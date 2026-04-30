@@ -59,7 +59,7 @@ The architecture should read like this:
 ```txt
 Document      = text truth + syntax truth
 Surface       = per-view/editor-session state + visible syntax caches
-RenderSurface = retained render subsystem, syntax-agnostic
+CellGridRenderSurface = retained render subsystem, syntax-agnostic
 Runtime       = syntax scheduling/orchestration and asset loading
 ```
 
@@ -120,7 +120,7 @@ Document defines the pure state machine; runtime drives it with bounded foregrou
 Surface/runtime pull byte-oriented visible runs from syntax truth on demand.
 
 ### 4. Render-facing retained visible caches
-Surface converts extracted runs into row-local render payloads by projecting them through the current visible layout; `RenderSurface` remains syntax-agnostic.
+Surface converts extracted runs into row-local render payloads by projecting them through the current visible layout; `CellGridRenderSurface` remains syntax-agnostic.
 
 ---
 
@@ -151,7 +151,7 @@ Surface converts extracted runs into row-local render payloads by projecting the
 - byte->char/visual conversion near render
 - adaptation of syntax extraction into visible-layout-backed render payloads
 
-### `RenderSurface` owns
+### `CellGridRenderSurface` owns
 - retained visible render state only
 - projection/diffing of row-local syntax spans from the current visible layout
 - no direct knowledge of `Document` syntax internals
@@ -365,21 +365,21 @@ Bulk `Vec` collection may exist as convenience, but it must not be the architect
 ### 14. Keep `Surface` as the syntax-to-render adapter
 **Decision:** yes.
 
-`RenderSurface` should not talk directly to `Document` syntax.
+`CellGridRenderSurface` should not talk directly to `Document` syntax.
 
 Instead:
 - `Document` exposes syntax truth/extraction
 - runtime advances freshness
 - `Surface` requests visible extraction for its viewport
 - `Surface` projects that through the current visible layout into retained render-facing payloads
-- `RenderSurface` diffs and emits those payloads
+- `CellGridRenderSurface` diffs and emits those payloads
 
 ---
 
-### 15. Keep `RenderSurface` syntax-agnostic
+### 15. Keep `CellGridRenderSurface` syntax-agnostic
 **Decision:** yes.
 
-`RenderSurface` should retain rows/layers and diff row-local syntax payloads, but not own syntax query policy or syntax truth.
+`CellGridRenderSurface` should retain rows/layers and diff row-local syntax payloads, but not own syntax query policy or syntax truth.
 
 This preserves the clean object split:
 - document = truth

@@ -7,6 +7,7 @@ publish = false
 [workspace]
 
 [dependencies]
+cosmic-text = "0.15"
 iced = { version = "0.14", default-features = false, features = [ "thread-pool", "tiny-skia", "x11", "wayland" ] }
 ropey = "1.6.1"
 the-lib = { path = "../../the-lib" }

@@ -151,9 +151,9 @@ pub(crate) struct TextAnnotationsCursor<'a> {
 impl<'a> TextAnnotationsCursor<'a> {
   fn new(annotations: &'a TextAnnotations) -> Self {
     Self {
-      inline_annotations: &annotations.inline_annotations,
-      inline_index: 0,
-      grapheme_substitutions: &annotations.grapheme_substitutions,
+      inline_annotations:          &annotations.inline_annotations,
+      inline_index:                0,
+      grapheme_substitutions:      &annotations.grapheme_substitutions,
       grapheme_substitution_index: 0,
     }
   }
@@ -258,12 +258,18 @@ mod tests {
   #[test]
   fn substitution_rejects_line_breaks() {
     let err = GraphemeSubstitution::new(0, "x\ny").unwrap_err();
-    assert_eq!(err, TextAnnotationError::GraphemeSubstitutionContainsLineBreak);
+    assert_eq!(
+      err,
+      TextAnnotationError::GraphemeSubstitutionContainsLineBreak
+    );
   }
 
   #[test]
   fn substitution_rejects_multiple_graphemes() {
     let err = GraphemeSubstitution::new(0, "xy").unwrap_err();
-    assert_eq!(err, TextAnnotationError::GraphemeSubstitutionMustBeSingleGrapheme);
+    assert_eq!(
+      err,
+      TextAnnotationError::GraphemeSubstitutionMustBeSingleGrapheme
+    );
   }
 }

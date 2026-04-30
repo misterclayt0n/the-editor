@@ -17,7 +17,7 @@ This document is intentionally opinionated. The old editor mixed too many concer
 The editor is a native Rust editor platform with a TypeScript product layer.
 
 ```txt
-Rust engine (`the-lib`):      text/state/layout/render invariants
+Rust engine (`the-lib`):      text/state/editing invariants + built-in cell-grid layout/rendering
 Rust runtime (`the-runtime`): services, resources, async/impure native orchestration
 TypeScript packages:          commands, hooks, keymaps, modes, extensions, defaults, UI composition
 Client:                       painting, platform chrome, event loop, native UI resources
@@ -26,6 +26,8 @@ Client:                       painting, platform chrome, event loop, native UI r
 The editor is not a monolithic app. It is a capability-oriented platform.
 
 A prompt, text input, code editor, minimap, diff experience, or coding-agent surface should all be built from the same native primitives and composed differently by TypeScript.
+
+The built-in renderer is explicitly a **monospace cell-grid renderer**. It is client-agnostic in the sense that a TUI, REPL, Electron canvas, native GUI, or test harness can paint its output, but it is not a universal proportional-font layout engine.
 
 The default editor experience is only one distribution. In the future, an alternate distribution should be able to replace most of the product layer in TypeScript, including commands, hooks, keymaps, layout, and UI composition.
 
@@ -54,6 +56,7 @@ These are explicitly **not** goals for `the-lib`:
 - owning FFF/workspace search integration
 - owning persistence, file watching, git, clipboard, or other impure services
 - owning client painting or platform UI
+- owning universal GUI text shaping, proportional-font measurement, or framework-specific layout semantics
 - becoming a dump for every feature that happens to be written in Rust
 
 ---
@@ -97,7 +100,7 @@ Purpose:
 - pure editor engine
 - semantic text state
 - deterministic editing operations
-- retained layout and render-delta production
+- built-in retained cell-grid layout and render-delta production
 
 Reasoning:
 - this is where correctness, invariants, and hot-path performance matter most
@@ -189,7 +192,7 @@ It owns things like:
 - surface-local undo/redo history
 - viewport/scroll state
 - reveal behavior
-- retained render state via `RenderSurface`
+- retained render state via `CellGridRenderSurface`
 - render capabilities/options
 - per-view interaction state
 
@@ -516,18 +519,18 @@ Reasoning:
 
 ## Rendering position
 
-Rendering is split into two stages.
+The built-in cell-grid renderer is split into two stages.
 
 ```txt
-Rust (`the-lib`):   viewport-first retained layout + render-delta production
+Rust (`the-lib`):   viewport-first retained cell-grid layout + render-delta production
 Client:             retained presentation scene + native painting
 TypeScript:         orchestration + providers + surface composition
 ```
 
-Rust owns:
-- viewport-first text layout
+Rust owns the built-in monospace path:
+- viewport-first cell-grid text layout
 - visible-row mapping
-- wrap and inline text-annotation participation
+- column-based wrap and inline text-annotation participation
 - widget row insertion
 - retained visible-window state
 - sparse checkpoint/origin caches
@@ -539,6 +542,7 @@ Client owns:
 - GPU/native text resources
 - platform presentation
 - frame pacing/presentation loop
+- non-cell-grid layout/rendering paths
 
 TypeScript owns:
 - decoration/widget/provider composition
@@ -546,7 +550,7 @@ TypeScript owns:
 
 The important rendering decision is this:
 
-> `RenderSurface` is a retained **visible-window renderer**, not a whole-document layout owner.
+> `CellGridRenderSurface` is a retained **visible-window renderer**, not a whole-document layout owner.
 
 There is no document-wide layout cache at the center of the architecture.
 Rows, row metadata, selections, cursors, and syntax spans should all derive from a single shared visible-layout pass for the viewport plus a small margin.
@@ -564,7 +568,7 @@ The intended split is:
 ```txt
 Document      = persistent syntax truth
 Surface       = visible syntax extraction/cache + render adapter
-RenderSurface = retained syntax-agnostic renderer
+CellGridRenderSurface = retained syntax-agnostic renderer
 Runtime       = syntax scheduler/orchestrator
 ```
 
@@ -617,7 +621,7 @@ The complete model should be tiered:
 The render path should consume visible syntax projections, not whole-document highlight truth.
 
 That means:
-- `RenderSurface` stays syntax-agnostic
+- `CellGridRenderSurface` stays syntax-agnostic
 - `Surface` adapts syntax extraction into render-visible payloads using the visible layout
 - runtime pushes freshness notifications, not whole-document syntax payloads
 

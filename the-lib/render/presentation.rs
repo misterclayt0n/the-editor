@@ -130,17 +130,17 @@ pub struct PresentUpdate {
 impl Default for PresentUpdate {
   fn default() -> Self {
     Self {
-      generation: 0,
-      full: false,
-      damage: Damage::empty(),
-      changed_rows: 0,
+      generation:    0,
+      full:          false,
+      damage:        Damage::empty(),
+      changed_rows:  0,
       retained_rows: 0,
-      removed_rows: 0,
-      row_metadata: 0,
-      selections: 0,
-      cursors: 0,
-      syntax: 0,
-      widgets: 0,
+      removed_rows:  0,
+      row_metadata:  0,
+      selections:    0,
+      cursors:       0,
+      syntax:        0,
+      widgets:       0,
     }
   }
 }
@@ -337,21 +337,21 @@ impl RetainedFrame {
     self.generation = delta.generation;
 
     PresentUpdate {
-      generation: delta.generation,
-      full: delta.full,
-      damage: delta.damage,
-      changed_rows: delta.changed_rows.len(),
+      generation:    delta.generation,
+      full:          delta.full,
+      damage:        delta.damage,
+      changed_rows:  delta.changed_rows.len(),
       retained_rows: delta.retained_rows.len(),
-      removed_rows: delta.removed_rows.len(),
-      row_metadata: delta
+      removed_rows:  delta.removed_rows.len(),
+      row_metadata:  delta
         .row_metadata
         .as_ref()
         .map(|row_metadata| row_metadata.rows.len())
         .unwrap_or(0),
-      selections: self.selections.len(),
-      cursors: self.cursors.len(),
-      syntax: self.syntax.len(),
-      widgets: self.widgets.len(),
+      selections:    self.selections.len(),
+      cursors:       self.cursors.len(),
+      syntax:        self.syntax.len(),
+      widgets:       self.widgets.len(),
     }
   }
 }

@@ -58,17 +58,14 @@ pub use manager::{
   RenderManager,
   SourceId,
 };
-pub use measurement::{
-  MeasurementBackendKind,
-  SurfaceMeasurements,
-};
+pub use measurement::CellGridMetrics;
 pub use presentation::{
   FrameRow,
   PresentUpdate,
   RetainedFrame,
   SurfaceFrame,
 };
-pub use surface::RenderSurface;
+pub use surface::CellGridRenderSurface;
 pub use text_annotations::{
   GraphemeSubstitution,
   InlineAnnotation,

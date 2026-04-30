@@ -1,10 +1,10 @@
-# Rendering Architecture
+# Cell-grid Rendering Architecture
 
-This document is the authoritative rendering plan for the editor.
+This document is the authoritative rendering plan for the editor's built-in **monospace cell-grid renderer**.
 
 The old fast renderer got one big thing right:
 
-> rendering should be **viewport-first**.
+> cell-grid rendering should be **viewport-first**.
 
 The current retained renderer still has one deep mistake:
 
@@ -16,22 +16,36 @@ This document replaces that model.
 
 ---
 
+## Scope
+
+This renderer assumes a uniform cell grid:
+
+- horizontal layout is expressed in visual columns
+- vertical layout is expressed in surface rows
+- wrapping width is a column count
+- tabs, wrap indentation, selections, cursors, and syntax spans are projected through column math
+- pixel annotations are derived from `CellGridMetrics`
+
+That makes the renderer appropriate for TUIs, REPLs, tests, and monospace GUI code-editor clients. It deliberately does **not** try to model proportional fonts, browser/native shaping, variable line heights, or framework-owned rich text layout. Clients that need those capabilities should own that layout path instead of treating this renderer as universal.
+
+---
+
 ## Final position
 
-Rendering is built from **two different native modules**:
+Cell-grid rendering is built from **two different native modules**:
 
 1. **`LayoutIndex`** — persistent global layout knowledge
 2. **`VisibleLayout`** — transient visible-window paint truth
 
 That split is the architecture.
 
-Rust owns:
+Rust owns the built-in cell-grid path:
 
-- text layout
-- wrap decisions
+- monospace text layout
+- column-based wrap decisions
 - document-visual-row indexing
 - widget row indexing
-- viewport math
+- cell-grid viewport math
 - visible row building
 - retained row/layer diffing
 - damage tracking
@@ -43,6 +57,7 @@ Clients own:
 - terminal / GPU / native UI details
 - presentation scenes
 - frame pacing
+- any non-cell-grid text layout path
 
 TypeScript owns:
 
@@ -64,7 +79,7 @@ Callers should configure one view object instead of juggling many setters.
 pub struct SurfaceViewSpec {
   pub viewport: Viewport,
   pub format: TextFormat,
-  pub measurements: SurfaceMeasurements,
+  pub measurements: CellGridMetrics,
   pub annotations: TextAnnotations,
   pub widgets: Vec<BlockWidget>,
 }
@@ -477,9 +492,9 @@ Surface row should be derived from widget indexing where possible, not treated a
 
 ---
 
-## `RenderSurface` responsibilities
+## `CellGridRenderSurface` responsibilities
 
-`RenderSurface` owns only retained visible rendering concerns:
+`CellGridRenderSurface` owns only retained visible rendering concerns:
 
 - visible-window retained rows
 - visible row ids and generations
@@ -489,7 +504,7 @@ Surface row should be derived from widget indexing where possible, not treated a
 - incremental frame delta production
 - `VisibleLayout` for the current window
 
-`RenderSurface` does **not** own:
+`CellGridRenderSurface` does **not** own:
 
 - global layout truth
 - whole-document row mapping
@@ -497,7 +512,7 @@ Surface row should be derived from widget indexing where possible, not treated a
 - syntax query policy
 - document-owned syntax state
 
-`RenderSurface::render_frame_stateless(...)` exists only as a tests/compatibility fallback; the real incremental path is the persistent `LayoutIndex`-backed path.
+`CellGridRenderSurface::render_frame_stateless(...)` exists only as a tests/compatibility fallback; the real incremental path is the persistent `LayoutIndex`-backed path.
 
 ---
 
@@ -662,7 +677,7 @@ Add the persistent global layout module.
 ### 2. Add per-line metrics and widget index
 This is the core global knowledge.
 
-### 3. Move global mapping out of `RenderSurface`
+### 3. Move global mapping out of `CellGridRenderSurface`
 Reveal and movement should stop depending on formatter traversal.
 
 ### 4. Keep `VisibleLayout` viewport-local
@@ -704,7 +719,7 @@ Especially:
 
 - `LayoutIndex` feels like the obvious seam for global mapping
 - `VisibleLayout` feels like the obvious seam for visible paint truth
-- `RenderSurface` feels obviously viewport-first and retained
+- `CellGridRenderSurface` feels obviously viewport-first and retained
 - `TextAnnotations` stays narrow and honest
 - widgets remain the only row insertion concept
 
@@ -712,4 +727,4 @@ Especially:
 
 ## One-line summary
 
-The rendering engine should be a **viewport-first retained visible-window renderer built on top of a persistent incremental `LayoutIndex`**, exposed through layered public Seams: `set_view()` for configuration, `snapshot()` for simple clients, `present()` for normal retained clients, and `raw_frame_delta()` for expert clients.
+The built-in cell-grid rendering engine should be a **viewport-first retained visible-window renderer built on top of a persistent incremental `LayoutIndex`**, exposed through layered public Seams: `set_view()` for configuration, `snapshot()` for simple clients, `present()` for normal retained clients, and `raw_frame_delta()` for expert clients.

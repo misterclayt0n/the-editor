@@ -109,10 +109,7 @@ pub struct RowMove {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RowKind {
   Document,
-  Widget {
-    widget_id: WidgetId,
-    fragment:  u32,
-  },
+  Widget { widget_id: WidgetId, fragment: u32 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

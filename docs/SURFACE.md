@@ -6,9 +6,9 @@ It answers five questions:
 
 1. What is a `Surface` in the new editor?
 2. What belongs on `Surface`, and what does not?
-3. How should `Surface` relate to `Document` and `RenderSurface`?
+3. How should `Surface` relate to `Document` and `CellGridRenderSurface`?
 4. What should the main editing/session API look like?
-5. Why do we need `Surface` at all instead of stopping at `Document` + `RenderSurface`?
+5. Why do we need `Surface` at all instead of stopping at `Document` + `CellGridRenderSurface`?
 
 This document is intentionally opinionated. `Surface` should be the real per-view/editor-session object in `the-lib`.
 
@@ -25,8 +25,8 @@ It is responsible for:
 - owning per-surface `History`
 - owning logical viewport/scroll state
 - owning reveal policy/helpers
-- owning retained rendering state via `RenderSurface`
-- coordinating text edits with document mutation, selection updates, history, cursor repair, visual goals, and render invalidation
+- owning retained rendering state via the built-in `CellGridRenderSurface`
+- coordinating text edits with document mutation, selection updates, history, cursor repair, visual goals, and cell-grid render invalidation
 
 It is **not** responsible for:
 - owning document text truth
@@ -46,7 +46,7 @@ The architecture should read like this:
 Resource      = external-world identity
 Document      = shared text truth
 Surface       = one live per-view/editor session on that text
-RenderSurface = retained rendering subsystem owned by Surface
+CellGridRenderSurface = built-in monospace cell-grid rendering subsystem owned by Surface
 ```
 
 A single `Document` may be shown by many `Surface`s.
@@ -70,7 +70,7 @@ Without `Surface`, the architecture becomes awkward:
 
 ```txt
 Document
-+ RenderSurface
++ CellGridRenderSurface
 + selection state
 + history
 + viewport
@@ -85,7 +85,7 @@ That is exactly the ghostly in-between state we want to avoid.
 ```txt
 Document = shared text truth
 Surface = one native editing/view session on that text
-RenderSurface = render subsystem inside Surface
+CellGridRenderSurface = built-in monospace cell-grid render subsystem inside Surface
 ```
 
 This is also why the old `view.rs` should not come back as a separate legacy-shaped module.
@@ -135,15 +135,15 @@ If surface-level scroll state later diverges from raw render input, a dedicated 
 - selection/cursor state
 - viewport/scroll state
 
-### 7. Retained render state
-`Surface` should own a `RenderSurface`.
+### 7. Retained cell-grid render state
+`Surface` should own a `CellGridRenderSurface` for the built-in monospace renderer.
 
-That means the following remain per-surface retained inputs/state:
+That means the following remain per-surface retained cell-grid inputs/state:
 - `TextFormat`
 - narrowed `TextAnnotations` for inline inserted text and grapheme substitutions only
 - visible syntax baseline/enrichment caches
 - widgets
-- measurements
+- `CellGridMetrics`
 - retained visible-window rows/layers/checkpoints/dirtiness
 
 ---
@@ -176,7 +176,7 @@ It should orchestrate canonical editing mechanics, not define the whole editor p
 For now, `Surface` should not introduce a new top-level `SurfaceId` in `the-lib`.
 Higher layers can own identity/registry concerns.
 
-`RenderSurface` already has a render-local `SurfaceId`; that does not force the higher-level `Surface` object to expose another ID type yet.
+`CellGridRenderSurface` already has a render-local `SurfaceId`; that does not force the higher-level `Surface` object to expose another ID type yet.
 
 ---
 
@@ -202,15 +202,15 @@ The important truth is the architectural attachment, not forced identity machine
 
 ---
 
-## Relationship to `RenderSurface`
+## Relationship to `CellGridRenderSurface`
 
-`RenderSurface` is not the whole future `Surface`.
-It is the retained rendering subsystem owned by `Surface`.
+`CellGridRenderSurface` is not the whole future `Surface`.
+It is the retained monospace cell-grid rendering subsystem owned by `Surface`.
 
 That means:
 - normal callers should think in terms of `Surface`
 - `Surface` should usually be the render entrypoint
-- `Surface` forwards into its owned `RenderSurface`
+- `Surface` forwards into its owned `CellGridRenderSurface`
 
 Conceptually:
 
@@ -221,13 +221,13 @@ pub struct Surface {
   visual_goals: VisualGoals,
   history: History,
   viewport: Viewport,
-  render: RenderSurface,
+  render: CellGridRenderSurface,
 }
 ```
 
 Not necessarily exactly that, but close.
 
-### Why own `RenderSurface` directly?
+### Why own `CellGridRenderSurface` directly?
 Because render state is already clearly per-surface state:
 - retained visible-row identity
 - visible-window checkpoint/origin caches
@@ -236,7 +236,9 @@ Because render state is already clearly per-surface state:
 - measurements
 - viewport-shaped rendering behavior
 
-`RenderSurface` should be viewport-first, not a whole-document layout owner. Keeping it inside `Surface` keeps reveal, viewport state, and retained visible rendering close to the session object that actually uses them.
+`CellGridRenderSurface` should be viewport-first, not a whole-document layout owner. Keeping it inside `Surface` keeps reveal, viewport state, and retained visible cell-grid rendering close to the session object that actually uses them.
+
+This does not claim that all clients must use this renderer. It is the built-in path for TUI, REPL, test, and monospace GUI clients.
 
 ---
 
@@ -370,12 +372,12 @@ Normal callers should render through `Surface`.
 
 That means `Surface` should likely expose things like:
 - access to render settings/state when needed
-- surface-level render calls that use the owned `RenderSurface`
+- surface-level render calls that use the owned `CellGridRenderSurface`
 - viewport-setting APIs above the raw render request
 
 This makes `Surface` feel like the real per-view object rather than forcing callers to juggle two peer objects for one view.
 
-`RenderSurface` may remain public and focused, but it should increasingly feel like a viewport-first retained visible-window subsystem.
+`CellGridRenderSurface` may remain public and focused, but it should increasingly feel like a viewport-first retained visible-window subsystem.
 
 ---
 
@@ -396,7 +398,7 @@ Instead the flow should be:
 2. runtime/surface observe that syntax generations changed
 3. `Surface` pulls the visible syntax it needs for its viewport
 4. `Surface` updates its retained visible syntax cache
-5. `RenderSurface` consumes the visible cache as syntax-agnostic layer payload projected through the current visible layout
+5. `CellGridRenderSurface` consumes the visible cache as syntax-agnostic layer payload projected through the current visible layout
 
 ### Demand reporting
 `Surface` should also be the object that reports syntax interest back to runtime.
@@ -425,7 +427,7 @@ pub struct Surface {
   visual_goals: VisualGoals,
   history: History,
   viewport: Viewport,
-  render: RenderSurface,
+  render: CellGridRenderSurface,
 }
 
 impl Surface {
@@ -469,7 +471,7 @@ These are not runtime services.
 These are not product chrome.
 These are editor semantics.
 
-If we stop at `Document` + `RenderSurface`, the missing session object just reappears elsewhere under another name.
+If we stop at `Document` + `CellGridRenderSurface`, the missing session object just reappears elsewhere under another name.
 That would recreate the old `view.rs` problem in a less honest form.
 
 ---

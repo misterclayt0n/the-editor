@@ -29,11 +29,11 @@ use the_lib::{
   },
   registers::Registers,
   render::{
+    CellGridMetrics,
+    CellGridRenderSurface,
     Damage,
     RenderFrameDelta,
-    RenderSurface,
     SurfaceId,
-    SurfaceMeasurements,
     TextAnnotations,
     TextFormat,
     Viewport,
@@ -105,12 +105,12 @@ struct SimEditor {
 impl SimEditor {
   fn new(initial_text: &str) -> Self {
     let document = Document::new(initial_text.into());
-    let mut render = RenderSurface::new(
+    let mut render = CellGridRenderSurface::new(
       SurfaceId::new(1).unwrap(),
       TextFormat::default(),
       TextAnnotations::default(),
     );
-    render.set_measurements(SurfaceMeasurements::cell_grid(1, 1));
+    render.set_measurements(CellGridMetrics::new(1, 1));
 
     let surface = Surface::new(&document, render, Viewport::new(0, 8, 0, 4)).unwrap();
     let mut editor = Self {

@@ -18,13 +18,13 @@ use crate::{
   },
   render::{
     BlockWidget,
+    CellGridMetrics,
+    CellGridRenderSurface,
     FrameRequest,
     PresentUpdate,
     RenderFrameDelta,
-    RenderSurface,
     RetainedFrame,
     SurfaceFrame,
-    SurfaceMeasurements,
     SyntaxSpan,
     TextAnnotations,
     TextFormat,
@@ -104,7 +104,7 @@ struct VisibleSyntaxCache {
 pub struct SurfaceViewSpec {
   pub viewport:     Viewport,
   pub format:       TextFormat,
-  pub measurements: SurfaceMeasurements,
+  pub measurements: CellGridMetrics,
   pub annotations:  TextAnnotations,
   pub widgets:      Vec<BlockWidget>,
 }
@@ -114,7 +114,7 @@ impl SurfaceViewSpec {
     Self {
       viewport,
       format: TextFormat::default(),
-      measurements: SurfaceMeasurements::default(),
+      measurements: CellGridMetrics::default(),
       annotations: TextAnnotations::default(),
       widgets: Vec::new(),
     }
@@ -129,19 +129,23 @@ pub struct Surface {
   history:       History,
   viewport:      Viewport,
   layout_index:  LayoutIndex,
-  render:        RenderSurface,
+  render:        CellGridRenderSurface,
   syntax_cache:  VisibleSyntaxCache,
 }
 
 impl Surface {
-  pub fn new(document: &Document, render: RenderSurface, viewport: Viewport) -> Result<Self> {
+  pub fn new(
+    document: &Document,
+    render: CellGridRenderSurface,
+    viewport: Viewport,
+  ) -> Result<Self> {
     Self::with_selection(document, Selection::point(0), render, viewport)
   }
 
   pub fn with_selection(
     document: &Document,
     selection: Selection,
-    mut render: RenderSurface,
+    mut render: CellGridRenderSurface,
     viewport: Viewport,
   ) -> Result<Self> {
     validate_selection_bounds(&selection, document.text().len_chars())?;
@@ -190,11 +194,11 @@ impl Surface {
 
   pub fn view_spec(&self) -> SurfaceViewSpec {
     SurfaceViewSpec {
-      viewport: self.viewport,
-      format: self.render.text_format().clone(),
+      viewport:     self.viewport,
+      format:       self.render.text_format().clone(),
       measurements: self.render.measurements(),
-      annotations: self.render.text_annotations().clone(),
-      widgets: self.render.widgets().to_vec(),
+      annotations:  self.render.text_annotations().clone(),
+      widgets:      self.render.widgets().to_vec(),
     }
   }
 
@@ -206,15 +210,18 @@ impl Surface {
     self.set_widgets(spec.widgets);
   }
 
-  pub fn render_surface(&self) -> &RenderSurface {
+  pub fn render_surface(&self) -> &CellGridRenderSurface {
     &self.render
   }
 
   pub fn syntax_interest(&mut self, document: &Document) -> SurfaceSyntaxInterest {
     let text = document.text().slice(..);
-    let (char_range, byte_range) = self
-      .render
-      .visible_document_ranges(text, document.revision(), self.viewport, &mut self.layout_index);
+    let (char_range, byte_range) = self.render.visible_document_ranges(
+      text,
+      document.revision(),
+      self.viewport,
+      &mut self.layout_index,
+    );
 
     SurfaceSyntaxInterest {
       viewport: self.viewport,
@@ -272,11 +279,11 @@ impl Surface {
     self.invalidate_visible_syntax_cache();
   }
 
-  pub fn measurements(&self) -> SurfaceMeasurements {
+  pub fn measurements(&self) -> CellGridMetrics {
     self.render.measurements()
   }
 
-  pub fn set_measurements(&mut self, measurements: SurfaceMeasurements) {
+  pub fn set_measurements(&mut self, measurements: CellGridMetrics) {
     if self.render.measurements() == measurements {
       return;
     }
@@ -342,13 +349,12 @@ impl Surface {
     self.preflight_edit(document, &edit)?;
 
     let before = document.text().clone();
-    let change_extent = summarize_text_change(edit.transaction.changes().changes()).unwrap_or(
-      TextChangeExtent {
+    let change_extent =
+      summarize_text_change(edit.transaction.changes().changes()).unwrap_or(TextChangeExtent {
         start_old_char: before.len_chars(),
-        end_old_char: before.len_chars(),
-        end_new_char: before.len_chars(),
-      },
-    );
+        end_old_char:   before.len_chars(),
+        end_new_char:   before.len_chars(),
+      });
     let start_line = before
       .slice(..)
       .char_to_line(change_extent.start_old_char.min(before.len_chars()));
@@ -732,8 +738,8 @@ fn summarize_text_change(changes: &[crate::transaction::Operation]) -> Option<Te
 
   Some(TextChangeExtent {
     start_old_char: start_old?,
-    end_old_char: end_old,
-    end_new_char: end_new,
+    end_old_char:   end_old,
+    end_new_char:   end_new,
   })
 }
 
@@ -750,7 +756,7 @@ fn validate_selection_bounds(selection: &Selection, len: usize) -> Result<()> {
 
 fn project_visible_syntax(
   document: &Document,
-  render: &mut RenderSurface,
+  render: &mut CellGridRenderSurface,
   layout_index: &mut LayoutIndex,
   viewport: Viewport,
   registry: &LanguageRegistry,
@@ -788,8 +794,8 @@ mod tests {
     transaction::Transaction,
   };
 
-  fn render_surface() -> RenderSurface {
-    RenderSurface::new(
+  fn render_surface() -> CellGridRenderSurface {
+    CellGridRenderSurface::new(
       SurfaceId::new(1).unwrap(),
       TextFormat::default(),
       TextAnnotations::default(),

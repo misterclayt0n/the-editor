@@ -78,6 +78,7 @@ use the_lib::{
     move_up_visual,
   },
   render::{
+    CellGridMetrics,
     CursorPlacement,
     FrameRow,
     PresentUpdate,
@@ -85,7 +86,6 @@ use the_lib::{
     RowKind,
     RowMetadata,
     SelectionSpan,
-    SurfaceMeasurements,
     SyntaxSpan,
     TextAnnotations,
     Viewport,
@@ -216,7 +216,7 @@ impl App {
       .surface_mut(surface)
       .expect("surface must exist")
       .set_view(SurfaceViewSpec {
-        measurements: SurfaceMeasurements::cell_grid(1, 1),
+        measurements: CellGridMetrics::new(1, 1),
         ..SurfaceViewSpec::new(viewport)
       });
 
@@ -1436,8 +1436,8 @@ impl App {
     let present = self.last_present;
 
     let info = format!(
-      " {mode} {name}{modified} | profile {} | ln {}, col {} | sel {} | rev {} | tx {} | render {:?} | gen {} \
-       | Δ c/rm/r {} / {} / {} | meta {} | dmg {}..{}{} ",
+      " {mode} {name}{modified} | profile {} | ln {}, col {} | sel {} | rev {} | tx {} | render \
+       {:?} | gen {} | Δ c/rm/r {} / {} / {} | meta {} | dmg {}..{}{} ",
       self.render_profile.label(),
       line + 1,
       col + 1,

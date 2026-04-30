@@ -305,9 +305,9 @@ impl<'a> DocumentFormatter<'a> {
     }
 
     Some(FormatterCheckpoint {
-      char_idx: self.char_pos,
-      line_idx: self.line_pos,
-      visual_pos: self.visual_pos,
+      char_idx:     self.char_pos,
+      line_idx:     self.line_pos,
+      visual_pos:   self.visual_pos,
       indent_level: self.indent_level,
     })
   }

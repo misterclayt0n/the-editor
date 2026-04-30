@@ -19,9 +19,9 @@ use the_lib::{
   document::Document,
   registers::Registers,
   render::{
+    CellGridRenderSurface,
     PresentUpdate,
     RenderFrameDelta,
-    RenderSurface,
     RetainedFrame,
     SurfaceFrame,
     SurfaceId,
@@ -604,7 +604,7 @@ impl RuntimeSession {
       .get(&document)
       .ok_or(RuntimeError::UnknownDocument(document))?;
     let handle = SurfaceHandle::next(&mut self.next_surface_id);
-    let render = RenderSurface::new(
+    let render = CellGridRenderSurface::new(
       SurfaceId::new(handle.get()).expect("runtime surface handle must be non-zero"),
       TextFormat::default(),
       TextAnnotations::default(),

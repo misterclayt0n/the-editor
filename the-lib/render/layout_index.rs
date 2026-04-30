@@ -9,7 +9,7 @@ use super::{
     Position,
   },
   layers::BlockWidget,
-  measurement::SurfaceMeasurements,
+  measurement::CellGridMetrics,
   text_annotations::TextAnnotations,
   text_format::TextFormat,
 };
@@ -24,7 +24,7 @@ struct LayoutSignature {
   format:       TextFormat,
   annotations:  TextAnnotations,
   widgets:      Vec<BlockWidget>,
-  measurements: SurfaceMeasurements,
+  measurements: CellGridMetrics,
 }
 
 impl LayoutSignature {
@@ -150,7 +150,7 @@ pub(crate) struct LayoutInputs<'a> {
   pub(crate) wrap_width:    usize,
   pub(crate) annotations:   &'a TextAnnotations,
   pub(crate) widgets:       &'a [BlockWidget],
-  pub(crate) measurements:  SurfaceMeasurements,
+  pub(crate) measurements:  CellGridMetrics,
 }
 
 impl LayoutIndex {
@@ -284,7 +284,7 @@ impl LayoutIndex {
     &mut self,
     text: RopeSlice<'_>,
     widgets: &[BlockWidget],
-    measurements: SurfaceMeasurements,
+    measurements: CellGridMetrics,
   ) {
     let line_count = text.len_lines().max(1);
     self.widget_rows_before_line.clear();
@@ -727,7 +727,7 @@ mod tests {
       wrap_width:    8,
       annotations:   &annotations,
       widgets:       &[],
-      measurements:  SurfaceMeasurements::default(),
+      measurements:  CellGridMetrics::default(),
     });
 
     assert_eq!(index.doc_visual_row_for_line(0), 0);
@@ -751,7 +751,7 @@ mod tests {
       wrap_width:    8,
       annotations:   &annotations,
       widgets:       &[],
-      measurements:  SurfaceMeasurements::default(),
+      measurements:  CellGridMetrics::default(),
     });
     let original_second = index.line_metrics[1].visual_row_count;
 
@@ -768,7 +768,7 @@ mod tests {
       wrap_width:    8,
       annotations:   &annotations,
       widgets:       &[],
-      measurements:  SurfaceMeasurements::default(),
+      measurements:  CellGridMetrics::default(),
     });
 
     assert_eq!(index.line_metrics[1].visual_row_count, original_second);

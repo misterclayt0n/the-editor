@@ -9,7 +9,7 @@ use super::{
     SyntaxSpan,
     WidgetPlacement,
   },
-  measurement::SurfaceMeasurements,
+  measurement::CellGridMetrics,
   visible_layout::VisibleLayout,
 };
 use crate::{
@@ -24,7 +24,7 @@ impl LayerProjector {
   pub(super) fn project_syntax_runs(
     visible_layout: &VisibleLayout,
     viewport: Viewport,
-    measurements: SurfaceMeasurements,
+    measurements: CellGridMetrics,
     runs: &[SyntaxHighlightRun],
   ) -> Vec<SyntaxSpan> {
     if runs.is_empty() {
@@ -58,8 +58,8 @@ impl LayerProjector {
             surface_row: unit.surface_row_abs - viewport.first_row,
             start_col,
             end_col,
-            x_px: start_col as u32 * measurements.cell_width_px,
-            width_px: (end_col - start_col) as u32 * measurements.cell_width_px,
+            x_px: measurements.col_to_x_px(start_col),
+            width_px: measurements.col_span_width_px(start_col, end_col),
             kind: runs[probe].kind,
           };
 
@@ -69,7 +69,7 @@ impl LayerProjector {
             && last.end_col == span.start_col
           {
             last.end_col = span.end_col;
-            last.width_px = (last.end_col - last.start_col) as u32 * measurements.cell_width_px;
+            last.width_px = measurements.col_span_width_px(last.start_col, last.end_col);
           } else {
             spans.push(span);
           }
@@ -84,11 +84,11 @@ impl LayerProjector {
   pub(super) fn project_widgets(
     visible_layout: &VisibleLayout,
     viewport: Viewport,
-    measurements: SurfaceMeasurements,
+    measurements: CellGridMetrics,
   ) -> Vec<WidgetPlacement> {
     let viewport_end = viewport.first_row.saturating_add(viewport.row_count);
-    let viewport_width_px = viewport.wrap_width as i64 * measurements.cell_width_px as i64;
-    let x_px = -(viewport.first_col as i64 * measurements.cell_width_px as i64);
+    let viewport_width_px = measurements.col_span_width_px(0, viewport.wrap_width) as i64;
+    let x_px = -(measurements.col_to_x_px(viewport.first_col) as i64);
 
     visible_layout
       .widget_layouts
@@ -109,8 +109,8 @@ impl LayerProjector {
           surface_row: visible_start - viewport.first_row,
           row_span: visible_end - visible_start,
           x_px,
-          y_px: (widget.start_row as i64 - viewport.first_row as i64)
-            * measurements.row_height_px as i64,
+          y_px: (measurements.row_to_y_px(widget.start_row) as i64)
+            - (measurements.row_to_y_px(viewport.first_row) as i64),
           width_px: widget.width_px,
           height_px: widget.height_px,
         })
@@ -122,7 +122,7 @@ impl LayerProjector {
     visible_layout: &VisibleLayout,
     selection: Option<&Selection>,
     viewport: Viewport,
-    measurements: SurfaceMeasurements,
+    measurements: CellGridMetrics,
   ) -> Vec<SelectionSpan> {
     let Some(selection) = selection else {
       return Vec::new();
@@ -154,8 +154,8 @@ impl LayerProjector {
         surface_row: unit.surface_row_abs - viewport.first_row,
         start_col,
         end_col,
-        x_px: start_col as u32 * measurements.cell_width_px,
-        width_px: (end_col - start_col) as u32 * measurements.cell_width_px,
+        x_px: measurements.col_to_x_px(start_col),
+        width_px: measurements.col_span_width_px(start_col, end_col),
       };
 
       if let Some(last) = spans.last_mut()
@@ -164,7 +164,7 @@ impl LayerProjector {
         && last.end_col == span.start_col
       {
         last.end_col = span.end_col;
-        last.width_px = (last.end_col - last.start_col) as u32 * measurements.cell_width_px;
+        last.width_px = measurements.col_span_width_px(last.start_col, last.end_col);
       } else {
         spans.push(span);
       }
@@ -178,7 +178,7 @@ impl LayerProjector {
     visible_layout: &VisibleLayout,
     selection: Option<&Selection>,
     viewport: Viewport,
-    measurements: SurfaceMeasurements,
+    measurements: CellGridMetrics,
   ) -> Vec<CursorPlacement> {
     let Some(selection) = selection else {
       return Vec::new();
@@ -213,8 +213,8 @@ impl LayerProjector {
         cursor_id: cursor.id,
         surface_row,
         col,
-        x_px: col as u32 * measurements.cell_width_px,
-        y_px: surface_row as u32 * measurements.row_height_px,
+        x_px: measurements.col_to_x_px(col),
+        y_px: measurements.row_to_y_px(surface_row),
         height_px: measurements.row_height_px,
       });
     }

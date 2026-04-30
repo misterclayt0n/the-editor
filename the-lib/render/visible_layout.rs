@@ -18,7 +18,7 @@ use super::{
     LayoutIndex,
     LayoutInputs,
   },
-  measurement::SurfaceMeasurements,
+  measurement::CellGridMetrics,
   text_annotations::TextAnnotations,
   text_format::TextFormat,
 };
@@ -119,7 +119,7 @@ impl VisibleLayout {
   pub(super) fn build_rows(
     &self,
     viewport: Viewport,
-    measurements: SurfaceMeasurements,
+    measurements: CellGridMetrics,
   ) -> Vec<BuiltRow> {
     self
       .rows
@@ -131,7 +131,7 @@ impl VisibleLayout {
           key:       row.key.clone(),
           placement: RowPlacement::new(
             row.abs_surface_row - viewport.first_row,
-            (row.abs_surface_row - viewport.first_row) as u32 * measurements.row_height_px,
+            measurements.row_to_y_px(row.abs_surface_row - viewport.first_row),
             measurements.row_height_px,
           ),
           text:      crop_row_text(&row.text, viewport),
@@ -175,7 +175,7 @@ pub(super) struct VisibleLayoutBuilder<'a> {
   format:        &'a TextFormat,
   annotations:   &'a TextAnnotations,
   widgets:       &'a [BlockWidget],
-  measurements:  SurfaceMeasurements,
+  measurements:  CellGridMetrics,
 }
 
 impl<'a> VisibleLayoutBuilder<'a> {
@@ -185,7 +185,7 @@ impl<'a> VisibleLayoutBuilder<'a> {
     format: &'a TextFormat,
     annotations: &'a TextAnnotations,
     widgets: &'a [BlockWidget],
-    measurements: SurfaceMeasurements,
+    measurements: CellGridMetrics,
   ) -> Self {
     Self {
       text,
@@ -431,7 +431,7 @@ fn finalize_visible_row(
   row: RowBuilder,
   last_for_line: bool,
   widgets: &[BlockWidget],
-  measurements: SurfaceMeasurements,
+  measurements: CellGridMetrics,
   last_doc_line: usize,
   window_start_row: usize,
   window_end_row: usize,

@@ -3,10 +3,19 @@ use std::path::{
   PathBuf,
 };
 
+use cosmic_text::{
+  Attrs,
+  Buffer,
+  Family,
+  FontSystem,
+  Metrics,
+  Shaping,
+};
 use iced::{
   Element,
   Fill,
   Font,
+  Pixels,
   Subscription,
   Theme,
   keyboard::{
@@ -18,6 +27,8 @@ use iced::{
     column,
     container,
     row,
+    space,
+    stack,
     text,
   },
 };
@@ -46,7 +57,7 @@ use the_lib::{
     PresentUpdate,
     RetainedFrame,
     RowKind,
-    SurfaceMeasurements,
+    CellGridMetrics,
     Viewport,
   },
   selection::Selection,
@@ -65,6 +76,7 @@ use the_runtime::{
 
 const VIEW_ROWS: usize = 28;
 const VIEW_COLS: usize = 96;
+const FONT_SIZE_PX: f32 = 16.0;
 const DEFAULT_TEXT: &str = include_str!("../../../the-lib/examples/demo_wrap_repro.txt");
 
 fn main() -> iced::Result {
@@ -82,14 +94,23 @@ enum Message {
   Keyboard(keyboard::Event),
 }
 
+#[derive(Debug, Clone, Copy)]
+struct IcedCellMetrics {
+  text_size_px:   f32,
+  line_height_px: f32,
+  cell_width_px:  u32,
+  row_height_px:  u32,
+}
+
 struct IcedEditor {
-  session:     RuntimeSession,
-  document:    DocumentHandle,
-  surface:     SurfaceHandle,
-  render:      RetainedFrame,
-  present:     PresentUpdate,
-  status:      String,
-  opened_path: Option<PathBuf>,
+  session:      RuntimeSession,
+  document:     DocumentHandle,
+  surface:      SurfaceHandle,
+  render:       RetainedFrame,
+  present:      PresentUpdate,
+  status:       String,
+  opened_path:  Option<PathBuf>,
+  cell_metrics: IcedCellMetrics,
 }
 
 impl IcedEditor {
@@ -120,6 +141,7 @@ impl IcedEditor {
       },
     };
 
+    let cell_metrics = measure_cell_grid_metrics();
     let viewport = Viewport::new(0, VIEW_ROWS, 0, VIEW_COLS);
     let surface = session
       .create_surface_with_viewport(document, viewport)
@@ -128,7 +150,10 @@ impl IcedEditor {
       .surface_mut(surface)
       .expect("surface should exist")
       .set_view(SurfaceViewSpec {
-        measurements: SurfaceMeasurements::cell_grid(1, 1),
+        measurements: CellGridMetrics::new(
+          cell_metrics.cell_width_px,
+          cell_metrics.row_height_px,
+        ),
         ..SurfaceViewSpec::new(viewport)
       });
 
@@ -140,6 +165,7 @@ impl IcedEditor {
       present: PresentUpdate::default(),
       status: std::mem::take(&mut status),
       opened_path,
+      cell_metrics,
     };
     editor.refresh_frame();
     editor
@@ -552,6 +578,16 @@ impl IcedEditor {
     )
   }
 
+  fn cell_grid_label(&self) -> String {
+    format!(
+      "Font::MONOSPACE @ {:.1}px · measured cell {}×{} px · line height {:.1}px · the-lib still assumes a uniform cell grid",
+      self.cell_metrics.text_size_px,
+      self.cell_metrics.cell_width_px,
+      self.cell_metrics.row_height_px,
+      self.cell_metrics.line_height_px,
+    )
+  }
+
   fn document_name(&self) -> String {
     self
       .document_path()
@@ -572,22 +608,13 @@ impl IcedEditor {
       return String::new();
     };
 
-    let base = match row.metadata.as_ref().map(|metadata| metadata.kind) {
+    match row.metadata.as_ref().map(|metadata| metadata.kind) {
       Some(RowKind::Widget {
         widget_id,
         fragment,
       }) => format!("[widget {} · fragment {}]", widget_id.get(), fragment),
       _ => row.row.text.to_string(),
-    };
-
-    let primary_cursor = self.surface().primary_cursor_id();
-    let cursor = self
-      .render
-      .cursor_placements(surface_row)
-      .into_iter()
-      .find(|cursor| cursor.cursor_id == primary_cursor);
-
-    overlay_cursor(&base, cursor.map(|cursor| cursor.col))
+    }
   }
 
   fn gutter_label(&self, surface_row: usize) -> String {
@@ -627,10 +654,12 @@ fn update(editor: &mut IcedEditor, message: Message) {
 
 fn view(editor: &IcedEditor) -> Element<'_, Message> {
   let viewport = editor.surface().viewport();
+  let primary_cursor = editor.surface().primary_cursor_id();
 
   let controls = column![
     text(editor.document_name()).size(24),
     text(editor.viewport_label()),
+    text(editor.cell_grid_label()),
     text(
       "Type directly. Arrows move · Shift+Arrows select · Enter newline · Backspace/Delete edit"
     ),
@@ -642,13 +671,46 @@ fn view(editor: &IcedEditor) -> Element<'_, Message> {
 
   let mut rows = column![];
   for surface_row in 0..viewport.row_count {
+    let text_row = text(editor.render_row_text(surface_row))
+      .font(Font::MONOSPACE)
+      .size(FONT_SIZE_PX)
+      .line_height(iced::widget::text::LineHeight::Absolute(Pixels(
+        editor.cell_metrics.line_height_px,
+      )))
+      .width(Fill);
+
+    let cursor_overlay = editor
+      .render
+      .cursor_placements(surface_row)
+      .into_iter()
+      .find(|cursor| cursor.cursor_id == primary_cursor)
+      .map(|cursor| {
+        row![
+          space().width(cursor.x_px as f32),
+          text("▏")
+            .font(Font::MONOSPACE)
+            .size(FONT_SIZE_PX)
+            .line_height(iced::widget::text::LineHeight::Absolute(Pixels(
+              editor.cell_metrics.line_height_px,
+            ))),
+        ]
+        .into()
+      })
+      .unwrap_or_else(|| space().into());
+
     let line = row![
       text(editor.gutter_label(surface_row))
         .font(Font::MONOSPACE)
+        .size(FONT_SIZE_PX)
+        .line_height(iced::widget::text::LineHeight::Absolute(Pixels(
+          editor.cell_metrics.line_height_px,
+        )))
         .width(56),
-      text(editor.render_row_text(surface_row))
-        .font(Font::MONOSPACE)
-        .width(Fill),
+      stack([
+        text_row.into(),
+        cursor_overlay,
+      ])
+      .width(Fill),
     ]
     .spacing(12);
 
@@ -684,26 +746,37 @@ fn view(editor: &IcedEditor) -> Element<'_, Message> {
     .into()
 }
 
-fn overlay_cursor(text: &str, col: Option<usize>) -> String {
-  let Some(col) = col else {
-    return text.to_string();
-  };
+fn measure_cell_grid_metrics() -> IcedCellMetrics {
+  let line_height_px = iced::widget::text::LineHeight::default()
+    .to_absolute(Pixels(FONT_SIZE_PX))
+    .0;
 
-  let mut out = String::new();
-  let mut chars = text.chars();
-  let mut current = 0usize;
+  let mut font_system = FontSystem::new();
+  let metrics = Metrics::new(FONT_SIZE_PX, line_height_px);
+  let mut buffer = Buffer::new(&mut font_system, metrics);
+  buffer.set_size(&mut font_system, None, None);
+  buffer.set_text(
+    &mut font_system,
+    "M",
+    &Attrs::new().family(Family::Monospace),
+    Shaping::Advanced,
+    None,
+  );
+  buffer.shape_until_scroll(&mut font_system, true);
 
-  while current < col {
-    match chars.next() {
-      Some(ch) => out.push(ch),
-      None => out.push(' '),
-    }
-    current += 1;
+  let cell_width_px = buffer
+    .layout_runs()
+    .next()
+    .and_then(|run| run.glyphs.first())
+    .map(|glyph| glyph.w.ceil().max(1.0) as u32)
+    .unwrap_or(8);
+
+  IcedCellMetrics {
+    text_size_px: FONT_SIZE_PX,
+    line_height_px,
+    cell_width_px,
+    row_height_px: line_height_px.ceil().max(1.0) as u32,
   }
-
-  out.push('▏');
-  out.extend(chars);
-  out
 }
 
 fn fallback_text() -> String {

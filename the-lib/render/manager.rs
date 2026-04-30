@@ -9,9 +9,9 @@ use std::{
 use ropey::RopeSlice;
 
 use super::{
+  CellGridRenderSurface,
   FrameRequest,
   RenderFrameDelta,
-  RenderSurface,
   SurfaceId,
   TextAnnotations,
   TextFormat,
@@ -45,7 +45,7 @@ pub struct RenderManager {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ManagedSurface {
   source_id:    SourceId,
-  surface:      RenderSurface,
+  surface:      CellGridRenderSurface,
   layout_index: LayoutIndex,
 }
 
@@ -72,7 +72,7 @@ impl RenderManager {
     annotations: TextAnnotations,
   ) -> SurfaceId {
     let surface_id = next_surface_id(&mut self.next_surface_id);
-    let surface = RenderSurface::new(surface_id, format, annotations);
+    let surface = CellGridRenderSurface::new(surface_id, format, annotations);
 
     self.surfaces.insert(surface_id, ManagedSurface {
       source_id,
@@ -89,7 +89,7 @@ impl RenderManager {
     surface_id
   }
 
-  pub fn destroy_surface(&mut self, surface_id: SurfaceId) -> Option<RenderSurface> {
+  pub fn destroy_surface(&mut self, surface_id: SurfaceId) -> Option<CellGridRenderSurface> {
     let managed = self.surfaces.remove(&surface_id)?;
     self.dirty_surfaces.remove(&surface_id);
 
@@ -118,14 +118,14 @@ impl RenderManager {
       .unwrap_or_default()
   }
 
-  pub fn surface(&self, surface_id: SurfaceId) -> Option<&RenderSurface> {
+  pub fn surface(&self, surface_id: SurfaceId) -> Option<&CellGridRenderSurface> {
     self
       .surfaces
       .get(&surface_id)
       .map(|managed| &managed.surface)
   }
 
-  pub fn surface_mut(&mut self, surface_id: SurfaceId) -> Option<&mut RenderSurface> {
+  pub fn surface_mut(&mut self, surface_id: SurfaceId) -> Option<&mut CellGridRenderSurface> {
     self.dirty_surfaces.insert(surface_id);
     self
       .surfaces

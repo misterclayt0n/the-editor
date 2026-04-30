@@ -99,9 +99,9 @@ So `the-runtime` is the honest middle layer.
 `the-lib` owns:
 - `Document`
 - `Surface`
-- `RenderSurface`
+- `CellGridRenderSurface`
 - editing semantics
-- selection/history/render invariants
+- selection/history/cell-grid render invariants
 - syntax core state model
 - pure algorithms and data structures
 

@@ -28,7 +28,7 @@ use super::{
     WidgetPlacement,
   },
   layout_index::LayoutIndex,
-  measurement::SurfaceMeasurements,
+  measurement::CellGridMetrics,
   row_diff::{
     RetainedRow,
     RowDiffEngine,
@@ -46,14 +46,14 @@ use crate::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RenderSurface {
+pub struct CellGridRenderSurface {
   id:             SurfaceId,
   format:         TextFormat,
   annotations:    TextAnnotations,
   selection:      Option<Selection>,
   visible_syntax: Vec<SyntaxSpan>,
   widgets:        Vec<BlockWidget>,
-  measurements:   SurfaceMeasurements,
+  measurements:   CellGridMetrics,
   generation:     u64,
   dirty:          DirtyState,
   state:          SurfaceState,
@@ -90,7 +90,7 @@ impl Default for SurfaceState {
   }
 }
 
-impl RenderSurface {
+impl CellGridRenderSurface {
   pub fn new(id: SurfaceId, format: TextFormat, annotations: TextAnnotations) -> Self {
     Self {
       id,
@@ -99,7 +99,7 @@ impl RenderSurface {
       selection: None,
       visible_syntax: Vec::new(),
       widgets: Vec::new(),
-      measurements: SurfaceMeasurements::default(),
+      measurements: CellGridMetrics::default(),
       generation: 0,
       dirty: DirtyState::default(),
       state: SurfaceState::default(),
@@ -137,7 +137,7 @@ impl RenderSurface {
     &self.visible_syntax
   }
 
-  pub fn measurements(&self) -> SurfaceMeasurements {
+  pub fn measurements(&self) -> CellGridMetrics {
     self.measurements
   }
 
@@ -182,7 +182,7 @@ impl RenderSurface {
     }
   }
 
-  pub fn set_measurements(&mut self, measurements: SurfaceMeasurements) {
+  pub fn set_measurements(&mut self, measurements: CellGridMetrics) {
     if self.measurements != measurements {
       let relayout = !self.widgets.is_empty();
       self.measurements = measurements;
@@ -523,14 +523,14 @@ impl RenderSurface {
 mod tests {
   use ropey::Rope;
 
-  use super::RenderSurface;
+  use super::CellGridRenderSurface;
   use crate::{
     render::{
       BlockWidget,
+      CellGridMetrics,
       FrameRequest,
       RowKind,
       SurfaceId,
-      SurfaceMeasurements,
       SyntaxSpan,
       TextAnnotations,
       TextFormat,
@@ -595,7 +595,7 @@ mod tests {
     let rope = Rope::from("alpha beta gamma delta");
     let mut format = TextFormat::default();
     format.soft_wrap = true;
-    let mut surface = RenderSurface::new(
+    let mut surface = CellGridRenderSurface::new(
       SurfaceId::new(1).unwrap(),
       format,
       TextAnnotations::default(),
@@ -611,7 +611,7 @@ mod tests {
   #[test]
   fn first_frame_is_full() {
     let rope = Rope::from("a\nb\nc");
-    let mut surface = RenderSurface::new(
+    let mut surface = CellGridRenderSurface::new(
       SurfaceId::new(1).unwrap(),
       TextFormat::default(),
       TextAnnotations::default(),
@@ -630,7 +630,7 @@ mod tests {
     let rope = Rope::from("alpha beta gamma");
     let mut format = TextFormat::default();
     format.soft_wrap = true;
-    let mut surface = RenderSurface::new(
+    let mut surface = CellGridRenderSurface::new(
       SurfaceId::new(1).unwrap(),
       format,
       TextAnnotations::default(),
@@ -656,7 +656,7 @@ mod tests {
   #[test]
   fn identical_second_frame_is_empty_incremental() {
     let rope = Rope::from("a\nb\nc");
-    let mut surface = RenderSurface::new(
+    let mut surface = CellGridRenderSurface::new(
       SurfaceId::new(1).unwrap(),
       TextFormat::default(),
       TextAnnotations::default(),
@@ -680,7 +680,7 @@ mod tests {
   #[test]
   fn vertical_scroll_reuses_overlapping_rows() {
     let rope = Rope::from("a\nb\nc");
-    let mut surface = RenderSurface::new(
+    let mut surface = CellGridRenderSurface::new(
       SurfaceId::new(1).unwrap(),
       TextFormat::default(),
       TextAnnotations::default(),
@@ -709,7 +709,7 @@ mod tests {
   #[test]
   fn visible_text_edit_bumps_only_changed_row_generation() {
     let rope = Rope::from("a\nb\nc");
-    let mut surface = RenderSurface::new(
+    let mut surface = CellGridRenderSurface::new(
       SurfaceId::new(1).unwrap(),
       TextFormat::default(),
       TextAnnotations::default(),
@@ -739,7 +739,7 @@ mod tests {
     let rope = Rope::from("hello world");
     let mut format = TextFormat::default();
     format.soft_wrap = true;
-    let mut surface = RenderSurface::new(
+    let mut surface = CellGridRenderSurface::new(
       SurfaceId::new(1).unwrap(),
       format,
       TextAnnotations::default(),
@@ -758,7 +758,7 @@ mod tests {
   #[test]
   fn annotation_change_forces_full_refresh() {
     let rope = Rope::from("a\nb");
-    let mut surface = RenderSurface::new(
+    let mut surface = CellGridRenderSurface::new(
       SurfaceId::new(1).unwrap(),
       TextFormat::default(),
       TextAnnotations::default(),
@@ -781,7 +781,7 @@ mod tests {
   #[test]
   fn selection_change_updates_selection_and_cursor_layers_only() {
     let rope = Rope::from("abcd\nefgh");
-    let mut surface = RenderSurface::new(
+    let mut surface = CellGridRenderSurface::new(
       SurfaceId::new(1).unwrap(),
       TextFormat::default(),
       TextAnnotations::default(),
@@ -820,7 +820,7 @@ mod tests {
   #[test]
   fn selection_and_cursor_layers_update_on_scroll_without_rebuilding_existing_rows() {
     let rope = Rope::from("aaaa\nbbbb\ncccc");
-    let mut surface = RenderSurface::new(
+    let mut surface = CellGridRenderSurface::new(
       SurfaceId::new(1).unwrap(),
       TextFormat::default(),
       TextAnnotations::default(),
@@ -853,7 +853,7 @@ mod tests {
   #[test]
   fn point_selection_emits_cursor_without_selection_span() {
     let rope = Rope::from("abcd");
-    let mut surface = RenderSurface::new(
+    let mut surface = CellGridRenderSurface::new(
       SurfaceId::new(1).unwrap(),
       TextFormat::default(),
       TextAnnotations::default(),
@@ -874,7 +874,7 @@ mod tests {
   #[test]
   fn syntax_change_updates_only_syntax_layer() {
     let rope = Rope::from("abcd");
-    let mut surface = RenderSurface::new(
+    let mut surface = CellGridRenderSurface::new(
       SurfaceId::new(1).unwrap(),
       TextFormat::default(),
       TextAnnotations::default(),
@@ -907,7 +907,7 @@ mod tests {
   #[test]
   fn horizontal_scroll_crops_rows_and_layer_columns() {
     let rope = Rope::from("abcdef");
-    let mut surface = RenderSurface::new(
+    let mut surface = CellGridRenderSurface::new(
       SurfaceId::new(1).unwrap(),
       TextFormat::default(),
       TextAnnotations::default(),
@@ -949,7 +949,7 @@ mod tests {
   #[test]
   fn syntax_layer_updates_on_scroll_without_rebuilding_existing_rows() {
     let rope = Rope::from("aaaa\nbbbb\ncccc");
-    let mut surface = RenderSurface::new(
+    let mut surface = CellGridRenderSurface::new(
       SurfaceId::new(1).unwrap(),
       TextFormat::default(),
       TextAnnotations::default(),
@@ -980,7 +980,7 @@ mod tests {
   #[test]
   fn row_metadata_updates_for_retained_rows_on_scroll() {
     let rope = Rope::from("a\nb\nc");
-    let mut surface = RenderSurface::new(
+    let mut surface = CellGridRenderSurface::new(
       SurfaceId::new(1).unwrap(),
       TextFormat::default(),
       TextAnnotations::default(),
@@ -1013,7 +1013,7 @@ mod tests {
   #[test]
   fn measurement_change_updates_pixel_placement_without_rebuilding_text_rows() {
     let rope = Rope::from("abcd");
-    let mut surface = RenderSurface::new(
+    let mut surface = CellGridRenderSurface::new(
       SurfaceId::new(1).unwrap(),
       TextFormat::default(),
       TextAnnotations::default(),
@@ -1023,7 +1023,7 @@ mod tests {
 
     let initial = surface.render_frame(rope.slice(..), 1, request(0, 1, 20, None));
     let original_row = initial.changed_rows[0].clone();
-    surface.set_measurements(SurfaceMeasurements::cell_grid(10, 20));
+    surface.set_measurements(CellGridMetrics::new(10, 20));
     surface.set_visible_syntax(vec![SyntaxSpan {
       x_px: 10,
       width_px: 20,
@@ -1059,7 +1059,7 @@ mod tests {
   #[test]
   fn block_widget_reserves_rows_and_emits_widget_layer() {
     let rope = Rope::from("a\nb");
-    let mut surface = RenderSurface::new(
+    let mut surface = CellGridRenderSurface::new(
       SurfaceId::new(1).unwrap(),
       TextFormat::default(),
       TextAnnotations::default(),
@@ -1093,7 +1093,7 @@ mod tests {
   #[test]
   fn widget_measurement_change_reflows_reserved_rows() {
     let rope = Rope::from("a\nb");
-    let mut surface = RenderSurface::new(
+    let mut surface = CellGridRenderSurface::new(
       SurfaceId::new(1).unwrap(),
       TextFormat::default(),
       TextAnnotations::default(),
@@ -1107,7 +1107,7 @@ mod tests {
 
     let initial = surface.render_frame(rope.slice(..), 1, request(0, 4, 20, None));
     let old_bottom = initial.changed_rows[3].clone();
-    surface.set_measurements(SurfaceMeasurements::cell_grid(8, 10));
+    surface.set_measurements(CellGridMetrics::new(8, 10));
 
     let delta = surface.render_frame(
       rope.slice(..),
@@ -1128,7 +1128,7 @@ mod tests {
   #[test]
   fn widget_rows_emit_widget_row_metadata() {
     let rope = Rope::from("a\nb");
-    let mut surface = RenderSurface::new(
+    let mut surface = CellGridRenderSurface::new(
       SurfaceId::new(1).unwrap(),
       TextFormat::default(),
       TextAnnotations::default(),
@@ -1164,7 +1164,7 @@ mod tests {
   #[test]
   fn stale_generation_forces_full_refresh() {
     let rope = Rope::from("a\nb");
-    let mut surface = RenderSurface::new(
+    let mut surface = CellGridRenderSurface::new(
       SurfaceId::new(1).unwrap(),
       TextFormat::default(),
       TextAnnotations::default(),

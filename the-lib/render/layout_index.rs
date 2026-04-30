@@ -89,15 +89,14 @@ impl FenwickTree {
   }
 
   fn rebuild_from(values: impl IntoIterator<Item = usize>) -> Self {
-    let mut tree = Vec::new();
-    for value in values {
-      tree.push(0);
-      let index = tree.len() - 1;
-      let mut fenwick = Self { tree };
+    let values = values.into_iter().collect::<Vec<_>>();
+    let mut fenwick = Self {
+      tree: vec![0; values.len()],
+    };
+    for (index, value) in values.into_iter().enumerate() {
       fenwick.add(index, value as isize);
-      tree = fenwick.tree;
     }
-    Self { tree }
+    fenwick
   }
 
   fn prefix_sum(&self, end_exclusive: usize) -> usize {
@@ -735,6 +734,29 @@ mod tests {
       index.doc_visual_row_for_line(1),
       index.line_metrics[0].visual_row_count
     );
+  }
+
+  #[test]
+  fn visual_row_prefix_sums_accumulate_all_previous_lines() {
+    let rope = Rope::from_str("a\nb\nc\nd\n");
+    let mut format = TextFormat::default();
+    format.soft_wrap = true;
+    let annotations = TextAnnotations::default();
+    let mut index = LayoutIndex::default();
+    index.ensure(LayoutInputs {
+      text:          rope.slice(..),
+      text_revision: 1,
+      format:        &format,
+      wrap_width:    80,
+      annotations:   &annotations,
+      widgets:       &[],
+      measurements:  CellGridMetrics::default(),
+    });
+
+    assert_eq!(index.doc_visual_row_for_line(0), 0);
+    assert_eq!(index.doc_visual_row_for_line(1), 1);
+    assert_eq!(index.doc_visual_row_for_line(2), 2);
+    assert_eq!(index.doc_visual_row_for_line(3), 3);
   }
 
   #[test]

@@ -1,4 +1,5 @@
 import type {
+  CellGridMetrics,
   DocumentId,
   DocumentOpened,
   OkResult,
@@ -44,6 +45,10 @@ export class RuntimeNativeClient implements RuntimeApi {
     }),
     setViewport: async (params: { surfaceId: SurfaceId; viewport: Viewport }): Promise<OkResult> => {
       this.session.setSurfaceViewport(params.surfaceId, params.viewport);
+      return { ok: true };
+    },
+    setMetrics: async (params: { surfaceId: SurfaceId; metrics: CellGridMetrics }): Promise<OkResult> => {
+      this.session.setSurfaceMeasurements(params.surfaceId, params.metrics);
       return { ok: true };
     },
     snapshot: async (params: { surfaceId: SurfaceId }): Promise<SurfaceSnapshot> => {
@@ -100,6 +105,8 @@ export class RuntimeNativeClient implements RuntimeApi {
         return this.surfaces.create(params as Parameters<RuntimeApi["surfaces"]["create"]>[0]);
       case "surfaces.setViewport":
         return this.surfaces.setViewport(params as Parameters<RuntimeApi["surfaces"]["setViewport"]>[0]);
+      case "surfaces.setMetrics":
+        return this.surfaces.setMetrics(params as Parameters<RuntimeApi["surfaces"]["setMetrics"]>[0]);
       case "surfaces.snapshot":
         return this.surfaces.snapshot(params as Parameters<RuntimeApi["surfaces"]["snapshot"]>[0]);
       case "surfaces.setSelection":

@@ -6,11 +6,17 @@ export declare class NativeRuntimeSession {
   openFile(path: string): number
   createSurface(documentId: number, viewport?: JsViewport | undefined | null): number
   setSurfaceViewport(surfaceId: number, viewport: JsViewport): void
+  setSurfaceMeasurements(surfaceId: number, metrics: JsCellGridMetrics): void
   snapshotSurfaceState(surfaceId: number): JsSurfaceSnapshot
   setSurfaceSelection(surfaceId: number, selection: JsSelection): void
   applySurfaceTransaction(surfaceId: number, transaction: JsTransaction, selection: JsSelection): void
   renderFrameJson(surfaceId: number, viewport?: JsViewport | undefined | null, sinceGeneration?: number | undefined | null): string
   saveSurfaceDocument(surfaceId: number): void
+}
+
+export interface JsCellGridMetrics {
+  cellWidthPx: number
+  rowHeightPx: number
 }
 
 export interface JsCursorRange {

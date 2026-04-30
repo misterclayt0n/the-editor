@@ -32,6 +32,7 @@ use the_lib::{
     RenderFrameDelta,
     RetainedFrame,
     SurfaceFrame,
+    CellGridMetrics,
     SurfaceId,
     TextAnnotations,
     TextFormat,
@@ -619,6 +620,34 @@ impl RuntimeSession {
       .get_mut(&surface)
       .ok_or(RuntimeError::UnknownSurface(surface))?;
     entry.surface.set_viewport(viewport);
+    Ok(())
+  }
+
+  pub fn set_surface_measurements(
+    &mut self,
+    surface: SurfaceHandle,
+    measurements: CellGridMetrics,
+  ) -> RuntimeResult<()> {
+    let entry = self
+      .surfaces
+      .get_mut(&surface)
+      .ok_or(RuntimeError::UnknownSurface(surface))?;
+    entry.surface.set_measurements(measurements);
+    Ok(())
+  }
+
+  pub fn set_surface_soft_wrap(
+    &mut self,
+    surface: SurfaceHandle,
+    soft_wrap: bool,
+  ) -> RuntimeResult<()> {
+    let entry = self
+      .surfaces
+      .get_mut(&surface)
+      .ok_or(RuntimeError::UnknownSurface(surface))?;
+    let mut format = entry.surface.text_format().clone();
+    format.soft_wrap = soft_wrap;
+    entry.surface.set_text_format(format);
     Ok(())
   }
 

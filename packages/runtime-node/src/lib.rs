@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use ropey::Rope;
-use the_lib::render::Viewport;
+use the_lib::render::{CellGridMetrics, Viewport};
 use the_runtime::{
   CursorRangeSpec,
   DocumentHandle,
@@ -20,6 +20,12 @@ pub struct JsViewport {
   pub row_count: u32,
   pub first_col: u32,
   pub wrap_width: u32,
+}
+
+#[napi(object)]
+pub struct JsCellGridMetrics {
+  pub cell_width_px: u32,
+  pub row_height_px: u32,
 }
 
 impl From<JsViewport> for Viewport {
@@ -111,6 +117,25 @@ impl NativeRuntimeSession {
     let mut runtime = self.lock()?;
     runtime
       .set_surface_viewport(surface_handle(surface_id)?, viewport.into())
+      .map_err(runtime_error)
+  }
+
+  #[napi]
+  pub fn set_surface_measurements(&self, surface_id: u32, metrics: JsCellGridMetrics) -> Result<()> {
+    let mut runtime = self.lock()?;
+    runtime
+      .set_surface_measurements(
+        surface_handle(surface_id)?,
+        CellGridMetrics::new(metrics.cell_width_px, metrics.row_height_px),
+      )
+      .map_err(runtime_error)
+  }
+
+  #[napi]
+  pub fn set_surface_soft_wrap(&self, surface_id: u32, soft_wrap: bool) -> Result<()> {
+    let mut runtime = self.lock()?;
+    runtime
+      .set_surface_soft_wrap(surface_handle(surface_id)?, soft_wrap)
       .map_err(runtime_error)
   }
 

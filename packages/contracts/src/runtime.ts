@@ -41,6 +41,11 @@ export interface Viewport {
   wrapWidth: number;
 }
 
+export interface CellGridMetrics {
+  cellWidthPx: number;
+  rowHeightPx: number;
+}
+
 export interface DocumentOpened {
   documentId: DocumentId;
 }
@@ -192,6 +197,8 @@ export interface RuntimeApi {
   surfaces: {
     create(params: { documentId: DocumentId; viewport?: Viewport }): Promise<SurfaceCreated>;
     setViewport(params: { surfaceId: SurfaceId; viewport: Viewport }): Promise<OkResult>;
+    setMetrics(params: { surfaceId: SurfaceId; metrics: CellGridMetrics }): Promise<OkResult>;
+    setSoftWrap(params: { surfaceId: SurfaceId; softWrap: boolean }): Promise<OkResult>;
     snapshot(params: { surfaceId: SurfaceId }): Promise<SurfaceSnapshot>;
     setSelection(params: { surfaceId: SurfaceId; selection: SelectionSpec }): Promise<OkResult>;
     applyTransaction(params: {

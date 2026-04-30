@@ -1,3 +1,11 @@
+@font-face {
+  font-family: "Iosevka";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("../assets/fonts/iosevka-latin-400-normal.woff2") format("woff2");
+}
+
 html,
 body,
 #root {
@@ -37,10 +45,13 @@ button {
 
 .surfaceShell {
   flex: 1;
-  padding: 16px;
+  min-height: 0;
+  padding: 0;
 }
 
 canvas {
-  background: #111;
-  border: 1px solid #333;
+  background: #101010;
+  display: block;
+  height: 100%;
+  width: 100%;
 }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { RenderFrameDelta } from "@the-editor/contracts/runtime";
+import { configureTextSurface, loadEditorFont, paintTextSurface } from "./textSurface.js";
 import "./style.css";
 
 function App() {
@@ -38,8 +39,34 @@ function App() {
 
   useEffect(() => {
     const canvas = canvasRef.current;
+    if (!canvas) return;
+    let disposed = false;
+    let observer: ResizeObserver | undefined;
+
+    const configure = () => {
+      const config = configureTextSurface(canvas);
+      void window.theEditor.policyRequest("surface.configure", config).catch((error) => {
+        setStatus(error instanceof Error ? error.message : String(error));
+      });
+    };
+
+    void loadEditorFont().finally(() => {
+      if (disposed) return;
+      configure();
+      observer = new ResizeObserver(configure);
+      observer.observe(canvas.parentElement ?? canvas);
+    });
+
+    return () => {
+      disposed = true;
+      observer?.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
     if (!canvas || !frame) return;
-    paintFrame(canvas, frame);
+    paintTextSurface(canvas, frame);
   }, [frame]);
 
   async function resetScratch() {
@@ -64,30 +91,10 @@ function App() {
         <span>{status}</span>
       </header>
       <section className="surfaceShell">
-        <canvas ref={canvasRef} width={1000} height={500} />
+        <canvas ref={canvasRef} />
       </section>
     </main>
   );
-}
-
-function paintFrame(canvas: HTMLCanvasElement, frame: RenderFrameDelta) {
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  ctx.fillStyle = "#111111";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.font = "14px ui-monospace, SFMono-Regular, Menlo, monospace";
-  ctx.textBaseline = "top";
-  ctx.fillStyle = "#d4d4d4";
-
-  for (const row of frame.changedRows) {
-    ctx.fillText(row.text, 8, row.placement.yPx + 8);
-  }
-
-  const cursors = frame.layers.cursors?.cursors ?? [];
-  ctx.fillStyle = "#eeeeee";
-  for (const cursor of cursors) {
-    ctx.fillRect(8 + cursor.xPx, 8 + cursor.yPx, Math.max(2, cursor.widthPx), cursor.heightPx);
-  }
 }
 
 function toKeyInput(event: KeyboardEvent): { key: string; text?: string } | undefined {

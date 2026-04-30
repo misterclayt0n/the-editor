@@ -45,6 +45,17 @@ async function handlePolicyRequest(request: PolicyRequest): Promise<void> {
         result = postSessionState();
         break;
       }
+      case "surface.configure": {
+        const state = getDefaultState(editor);
+        const params = request.params as SurfaceConfigureParams;
+        if (!state.activeSurfaceId) throw new Error("no active surface");
+        if (params.metrics) {
+          await editor.runtime.surfaces.setMetrics({ surfaceId: state.activeSurfaceId, metrics: params.metrics });
+        }
+        await editor.commands.dispatch({ id: "surface.renderActive", args: { viewport: params.viewport } });
+        result = postSessionState();
+        break;
+      }
       default:
         throw new Error(`unknown policy method ${request.method}`);
     }
@@ -72,6 +83,11 @@ interface PolicyRequest {
   id: number;
   method: string;
   params?: unknown;
+}
+
+interface SurfaceConfigureParams {
+  viewport?: { firstRow: number; rowCount: number; firstCol: number; wrapWidth: number };
+  metrics?: { cellWidthPx: number; rowHeightPx: number };
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

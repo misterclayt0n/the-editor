@@ -4,9 +4,11 @@ import type {
   OkResult,
   RenderFrameDelta,
   RuntimeApi,
+  SelectionSpec,
   SurfaceCreated,
   SurfaceId,
-  SurfaceOperation,
+  SurfaceSnapshot,
+  TransactionSpec,
   Viewport,
 } from "@the-editor/contracts/runtime";
 import { NativeRuntimeSession } from "@the-editor/runtime-node";
@@ -44,8 +46,19 @@ export class RuntimeNativeClient implements RuntimeApi {
       this.session.setSurfaceViewport(params.surfaceId, params.viewport);
       return { ok: true };
     },
-    applyOperation: async (params: { surfaceId: SurfaceId; operation: SurfaceOperation }): Promise<OkResult> => {
-      this.session.applySurfaceOperation(params.surfaceId, params.operation);
+    snapshot: async (params: { surfaceId: SurfaceId }): Promise<SurfaceSnapshot> => {
+      return this.session.snapshotSurfaceState(params.surfaceId) as SurfaceSnapshot;
+    },
+    setSelection: async (params: { surfaceId: SurfaceId; selection: SelectionSpec }): Promise<OkResult> => {
+      this.session.setSurfaceSelection(params.surfaceId, params.selection);
+      return { ok: true };
+    },
+    applyTransaction: async (params: {
+      surfaceId: SurfaceId;
+      transaction: TransactionSpec;
+      selection: SelectionSpec;
+    }): Promise<OkResult> => {
+      this.session.applySurfaceTransaction(params.surfaceId, params.transaction, params.selection);
       return { ok: true };
     },
     renderFrame: async (params: {
@@ -87,8 +100,12 @@ export class RuntimeNativeClient implements RuntimeApi {
         return this.surfaces.create(params as Parameters<RuntimeApi["surfaces"]["create"]>[0]);
       case "surfaces.setViewport":
         return this.surfaces.setViewport(params as Parameters<RuntimeApi["surfaces"]["setViewport"]>[0]);
-      case "surfaces.applyOperation":
-        return this.surfaces.applyOperation(params as Parameters<RuntimeApi["surfaces"]["applyOperation"]>[0]);
+      case "surfaces.snapshot":
+        return this.surfaces.snapshot(params as Parameters<RuntimeApi["surfaces"]["snapshot"]>[0]);
+      case "surfaces.setSelection":
+        return this.surfaces.setSelection(params as Parameters<RuntimeApi["surfaces"]["setSelection"]>[0]);
+      case "surfaces.applyTransaction":
+        return this.surfaces.applyTransaction(params as Parameters<RuntimeApi["surfaces"]["applyTransaction"]>[0]);
       case "surfaces.renderFrame":
         return this.surfaces.renderFrame(params as Parameters<RuntimeApi["surfaces"]["renderFrame"]>[0]);
       case "resources.save":

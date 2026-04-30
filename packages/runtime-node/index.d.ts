@@ -6,24 +6,37 @@ export declare class NativeRuntimeSession {
   openFile(path: string): number
   createSurface(documentId: number, viewport?: JsViewport | undefined | null): number
   setSurfaceViewport(surfaceId: number, viewport: JsViewport): void
-  applySurfaceOperation(surfaceId: number, operation: JsSurfaceOperation): void
+  snapshotSurfaceState(surfaceId: number): JsSurfaceSnapshot
+  setSurfaceSelection(surfaceId: number, selection: JsSelection): void
+  applySurfaceTransaction(surfaceId: number, transaction: JsTransaction, selection: JsSelection): void
   renderFrameJson(surfaceId: number, viewport?: JsViewport | undefined | null, sinceGeneration?: number | undefined | null): string
   saveSurfaceDocument(surfaceId: number): void
 }
 
-export interface JsSelectionTransform {
-  kind: string
-  direction?: string
-  count?: number
-  mode?: string
-  wordKind?: string
-  wordTarget?: string
+export interface JsCursorRange {
+  id?: number
+  anchor: number
+  head: number
 }
 
-export interface JsSurfaceOperation {
-  kind: string
-  transform?: JsSelectionTransform
+export interface JsReplacement {
+  start: number
+  end: number
   text?: string
+}
+
+export interface JsSelection {
+  ranges: Array<JsCursorRange>
+}
+
+export interface JsSurfaceSnapshot {
+  text: string
+  selection: JsSelection
+  activeCursorId?: number
+}
+
+export interface JsTransaction {
+  replacements: Array<JsReplacement>
 }
 
 export interface JsViewport {

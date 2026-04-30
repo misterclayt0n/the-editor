@@ -19,8 +19,11 @@ pub use session::{
   SurfaceHandle,
 };
 pub use the_lib::operation::{
-  SelectionTransform,
-  SurfaceOperation,
+  CursorRangeSpec,
+  ReplacementSpec,
+  SelectionSpec,
+  SurfaceSnapshot,
+  TransactionSpec,
 };
 pub use syntax::{
   FilesystemSyntaxResources,

@@ -18,8 +18,12 @@ use the_lib::{
     ClipboardType,
   },
   operation::{
-    SurfaceOperation,
-    apply_surface_operation,
+    SelectionSpec,
+    SurfaceSnapshot,
+    TransactionSpec,
+    selection_from_spec,
+    selection_to_spec,
+    transaction_from_spec,
   },
   registers::Registers,
   render::{
@@ -160,6 +164,12 @@ pub enum RuntimeError {
 
   #[error(transparent)]
   Surface(#[from] the_lib::surface::SurfaceError),
+
+  #[error(transparent)]
+  Selection(#[from] the_lib::selection::SelectionError),
+
+  #[error(transparent)]
+  Transaction(#[from] the_lib::transaction::TransactionError),
 
   #[error(transparent)]
   Syntax(#[from] RuntimeSyntaxError),
@@ -612,13 +622,46 @@ impl RuntimeSession {
     Ok(())
   }
 
-  pub fn apply_surface_operation(
+  pub fn snapshot_surface_state(&self, surface: SurfaceHandle) -> RuntimeResult<SurfaceSnapshot> {
+    let entry = self
+      .surface_entry(surface)
+      .ok_or(RuntimeError::UnknownSurface(surface))?;
+    let document = self
+      .document(entry.document)
+      .ok_or(RuntimeError::UnknownDocument(entry.document))?;
+    Ok(SurfaceSnapshot {
+      text: document.text().to_string(),
+      selection: selection_to_spec(entry.surface.selection()),
+      active_cursor_id: entry.surface.active_cursor().map(|id| id.get()),
+    })
+  }
+
+  pub fn set_surface_selection(
     &mut self,
     surface: SurfaceHandle,
-    operation: SurfaceOperation,
+    selection: SelectionSpec,
   ) -> RuntimeResult<()> {
+    let selection = selection_from_spec(selection)?;
     self.with_surface_document_mut(surface, move |surface, document| {
-      apply_surface_operation(surface, document, operation)
+      surface.apply_selection(document, selection)
+    })??;
+    Ok(())
+  }
+
+  pub fn apply_surface_transaction(
+    &mut self,
+    surface: SurfaceHandle,
+    transaction: TransactionSpec,
+    selection: SelectionSpec,
+  ) -> RuntimeResult<()> {
+    let selection = selection_from_spec(selection)?;
+    self.with_surface_document_mut(surface, move |surface, document| -> RuntimeResult<()> {
+      let transaction = transaction_from_spec(document.text().len_chars(), transaction)?;
+      surface.apply_edit(document, the_lib::operation::Edit {
+        transaction,
+        selection,
+      })?;
+      Ok(())
     })??;
     Ok(())
   }
@@ -966,31 +1009,47 @@ mod tests {
   }
 
   #[test]
-  fn apply_surface_operation_inserts_text() {
+  fn apply_surface_transaction_inserts_text() {
     let mut runtime = RuntimeSession::default();
     let document = runtime.create_scratch(Rope::from("hello")).unwrap();
     let surface = runtime.create_surface(document).unwrap();
 
     runtime
-      .apply_surface_operation(surface, SurfaceOperation::InsertText {
-        text: "!".into(),
-      })
+      .apply_surface_transaction(
+        surface,
+        the_lib::operation::TransactionSpec {
+          replacements: vec![the_lib::operation::ReplacementSpec {
+            start: 0,
+            end: 0,
+            text: Some("!".into()),
+          }],
+        },
+        the_lib::operation::SelectionSpec {
+          ranges: vec![the_lib::operation::CursorRangeSpec {
+            id: None,
+            anchor: 1,
+            head: 1,
+          }],
+        },
+      )
       .unwrap();
 
     assert_eq!(runtime.document(document).unwrap().text().to_string(), "!hello");
   }
 
   #[test]
-  fn apply_surface_operation_moves_primary_cursor() {
+  fn set_surface_selection_moves_primary_cursor() {
     let mut runtime = RuntimeSession::default();
     let document = runtime.create_scratch(Rope::from("hello")).unwrap();
     let surface = runtime.create_surface(document).unwrap();
 
     runtime
-      .apply_surface_operation(surface, SurfaceOperation::TransformSelection {
-        transform: the_lib::operation::SelectionTransform::DocumentEnd {
-          mode: the_lib::movement::MotionMode::Move,
-        },
+      .set_surface_selection(surface, the_lib::operation::SelectionSpec {
+        ranges: vec![the_lib::operation::CursorRangeSpec {
+          id: None,
+          anchor: 5,
+          head: 5,
+        }],
       })
       .unwrap();
 

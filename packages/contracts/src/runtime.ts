@@ -53,36 +53,31 @@ export interface OkResult {
   ok: true;
 }
 
-export type Direction = "forward" | "backward";
-export type MotionMode = "move" | "extend";
-export type WordKind = "word" | "longWord" | "subWord";
-export type WordTarget = "start" | "end";
+export interface CursorRangeSpec {
+  id?: number;
+  anchor: number;
+  head: number;
+}
 
-export type SelectionTransform =
-  | { kind: "horizontal"; direction: Direction; count?: number; mode?: MotionMode }
-  | { kind: "vertical"; direction: Direction; count?: number; mode?: MotionMode }
-  | { kind: "visualVertical"; direction: Direction; count?: number; mode?: MotionMode }
-  | {
-      kind: "word";
-      direction: Direction;
-      wordKind: WordKind;
-      wordTarget: WordTarget;
-      count?: number;
-      mode?: MotionMode;
-    }
-  | { kind: "paragraph"; direction: Direction; count?: number; mode?: MotionMode }
-  | { kind: "lineStart"; mode?: MotionMode }
-  | { kind: "lineEnd"; mode?: MotionMode }
-  | { kind: "firstNonWhitespace"; mode?: MotionMode }
-  | { kind: "documentStart"; mode?: MotionMode }
-  | { kind: "documentEnd"; mode?: MotionMode };
+export interface SelectionSpec {
+  ranges: CursorRangeSpec[];
+}
 
-export type SurfaceOperation =
-  | { kind: "transformSelection"; transform: SelectionTransform }
-  | { kind: "insertText"; text: string }
-  | { kind: "insertNewline" }
-  | { kind: "deleteBackward" }
-  | { kind: "deleteForward" };
+export interface ReplacementSpec {
+  start: number;
+  end: number;
+  text?: string;
+}
+
+export interface TransactionSpec {
+  replacements: ReplacementSpec[];
+}
+
+export interface SurfaceSnapshot {
+  text: string;
+  selection: SelectionSpec;
+  activeCursorId?: number;
+}
 
 export interface RowPlacement {
   surfaceRow: number;
@@ -197,7 +192,13 @@ export interface RuntimeApi {
   surfaces: {
     create(params: { documentId: DocumentId; viewport?: Viewport }): Promise<SurfaceCreated>;
     setViewport(params: { surfaceId: SurfaceId; viewport: Viewport }): Promise<OkResult>;
-    applyOperation(params: { surfaceId: SurfaceId; operation: SurfaceOperation }): Promise<OkResult>;
+    snapshot(params: { surfaceId: SurfaceId }): Promise<SurfaceSnapshot>;
+    setSelection(params: { surfaceId: SurfaceId; selection: SelectionSpec }): Promise<OkResult>;
+    applyTransaction(params: {
+      surfaceId: SurfaceId;
+      transaction: TransactionSpec;
+      selection: SelectionSpec;
+    }): Promise<OkResult>;
     renderFrame(params: {
       surfaceId: SurfaceId;
       viewport?: Viewport;

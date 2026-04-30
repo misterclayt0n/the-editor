@@ -39,6 +39,3 @@ smallvec.workspace                 = true
 tree-sitter-json                   = "0.24"
 the-runtime.path                   = "../the-runtime"
 
-[[bench]]
-name = "simulations"
-harness = false

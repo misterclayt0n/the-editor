@@ -649,7 +649,7 @@ mod tests {
   }
 
   #[test]
-  fn builtin_runtime_highlights_real_demo_editor_source() {
+  fn builtin_runtime_highlights_real_rust_source() {
     let Some(runtime_root) = builtin_runtime_root() else {
       return;
     };
@@ -658,8 +658,16 @@ mod tests {
     }
 
     let runtime = RuntimeSyntax::builtin().unwrap();
-    let mut document = Document::new(include_str!("../the-lib/examples/demo_editor.rs").into());
-    runtime.activate_document(&mut document, Some(Path::new("demo_editor.rs")));
+    let mut document = Document::new(
+      r#"
+fn main() {
+  let answer = 42;
+  println!("{answer}");
+}
+"#
+      .into(),
+    );
+    runtime.activate_document(&mut document, Some(Path::new("main.rs")));
 
     let runs = document
       .active_syntax()

@@ -3,21 +3,15 @@ use std::sync::Mutex;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use ropey::Rope;
-use the_lib::{
-  movement::{
-    Direction,
-    MotionMode,
-    WordKind,
-    WordTarget,
-  },
-  render::Viewport,
-};
+use the_lib::render::Viewport;
 use the_runtime::{
+  CursorRangeSpec,
   DocumentHandle,
+  ReplacementSpec,
   RuntimeSession,
-  SelectionTransform,
+  SelectionSpec,
   SurfaceHandle,
-  SurfaceOperation,
+  TransactionSpec,
 };
 
 #[napi(object)]
@@ -40,20 +34,34 @@ impl From<JsViewport> for Viewport {
 }
 
 #[napi(object)]
-pub struct JsSelectionTransform {
-  pub kind: String,
-  pub direction: Option<String>,
-  pub count: Option<u32>,
-  pub mode: Option<String>,
-  pub word_kind: Option<String>,
-  pub word_target: Option<String>,
+pub struct JsCursorRange {
+  pub id: Option<u32>,
+  pub anchor: u32,
+  pub head: u32,
 }
 
 #[napi(object)]
-pub struct JsSurfaceOperation {
-  pub kind: String,
-  pub transform: Option<JsSelectionTransform>,
+pub struct JsSelection {
+  pub ranges: Vec<JsCursorRange>,
+}
+
+#[napi(object)]
+pub struct JsReplacement {
+  pub start: u32,
+  pub end: u32,
   pub text: Option<String>,
+}
+
+#[napi(object)]
+pub struct JsTransaction {
+  pub replacements: Vec<JsReplacement>,
+}
+
+#[napi(object)]
+pub struct JsSurfaceSnapshot {
+  pub text: String,
+  pub selection: JsSelection,
+  pub active_cursor_id: Option<u32>,
 }
 
 #[napi]
@@ -107,10 +115,36 @@ impl NativeRuntimeSession {
   }
 
   #[napi]
-  pub fn apply_surface_operation(&self, surface_id: u32, operation: JsSurfaceOperation) -> Result<()> {
+  pub fn snapshot_surface_state(&self, surface_id: u32) -> Result<JsSurfaceSnapshot> {
+    let runtime = self.lock()?;
+    runtime
+      .snapshot_surface_state(surface_handle(surface_id)?)
+      .map(js_snapshot)
+      .map_err(runtime_error)
+  }
+
+  #[napi]
+  pub fn set_surface_selection(&self, surface_id: u32, selection: JsSelection) -> Result<()> {
     let mut runtime = self.lock()?;
     runtime
-      .apply_surface_operation(surface_handle(surface_id)?, surface_operation(operation)?)
+      .set_surface_selection(surface_handle(surface_id)?, selection_spec(selection))
+      .map_err(runtime_error)
+  }
+
+  #[napi]
+  pub fn apply_surface_transaction(
+    &self,
+    surface_id: u32,
+    transaction: JsTransaction,
+    selection: JsSelection,
+  ) -> Result<()> {
+    let mut runtime = self.lock()?;
+    runtime
+      .apply_surface_transaction(
+        surface_handle(surface_id)?,
+        transaction_spec(transaction),
+        selection_spec(selection),
+      )
       .map_err(runtime_error)
   }
 
@@ -160,102 +194,37 @@ fn surface_handle(id: u32) -> Result<SurfaceHandle> {
   SurfaceHandle::new(u64::from(id)).ok_or_else(|| Error::from_reason(format!("invalid surface id {id}")))
 }
 
-fn surface_operation(operation: JsSurfaceOperation) -> Result<SurfaceOperation> {
-  match operation.kind.as_str() {
-    "transformSelection" => Ok(SurfaceOperation::TransformSelection {
-      transform: selection_transform(
-        operation
-          .transform
-          .ok_or_else(|| Error::from_reason("missing selection transform"))?,
-      )?,
-    }),
-    "insertText" => Ok(SurfaceOperation::InsertText {
-      text: operation.text.unwrap_or_default(),
-    }),
-    "insertNewline" => Ok(SurfaceOperation::InsertNewline),
-    "deleteBackward" => Ok(SurfaceOperation::DeleteBackward),
-    "deleteForward" => Ok(SurfaceOperation::DeleteForward),
-    kind => Err(Error::from_reason(format!("unknown surface operation {kind}"))),
+fn selection_spec(selection: JsSelection) -> SelectionSpec {
+  SelectionSpec {
+    ranges: selection.ranges.into_iter().map(|range| CursorRangeSpec {
+      id: range.id.map(u64::from),
+      anchor: range.anchor as usize,
+      head: range.head as usize,
+    }).collect(),
   }
 }
 
-fn selection_transform(transform: JsSelectionTransform) -> Result<SelectionTransform> {
-  let count = transform.count.unwrap_or(1) as usize;
-  let mode = motion_mode(transform.mode.as_deref().unwrap_or("move"))?;
-
-  match transform.kind.as_str() {
-    "horizontal" => Ok(SelectionTransform::Horizontal {
-      direction: direction(required(&transform.direction, "direction")?)?,
-      count,
-      mode,
-    }),
-    "vertical" => Ok(SelectionTransform::Vertical {
-      direction: direction(required(&transform.direction, "direction")?)?,
-      count,
-      mode,
-    }),
-    "visualVertical" => Ok(SelectionTransform::VisualVertical {
-      direction: direction(required(&transform.direction, "direction")?)?,
-      count,
-      mode,
-    }),
-    "word" => Ok(SelectionTransform::Word {
-      direction: direction(required(&transform.direction, "direction")?)?,
-      kind: word_kind(required(&transform.word_kind, "wordKind")?)?,
-      target: word_target(required(&transform.word_target, "wordTarget")?)?,
-      count,
-      mode,
-    }),
-    "paragraph" => Ok(SelectionTransform::Paragraph {
-      direction: direction(required(&transform.direction, "direction")?)?,
-      count,
-      mode,
-    }),
-    "lineStart" => Ok(SelectionTransform::LineStart { mode }),
-    "lineEnd" => Ok(SelectionTransform::LineEnd { mode }),
-    "firstNonWhitespace" => Ok(SelectionTransform::FirstNonWhitespace { mode }),
-    "documentStart" => Ok(SelectionTransform::DocumentStart { mode }),
-    "documentEnd" => Ok(SelectionTransform::DocumentEnd { mode }),
-    kind => Err(Error::from_reason(format!("unknown selection transform {kind}"))),
+fn transaction_spec(transaction: JsTransaction) -> TransactionSpec {
+  TransactionSpec {
+    replacements: transaction.replacements.into_iter().map(|replacement| ReplacementSpec {
+      start: replacement.start as usize,
+      end: replacement.end as usize,
+      text: replacement.text,
+    }).collect(),
   }
 }
 
-fn required<'a>(value: &'a Option<String>, name: &str) -> Result<&'a str> {
-  value
-    .as_deref()
-    .ok_or_else(|| Error::from_reason(format!("missing {name}")))
-}
-
-fn direction(direction: &str) -> Result<Direction> {
-  match direction {
-    "forward" => Ok(Direction::Forward),
-    "backward" => Ok(Direction::Backward),
-    _ => Err(Error::from_reason(format!("unknown direction {direction}"))),
-  }
-}
-
-fn motion_mode(mode: &str) -> Result<MotionMode> {
-  match mode {
-    "move" => Ok(MotionMode::Move),
-    "extend" => Ok(MotionMode::Extend),
-    _ => Err(Error::from_reason(format!("unknown motion mode {mode}"))),
-  }
-}
-
-fn word_kind(kind: &str) -> Result<WordKind> {
-  match kind {
-    "word" => Ok(WordKind::Word),
-    "longWord" => Ok(WordKind::LongWord),
-    "subWord" => Ok(WordKind::SubWord),
-    _ => Err(Error::from_reason(format!("unknown word kind {kind}"))),
-  }
-}
-
-fn word_target(target: &str) -> Result<WordTarget> {
-  match target {
-    "start" => Ok(WordTarget::Start),
-    "end" => Ok(WordTarget::End),
-    _ => Err(Error::from_reason(format!("unknown word target {target}"))),
+fn js_snapshot(snapshot: the_runtime::SurfaceSnapshot) -> JsSurfaceSnapshot {
+  JsSurfaceSnapshot {
+    text: snapshot.text,
+    active_cursor_id: snapshot.active_cursor_id.map(|id| id as u32),
+    selection: JsSelection {
+      ranges: snapshot.selection.ranges.into_iter().map(|range| JsCursorRange {
+        id: range.id.map(|id| id as u32),
+        anchor: range.anchor as u32,
+        head: range.head as u32,
+      }).collect(),
+    },
   }
 }
 

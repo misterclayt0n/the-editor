@@ -1,6 +1,7 @@
 # Rust build artifacts
 target/
 Cargo.lock
+node_modules/
 
 # Nix build artifacts
 result*

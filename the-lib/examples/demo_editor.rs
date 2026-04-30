@@ -57,7 +57,10 @@ use the_lib::{
     edit_for_typed_char,
   },
   clipboard::ClipboardType,
-  edit::Edit,
+  operation::{
+    Edit,
+    SelectionTransform,
+  },
   grapheme::{
     grapheme_width,
     next_grapheme_boundary,
@@ -66,16 +69,10 @@ use the_lib::{
   indent::indent_for_newline,
   line_ending::get_line_ending,
   movement::{
+    Direction,
     MotionMode,
     MovementContext,
-    // move_document_end,
-    move_document_start,
-    move_down_visual,
-    move_left,
-    move_line_end,
-    move_line_start,
-    move_right,
-    move_up_visual,
+    transform_selection,
   },
   render::{
     CellGridMetrics,
@@ -887,25 +884,49 @@ impl App {
     match key.code {
       // KeyCode::Char('n') => self.repeat_search(true)?,
       // KeyCode::Char('N') => self.repeat_search(false)?,
-      KeyCode::Left => self.apply_motion(move_left, 1, mode)?,
-      KeyCode::Right => self.apply_motion(move_right, 1, mode)?,
-      KeyCode::Up => self.apply_motion(move_up_visual, 1, mode)?,
-      KeyCode::Down => self.apply_motion(move_down_visual, 1, mode)?,
+      KeyCode::Left => self.apply_transform(SelectionTransform::Horizontal {
+        direction: Direction::Backward,
+        count: 1,
+        mode,
+      })?,
+      KeyCode::Right => self.apply_transform(SelectionTransform::Horizontal {
+        direction: Direction::Forward,
+        count: 1,
+        mode,
+      })?,
+      KeyCode::Up => self.apply_transform(SelectionTransform::VisualVertical {
+        direction: Direction::Backward,
+        count: 1,
+        mode,
+      })?,
+      KeyCode::Down => self.apply_transform(SelectionTransform::VisualVertical {
+        direction: Direction::Forward,
+        count: 1,
+        mode,
+      })?,
       KeyCode::PageUp => {
         let count = self.surface().viewport().row_count.max(1);
-        self.apply_motion(move_up_visual, count, mode)?;
+        self.apply_transform(SelectionTransform::VisualVertical {
+          direction: Direction::Backward,
+          count,
+          mode,
+        })?;
       },
       KeyCode::PageDown => {
         let count = self.surface().viewport().row_count.max(1);
-        self.apply_motion(move_down_visual, count, mode)?;
+        self.apply_transform(SelectionTransform::VisualVertical {
+          direction: Direction::Forward,
+          count,
+          mode,
+        })?;
       },
       KeyCode::F(2) => self.toggle_wrap(),
       KeyCode::F(3) => self.start_save_as(),
       KeyCode::F(6) => self.stress_transactions()?,
       KeyCode::F(7) => self.cycle_render_profile(),
       KeyCode::F(8) => self.cycle_cursor_shape(),
-      KeyCode::Home => self.apply_motion_simple(move_line_start, mode)?,
-      KeyCode::End => self.apply_motion_simple(move_line_end, mode)?,
+      KeyCode::Home => self.apply_transform(SelectionTransform::LineStart { mode })?,
+      KeyCode::End => self.apply_transform(SelectionTransform::LineEnd { mode })?,
       KeyCode::Backspace => self.backspace()?,
       KeyCode::Delete => self.delete_forward()?,
       KeyCode::Enter => self.insert_newline()?,
@@ -1042,26 +1063,21 @@ impl App {
         };
         self.status = String::from("search: type regex, Enter to jump, Esc to cancel");
       },
-      KeyCode::Char('g') => self.apply_motion_simple(move_document_start, MotionMode::Move)?,
-      // KeyCode::Char('e') => self.apply_motion_simple(move_document_end, MotionMode::Move)?,
+      KeyCode::Char('g') => self.apply_transform(SelectionTransform::DocumentStart {
+        mode: MotionMode::Move,
+      })?,
+      // KeyCode::Char('e') => self.apply_transform(SelectionTransform::DocumentEnd {
+      //   mode: MotionMode::Move,
+      // })?,
       _ => {},
     }
 
     Ok(false)
   }
 
-  fn apply_motion(
+  fn apply_transform(
     &mut self,
-    motion: impl Fn(
-      ropey::RopeSlice<'_>,
-      Selection,
-      usize,
-      MotionMode,
-      &the_lib::movement::VisualGoals,
-      &MovementContext<'_>,
-    ) -> the_lib::movement::MotionResult,
-    count: usize,
-    mode: MotionMode,
+    transform: SelectionTransform,
   ) -> Result<(), Box<dyn std::error::Error>> {
     let surface = self.surface();
     let viewport = surface.viewport();
@@ -1071,47 +1087,11 @@ impl App {
       annotations: surface.text_annotations(),
       wrap_width:  viewport.wrap_width,
     };
-    let result = motion(
+    let result = transform_selection(
       text,
       surface.selection().clone(),
-      count,
-      mode,
       surface.visual_goals(),
-      &cx,
-    );
-
-    self
-      .session
-      .with_surface_document_mut(self.surface, |surface, document| {
-        surface.apply_motion_result(document, result)
-      })??;
-    Ok(())
-  }
-
-  fn apply_motion_simple(
-    &mut self,
-    motion: impl Fn(
-      ropey::RopeSlice<'_>,
-      Selection,
-      MotionMode,
-      &the_lib::movement::VisualGoals,
-      &MovementContext<'_>,
-    ) -> the_lib::movement::MotionResult,
-    mode: MotionMode,
-  ) -> Result<(), Box<dyn std::error::Error>> {
-    let surface = self.surface();
-    let viewport = surface.viewport();
-    let text = self.document().text().slice(..);
-    let cx = MovementContext {
-      text_format: surface.text_format(),
-      annotations: surface.text_annotations(),
-      wrap_width:  viewport.wrap_width,
-    };
-    let result = motion(
-      text,
-      surface.selection().clone(),
-      mode,
-      surface.visual_goals(),
+      transform,
       &cx,
     );
 

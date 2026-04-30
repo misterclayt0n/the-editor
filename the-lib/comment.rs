@@ -8,7 +8,7 @@ use thiserror::Error;
 
 use crate::{
   Tendril,
-  edit::Edit,
+  operation::Edit,
   selection::{
     Range,
     Selection,

@@ -1,5 +1,6 @@
 import { parentPort } from "node:worker_threads";
-import { activate, getScratchState } from "@the-editor/default";
+import { activate, defaultViewport, getDefaultState, handleKeyInput } from "@the-editor/default";
+import type { KeyInput } from "@the-editor/editor";
 import { createEditorHost, createRuntimeClient } from "@the-editor/editor";
 
 if (!parentPort) throw new Error("policy worker requires parentPort");
@@ -19,6 +20,11 @@ void boot();
 async function boot(): Promise<void> {
   try {
     await activate(editor);
+    await editor.commands.dispatch({
+      id: "scratch.create",
+      args: { text: "", viewport: defaultViewport() },
+    });
+    postSessionState();
     parentPort?.postMessage({ type: "policy.ready" });
   } catch (error) {
     parentPort?.postMessage({ type: "policy.error", ...serializeError(error) });
@@ -31,13 +37,12 @@ async function handlePolicyRequest(request: PolicyRequest): Promise<void> {
     switch (request.method) {
       case "default.createScratch": {
         await editor.commands.dispatch({ id: "scratch.create", args: request.params });
-        const state = getScratchState(editor);
-        result = {
-          activeDocumentId: state.activeDocumentId,
-          activeSurfaceId: state.activeSurfaceId,
-          frame: state.lastFrame,
-        };
-        parentPort?.postMessage({ type: "default.activeSurfaceChanged", ...(result as Record<string, unknown>) });
+        result = postSessionState();
+        break;
+      }
+      case "input.keyDown": {
+        await handleKeyInput(editor, request.params as KeyInput);
+        result = postSessionState();
         break;
       }
       default:
@@ -47,6 +52,19 @@ async function handlePolicyRequest(request: PolicyRequest): Promise<void> {
   } catch (error) {
     parentPort?.postMessage({ type: "policy.response", id: request.id, error: serializeError(error) });
   }
+}
+
+function postSessionState() {
+  const state = getDefaultState(editor);
+  const payload = {
+    type: "default.sessionChanged",
+    mode: state.mode,
+    activeDocumentId: state.activeDocumentId,
+    activeSurfaceId: state.activeSurfaceId,
+    frame: state.lastFrame,
+  };
+  parentPort?.postMessage(payload);
+  return payload;
 }
 
 interface PolicyRequest {

@@ -12,11 +12,15 @@ use std::{
 
 use ropey::Rope;
 use the_lib::{
+  document::Document,
   clipboard::{
     ClipboardProvider,
     ClipboardType,
   },
-  document::Document,
+  operation::{
+    SurfaceOperation,
+    apply_surface_operation,
+  },
   registers::Registers,
   render::{
     CellGridRenderSurface,
@@ -88,6 +92,7 @@ impl SurfaceHandle {
     Self::new(*counter).expect("surface handle must be non-zero")
   }
 }
+
 
 #[derive(Debug)]
 pub struct RuntimeDocument {
@@ -607,6 +612,17 @@ impl RuntimeSession {
     Ok(())
   }
 
+  pub fn apply_surface_operation(
+    &mut self,
+    surface: SurfaceHandle,
+    operation: SurfaceOperation,
+  ) -> RuntimeResult<()> {
+    self.with_surface_document_mut(surface, move |surface, document| {
+      apply_surface_operation(surface, document, operation)
+    })??;
+    Ok(())
+  }
+
   pub fn create_surface_with_viewport(
     &mut self,
     document: DocumentHandle,
@@ -859,7 +875,7 @@ mod tests {
         let tx = the_lib::transaction::Transaction::insert_at(document.text().len_chars(), 5, "!")
           .unwrap();
         surface
-          .apply_edit(document, the_lib::edit::Edit {
+          .apply_edit(document, the_lib::operation::Edit {
             transaction: tx,
             selection:   the_lib::selection::Selection::point(6),
           })
@@ -916,7 +932,7 @@ mod tests {
         )
         .unwrap();
         surface
-          .apply_edit(document, the_lib::edit::Edit {
+          .apply_edit(document, the_lib::operation::Edit {
             transaction: tx,
             selection:   the_lib::selection::Selection::point(document.text().len_chars() - 1),
           })
@@ -947,6 +963,40 @@ mod tests {
         .tree
         .is_empty()
     );
+  }
+
+  #[test]
+  fn apply_surface_operation_inserts_text() {
+    let mut runtime = RuntimeSession::default();
+    let document = runtime.create_scratch(Rope::from("hello")).unwrap();
+    let surface = runtime.create_surface(document).unwrap();
+
+    runtime
+      .apply_surface_operation(surface, SurfaceOperation::InsertText {
+        text: "!".into(),
+      })
+      .unwrap();
+
+    assert_eq!(runtime.document(document).unwrap().text().to_string(), "!hello");
+  }
+
+  #[test]
+  fn apply_surface_operation_moves_primary_cursor() {
+    let mut runtime = RuntimeSession::default();
+    let document = runtime.create_scratch(Rope::from("hello")).unwrap();
+    let surface = runtime.create_surface(document).unwrap();
+
+    runtime
+      .apply_surface_operation(surface, SurfaceOperation::TransformSelection {
+        transform: the_lib::operation::SelectionTransform::DocumentEnd {
+          mode: the_lib::movement::MotionMode::Move,
+        },
+      })
+      .unwrap();
+
+    let range = runtime.surface(surface).unwrap().primary_range();
+    assert_eq!(range.anchor, 5);
+    assert_eq!(range.head, 5);
   }
 
   #[test]

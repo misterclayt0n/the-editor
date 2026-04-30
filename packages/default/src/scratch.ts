@@ -1,11 +1,6 @@
-import type { DocumentId, RenderFrameDelta, SurfaceId, Viewport } from "@the-editor/contracts/runtime";
+import type { RenderFrameDelta, Viewport } from "@the-editor/contracts/runtime";
 import { commandId, type EditorHost, type EditorModule } from "@the-editor/editor";
-
-export interface ScratchState {
-  activeDocumentId: DocumentId | undefined;
-  activeSurfaceId: SurfaceId | undefined;
-  lastFrame: RenderFrameDelta | undefined;
-}
+import { getDefaultState, refreshActiveSurface, setEditorMode, type DefaultEditorState } from "./state.js";
 
 export interface CreateScratchArgs {
   text?: string;
@@ -14,27 +9,11 @@ export interface CreateScratchArgs {
 
 export interface RenderActiveSurfaceArgs {
   viewport?: Viewport;
-  sinceGeneration?: number | null;
-}
-
-export const scratchState = new WeakMap<EditorHost, ScratchState>();
-
-export function getScratchState(editor: EditorHost): ScratchState {
-  let state = scratchState.get(editor);
-  if (!state) {
-    state = {
-      activeDocumentId: undefined,
-      activeSurfaceId: undefined,
-      lastFrame: undefined,
-    };
-    scratchState.set(editor, state);
-  }
-  return state;
 }
 
 export function defaultScratch(): EditorModule {
   return (editor) => {
-    editor.commands.register<CreateScratchArgs | undefined, ScratchState>({
+    editor.commands.register<CreateScratchArgs | undefined, DefaultEditorState>({
       id: commandId("scratch.create"),
       title: "Create Scratch Buffer",
       async run(_ctx, args) {
@@ -47,18 +26,11 @@ export function defaultScratch(): EditorModule {
           viewport,
         });
 
-        const state = getScratchState(editor);
+        const state = getDefaultState(editor);
         state.activeDocumentId = document.documentId;
         state.activeSurfaceId = surface.surfaceId;
-        state.lastFrame = await editor.runtime.surfaces.renderFrame({
-          surfaceId: surface.surfaceId,
-          sinceGeneration: null,
-        });
-        await editor.hooks.event("default.activeSurfaceChanged", {
-          documentId: state.activeDocumentId,
-          surfaceId: state.activeSurfaceId,
-          frame: state.lastFrame,
-        });
+        setEditorMode(editor, "normal");
+        await refreshActiveSurface(editor, viewport);
         return state;
       },
     });
@@ -67,15 +39,10 @@ export function defaultScratch(): EditorModule {
       id: commandId("surface.renderActive"),
       title: "Render Active Surface",
       async run(_ctx, args) {
-        const state = getScratchState(editor);
-        if (!state.activeSurfaceId) {
+        const state = await refreshActiveSurface(editor, args?.viewport);
+        if (!state.lastFrame) {
           throw new Error("no active surface");
         }
-        state.lastFrame = await editor.runtime.surfaces.renderFrame({
-          surfaceId: state.activeSurfaceId,
-          viewport: args?.viewport,
-          sinceGeneration: args?.sinceGeneration ?? state.lastFrame?.generation ?? null,
-        });
         return state.lastFrame;
       },
     });

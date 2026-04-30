@@ -5,7 +5,7 @@ use crate::{
     Document,
     DocumentError,
   },
-  edit::Edit,
+  operation::Edit,
   history::{
     History,
     HistoryError,

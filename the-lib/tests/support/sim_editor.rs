@@ -8,7 +8,10 @@ use the_lib::{
     edit_for_typed_char,
   },
   document::Document,
-  edit::Edit,
+  operation::{
+    Edit,
+    SelectionTransform,
+  },
   grapheme::{
     next_grapheme_boundary,
     prev_grapheme_boundary,
@@ -16,16 +19,10 @@ use the_lib::{
   indent::indent_for_newline,
   line_ending::get_line_ending,
   movement::{
+    Direction,
     MotionMode,
     MovementContext,
-    move_document_end,
-    move_document_start,
-    move_down_visual,
-    move_left,
-    move_line_end,
-    move_line_start,
-    move_right,
-    move_up_visual,
+    transform_selection,
   },
   registers::Registers,
   render::{
@@ -228,14 +225,38 @@ impl SimEditor {
       Op::InsertNewline => self.insert_newline(),
       Op::Backspace => self.backspace(),
       Op::DeleteForward => self.delete_forward(),
-      Op::MoveLeft => self.apply_motion(move_left, 1, MotionMode::Move),
-      Op::MoveRight => self.apply_motion(move_right, 1, MotionMode::Move),
-      Op::MoveUp => self.apply_motion(move_up_visual, 1, MotionMode::Move),
-      Op::MoveDown => self.apply_motion(move_down_visual, 1, MotionMode::Move),
-      Op::MoveLineStart => self.apply_motion_simple(move_line_start, MotionMode::Move),
-      Op::MoveLineEnd => self.apply_motion_simple(move_line_end, MotionMode::Move),
-      Op::MoveDocumentStart => self.apply_motion_simple(move_document_start, MotionMode::Move),
-      Op::MoveDocumentEnd => self.apply_motion_simple(move_document_end, MotionMode::Move),
+      Op::MoveLeft => self.apply_transform(SelectionTransform::Horizontal {
+        direction: Direction::Backward,
+        count: 1,
+        mode: MotionMode::Move,
+      }),
+      Op::MoveRight => self.apply_transform(SelectionTransform::Horizontal {
+        direction: Direction::Forward,
+        count: 1,
+        mode: MotionMode::Move,
+      }),
+      Op::MoveUp => self.apply_transform(SelectionTransform::VisualVertical {
+        direction: Direction::Backward,
+        count: 1,
+        mode: MotionMode::Move,
+      }),
+      Op::MoveDown => self.apply_transform(SelectionTransform::VisualVertical {
+        direction: Direction::Forward,
+        count: 1,
+        mode: MotionMode::Move,
+      }),
+      Op::MoveLineStart => self.apply_transform(SelectionTransform::LineStart {
+        mode: MotionMode::Move,
+      }),
+      Op::MoveLineEnd => self.apply_transform(SelectionTransform::LineEnd {
+        mode: MotionMode::Move,
+      }),
+      Op::MoveDocumentStart => self.apply_transform(SelectionTransform::DocumentStart {
+        mode: MotionMode::Move,
+      }),
+      Op::MoveDocumentEnd => self.apply_transform(SelectionTransform::DocumentEnd {
+        mode: MotionMode::Move,
+      }),
       Op::SelectAll => {
         let len = self.document.text().len_chars();
         self
@@ -267,18 +288,9 @@ impl SimEditor {
     }
   }
 
-  fn apply_motion(
+  fn apply_transform(
     &mut self,
-    motion: impl Fn(
-      ropey::RopeSlice<'_>,
-      Selection,
-      usize,
-      MotionMode,
-      &the_lib::movement::VisualGoals,
-      &MovementContext<'_>,
-    ) -> the_lib::movement::MotionResult,
-    count: usize,
-    mode: MotionMode,
+    transform: SelectionTransform,
   ) -> Result<(), Box<dyn Error>> {
     let viewport = self.surface.viewport();
     let text = self.document.text().slice(..);
@@ -287,41 +299,11 @@ impl SimEditor {
       annotations: self.surface.text_annotations(),
       wrap_width:  viewport.wrap_width,
     };
-    let result = motion(
+    let result = transform_selection(
       text,
       self.surface.selection().clone(),
-      count,
-      mode,
       self.surface.visual_goals(),
-      &cx,
-    );
-    self.surface.apply_motion_result(&self.document, result)?;
-    Ok(())
-  }
-
-  fn apply_motion_simple(
-    &mut self,
-    motion: impl Fn(
-      ropey::RopeSlice<'_>,
-      Selection,
-      MotionMode,
-      &the_lib::movement::VisualGoals,
-      &MovementContext<'_>,
-    ) -> the_lib::movement::MotionResult,
-    mode: MotionMode,
-  ) -> Result<(), Box<dyn Error>> {
-    let viewport = self.surface.viewport();
-    let text = self.document.text().slice(..);
-    let cx = MovementContext {
-      text_format: self.surface.text_format(),
-      annotations: self.surface.text_annotations(),
-      wrap_width:  viewport.wrap_width,
-    };
-    let result = motion(
-      text,
-      self.surface.selection().clone(),
-      mode,
-      self.surface.visual_goals(),
+      transform,
       &cx,
     );
     self.surface.apply_motion_result(&self.document, result)?;

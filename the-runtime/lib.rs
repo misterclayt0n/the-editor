@@ -18,6 +18,10 @@ pub use session::{
   RuntimeSurface,
   SurfaceHandle,
 };
+pub use the_lib::operation::{
+  SelectionTransform,
+  SurfaceOperation,
+};
 pub use syntax::{
   FilesystemSyntaxResources,
   RuntimeSyntax,

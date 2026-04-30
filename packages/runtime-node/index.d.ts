@@ -6,8 +6,24 @@ export declare class NativeRuntimeSession {
   openFile(path: string): number
   createSurface(documentId: number, viewport?: JsViewport | undefined | null): number
   setSurfaceViewport(surfaceId: number, viewport: JsViewport): void
+  applySurfaceOperation(surfaceId: number, operation: JsSurfaceOperation): void
   renderFrameJson(surfaceId: number, viewport?: JsViewport | undefined | null, sinceGeneration?: number | undefined | null): string
   saveSurfaceDocument(surfaceId: number): void
+}
+
+export interface JsSelectionTransform {
+  kind: string
+  direction?: string
+  count?: number
+  mode?: string
+  wordKind?: string
+  wordTarget?: string
+}
+
+export interface JsSurfaceOperation {
+  kind: string
+  transform?: JsSelectionTransform
+  text?: string
 }
 
 export interface JsViewport {

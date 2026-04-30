@@ -6,6 +6,7 @@ import type {
   RuntimeApi,
   SurfaceCreated,
   SurfaceId,
+  SurfaceOperation,
   Viewport,
 } from "@the-editor/contracts/runtime";
 import { NativeRuntimeSession } from "@the-editor/runtime-node";
@@ -41,6 +42,10 @@ export class RuntimeNativeClient implements RuntimeApi {
     }),
     setViewport: async (params: { surfaceId: SurfaceId; viewport: Viewport }): Promise<OkResult> => {
       this.session.setSurfaceViewport(params.surfaceId, params.viewport);
+      return { ok: true };
+    },
+    applyOperation: async (params: { surfaceId: SurfaceId; operation: SurfaceOperation }): Promise<OkResult> => {
+      this.session.applySurfaceOperation(params.surfaceId, params.operation);
       return { ok: true };
     },
     renderFrame: async (params: {
@@ -82,6 +87,8 @@ export class RuntimeNativeClient implements RuntimeApi {
         return this.surfaces.create(params as Parameters<RuntimeApi["surfaces"]["create"]>[0]);
       case "surfaces.setViewport":
         return this.surfaces.setViewport(params as Parameters<RuntimeApi["surfaces"]["setViewport"]>[0]);
+      case "surfaces.applyOperation":
+        return this.surfaces.applyOperation(params as Parameters<RuntimeApi["surfaces"]["applyOperation"]>[0]);
       case "surfaces.renderFrame":
         return this.surfaces.renderFrame(params as Parameters<RuntimeApi["surfaces"]["renderFrame"]>[0]);
       case "resources.save":

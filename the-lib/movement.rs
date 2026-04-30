@@ -18,6 +18,7 @@ use crate::{
     categorize_char,
     char_is_line_ending,
   },
+  operation::SelectionTransform,
   grapheme::{
     next_grapheme_boundary,
     nth_next_grapheme_boundary,
@@ -45,13 +46,13 @@ use crate::{
   },
 };
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Direction {
   Forward,
   Backward,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MotionMode {
   /// Extend the selection.
   Extend,
@@ -60,14 +61,14 @@ pub enum MotionMode {
   Move,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum WordKind {
   Word,
   LongWord,
   SubWord,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum WordTarget {
   Start,
   End,
@@ -236,309 +237,102 @@ impl CharHelpers for Chars<'_> {
   }
 }
 
-pub fn move_left(
+pub fn transform_selection(
   text: RopeSlice,
   selection: Selection,
-  count: usize,
-  mode: MotionMode,
   visual_goals: &VisualGoals,
-  _cx: &MovementContext<'_>,
-) -> MotionResult {
-  apply_selection_motion(text, selection, visual_goals, |range, _| {
-    CursorMotionResult {
-      range:       move_horizontally_range(text, range, Direction::Backward, count, mode),
-      visual_goal: None,
-    }
-  })
-}
-
-pub fn move_right(
-  text: RopeSlice,
-  selection: Selection,
-  count: usize,
-  mode: MotionMode,
-  visual_goals: &VisualGoals,
-  _cx: &MovementContext<'_>,
-) -> MotionResult {
-  apply_selection_motion(text, selection, visual_goals, |range, _| {
-    CursorMotionResult {
-      range:       move_horizontally_range(text, range, Direction::Forward, count, mode),
-      visual_goal: None,
-    }
-  })
-}
-
-pub fn move_up(
-  text: RopeSlice,
-  selection: Selection,
-  count: usize,
-  mode: MotionMode,
-  visual_goals: &VisualGoals,
+  transform: SelectionTransform,
   cx: &MovementContext<'_>,
 ) -> MotionResult {
-  apply_selection_motion(text, selection, visual_goals, |range, visual_goal| {
-    let result = move_vertically_range(
-      text,
-      range,
-      visual_goal,
-      Direction::Backward,
+  match transform {
+    SelectionTransform::Horizontal {
+      direction,
       count,
       mode,
-      cx,
-    );
-    CursorMotionResult {
-      range:       result.range,
-      visual_goal: Some(result.visual_goal),
-    }
-  })
-}
-
-pub fn move_down(
-  text: RopeSlice,
-  selection: Selection,
-  count: usize,
-  mode: MotionMode,
-  visual_goals: &VisualGoals,
-  cx: &MovementContext<'_>,
-) -> MotionResult {
-  apply_selection_motion(text, selection, visual_goals, |range, visual_goal| {
-    let result = move_vertically_range(
-      text,
-      range,
-      visual_goal,
-      Direction::Forward,
+    } => apply_selection_motion(text, selection, visual_goals, |range, _| {
+      CursorMotionResult {
+        range:       move_horizontally_range(text, range, direction, count, mode),
+        visual_goal: None,
+      }
+    }),
+    SelectionTransform::Vertical {
+      direction,
       count,
       mode,
-      cx,
-    );
-    CursorMotionResult {
-      range:       result.range,
-      visual_goal: Some(result.visual_goal),
-    }
-  })
-}
-
-pub fn move_up_visual(
-  text: RopeSlice,
-  selection: Selection,
-  count: usize,
-  mode: MotionMode,
-  visual_goals: &VisualGoals,
-  cx: &MovementContext<'_>,
-) -> MotionResult {
-  apply_selection_motion(text, selection, visual_goals, |range, visual_goal| {
-    let result = move_vertically_visual_range(
-      text,
-      range,
-      visual_goal,
-      Direction::Backward,
+    } => apply_selection_motion(text, selection, visual_goals, |range, visual_goal| {
+      let result = move_vertically_range(text, range, visual_goal, direction, count, mode, cx);
+      CursorMotionResult {
+        range:       result.range,
+        visual_goal: Some(result.visual_goal),
+      }
+    }),
+    SelectionTransform::VisualVertical {
+      direction,
       count,
       mode,
-      cx,
-    );
-    CursorMotionResult {
-      range:       result.range,
-      visual_goal: Some(result.visual_goal),
-    }
-  })
-}
-
-pub fn move_down_visual(
-  text: RopeSlice,
-  selection: Selection,
-  count: usize,
-  mode: MotionMode,
-  visual_goals: &VisualGoals,
-  cx: &MovementContext<'_>,
-) -> MotionResult {
-  apply_selection_motion(text, selection, visual_goals, |range, visual_goal| {
-    let result = move_vertically_visual_range(
-      text,
-      range,
-      visual_goal,
-      Direction::Forward,
+    } => apply_selection_motion(text, selection, visual_goals, |range, visual_goal| {
+      let result = move_vertically_visual_range(text, range, visual_goal, direction, count, mode, cx);
+      CursorMotionResult {
+        range:       result.range,
+        visual_goal: Some(result.visual_goal),
+      }
+    }),
+    SelectionTransform::Word {
+      direction,
+      kind,
+      target,
       count,
       mode,
-      cx,
-    );
-    CursorMotionResult {
-      range:       result.range,
-      visual_goal: Some(result.visual_goal),
-    }
-  })
-}
-
-pub fn move_next_word(
-  text: RopeSlice,
-  selection: Selection,
-  kind: WordKind,
-  target: WordTarget,
-  count: usize,
-  mode: MotionMode,
-  visual_goals: &VisualGoals,
-  _cx: &MovementContext<'_>,
-) -> MotionResult {
-  apply_selection_motion(text, selection, visual_goals, |range, _| {
-    CursorMotionResult {
-      range:       move_to_pos(
-        text,
-        range,
-        word_target_pos(
-          text,
-          range,
-          count,
-          word_target(Direction::Forward, kind, target),
-        ),
-        mode,
-      ),
-      visual_goal: None,
-    }
-  })
-}
-
-pub fn move_prev_word(
-  text: RopeSlice,
-  selection: Selection,
-  kind: WordKind,
-  target: WordTarget,
-  count: usize,
-  mode: MotionMode,
-  visual_goals: &VisualGoals,
-  _cx: &MovementContext<'_>,
-) -> MotionResult {
-  apply_selection_motion(text, selection, visual_goals, |range, _| {
-    CursorMotionResult {
-      range:       move_to_pos(
-        text,
-        range,
-        word_target_pos(
-          text,
-          range,
-          count,
-          word_target(Direction::Backward, kind, target),
-        ),
-        mode,
-      ),
-      visual_goal: None,
-    }
-  })
-}
-
-pub fn move_prev_paragraph(
-  text: RopeSlice,
-  selection: Selection,
-  count: usize,
-  mode: MotionMode,
-  visual_goals: &VisualGoals,
-  _cx: &MovementContext<'_>,
-) -> MotionResult {
-  apply_selection_motion(text, selection, visual_goals, |range, _| {
-    CursorMotionResult {
-      range:       move_prev_paragraph_range(text, range, count, mode),
-      visual_goal: None,
-    }
-  })
-}
-
-pub fn move_next_paragraph(
-  text: RopeSlice,
-  selection: Selection,
-  count: usize,
-  mode: MotionMode,
-  visual_goals: &VisualGoals,
-  _cx: &MovementContext<'_>,
-) -> MotionResult {
-  apply_selection_motion(text, selection, visual_goals, |range, _| {
-    CursorMotionResult {
-      range:       move_next_paragraph_range(text, range, count, mode),
-      visual_goal: None,
-    }
-  })
-}
-
-pub fn move_line_start(
-  text: RopeSlice,
-  selection: Selection,
-  mode: MotionMode,
-  visual_goals: &VisualGoals,
-  _cx: &MovementContext<'_>,
-) -> MotionResult {
-  apply_selection_motion(text, selection, visual_goals, |range, _| {
-    CursorMotionResult {
-      range:       move_to_pos(text, range, line_start(text, range.cursor_line(text)), mode),
-      visual_goal: None,
-    }
-  })
-}
-
-pub fn move_line_end(
-  text: RopeSlice,
-  selection: Selection,
-  mode: MotionMode,
-  visual_goals: &VisualGoals,
-  _cx: &MovementContext<'_>,
-) -> MotionResult {
-  apply_selection_motion(text, selection, visual_goals, |range, _| {
-    CursorMotionResult {
-      range:       move_to_pos(
-        text,
-        range,
-        line_content_end(text, range.cursor_line(text)),
-        mode,
-      ),
-      visual_goal: None,
-    }
-  })
-}
-
-pub fn move_first_non_whitespace(
-  text: RopeSlice,
-  selection: Selection,
-  mode: MotionMode,
-  visual_goals: &VisualGoals,
-  _cx: &MovementContext<'_>,
-) -> MotionResult {
-  apply_selection_motion(text, selection, visual_goals, |range, _| {
-    CursorMotionResult {
-      range:       move_to_pos(
-        text,
-        range,
-        first_non_whitespace(text, range.cursor_line(text)),
-        mode,
-      ),
-      visual_goal: None,
-    }
-  })
-}
-
-pub fn move_document_start(
-  text: RopeSlice,
-  selection: Selection,
-  mode: MotionMode,
-  visual_goals: &VisualGoals,
-  _cx: &MovementContext<'_>,
-) -> MotionResult {
-  apply_selection_motion(text, selection, visual_goals, |range, _| {
-    CursorMotionResult {
-      range:       move_to_pos(text, range, 0, mode),
-      visual_goal: None,
-    }
-  })
-}
-
-pub fn move_document_end(
-  text: RopeSlice,
-  selection: Selection,
-  mode: MotionMode,
-  visual_goals: &VisualGoals,
-  _cx: &MovementContext<'_>,
-) -> MotionResult {
-  apply_selection_motion(text, selection, visual_goals, |range, _| {
-    CursorMotionResult {
-      range:       move_to_pos(text, range, text.len_chars(), mode),
-      visual_goal: None,
-    }
-  })
+    } => apply_selection_motion(text, selection, visual_goals, |range, _| {
+      CursorMotionResult {
+        range:       move_to_pos(text, range, word_target_pos(text, range, count, word_target(direction, kind, target)), mode),
+        visual_goal: None,
+      }
+    }),
+    SelectionTransform::Paragraph {
+      direction,
+      count,
+      mode,
+    } => apply_selection_motion(text, selection, visual_goals, |range, _| {
+      CursorMotionResult {
+        range:       match direction {
+          Direction::Backward => move_prev_paragraph_range(text, range, count, mode),
+          Direction::Forward => move_next_paragraph_range(text, range, count, mode),
+        },
+        visual_goal: None,
+      }
+    }),
+    SelectionTransform::LineStart { mode } => apply_selection_motion(text, selection, visual_goals, |range, _| {
+      CursorMotionResult {
+        range:       move_to_pos(text, range, line_start(text, range.cursor_line(text)), mode),
+        visual_goal: None,
+      }
+    }),
+    SelectionTransform::LineEnd { mode } => apply_selection_motion(text, selection, visual_goals, |range, _| {
+      CursorMotionResult {
+        range:       move_to_pos(text, range, line_content_end(text, range.cursor_line(text)), mode),
+        visual_goal: None,
+      }
+    }),
+    SelectionTransform::FirstNonWhitespace { mode } => {
+      apply_selection_motion(text, selection, visual_goals, |range, _| CursorMotionResult {
+        range:       move_to_pos(text, range, first_non_whitespace(text, range.cursor_line(text)), mode),
+        visual_goal: None,
+      })
+    },
+    SelectionTransform::DocumentStart { mode } => apply_selection_motion(text, selection, visual_goals, |range, _| {
+      CursorMotionResult {
+        range:       move_to_pos(text, range, 0, mode),
+        visual_goal: None,
+      }
+    }),
+    SelectionTransform::DocumentEnd { mode } => apply_selection_motion(text, selection, visual_goals, |range, _| {
+      CursorMotionResult {
+        range:       move_to_pos(text, range, text.len_chars(), mode),
+        visual_goal: None,
+      }
+    }),
+  }
 }
 
 fn apply_selection_motion<F>(
@@ -1013,20 +807,14 @@ mod tests {
   use smallvec::SmallVec;
 
   use super::{
+    Direction,
     MotionMode,
     MovementContext,
     VisualGoal,
     VisualGoals,
-    WordKind,
-    WordTarget,
-    move_document_end,
-    move_down,
-    move_down_visual,
-    move_first_non_whitespace,
-    move_line_end,
-    move_next_word,
-    move_right,
+    transform_selection,
   };
+  use crate::operation::SelectionTransform;
   use crate::{
     render::{
       TextAnnotations,
@@ -1079,12 +867,15 @@ mod tests {
       col: 7,
     });
 
-    let result = move_right(
+    let result = transform_selection(
       rope.slice(..),
       selection,
-      2,
-      MotionMode::Move,
       &visual_goals,
+      SelectionTransform::Horizontal {
+        direction: Direction::Forward,
+        count: 2,
+        mode: MotionMode::Move,
+      },
       &context(&TextFormat::default()),
     );
 
@@ -1102,12 +893,15 @@ mod tests {
     let rope = Rope::from("ab\nxyz\nqrst");
     let selection = selection(&[(1, 1, 1), (2, 5, 5)]);
 
-    let result = move_down(
+    let result = transform_selection(
       rope.slice(..),
       selection,
-      1,
-      MotionMode::Move,
       &VisualGoals::new(),
+      SelectionTransform::Vertical {
+        direction: Direction::Forward,
+        count: 1,
+        mode: MotionMode::Move,
+      },
       &context(&TextFormat::default()),
     );
 
@@ -1134,12 +928,15 @@ mod tests {
     format.soft_wrap = true;
     let selection = selection(&[(1, 1, 1)]);
 
-    let result = move_down_visual(
+    let result = transform_selection(
       rope.slice(..),
       selection,
-      1,
-      MotionMode::Move,
       &VisualGoals::new(),
+      SelectionTransform::VisualVertical {
+        direction: Direction::Forward,
+        count: 1,
+        mode: MotionMode::Move,
+      },
       &context(&format),
     );
 
@@ -1157,12 +954,15 @@ mod tests {
     let mut format = TextFormat::default();
     format.soft_wrap = true;
 
-    let result = super::move_up_visual(
+    let result = transform_selection(
       rope.slice(..),
       selection(&[(1, 7, 7)]),
-      1,
-      MotionMode::Move,
       &VisualGoals::new(),
+      SelectionTransform::VisualVertical {
+        direction: Direction::Backward,
+        count: 1,
+        mode: MotionMode::Move,
+      },
       &context(&format),
     );
 
@@ -1179,14 +979,17 @@ mod tests {
     let rope = Rope::from("alpha beta gamma");
     let selection = selection(&[(1, 0, 0)]);
 
-    let result = move_next_word(
+    let result = transform_selection(
       rope.slice(..),
       selection,
-      WordKind::Word,
-      WordTarget::Start,
-      2,
-      MotionMode::Move,
       &VisualGoals::new(),
+      SelectionTransform::Word {
+        direction: Direction::Forward,
+        kind: crate::movement::WordKind::Word,
+        target: crate::movement::WordTarget::Start,
+        count: 2,
+        mode: MotionMode::Move,
+      },
       &context(&TextFormat::default()),
     );
 
@@ -1198,11 +1001,11 @@ mod tests {
     let rope = Rope::from("  abc\nxyz\n");
     let selection = selection(&[(1, 4, 4)]);
 
-    let first_non_whitespace = move_first_non_whitespace(
+    let first_non_whitespace = transform_selection(
       rope.slice(..),
       selection.clone(),
-      MotionMode::Move,
       &VisualGoals::new(),
+      SelectionTransform::FirstNonWhitespace { mode: MotionMode::Move },
       &context(&TextFormat::default()),
     );
     assert_eq!(
@@ -1210,20 +1013,20 @@ mod tests {
       Range::new(2, 2)
     );
 
-    let line_end = move_line_end(
+    let line_end = transform_selection(
       rope.slice(..),
       selection.clone(),
-      MotionMode::Move,
       &VisualGoals::new(),
+      SelectionTransform::LineEnd { mode: MotionMode::Move },
       &context(&TextFormat::default()),
     );
     assert_eq!(*line_end.selection.get(0).unwrap().range, Range::new(5, 5));
 
-    let document_end = move_document_end(
+    let document_end = transform_selection(
       rope.slice(..),
       selection,
-      MotionMode::Move,
       &VisualGoals::new(),
+      SelectionTransform::DocumentEnd { mode: MotionMode::Move },
       &context(&TextFormat::default()),
     );
     assert_eq!(

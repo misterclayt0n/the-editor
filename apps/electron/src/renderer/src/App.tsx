@@ -6,18 +6,34 @@ import "./style.css";
 function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [frame, setFrame] = useState<RenderFrameDelta | undefined>();
+  const [mode, setMode] = useState("NORMAL");
   const [status, setStatus] = useState("booting");
 
   useEffect(() => {
     return window.theEditor.onPolicyEvent((event) => {
       if (!isObject(event)) return;
-      if (event.type === "policy.ready") setStatus("policy ready");
+      if (event.type === "policy.ready") setStatus("ready");
       if (event.type === "policy.error") setStatus(String(event.message ?? "policy error"));
-      if (event.type === "default.activeSurfaceChanged" && isObject(event.frame)) {
-        setFrame(event.frame as unknown as RenderFrameDelta);
-        setStatus("surface rendered");
+      if (event.type === "default.sessionChanged") {
+        if (typeof event.mode === "string") setMode(event.mode.toUpperCase());
+        if (isObject(event.frame)) setFrame(event.frame as unknown as RenderFrameDelta);
       }
     });
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.metaKey) return;
+      const input = toKeyInput(event);
+      if (!input) return;
+      event.preventDefault();
+      void window.theEditor.policyRequest("input.keyDown", input).catch((error) => {
+        setStatus(error instanceof Error ? error.message : String(error));
+      });
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
   useEffect(() => {
@@ -26,17 +42,14 @@ function App() {
     paintFrame(canvas, frame);
   }, [frame]);
 
-  async function createScratch() {
-    setStatus("creating scratch");
+  async function resetScratch() {
+    setStatus("resetting scratch");
     try {
-      const result = await window.theEditor.policyRequest("default.createScratch", {
-        text: "hello from electron",
+      await window.theEditor.policyRequest("default.createScratch", {
+        text: "",
         viewport: { firstRow: 0, rowCount: 24, firstCol: 0, wrapWidth: 100 },
       });
-      if (isObject(result) && isObject(result.frame)) {
-        setFrame(result.frame as unknown as RenderFrameDelta);
-      }
-      setStatus("surface rendered");
+      setStatus("ready");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     }
@@ -46,7 +59,8 @@ function App() {
     <main className="app">
       <header className="toolbar">
         <strong>The Editor</strong>
-        <button onClick={() => void createScratch()}>Create scratch</button>
+        <span>{mode}</span>
+        <button onClick={() => void resetScratch()}>Reset scratch</button>
         <span>{status}</span>
       </header>
       <section className="surfaceShell">
@@ -73,6 +87,71 @@ function paintFrame(canvas: HTMLCanvasElement, frame: RenderFrameDelta) {
   ctx.fillStyle = "#eeeeee";
   for (const cursor of cursors) {
     ctx.fillRect(8 + cursor.xPx, 8 + cursor.yPx, Math.max(2, cursor.widthPx), cursor.heightPx);
+  }
+}
+
+function toKeyInput(event: KeyboardEvent): { key: string; text?: string } | undefined {
+  const key = canonicalKey(event);
+  if (!key) return undefined;
+  const text = printableText(event);
+  return text === undefined ? { key } : { key, text };
+}
+
+function canonicalKey(event: KeyboardEvent): string | undefined {
+  const key = event.key;
+  const modifiers: string[] = [];
+  if (event.ctrlKey) modifiers.push("C");
+  if (event.altKey) modifiers.push("A");
+  if (event.metaKey) modifiers.push("M");
+
+  let atom: string | undefined;
+  if (key.length === 1) {
+    atom = key === " " ? "space" : key;
+  } else {
+    atom = namedKey(key);
+    if (!atom) return undefined;
+    if (event.shiftKey) modifiers.push("S");
+  }
+
+  return modifiers.length ? `${modifiers.join("-")}-${atom}` : atom;
+}
+
+function printableText(event: KeyboardEvent): string | undefined {
+  if (event.ctrlKey || event.altKey || event.metaKey) return undefined;
+  if (event.key === " ") return " ";
+  return event.key.length === 1 ? event.key : undefined;
+}
+
+function namedKey(key: string): string | undefined {
+  switch (key) {
+    case "Escape":
+      return "esc";
+    case "Enter":
+      return "ret";
+    case "Backspace":
+      return "backspace";
+    case "Delete":
+      return "del";
+    case "ArrowLeft":
+      return "left";
+    case "ArrowRight":
+      return "right";
+    case "ArrowUp":
+      return "up";
+    case "ArrowDown":
+      return "down";
+    case "PageUp":
+      return "pageup";
+    case "PageDown":
+      return "pagedown";
+    case "Home":
+      return "home";
+    case "End":
+      return "end";
+    case "Tab":
+      return "tab";
+    default:
+      return undefined;
   }
 }
 

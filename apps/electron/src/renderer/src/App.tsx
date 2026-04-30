@@ -12,6 +12,7 @@ function App() {
     return window.theEditor.onPolicyEvent((event) => {
       if (!isObject(event)) return;
       if (event.type === "policy.ready") setStatus("policy ready");
+      if (event.type === "policy.error") setStatus(String(event.message ?? "policy error"));
       if (event.type === "default.activeSurfaceChanged" && isObject(event.frame)) {
         setFrame(event.frame as unknown as RenderFrameDelta);
         setStatus("surface rendered");
@@ -37,7 +38,6 @@ function App() {
       }
       setStatus("surface rendered");
     } catch (error) {
-      console.error(error);
       setStatus(error instanceof Error ? error.message : String(error));
     }
   }

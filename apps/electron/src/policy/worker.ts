@@ -17,8 +17,12 @@ parentPort.on("message", (message: unknown) => {
 void boot();
 
 async function boot(): Promise<void> {
-  await activate(editor);
-  parentPort?.postMessage({ type: "policy.ready" });
+  try {
+    await activate(editor);
+    parentPort?.postMessage({ type: "policy.ready" });
+  } catch (error) {
+    parentPort?.postMessage({ type: "policy.error", ...serializeError(error) });
+  }
 }
 
 async function handlePolicyRequest(request: PolicyRequest): Promise<void> {

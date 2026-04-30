@@ -11,5 +11,6 @@ export default defineConfig({
   clean: true,
   dts: false,
   sourcemap: true,
+  unbundle: true,
   external: ["electron"],
 });

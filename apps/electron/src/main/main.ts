@@ -1,9 +1,7 @@
 import { app, BrowserWindow, ipcMain } from "electron";
-import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = process.env.THE_EDITOR_DEV_SERVER_URL !== undefined;
 
 let mainWindow: BrowserWindow | undefined;
@@ -23,9 +21,6 @@ async function createWindow(): Promise<void> {
     },
   });
 
-  mainWindow.webContents.on("console-message", (_event, level, message, line, sourceId) => {
-    console.log(`[renderer:${level}] ${message} (${sourceId}:${line})`);
-  });
   mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
     console.error(`renderer failed to load ${validatedURL}: ${errorCode} ${errorDescription}`);
   });
@@ -37,9 +32,7 @@ async function createWindow(): Promise<void> {
     await mainWindow.loadURL(process.env.THE_EDITOR_DEV_SERVER_URL!);
     mainWindow.webContents.openDevTools({ mode: "detach" });
   } else {
-    const rendererIndex = path.join(__dirname, "../renderer/index.html");
-    console.log(`loading renderer ${rendererIndex}`);
-    await mainWindow.loadFile(rendererIndex);
+    await mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
 }
 
@@ -58,11 +51,17 @@ function startPolicyWorker(): void {
   });
 
   policyWorker.on("error", (error) => {
+    console.error("policy worker error", error);
     mainWindow?.webContents.send("policy:event", {
       type: "policy.error",
       message: error.message,
       stack: error.stack,
     });
+  });
+
+  policyWorker.on("exit", (code) => {
+    policyWorker = undefined;
+    rejectPendingPolicyRequests(new Error(`policy worker exited with code ${code}`));
   });
 }
 
@@ -76,8 +75,8 @@ ipcMain.handle("policy:request", async (_event, request: { method: string; param
 });
 
 app.whenReady().then(async () => {
-  startPolicyWorker();
   await createWindow();
+  startPolicyWorker();
 });
 
 app.on("window-all-closed", () => {
@@ -101,6 +100,11 @@ function handlePolicyResponse(response: PolicyBridgeResponse): void {
   pendingPolicyRequests.delete(response.id);
   if (response.error) pending.reject(response.error);
   else pending.resolve(response.result);
+}
+
+function rejectPendingPolicyRequests(error: Error): void {
+  for (const pending of pendingPolicyRequests.values()) pending.reject(error);
+  pendingPolicyRequests.clear();
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

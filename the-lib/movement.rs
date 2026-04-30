@@ -1167,10 +1167,10 @@ mod tests {
     );
 
     let cursor = result.selection.get(0).unwrap();
-    assert_eq!(*cursor.range, Range::new(4, 4));
+    assert_eq!(*cursor.range, Range::new(3, 3));
     assert_eq!(
       result.visual_goals.get(cursor.id),
-      Some(VisualGoal { col: 1 })
+      Some(VisualGoal { col: 3 })
     );
   }
 

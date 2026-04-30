@@ -893,6 +893,57 @@ mod tests {
   }
 
   #[test]
+  fn soft_wrap_boundary_cursor_uses_continuation_row() {
+    let rope = Rope::from("aaaaa");
+    let mut format = TextFormat::default();
+    format.soft_wrap = true;
+    let mut surface = CellGridRenderSurface::new(
+      SurfaceId::new(1).unwrap(),
+      format,
+      TextAnnotations::default(),
+    );
+    surface.set_selection(Some(selection(&[(5, 5)])));
+
+    let delta = surface.render_frame(rope.slice(..), 1, request(0, 3, 5, None));
+
+    assert!(
+      delta
+        .changed_rows
+        .iter()
+        .any(|row| row.placement.surface_row == 1 && row.text.is_empty())
+    );
+    let cursor_delta = delta.layers.cursors.expect("cursor layer delta");
+    assert_eq!(cursor_delta.cursors.len(), 1);
+    assert_eq!(cursor_delta.cursors[0].surface_row, 1);
+    assert_eq!(cursor_delta.cursors[0].col, 0);
+  }
+
+  #[test]
+  fn soft_wrap_continuation_rows_do_not_get_invisible_default_prefix() {
+    let rope = Rope::from("aaaaaa");
+    let mut format = TextFormat::default();
+    format.soft_wrap = true;
+    let mut surface = CellGridRenderSurface::new(
+      SurfaceId::new(1).unwrap(),
+      format,
+      TextAnnotations::default(),
+    );
+    surface.set_selection(Some(selection(&[(6, 6)])));
+
+    let delta = surface.render_frame(rope.slice(..), 1, request(0, 3, 5, None));
+
+    let continuation = delta
+      .changed_rows
+      .iter()
+      .find(|row| row.placement.surface_row == 1)
+      .expect("continuation row should be present");
+    assert_eq!(continuation.text.as_str(), "a");
+    let cursor_delta = delta.layers.cursors.expect("cursor layer delta");
+    assert_eq!(cursor_delta.cursors[0].surface_row, 1);
+    assert_eq!(cursor_delta.cursors[0].col, 1);
+  }
+
+  #[test]
   fn point_selection_emits_cursor_without_selection_span() {
     let rope = Rope::from("abcd");
     let mut surface = CellGridRenderSurface::new(

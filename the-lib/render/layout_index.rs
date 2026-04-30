@@ -20,19 +20,30 @@ const WRAP_CHECKPOINT_CHAR_STRIDE: usize = 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct LayoutSignature {
-  wrap_width:   usize,
-  format:       TextFormat,
-  annotations:  TextAnnotations,
-  widgets:      Vec<BlockWidget>,
-  measurements: CellGridMetrics,
+  wrap_width:  usize,
+  format:      TextFormat,
+  annotations: TextAnnotations,
 }
 
 impl LayoutSignature {
   fn from_inputs(inputs: LayoutInputs<'_>) -> Self {
     Self {
-      wrap_width:   inputs.wrap_width,
-      format:       inputs.format.clone(),
-      annotations:  inputs.annotations.clone(),
+      wrap_width:  inputs.wrap_width,
+      format:      inputs.format.clone(),
+      annotations: inputs.annotations.clone(),
+    }
+  }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WidgetSignature {
+  widgets:      Vec<BlockWidget>,
+  measurements: CellGridMetrics,
+}
+
+impl WidgetSignature {
+  fn from_inputs(inputs: LayoutInputs<'_>) -> Self {
+    Self {
       widgets:      inputs.widgets.to_vec(),
       measurements: inputs.measurements,
     }
@@ -134,6 +145,7 @@ impl FenwickTree {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct LayoutIndex {
   signature:               Option<LayoutSignature>,
+  widget_signature:        Option<WidgetSignature>,
   text_revision:           Option<u64>,
   line_metrics:            Vec<LineLayoutMetrics>,
   visual_row_tree:         FenwickTree,
@@ -155,6 +167,7 @@ pub(crate) struct LayoutInputs<'a> {
 impl LayoutIndex {
   pub(crate) fn invalidate_all(&mut self) {
     self.signature = None;
+    self.widget_signature = None;
     self.text_revision = None;
     self.line_metrics.clear();
     self.visual_row_tree.clear();
@@ -164,6 +177,10 @@ impl LayoutIndex {
       old_end_line: 0,
       new_end_line: 0,
     });
+  }
+
+  pub(crate) fn invalidate_widgets(&mut self) {
+    self.widget_signature = None;
   }
 
   pub(crate) fn note_text_change(&mut self, change: TextChangeSummary) {
@@ -177,19 +194,31 @@ impl LayoutIndex {
 
   pub(crate) fn ensure(&mut self, inputs: LayoutInputs<'_>) {
     let next_signature = LayoutSignature::from_inputs(inputs);
-    if self.signature.as_ref() != Some(&next_signature) {
+    let layout_changed = self.signature.as_ref() != Some(&next_signature);
+    let next_widget_signature = WidgetSignature::from_inputs(inputs);
+    let widgets_changed = self.widget_signature.as_ref() != Some(&next_widget_signature);
+
+    if layout_changed {
       self.signature = Some(next_signature);
+      self.widget_signature = Some(next_widget_signature);
       self.rebuild_full(inputs);
       self.text_revision = Some(inputs.text_revision);
       self.pending_text_change = None;
       return;
     }
 
+    if widgets_changed {
+      self.widget_signature = Some(next_widget_signature);
+      self.rebuild_widget_rows_before_line(inputs.text, inputs.widgets, inputs.measurements);
+    }
+
     if self.text_revision == Some(inputs.text_revision) {
       return;
     }
 
-    self.rebuild_widget_rows_before_line(inputs.text, inputs.widgets, inputs.measurements);
+    if !widgets_changed {
+      self.rebuild_widget_rows_before_line(inputs.text, inputs.widgets, inputs.measurements);
+    }
 
     if !inputs.format.soft_wrap {
       self.line_metrics.clear();
@@ -757,6 +786,53 @@ mod tests {
     assert_eq!(index.doc_visual_row_for_line(1), 1);
     assert_eq!(index.doc_visual_row_for_line(2), 2);
     assert_eq!(index.doc_visual_row_for_line(3), 3);
+  }
+
+  #[test]
+  fn widget_changes_update_surface_rows_without_text_revision_change() {
+    let rope = Rope::from_str("abcdefghij\nklmnopqrst\n");
+    let mut format = TextFormat::default();
+    format.soft_wrap = true;
+    let annotations = TextAnnotations::default();
+    let measurements = CellGridMetrics::default();
+    let mut index = LayoutIndex::default();
+    let no_widgets = Vec::new();
+    index.ensure(LayoutInputs {
+      text: rope.slice(..),
+      text_revision: 1,
+      format: &format,
+      wrap_width: 5,
+      annotations: &annotations,
+      widgets: &no_widgets,
+      measurements,
+    });
+    let visual_rows_before_line_one = index.doc_visual_row_for_line(1);
+    assert_eq!(index.surface_row_for_line(1), visual_rows_before_line_one);
+
+    let widgets = vec![BlockWidget::after_line(
+      crate::render::WidgetId::new(1).unwrap(),
+      0,
+      10,
+      measurements.row_height_px * 2,
+    )];
+    index.ensure(LayoutInputs {
+      text: rope.slice(..),
+      text_revision: 1,
+      format: &format,
+      wrap_width: 5,
+      annotations: &annotations,
+      widgets: &widgets,
+      measurements,
+    });
+
+    assert_eq!(
+      index.doc_visual_row_for_line(1),
+      visual_rows_before_line_one
+    );
+    assert_eq!(
+      index.surface_row_for_line(1),
+      visual_rows_before_line_one + 2
+    );
   }
 
   #[test]

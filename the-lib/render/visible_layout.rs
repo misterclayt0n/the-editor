@@ -242,6 +242,7 @@ impl<'a> VisibleLayoutBuilder<'a> {
         .is_some_and(|row| row.visual_row != abs_doc_visual_row)
       {
         let previous = current.take().unwrap();
+        let wrapped_row_boundary_char = previous.row_end_char;
         let last_for_line = previous.line_idx != grapheme.line_idx;
         finalize_visible_row(
           previous,
@@ -257,6 +258,16 @@ impl<'a> VisibleLayoutBuilder<'a> {
           &mut widget_layouts,
           &mut cursor_positions,
         );
+        if !last_for_line
+          && current_surface_row_abs >= window_start_row
+          && current_surface_row_abs < window_end_row
+        {
+          cursor_positions.push(CursorPosition {
+            char_idx:        wrapped_row_boundary_char,
+            surface_row_abs: current_surface_row_abs,
+            col_abs:         grapheme.visual_pos.col,
+          });
+        }
         if current_surface_row_abs >= window_end_row {
           break;
         }
@@ -278,6 +289,28 @@ impl<'a> VisibleLayoutBuilder<'a> {
             &mut widget_layouts,
             &mut cursor_positions,
           );
+        } else if grapheme.visual_pos.row > 0
+          && current_surface_row_abs >= window_start_row
+          && current_surface_row_abs < window_end_row
+        {
+          rows.push(VisibleRow {
+            key:             RowKey::Document {
+              line_idx:       grapheme.line_idx,
+              first_doc_char: grapheme.char_idx,
+            },
+            text:            Tendril::new(),
+            anchor_line:     grapheme.line_idx,
+            doc_visual_row:  Some(abs_doc_visual_row),
+            abs_surface_row: current_surface_row_abs,
+            row_end_char:    grapheme.char_idx,
+            row_end_col_abs: grapheme.visual_pos.col,
+            metadata:        VisibleRowMetadata {
+              kind:                 RowKind::Document,
+              doc_line:             Some(grapheme.line_idx),
+              starts_logical_line:  false,
+              wrapped_continuation: true,
+            },
+          });
         }
         break;
       }

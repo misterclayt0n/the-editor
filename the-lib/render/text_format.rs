@@ -31,7 +31,7 @@ impl TextFormat {
 
 impl Default for TextFormat {
   fn default() -> Self {
-    let wrap_indicator = Box::<str>::from(" ");
+    let wrap_indicator = Box::<str>::from("");
     let wrap_indicator_graphemes = tokenize_wrap_indicator(&wrap_indicator);
 
     Self {
@@ -60,8 +60,8 @@ mod tests {
   fn default_wrap_indicator_is_available() {
     let format = TextFormat::default();
 
-    assert_eq!(format.wrap_indicator(), " ");
-    assert_eq!(format.wrap_indicator_graphemes().len(), 1);
+    assert_eq!(format.wrap_indicator(), "");
+    assert_eq!(format.wrap_indicator_graphemes().len(), 0);
   }
 
   #[test]

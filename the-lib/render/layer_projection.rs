@@ -195,21 +195,20 @@ impl LayerProjector {
       let Some(position) = visible_layout
         .cursor_positions
         .iter()
-        .find(|position| position.char_idx == char_idx)
+        .filter(|position| position.char_idx == char_idx)
+        .find(|position| cursor_position_visible(**position, viewport))
+        .or_else(|| {
+          visible_layout
+            .cursor_positions
+            .iter()
+            .find(|position| position.char_idx == char_idx)
+        })
         .copied()
       else {
         continue;
       };
 
-      if position.surface_row_abs < viewport.first_row
-        || position.surface_row_abs >= viewport.first_row + viewport.row_count
-      {
-        continue;
-      }
-
-      if position.col_abs < viewport.first_col
-        || position.col_abs >= viewport.first_col.saturating_add(viewport.wrap_width)
-      {
+      if !cursor_position_visible(position, viewport) {
         continue;
       }
       let col = position.col_abs - viewport.first_col;
@@ -287,6 +286,16 @@ impl LayerProjector {
         .chain(new.iter().flat_map(widget_visible_rows)),
     )
   }
+}
+
+fn cursor_position_visible(
+  position: super::visible_layout::CursorPosition,
+  viewport: Viewport,
+) -> bool {
+  position.surface_row_abs >= viewport.first_row
+    && position.surface_row_abs < viewport.first_row.saturating_add(viewport.row_count)
+    && position.col_abs >= viewport.first_col
+    && position.col_abs < viewport.first_col.saturating_add(viewport.wrap_width)
 }
 
 fn project_visible_cols(

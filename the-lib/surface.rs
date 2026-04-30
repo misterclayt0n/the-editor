@@ -293,7 +293,7 @@ impl Surface {
       return;
     }
     self.render.set_measurements(measurements);
-    self.layout_index.invalidate_all();
+    self.layout_index.invalidate_widgets();
     self.invalidate_visible_syntax_cache();
   }
 
@@ -314,7 +314,7 @@ impl Surface {
       return;
     }
     self.render.set_widgets(widgets);
-    self.layout_index.invalidate_all();
+    self.layout_index.invalidate_widgets();
     self.invalidate_visible_syntax_cache();
   }
 

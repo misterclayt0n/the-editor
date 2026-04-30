@@ -11,6 +11,7 @@ version = "0.1.0"
 bitflags                 = "2.9"
 clap                     = { features = [ "derive" ], version = "4.5" }
 crossterm                = "0.28"
+divan                    = "0.1"
 dunce                    = "1.0"
 etcetera                 = "0.10"
 eyre                     = "0.6"

@@ -33,7 +33,12 @@ the-stdx.path                      = "../the-stdx"
 
 [dev-dependencies]
 clap.workspace                     = true
+divan.workspace                    = true
 crossterm.workspace                = true
 smallvec.workspace                 = true
 tree-sitter-json                   = "0.24"
 the-runtime.path                   = "../the-runtime"
+
+[[bench]]
+name = "simulations"
+harness = false

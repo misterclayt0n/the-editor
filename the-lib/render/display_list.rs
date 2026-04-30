@@ -6,7 +6,7 @@ use super::{
 };
 use crate::Tendril;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct SurfaceId(NonZeroU64);
 
 impl SurfaceId {
@@ -19,7 +19,7 @@ impl SurfaceId {
   }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct RowId(NonZeroU64);
 
 impl RowId {
@@ -36,7 +36,7 @@ impl RowId {
   }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct WidgetId(NonZeroU64);
 
 impl WidgetId {
@@ -49,7 +49,8 @@ impl WidgetId {
   }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Viewport {
   pub first_row:  usize,
   pub row_count:  usize,
@@ -68,13 +69,15 @@ impl Viewport {
   }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FrameRequest {
   pub viewport:         Viewport,
   pub since_generation: Option<u64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RowPlacement {
   pub surface_row: usize,
   pub y_px:        u32,
@@ -91,7 +94,8 @@ impl RowPlacement {
   }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RenderRow {
   pub id:         RowId,
   pub generation: u64,
@@ -99,20 +103,22 @@ pub struct RenderRow {
   pub text:       Tendril,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RowMove {
   pub id:   RowId,
   pub from: Option<RowPlacement>,
   pub to:   RowPlacement,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum RowKind {
   Document,
   Widget { widget_id: WidgetId, fragment: u32 },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RowMetadata {
   pub row_id:               RowId,
   pub surface_row:          usize,
@@ -122,12 +128,13 @@ pub struct RowMetadata {
   pub wrapped_continuation: bool,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RowMetadataDelta {
   pub rows: Vec<RowMetadata>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RenderFrameDelta {
   pub surface_id:    SurfaceId,
   pub generation:    u64,

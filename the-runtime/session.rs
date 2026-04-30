@@ -53,7 +53,7 @@ use crate::{
   },
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct DocumentHandle(NonZeroU64);
 
 impl DocumentHandle {
@@ -71,7 +71,7 @@ impl DocumentHandle {
   }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct SurfaceHandle(NonZeroU64);
 
 impl SurfaceHandle {
@@ -592,6 +592,19 @@ impl RuntimeSession {
 
   pub fn create_surface(&mut self, document: DocumentHandle) -> RuntimeResult<SurfaceHandle> {
     self.create_surface_with_viewport(document, Viewport::new(0, 1, 0, 80))
+  }
+
+  pub fn set_surface_viewport(
+    &mut self,
+    surface: SurfaceHandle,
+    viewport: Viewport,
+  ) -> RuntimeResult<()> {
+    let entry = self
+      .surfaces
+      .get_mut(&surface)
+      .ok_or(RuntimeError::UnknownSurface(surface))?;
+    entry.surface.set_viewport(viewport);
+    Ok(())
   }
 
   pub fn create_surface_with_viewport(

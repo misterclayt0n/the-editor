@@ -61,7 +61,7 @@ pub enum SelectionError {
   Transaction(#[from] TransactionError),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct CursorId(NonZeroU64);
 
 impl CursorId {

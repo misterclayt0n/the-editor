@@ -4,10 +4,11 @@ use crate::{
   syntax::HighlightKindId,
 };
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GutterLayerDelta;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SelectionSpan {
   pub cursor_id:   CursorId,
   pub surface_row: usize,
@@ -17,12 +18,12 @@ pub struct SelectionSpan {
   pub width_px:    u32,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SelectionLayerDelta {
   pub spans: Vec<SelectionSpan>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CursorSemantics {
   /// Edge-based insertion position, suitable for a vertical bar caret.
   InsertionPoint,
@@ -30,7 +31,8 @@ pub enum CursorSemantics {
   Cell,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CursorPlacement {
   pub cursor_id:   CursorId,
   pub surface_row: usize,
@@ -42,12 +44,13 @@ pub struct CursorPlacement {
   pub semantics:   CursorSemantics,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CursorLayerDelta {
   pub cursors: Vec<CursorPlacement>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SyntaxSpan {
   pub surface_row: usize,
   pub start_col:   usize,
@@ -57,15 +60,16 @@ pub struct SyntaxSpan {
   pub kind:        HighlightKindId,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SyntaxLayerDelta {
   pub spans: Vec<SyntaxSpan>,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct OverlayLayerDelta;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BlockWidget {
   pub id:                 WidgetId,
   pub after_line:         usize,
@@ -89,7 +93,8 @@ impl BlockWidget {
   }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WidgetPlacement {
   pub widget_id:   WidgetId,
   pub surface_row: usize,
@@ -100,12 +105,12 @@ pub struct WidgetPlacement {
   pub height_px:   u32,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct WidgetLayerDelta {
   pub widgets: Vec<WidgetPlacement>,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LayerDeltaSet {
   pub gutters:    Option<GutterLayerDelta>,
   pub selections: Option<SelectionLayerDelta>,

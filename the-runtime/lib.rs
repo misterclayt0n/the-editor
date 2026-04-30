@@ -1,6 +1,7 @@
 pub mod clipboard;
 pub mod io;
 pub mod resource;
+pub mod rpc;
 pub mod session;
 pub mod syntax;
 

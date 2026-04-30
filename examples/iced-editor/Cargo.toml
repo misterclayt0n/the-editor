@@ -1,0 +1,13 @@
+[package]
+name = "the-editor-iced-example"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+iced = { version = "0.14", default-features = false, features = [ "thread-pool", "tiny-skia", "x11", "wayland" ] }
+ropey = "1.6.1"
+the-lib = { path = "../../the-lib" }
+the-runtime = { path = "../../the-runtime" }

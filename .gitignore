@@ -1,5 +1,5 @@
 # Rust build artifacts
-/target
+target/
 Cargo.lock
 
 # Nix build artifacts

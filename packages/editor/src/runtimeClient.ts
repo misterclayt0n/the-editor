@@ -1,138 +1,101 @@
-import { spawn, type ChildProcessByStdio } from "node:child_process";
-import type { Writable, Readable } from "node:stream";
-import { createInterface } from "node:readline";
 import type {
   DocumentId,
   DocumentOpened,
-  JsonRpcResponse,
-  JsonValue,
   OkResult,
   RenderFrameDelta,
   RuntimeApi,
-  RuntimeRpcError,
   SurfaceCreated,
   SurfaceId,
   Viewport,
 } from "@the-editor/contracts/runtime";
+import { NativeRuntimeSession } from "@the-editor/runtime-node";
 
 export class RuntimeClientError extends Error {
-  constructor(readonly rpcError: RuntimeRpcError) {
-    super(rpcError.message);
+  constructor(message: string, readonly cause?: unknown) {
+    super(message);
     this.name = "RuntimeClientError";
   }
 }
 
-export interface RuntimeProcessClientOptions {
-  command?: string;
-  args?: string[];
-  cwd?: string;
-  stderr?: "inherit" | "pipe" | "ignore";
+export interface RuntimeNativeClientOptions {
+  session?: NativeRuntimeSession;
 }
 
-export class RuntimeProcessClient implements RuntimeApi {
+export class RuntimeNativeClient implements RuntimeApi {
   readonly server = {
-    ping: (): Promise<OkResult> => this.request("server.ping", {}),
+    ping: async (): Promise<OkResult> => ({ ok: true }),
   };
 
   readonly documents = {
-    openFile: (params: { path: string }): Promise<DocumentOpened> =>
-      this.request("documents.openFile", params),
-    createScratch: (params: { text?: string }): Promise<DocumentOpened> =>
-      this.request("documents.createScratch", params),
+    openFile: async (params: { path: string }): Promise<DocumentOpened> => ({
+      documentId: this.session.openFile(params.path) as DocumentId,
+    }),
+    createScratch: async (params: { text?: string }): Promise<DocumentOpened> => ({
+      documentId: this.session.createScratch(params.text ?? "") as DocumentId,
+    }),
   };
 
   readonly surfaces = {
-    create: (params: { documentId: DocumentId; viewport?: Viewport }): Promise<SurfaceCreated> =>
-      this.request("surfaces.create", params),
-    setViewport: (params: { surfaceId: SurfaceId; viewport: Viewport }): Promise<OkResult> =>
-      this.request("surfaces.setViewport", params),
-    renderFrame: (params: {
+    create: async (params: { documentId: DocumentId; viewport?: Viewport }): Promise<SurfaceCreated> => ({
+      surfaceId: this.session.createSurface(params.documentId, params.viewport ?? null) as SurfaceId,
+    }),
+    setViewport: async (params: { surfaceId: SurfaceId; viewport: Viewport }): Promise<OkResult> => {
+      this.session.setSurfaceViewport(params.surfaceId, params.viewport);
+      return { ok: true };
+    },
+    renderFrame: async (params: {
       surfaceId: SurfaceId;
       viewport?: Viewport;
       sinceGeneration?: number | null;
-    }): Promise<RenderFrameDelta> => this.request("surfaces.renderFrame", params),
+    }): Promise<RenderFrameDelta> => {
+      const json = this.session.renderFrameJson(
+        params.surfaceId,
+        params.viewport ?? null,
+        params.sinceGeneration ?? null,
+      );
+      return JSON.parse(json) as RenderFrameDelta;
+    },
   };
 
   readonly resources = {
-    save: (params: { surfaceId: SurfaceId }): Promise<OkResult> =>
-      this.request("resources.save", params),
+    save: async (params: { surfaceId: SurfaceId }): Promise<OkResult> => {
+      this.session.saveSurfaceDocument(params.surfaceId);
+      return { ok: true };
+    },
   };
 
-  private nextId = 1;
-  private readonly pending = new Map<
-    number,
-    {
-      resolve(value: unknown): void;
-      reject(reason: unknown): void;
-    }
-  >();
-  private readonly child: ChildProcessByStdio<Writable, Readable, Readable | null>;
+  private readonly session: NativeRuntimeSession;
 
-  constructor(options: RuntimeProcessClientOptions = {}) {
-    const command = options.command ?? "cargo";
-    const args = options.args ?? ["run", "-q", "-p", "the-runtime", "--bin", "the-runtime"];
-    this.child = spawn(command, args, {
-      cwd: options.cwd,
-      stdio: ["pipe", "pipe", options.stderr ?? "inherit"],
-    }) as ChildProcessByStdio<Writable, Readable, Readable | null>;
-
-    const lines = createInterface({ input: this.child.stdout });
-    lines.on("line", (line) => this.handleLine(line));
-    this.child.on("exit", (code, signal) => {
-      const error = new Error(`runtime process exited code=${code ?? "null"} signal=${signal ?? "null"}`);
-      for (const pending of this.pending.values()) {
-        pending.reject(error);
-      }
-      this.pending.clear();
-    });
+  constructor(options: RuntimeNativeClientOptions = {}) {
+    this.session = options.session ?? new NativeRuntimeSession();
   }
 
-  dispose(): void {
-    this.child.kill();
-  }
-
-  request<TResult>(method: string, params: JsonValue | object): Promise<TResult> {
-    const id = this.nextId++;
-    const payload = JSON.stringify({ id, method, params });
-    return new Promise<TResult>((resolve, reject) => {
-      this.pending.set(id, {
-        resolve: (value) => resolve(value as TResult),
-        reject,
-      });
-      this.child.stdin.write(`${payload}\n`, (error) => {
-        if (!error) return;
-        this.pending.delete(id);
-        reject(error);
-      });
-    });
-  }
-
-  private handleLine(line: string): void {
-    let response: JsonRpcResponse;
-    try {
-      response = JSON.parse(line) as JsonRpcResponse;
-    } catch (error) {
-      console.error("failed to parse runtime response", { line, error });
-      return;
-    }
-
-    if (typeof response.id !== "number") {
-      console.error("runtime response without numeric id", response);
-      return;
-    }
-
-    const pending = this.pending.get(response.id);
-    if (!pending) return;
-    this.pending.delete(response.id);
-
-    if ("error" in response) {
-      pending.reject(new RuntimeClientError(response.error));
-    } else {
-      pending.resolve(response.result);
+  async request(method: string, params: unknown = {}): Promise<unknown> {
+    switch (method) {
+      case "server.ping":
+        return this.server.ping();
+      case "documents.openFile":
+        return this.documents.openFile(params as Parameters<RuntimeApi["documents"]["openFile"]>[0]);
+      case "documents.createScratch":
+        return this.documents.createScratch(params as Parameters<RuntimeApi["documents"]["createScratch"]>[0]);
+      case "surfaces.create":
+        return this.surfaces.create(params as Parameters<RuntimeApi["surfaces"]["create"]>[0]);
+      case "surfaces.setViewport":
+        return this.surfaces.setViewport(params as Parameters<RuntimeApi["surfaces"]["setViewport"]>[0]);
+      case "surfaces.renderFrame":
+        return this.surfaces.renderFrame(params as Parameters<RuntimeApi["surfaces"]["renderFrame"]>[0]);
+      case "resources.save":
+        return this.resources.save(params as Parameters<RuntimeApi["resources"]["save"]>[0]);
+      default:
+        throw new RuntimeClientError(`unknown runtime method ${method}`);
     }
   }
+
+  dispose(): void {}
 }
 
-export function spawnRuntimeClient(options?: RuntimeProcessClientOptions): RuntimeProcessClient {
-  return new RuntimeProcessClient(options);
+export function createRuntimeClient(options?: RuntimeNativeClientOptions): RuntimeNativeClient {
+  return new RuntimeNativeClient(options);
 }
+
+export const spawnRuntimeClient = createRuntimeClient;

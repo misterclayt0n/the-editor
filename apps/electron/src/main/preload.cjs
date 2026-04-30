@@ -1,9 +1,6 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("theEditor", {
-  runtimeRequest(method, params) {
-    return ipcRenderer.invoke("runtime:request", { method, params });
-  },
   policyRequest(method, params) {
     return ipcRenderer.invoke("policy:request", { method, params });
   },

@@ -1,19 +1,14 @@
 import { parentPort } from "node:worker_threads";
 import { activate, getScratchState } from "@the-editor/default";
-import { createEditorHost } from "@the-editor/editor";
-import type { JsonValue, RuntimeApi } from "@the-editor/contracts/runtime";
+import { createEditorHost, createRuntimeClient } from "@the-editor/editor";
 
 if (!parentPort) throw new Error("policy worker requires parentPort");
 
-const runtime = createRuntimeBridge();
+const runtime = createRuntimeClient();
 const editor = createEditorHost({ runtime });
 
 parentPort.on("message", (message: unknown) => {
   if (!isObject(message)) return;
-  if (message.type === "runtime.response") {
-    runtime.handleResponse(message as unknown as RuntimeResponse);
-    return;
-  }
   if (message.type === "policy.request") {
     void handlePolicyRequest(message as unknown as PolicyRequest);
   }
@@ -50,52 +45,11 @@ async function handlePolicyRequest(request: PolicyRequest): Promise<void> {
   }
 }
 
-interface RuntimeResponse {
-  type: "runtime.response";
-  id: number;
-  result?: unknown;
-  error?: unknown;
-}
-
 interface PolicyRequest {
   type: "policy.request";
   id: number;
   method: string;
   params?: unknown;
-}
-
-function createRuntimeBridge(): RuntimeApi & { handleResponse(response: RuntimeResponse): void } {
-  let nextId = 1;
-  const pending = new Map<number, { resolve(value: unknown): void; reject(error: unknown): void }>();
-
-  function request<TResult>(method: string, params: unknown): Promise<TResult> {
-    const id = nextId++;
-    parentPort!.postMessage({ type: "runtime.request", id, method, params });
-    return new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
-  }
-
-  return {
-    server: { ping: () => request("server.ping", {}) },
-    documents: {
-      openFile: (params: Parameters<RuntimeApi["documents"]["openFile"]>[0]) => request("documents.openFile", params),
-      createScratch: (params: Parameters<RuntimeApi["documents"]["createScratch"]>[0]) => request("documents.createScratch", params),
-    },
-    surfaces: {
-      create: (params: Parameters<RuntimeApi["surfaces"]["create"]>[0]) => request("surfaces.create", params),
-      setViewport: (params: Parameters<RuntimeApi["surfaces"]["setViewport"]>[0]) => request("surfaces.setViewport", params),
-      renderFrame: (params: Parameters<RuntimeApi["surfaces"]["renderFrame"]>[0]) => request("surfaces.renderFrame", params),
-    },
-    resources: {
-      save: (params: Parameters<RuntimeApi["resources"]["save"]>[0]) => request("resources.save", params),
-    },
-    handleResponse(response: RuntimeResponse) {
-      const entry = pending.get(response.id);
-      if (!entry) return;
-      pending.delete(response.id);
-      if (response.error) entry.reject(response.error);
-      else entry.resolve(response.result);
-    },
-  };
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -106,5 +60,3 @@ function serializeError(error: unknown): { message: string; stack?: string } {
   if (error instanceof Error) return { message: error.message, stack: error.stack };
   return { message: String(error) };
 }
-
-void ({} satisfies JsonValue);

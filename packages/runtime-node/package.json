@@ -1,0 +1,34 @@
+{
+  "name": "@the-editor/runtime-node",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js",
+      "require": "./index.js"
+    }
+  },
+  "scripts": {
+    "build": "napi build --platform --release",
+    "typecheck": "tsc --noEmit --allowJs false",
+    "test": "vitest run --passWithNoTests"
+  },
+  "napi": {
+    "binaryName": "the_editor_runtime_node",
+    "targets": [
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-unknown-linux-gnu",
+      "x86_64-pc-windows-msvc"
+    ]
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "latest",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

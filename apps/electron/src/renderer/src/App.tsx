@@ -27,14 +27,19 @@ function App() {
 
   async function createScratch() {
     setStatus("creating scratch");
-    const result = await window.theEditor.policyRequest("default.createScratch", {
-      text: "hello from electron",
-      viewport: { firstRow: 0, rowCount: 24, firstCol: 0, wrapWidth: 100 },
-    });
-    if (isObject(result) && isObject(result.frame)) {
-      setFrame(result.frame as unknown as RenderFrameDelta);
+    try {
+      const result = await window.theEditor.policyRequest("default.createScratch", {
+        text: "hello from electron",
+        viewport: { firstRow: 0, rowCount: 24, firstCol: 0, wrapWidth: 100 },
+      });
+      if (isObject(result) && isObject(result.frame)) {
+        setFrame(result.frame as unknown as RenderFrameDelta);
+      }
+      setStatus("surface rendered");
+    } catch (error) {
+      console.error(error);
+      setStatus(error instanceof Error ? error.message : String(error));
     }
-    setStatus("surface rendered");
   }
 
   return (

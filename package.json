@@ -15,7 +15,7 @@
     }
   },
   "scripts": {
-    "build": "bun run --filter './packages/*' build && bun run --filter './apps/*' build",
+    "build": "bun --filter @the-editor/contracts build && bun --filter @the-editor/runtime-node build && bun --filter @the-editor/editor build && bun --filter @the-editor/default build && bun run --filter './apps/*' build",
     "typecheck": "bun run --filter './packages/*' --filter './apps/*' typecheck",
     "test": "bun run --filter './packages/*' --filter './apps/*' test"
   },

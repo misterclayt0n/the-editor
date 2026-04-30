@@ -24,7 +24,8 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@the-editor/contracts": "workspace:*"
+    "@the-editor/contracts": "workspace:*",
+    "@the-editor/runtime-node": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",

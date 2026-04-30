@@ -1,0 +1,21 @@
+[package]
+name = "the-editor-runtime-node"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+napi = { version = "3.8.6", default-features = false, features = ["napi8"] }
+napi-derive = "3.5.5"
+ropey.workspace = true
+serde_json.workspace = true
+
+the-runtime = { path = "../../the-runtime" }
+the-lib = { path = "../../the-lib" }
+
+[build-dependencies]
+napi-build = "2.2.3"

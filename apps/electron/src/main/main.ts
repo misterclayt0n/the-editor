@@ -2,16 +2,14 @@ import { app, BrowserWindow, ipcMain } from "electron";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
-import { spawnRuntimeClient } from "@the-editor/editor/runtimeClient";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = process.env.THE_EDITOR_DEV_SERVER_URL !== undefined;
 
 let mainWindow: BrowserWindow | undefined;
 let policyWorker: Worker | undefined;
-const runtime = spawnRuntimeClient({ cwd: path.resolve(__dirname, "../../../../") });
-const pendingRuntimeRequests = new Map<number, { resolve(value: unknown): void; reject(error: unknown): void }>();
-let nextRuntimeRequestId = 1;
+const pendingPolicyRequests = new Map<number, { resolve(value: unknown): void; reject(error: unknown): void }>();
+let nextPolicyRequestId = 1;
 
 async function createWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
@@ -52,10 +50,6 @@ function startPolicyWorker(): void {
 
   policyWorker.on("message", (message: unknown) => {
     if (!isObject(message)) return;
-    if (message.type === "runtime.request") {
-      void handlePolicyRuntimeRequest(message as unknown as RuntimeBridgeRequest);
-      return;
-    }
     if (message.type === "policy.response") {
       handlePolicyResponse(message as unknown as PolicyBridgeResponse);
       return;
@@ -72,29 +66,12 @@ function startPolicyWorker(): void {
   });
 }
 
-async function handlePolicyRuntimeRequest(message: RuntimeBridgeRequest): Promise<void> {
-  try {
-    const result = await runtime.request(message.method, message.params ?? {});
-    policyWorker?.postMessage({ type: "runtime.response", id: message.id, result });
-  } catch (error) {
-    policyWorker?.postMessage({
-      type: "runtime.response",
-      id: message.id,
-      error: serializeError(error),
-    });
-  }
-}
-
-ipcMain.handle("runtime:request", async (_event, request: { method: string; params?: unknown }) => {
-  return runtime.request(request.method, (request.params ?? {}) as object);
-});
-
 ipcMain.handle("policy:request", async (_event, request: { method: string; params?: unknown }) => {
   if (!policyWorker) throw new Error("policy worker is not running");
-  const id = nextRuntimeRequestId++;
+  const id = nextPolicyRequestId++;
   policyWorker.postMessage({ type: "policy.request", id, method: request.method, params: request.params });
   return new Promise((resolve, reject) => {
-    pendingRuntimeRequests.set(id, { resolve, reject });
+    pendingPolicyRequests.set(id, { resolve, reject });
   });
 });
 
@@ -109,15 +86,7 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   policyWorker?.terminate();
-  runtime.dispose();
 });
-
-interface RuntimeBridgeRequest {
-  type: "runtime.request";
-  id: number;
-  method: string;
-  params?: unknown;
-}
 
 interface PolicyBridgeResponse {
   type: "policy.response";
@@ -127,18 +96,13 @@ interface PolicyBridgeResponse {
 }
 
 function handlePolicyResponse(response: PolicyBridgeResponse): void {
-  const pending = pendingRuntimeRequests.get(response.id);
+  const pending = pendingPolicyRequests.get(response.id);
   if (!pending) return;
-  pendingRuntimeRequests.delete(response.id);
+  pendingPolicyRequests.delete(response.id);
   if (response.error) pending.reject(response.error);
   else pending.resolve(response.result);
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
-}
-
-function serializeError(error: unknown): { message: string; stack?: string } {
-  if (error instanceof Error) return { message: error.message, stack: error.stack };
-  return { message: String(error) };
 }

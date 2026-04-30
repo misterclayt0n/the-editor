@@ -17,3 +17,7 @@ the-swift/Frameworks/
 the-swift/RustBridge/TheEditorFFI.xcframework/
 /GhosttyKit.xcframework
 dist/
+
+# napi-rs generated native bindings
+packages/runtime-node/index.js
+packages/runtime-node/*.node

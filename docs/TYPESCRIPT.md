@@ -26,7 +26,8 @@ The editor is a native Rust editor platform with a programmable TypeScript produ
 
 ```txt
 Rust engine (`the-lib`)        text/state/editing invariants + cell-grid render deltas
-Rust runtime (`the-runtime`)   resources, sessions, services, file IO, search, LSP, watches + JSON-RPC host binary
+Rust runtime (`the-runtime`)   resources, sessions, services, file IO, search, LSP, watches
+Node native runtime package     napi-rs wrapper around `the-runtime`
 TypeScript editor substrate    hooks, dispatch, commands, keymaps, layout, modules
 Default distribution           first-party modules built on the same public substrate
 Policy worker                  runs the editor product layer and user modules
@@ -55,9 +56,10 @@ Preferred shape:
 ```txt
 the-editor/
   the-lib/                 # pure Rust editor engine
-  the-runtime/             # impure Rust runtime/services + JSON-RPC host binary
+  the-runtime/             # impure Rust runtime/services
 
   packages/
+    runtime-node/          # napi-rs Node native wrapper around the-runtime
     editor/                # TS programmable editor substrate
     default/               # first-party default distribution modules
     contracts/             # shared TS contracts for IPC/model messages, if needed
@@ -70,32 +72,33 @@ the-editor/
 
 `packages/default` should be a composed distribution of first-party modules, not a monolithic app.
 
-`apps/electron` is an adapter. It hosts the policy worker, renderer, `the-runtime` host process, and concrete painting/UI implementation.
+`apps/electron` is an adapter. It hosts the policy worker, renderer, native runtime package, and concrete painting/UI implementation.
 
 ---
 
 ## Process model
 
-V1 uses four cooperating execution contexts.
+V1 uses three cooperating execution contexts.
 
 ```txt
 ┌──────────────────────────────────────────────────────────────┐
 │ Electron main                                                │
 │ - owns windows/app lifecycle                                 │
-│ - spawns and supervises Rust runtime host                    │
-│ - owns JSON-RPC stdio transport                              │
-│ - bridges runtime API to policy worker and renderer          │
-└───────────────┬───────────────────────────┬──────────────────┘
-                │                           │
-                │ JSON-RPC stdio            │ Electron IPC / MessagePort
-                │                           │
-┌───────────────▼────────────────┐   ┌──────▼────────────────────┐
-│ `the-runtime` host binary       │   │ Policy worker              │
-│ - thin RPC adapter              │   │ - runs packages/editor      │
-│ - owns RuntimeSession           │   │ - runs packages/default     │
-│ - exposes domain RPC methods    │   │ - loads user modules        │
-│ - emits runtime events          │   │ - owns logical UI model     │
-└────────────────────────────────┘   └──────┬────────────────────┘
+│ - owns windows/app lifecycle                                 │
+│ - starts and supervises policy worker                        │
+│ - bridges renderer requests to policy worker                 │
+└───────────────────────────────────────────┬──────────────────┘
+                                            │ Electron IPC / MessagePort
+                                            │
+                                     ┌──────▼────────────────────┐
+                                     │ Policy worker              │
+                                     │ - runs packages/editor      │
+                                     │ - runs packages/default     │
+                                     │ - imports runtime-node      │
+                                     │ - owns RuntimeSession       │
+                                     │ - loads user modules        │
+                                     │ - owns logical UI model     │
+                                     └──────┬────────────────────┘
                                              │ logical app model + commands
                                              │
                                       ┌──────▼────────────────────┐
@@ -113,59 +116,48 @@ Electron main owns:
 
 - application lifecycle
 - window lifecycle
-- spawning the Rust runtime host
-- restarting or shutting down the runtime host
-- runtime process logs and crash diagnostics
-- JSON-RPC client transport over stdio
-- typed bridge endpoints for policy worker and renderer
+- starting the policy worker
+- restarting or shutting down the policy worker
+- policy worker logs and crash diagnostics
+- typed bridge endpoints for renderer ↔ policy worker requests
 
 Electron main does not own editor product policy.
 
-### `the-runtime` host binary
+### Native runtime package
 
-`the-runtime` exposes both a library and a thin host binary in the same crate.
+V1 uses `packages/runtime-node`, a napi-rs native Node package around `the-runtime`.
 
-Preferred flat crate shape:
+Preferred shape:
 
 ```txt
-the-runtime/
+packages/runtime-node/
+  package.json
   Cargo.toml
-  lib.rs       # runtime library API
-  main.rs      # JSON-RPC host binary
-  session.rs
-  resource.rs
-  io.rs
-  syntax.rs
-  clipboard.rs
-  rpc.rs       # JSON-RPC protocol/server glue
+  build.rs
+  index.d.ts
+  index.js                 # generated by napi-rs
+  src/lib.rs               # thin napi wrapper around RuntimeSession
 ```
 
-Cargo shape:
-
-```toml
-[lib]
-path = "lib.rs"
-
-[[bin]]
-name = "the-runtime"
-path = "main.rs"
-```
-
-This avoids a separate `the-runtime-host/` crate while preserving the conceptual seam:
+This preserves the conceptual seam:
 
 ```txt
-the-runtime library = runtime/session/services implementation
-the-runtime binary  = JSON-RPC process adapter
+the-runtime           = runtime/session/services implementation
+packages/runtime-node = Node native adapter over the runtime
 ```
 
-The host binary owns:
+The native package owns no editor personality. It exposes coarse runtime methods such as:
 
-- one or more `RuntimeSession`s
-- JSON-RPC request/response handling
-- runtime event emission
-- serialization of handles, render deltas, and runtime errors
+```ts
+createScratch(text)
+openFile(path)
+createSurface(documentId, viewport)
+setSurfaceViewport(surfaceId, viewport)
+renderFrame(surfaceId, viewport, sinceGeneration)
+saveSurfaceDocument(surfaceId)
+```
 
-It should stay thin. Runtime behavior belongs in the library side of `the-runtime`; transport behavior belongs in `main.rs`/`rpc.rs`.
+It should stay thin. Runtime behavior belongs in `the-runtime`; Node/Electron binding behavior belongs in `packages/runtime-node`.
 
 ### Policy worker
 
@@ -205,58 +197,28 @@ The renderer does not own semantic editor truth. It should not maintain a second
 
 ---
 
-## Runtime IPC
+## Native runtime bridge
 
-V1 uses JSON-RPC over stdio between Electron main and the `the-runtime` host binary.
+V1 uses napi-rs instead of a separate JSON-RPC runtime process.
 
-Request:
+The policy worker imports the native runtime package through `packages/editor`'s typed runtime client:
 
-```json
-{ "id": 1, "method": "documents.openFile", "params": { "path": "/tmp/a.txt" } }
+```ts
+const runtime = createRuntimeClient();
+const editor = createEditorHost({ runtime });
 ```
 
-Response:
+The native bridge is synchronous internally today, but exposed to TypeScript behind async domain methods so the public policy API can remain stable if specific calls become asynchronous later.
 
-```json
-{ "id": 1, "result": { "documentId": 1 } }
-```
-
-Error:
-
-```json
-{
-  "id": 1,
-  "error": {
-    "code": "document.notFound",
-    "message": "document not found",
-    "data": { "documentId": 1 }
-  }
-}
-```
-
-Push event:
-
-```json
-{
-  "channel": "runtime.event",
-  "sequence": 42,
-  "data": { "type": "document.changed", "documentId": 1, "revision": 12 }
-}
-```
-
-### Why JSON-RPC first
-
-JSON-RPC is chosen for v1 because it is simple, inspectable, and easy to supervise from Electron main.
-
-The known risk is serialization overhead, especially for render deltas. The mitigation is architectural rather than premature optimization:
+The important rule is unchanged:
 
 - keep runtime APIs coarse-grained
 - keep render deltas retained and incremental
-- isolate the runtime transport behind a typed client seam
-- benchmark render-frame serialization once the Electron loop exists
-- replace the codec later only if measurements justify it
+- keep hot text/layout work in Rust
+- do not expose chatty per-row/per-token APIs
+- benchmark native serialization costs once the Electron loop exists
 
-The product API should not expose JSON-RPC details. `packages/editor` should see a typed runtime client.
+`packages/editor` sees a typed runtime client, not napi-rs details.
 
 ---
 
@@ -927,13 +889,13 @@ The TS layer should be testable without Electron.
 
 `apps/electron` tests should cover:
 
-- runtime process supervision
-- JSON-RPC bridge
+- policy worker lifecycle
+- native runtime package loading
 - renderer/policy worker messaging
 - surface painter delta application
 - smoke boot of the workbench
 
-The `the-runtime` host binary/RPC layer should have protocol-level tests independent of Electron.
+The `packages/runtime-node` native package should have binding-level tests independent of Electron.
 
 ---
 
@@ -943,9 +905,9 @@ V1 should prove the architecture, not complete the editor.
 
 ### V1 should include
 
-- `the-runtime` JSON-RPC host binary
-- Electron main spawning the `the-runtime` host process
-- policy worker
+- `packages/runtime-node` napi-rs native package
+- Electron main starting the policy worker
+- policy worker loading the native runtime client
 - renderer React shell
 - Canvas2D surface painter
 - `packages/editor` substrate skeleton
@@ -1012,8 +974,8 @@ Rust should own the impure/session/service work.
 - `packages/default` must use the same public API as user modules.
 - The policy worker owns logical UI composition.
 - The renderer paints and hosts views; it does not own semantic editor truth.
-- Electron main owns runtime process lifecycle.
-- The Rust runtime host exposes domain APIs, not product behavior.
+- Electron main owns policy worker lifecycle.
+- The native runtime package exposes domain APIs, not product behavior.
 - Keyboard/keymap resolution belongs in policy worker.
 - Rust executes native editing/rendering intents.
 - Splits and panes belong in TypeScript, not Rust.
@@ -1035,8 +997,9 @@ packages/editor  = programmable editor substrate
 packages/default = first-party module distribution
 policy worker    = product behavior + logical UI composition
 Electron renderer= React chrome + Canvas surface painter
-Electron main    = runtime process supervision + IPC bridge
-Rust runtime     = authoritative native state, services, and thin host binary
+Electron main    = policy worker supervision + IPC bridge
+Rust runtime     = authoritative native state and services
+runtime-node     = thin napi-rs native adapter
 ```
 
 The defining principle is:

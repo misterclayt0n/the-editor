@@ -19,6 +19,19 @@
         "vitest": "catalog:",
       },
     },
+    "packages/default": {
+      "name": "@the-editor/default",
+      "version": "0.1.0",
+      "dependencies": {
+        "@the-editor/contracts": "workspace:*",
+        "@the-editor/editor": "workspace:*",
+      },
+      "devDependencies": {
+        "tsdown": "catalog:",
+        "typescript": "catalog:",
+        "vitest": "catalog:",
+      },
+    },
     "packages/editor": {
       "name": "@the-editor/editor",
       "version": "0.1.0",
@@ -105,6 +118,8 @@
     "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
 
     "@the-editor/contracts": ["@the-editor/contracts@workspace:packages/contracts"],
+
+    "@the-editor/default": ["@the-editor/default@workspace:packages/default"],
 
     "@the-editor/editor": ["@the-editor/editor@workspace:packages/editor"],
 

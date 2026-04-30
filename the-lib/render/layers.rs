@@ -23,13 +23,23 @@ pub struct SelectionLayerDelta {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CursorSemantics {
+  /// Edge-based insertion position, suitable for a vertical bar caret.
+  InsertionPoint,
+  /// Cell-based cursor position, suitable for block and underline cursors.
+  Cell,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CursorPlacement {
   pub cursor_id:   CursorId,
   pub surface_row: usize,
   pub col:         usize,
   pub x_px:        u32,
   pub y_px:        u32,
+  pub width_px:    u32,
   pub height_px:   u32,
+  pub semantics:   CursorSemantics,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]

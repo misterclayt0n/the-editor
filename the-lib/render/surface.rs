@@ -19,6 +19,7 @@ use super::{
     BlockWidget,
     CursorLayerDelta,
     CursorPlacement,
+    CursorSemantics,
     LayerDeltaSet,
     SelectionLayerDelta,
     SelectionSpan,
@@ -47,16 +48,17 @@ use crate::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CellGridRenderSurface {
-  id:             SurfaceId,
-  format:         TextFormat,
-  annotations:    TextAnnotations,
-  selection:      Option<Selection>,
-  visible_syntax: Vec<SyntaxSpan>,
-  widgets:        Vec<BlockWidget>,
-  measurements:   CellGridMetrics,
-  generation:     u64,
-  dirty:          DirtyState,
-  state:          SurfaceState,
+  id:               SurfaceId,
+  format:           TextFormat,
+  annotations:      TextAnnotations,
+  selection:        Option<Selection>,
+  visible_syntax:   Vec<SyntaxSpan>,
+  widgets:          Vec<BlockWidget>,
+  measurements:     CellGridMetrics,
+  cursor_semantics: CursorSemantics,
+  generation:       u64,
+  dirty:            DirtyState,
+  state:            SurfaceState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,6 +102,7 @@ impl CellGridRenderSurface {
       visible_syntax: Vec::new(),
       widgets: Vec::new(),
       measurements: CellGridMetrics::default(),
+      cursor_semantics: CursorSemantics::Cell,
       generation: 0,
       dirty: DirtyState::default(),
       state: SurfaceState::default(),
@@ -139,6 +142,10 @@ impl CellGridRenderSurface {
 
   pub fn measurements(&self) -> CellGridMetrics {
     self.measurements
+  }
+
+  pub fn cursor_semantics(&self) -> CursorSemantics {
+    self.cursor_semantics
   }
 
   pub fn widgets(&self) -> &[BlockWidget] {
@@ -191,6 +198,13 @@ impl CellGridRenderSurface {
       self.dirty.cursors.mark();
       self.dirty.syntax.mark();
       self.dirty.widgets.mark();
+    }
+  }
+
+  pub fn set_cursor_semantics(&mut self, semantics: CursorSemantics) {
+    if self.cursor_semantics != semantics {
+      self.cursor_semantics = semantics;
+      self.dirty.cursors.mark();
     }
   }
 
@@ -361,6 +375,7 @@ impl CellGridRenderSurface {
           self.selection.as_ref(),
           request.viewport,
           self.measurements,
+          self.cursor_semantics,
         )
       } else {
         self.state.cursor_placements.clone()
@@ -528,6 +543,7 @@ mod tests {
     render::{
       BlockWidget,
       CellGridMetrics,
+      CursorSemantics,
       FrameRequest,
       RowKind,
       SurfaceId,
@@ -814,7 +830,33 @@ mod tests {
     assert_eq!(cursor_delta.cursors[0].col, 2);
     assert_eq!(cursor_delta.cursors[0].x_px, 16);
     assert_eq!(cursor_delta.cursors[0].y_px, 0);
+    assert_eq!(cursor_delta.cursors[0].width_px, 8);
     assert_eq!(cursor_delta.cursors[0].height_px, 16);
+    assert_eq!(cursor_delta.cursors[0].semantics, CursorSemantics::Cell);
+  }
+
+  #[test]
+  fn insertion_point_cursor_semantics_use_range_head() {
+    let rope = Rope::from("abcd");
+    let mut surface = CellGridRenderSurface::new(
+      SurfaceId::new(1).unwrap(),
+      TextFormat::default(),
+      TextAnnotations::default(),
+    );
+    surface.set_cursor_semantics(CursorSemantics::InsertionPoint);
+    surface.set_selection(Some(selection(&[(1, 3)])));
+
+    let delta = surface.render_frame(rope.slice(..), 1, request(0, 1, 20, None));
+
+    let cursor_delta = delta.layers.cursors.expect("cursor layer delta");
+    assert_eq!(cursor_delta.cursors.len(), 1);
+    assert_eq!(cursor_delta.cursors[0].col, 3);
+    assert_eq!(cursor_delta.cursors[0].x_px, 24);
+    assert_eq!(cursor_delta.cursors[0].width_px, 0);
+    assert_eq!(
+      cursor_delta.cursors[0].semantics,
+      CursorSemantics::InsertionPoint
+    );
   }
 
   #[test]

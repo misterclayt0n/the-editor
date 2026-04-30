@@ -5,6 +5,7 @@ use super::{
   display_list::Viewport,
   layers::{
     CursorPlacement,
+    CursorSemantics,
     SelectionSpan,
     SyntaxSpan,
     WidgetPlacement,
@@ -179,6 +180,7 @@ impl LayerProjector {
     selection: Option<&Selection>,
     viewport: Viewport,
     measurements: CellGridMetrics,
+    semantics: CursorSemantics,
   ) -> Vec<CursorPlacement> {
     let Some(selection) = selection else {
       return Vec::new();
@@ -186,7 +188,10 @@ impl LayerProjector {
 
     let mut cursors = Vec::new();
     for cursor in selection.iter() {
-      let char_idx = cursor.range.cursor(text);
+      let char_idx = match semantics {
+        CursorSemantics::InsertionPoint => cursor.range.head,
+        CursorSemantics::Cell => cursor.range.cursor(text),
+      };
       let Some(position) = visible_layout
         .cursor_positions
         .iter()
@@ -209,13 +214,29 @@ impl LayerProjector {
       }
       let col = position.col_abs - viewport.first_col;
       let surface_row = position.surface_row_abs - viewport.first_row;
+      let width_cols = match semantics {
+        CursorSemantics::InsertionPoint => 0,
+        CursorSemantics::Cell => {
+          visible_layout
+            .units
+            .iter()
+            .find(|unit| {
+              unit.surface_row_abs == position.surface_row_abs && unit.char_start == char_idx
+            })
+            .map_or(1, |unit| {
+              unit.end_col_abs.saturating_sub(unit.start_col_abs).max(1)
+            })
+        },
+      };
       cursors.push(CursorPlacement {
         cursor_id: cursor.id,
         surface_row,
         col,
         x_px: measurements.col_to_x_px(col),
         y_px: measurements.row_to_y_px(surface_row),
+        width_px: measurements.col_span_width_px(0, width_cols),
         height_px: measurements.row_height_px,
+        semantics,
       });
     }
 

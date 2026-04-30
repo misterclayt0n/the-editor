@@ -44,6 +44,7 @@ pub use layers::{
   BlockWidget,
   CursorLayerDelta,
   CursorPlacement,
+  CursorSemantics,
   GutterLayerDelta,
   LayerDeltaSet,
   OverlayLayerDelta,

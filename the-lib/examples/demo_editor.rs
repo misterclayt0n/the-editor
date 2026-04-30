@@ -80,6 +80,7 @@ use the_lib::{
   render::{
     CellGridMetrics,
     CursorPlacement,
+    CursorSemantics,
     FrameRow,
     PresentUpdate,
     RetainedFrame,
@@ -137,6 +138,38 @@ enum RenderProfile {
   FullStress,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CursorShape {
+  Block,
+  Bar,
+  Underline,
+}
+
+impl CursorShape {
+  fn next(self) -> Self {
+    match self {
+      Self::Block => Self::Bar,
+      Self::Bar => Self::Underline,
+      Self::Underline => Self::Block,
+    }
+  }
+
+  fn label(self) -> &'static str {
+    match self {
+      Self::Block => "block",
+      Self::Bar => "bar",
+      Self::Underline => "underline",
+    }
+  }
+
+  fn semantics(self) -> CursorSemantics {
+    match self {
+      Self::Block | Self::Underline => CursorSemantics::Cell,
+      Self::Bar => CursorSemantics::InsertionPoint,
+    }
+  }
+}
+
 impl RenderProfile {
   fn next(self) -> Self {
     match self {
@@ -187,6 +220,7 @@ struct App {
   transaction_count: u64,
   render_view:       RetainedFrame,
   render_profile:    RenderProfile,
+  cursor_shape:      CursorShape,
 }
 
 #[cfg(test)]
@@ -228,13 +262,14 @@ impl App {
       mode: Mode::Normal,
       status: String::from(
         "Ctrl-Q quit · Ctrl-S save · Ctrl-Shift-S/F3 save as · Ctrl-Z/Y undo/redo · Ctrl-C/X/V \
-         copy/cut/paste · / search · F2 wrap · F6 stress · F7 render profile",
+         copy/cut/paste · / search · F2 wrap · F6 stress · F7 render profile · F8 cursor shape",
       ),
       last_render: Duration::ZERO,
       last_present: PresentUpdate::default(),
       transaction_count: 0,
       render_view: RetainedFrame::default(),
       render_profile: RenderProfile::Baseline,
+      cursor_shape: CursorShape::Block,
     })
   }
 
@@ -344,6 +379,7 @@ impl App {
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
     }
     view.annotations = annotations;
+    view.cursor_semantics = self.cursor_shape.semantics();
     view.widgets = if profile.show_widgets() {
       vec![
         the_lib::render::BlockWidget::after_line(
@@ -408,13 +444,9 @@ impl App {
       )?;
     }
 
-    if let Some((x, y)) = self.prompt_cursor_pos(cols as usize, rows as usize) {
-      queue!(stdout, MoveTo(x as u16, y as u16), Show)?;
-    } else if let Some((x, y)) = self.cursor_screen_pos(editor_rows, cols as usize) {
-      queue!(stdout, MoveTo(x as u16, y as u16), Show)?;
-    } else {
-      queue!(stdout, Hide)?;
-    }
+    // Editor cursors are painted by draw_visible_row(). Keep the terminal
+    // cursor hidden so cursor shape is controlled by the client renderer.
+    queue!(stdout, Hide)?;
 
     stdout.flush()?;
     Ok(())
@@ -668,7 +700,9 @@ impl App {
       let selected = selections
         .iter()
         .any(|span| ranges_overlap(col, next_col, span.start_col, span.end_col));
-      let cursor = cursors.iter().find(|cursor| cursor.col == col);
+      let cursor = (self.cursor_shape == CursorShape::Block)
+        .then(|| cursors.iter().find(|cursor| cursor.col == col))
+        .flatten();
 
       if let Some(cursor) = cursor {
         CellStyle {
@@ -723,7 +757,9 @@ impl App {
 
     flush_segment(stdout, active_style, &mut segment)?;
 
-    if let Some(cursor) = cursors.iter().find(|cursor| cursor.col == current_col) {
+    if self.cursor_shape == CursorShape::Block
+      && let Some(cursor) = cursors.iter().find(|cursor| cursor.col == current_col)
+    {
       let style = CellStyle {
         fg: Some(if cursor.cursor_id == primary {
           Color::Black
@@ -750,18 +786,64 @@ impl App {
       SetBackgroundColor(Color::Reset),
       SetAttribute(Attribute::Reset),
     )?;
+
+    self.draw_cursor_overlays(stdout, x, y, text, cursors)?;
+
+    queue!(
+      stdout,
+      SetForegroundColor(Color::Reset),
+      SetBackgroundColor(Color::Reset),
+      SetAttribute(Attribute::Reset),
+    )?;
     Ok(())
   }
 
-  fn cursor_screen_pos(&self, editor_rows: usize, cols: usize) -> Option<(usize, usize)> {
-    let metadata_cols = self.metadata_cols(cols);
-    let text_cols = cols.saturating_sub(metadata_cols);
-    self.render_view.primary_cursor_screen_pos(
-      self.surface().primary_cursor_id(),
-      metadata_cols,
-      text_cols,
-      editor_rows,
-    )
+  fn draw_cursor_overlays<W: Write>(
+    &self,
+    stdout: &mut W,
+    x: u16,
+    y: u16,
+    text: &str,
+    cursors: &[CursorPlacement],
+  ) -> io::Result<()> {
+    if self.cursor_shape == CursorShape::Block {
+      return Ok(());
+    }
+
+    let primary = self.surface().primary_cursor_id();
+    for cursor in cursors {
+      let fg = if cursor.cursor_id == primary {
+        Color::White
+      } else {
+        Color::DarkRed
+      };
+      let x = x.saturating_add(cursor.col as u16);
+      match self.cursor_shape {
+        CursorShape::Block => {},
+        CursorShape::Bar => {
+          queue!(
+            stdout,
+            MoveTo(x, y),
+            SetForegroundColor(fg),
+            SetBackgroundColor(Color::Reset),
+            Print("▏"),
+          )?;
+        },
+        CursorShape::Underline => {
+          queue!(
+            stdout,
+            MoveTo(x, y),
+            SetForegroundColor(fg),
+            SetBackgroundColor(Color::Reset),
+            SetAttribute(Attribute::Underlined),
+            Print(cell_text_at_col(text, cursor.col)),
+            SetAttribute(Attribute::NoUnderline),
+          )?;
+        },
+      }
+    }
+
+    Ok(())
   }
 
   fn syntax_color(&self, kind: the_lib::syntax::HighlightKindId) -> Option<Color> {
@@ -821,6 +903,7 @@ impl App {
       KeyCode::F(3) => self.start_save_as(),
       KeyCode::F(6) => self.stress_transactions()?,
       KeyCode::F(7) => self.cycle_render_profile(),
+      KeyCode::F(8) => self.cycle_cursor_shape(),
       KeyCode::Home => self.apply_motion_simple(move_line_start, mode)?,
       KeyCode::End => self.apply_motion_simple(move_line_end, mode)?,
       KeyCode::Backspace => self.backspace()?,
@@ -1287,6 +1370,11 @@ impl App {
     self.status = format!("render profile: {}", self.render_profile.label());
   }
 
+  fn cycle_cursor_shape(&mut self) {
+    self.cursor_shape = self.cursor_shape.next();
+    self.status = format!("cursor shape: {}", self.cursor_shape.label());
+  }
+
   fn stress_transactions(&mut self) -> Result<(), Box<dyn std::error::Error>> {
     let start = Instant::now();
     for _ in 0..1000 {
@@ -1336,12 +1424,6 @@ impl App {
       Mode::Search { query } => Some(format!("/{query}")),
       Mode::SaveAs { path } => Some(format!("save as: {path}")),
     }
-  }
-
-  fn prompt_cursor_pos(&self, cols: usize, rows: usize) -> Option<(usize, usize)> {
-    let prompt = self.prompt_line()?;
-    let x = prompt.chars().count().min(cols.saturating_sub(1));
-    Some((x, rows.saturating_sub(1)))
   }
 
   fn footer_rows(&self) -> usize {
@@ -1436,9 +1518,10 @@ impl App {
     let present = self.last_present;
 
     let info = format!(
-      " {mode} {name}{modified} | profile {} | ln {}, col {} | sel {} | rev {} | tx {} | render \
-       {:?} | gen {} | Δ c/rm/r {} / {} / {} | meta {} | dmg {}..{}{} ",
+      " {mode} {name}{modified} | profile {} | cursor {} | ln {}, col {} | sel {} | rev {} | tx \
+       {} | render {:?} | gen {} | Δ c/rm/r {} / {} / {} | meta {} | dmg {}..{}{} ",
       self.render_profile.label(),
+      self.cursor_shape.label(),
       line + 1,
       col + 1,
       selection_len,
@@ -1507,6 +1590,20 @@ fn first_substitutable_char(text: ropey::RopeSlice<'_>) -> Option<(usize, &'stat
 
 fn ranges_overlap(start_a: usize, end_a: usize, start_b: usize, end_b: usize) -> bool {
   start_a < end_b && start_b < end_a
+}
+
+fn cell_text_at_col(text: &str, target_col: usize) -> String {
+  let mut col = 0;
+  for ch in text.chars() {
+    let mut encoded = [0; 4];
+    let width = grapheme_width(ch.encode_utf8(&mut encoded)).max(1);
+    let next_col = col + width;
+    if target_col >= col && target_col < next_col {
+      return ch.to_string();
+    }
+    col = next_col;
+  }
+  String::from(" ")
 }
 
 fn truncate_pad(text: &str, width: usize) -> String {

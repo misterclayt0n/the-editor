@@ -50,6 +50,7 @@ Rust owns the built-in cell-grid path:
 - retained row/layer diffing
 - damage tracking
 - projection of selections/cursors/syntax into row-local payloads
+- cursor placement semantics (`InsertionPoint` for bar carets, `Cell` for block/underline cursors)
 
 Clients own:
 
@@ -80,6 +81,7 @@ pub struct SurfaceViewSpec {
   pub viewport: Viewport,
   pub format: TextFormat,
   pub measurements: CellGridMetrics,
+  pub cursor_semantics: CursorSemantics,
   pub annotations: TextAnnotations,
   pub widgets: Vec<BlockWidget>,
 }
@@ -571,6 +573,17 @@ Projected from `VisibleLayout` only.
 
 ### Cursor layer
 Projected from `VisibleLayout` only.
+
+The cell-grid renderer distinguishes cursor placement semantics from cursor drawing style:
+
+```rust
+pub enum CursorSemantics {
+  InsertionPoint, // edge-based, suitable for a vertical bar caret
+  Cell,           // cell-based, suitable for block/underline cursors
+}
+```
+
+`CellGridRenderSurface` emits `CursorPlacement { width_px, height_px, semantics, ... }`. Clients still own shape, blink, color, theme, and animation, but they no longer have to guess whether the placement refers to an insertion edge or a cell.
 
 ### Syntax layer
 Syntax provides document highlight runs.

@@ -20,6 +20,7 @@ use crate::{
     BlockWidget,
     CellGridMetrics,
     CellGridRenderSurface,
+    CursorSemantics,
     FrameRequest,
     PresentUpdate,
     RenderFrameDelta,
@@ -102,11 +103,12 @@ struct VisibleSyntaxCache {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SurfaceViewSpec {
-  pub viewport:     Viewport,
-  pub format:       TextFormat,
-  pub measurements: CellGridMetrics,
-  pub annotations:  TextAnnotations,
-  pub widgets:      Vec<BlockWidget>,
+  pub viewport:         Viewport,
+  pub format:           TextFormat,
+  pub measurements:     CellGridMetrics,
+  pub cursor_semantics: CursorSemantics,
+  pub annotations:      TextAnnotations,
+  pub widgets:          Vec<BlockWidget>,
 }
 
 impl SurfaceViewSpec {
@@ -115,6 +117,7 @@ impl SurfaceViewSpec {
       viewport,
       format: TextFormat::default(),
       measurements: CellGridMetrics::default(),
+      cursor_semantics: CursorSemantics::Cell,
       annotations: TextAnnotations::default(),
       widgets: Vec::new(),
     }
@@ -194,11 +197,12 @@ impl Surface {
 
   pub fn view_spec(&self) -> SurfaceViewSpec {
     SurfaceViewSpec {
-      viewport:     self.viewport,
-      format:       self.render.text_format().clone(),
-      measurements: self.render.measurements(),
-      annotations:  self.render.text_annotations().clone(),
-      widgets:      self.render.widgets().to_vec(),
+      viewport:         self.viewport,
+      format:           self.render.text_format().clone(),
+      measurements:     self.render.measurements(),
+      cursor_semantics: self.render.cursor_semantics(),
+      annotations:      self.render.text_annotations().clone(),
+      widgets:          self.render.widgets().to_vec(),
     }
   }
 
@@ -206,6 +210,7 @@ impl Surface {
     self.set_viewport(spec.viewport);
     self.set_text_format(spec.format);
     self.set_measurements(spec.measurements);
+    self.set_cursor_semantics(spec.cursor_semantics);
     self.set_text_annotations(spec.annotations);
     self.set_widgets(spec.widgets);
   }
@@ -290,6 +295,14 @@ impl Surface {
     self.render.set_measurements(measurements);
     self.layout_index.invalidate_all();
     self.invalidate_visible_syntax_cache();
+  }
+
+  pub fn cursor_semantics(&self) -> CursorSemantics {
+    self.render.cursor_semantics()
+  }
+
+  pub fn set_cursor_semantics(&mut self, semantics: CursorSemantics) {
+    self.render.set_cursor_semantics(semantics);
   }
 
   pub fn widgets(&self) -> &[BlockWidget] {

@@ -15,9 +15,9 @@
     }
   },
   "scripts": {
-    "build": "bun run --filter './packages/*' build",
-    "typecheck": "bun run --filter './packages/*' typecheck",
-    "test": "bun run --filter './packages/*' test"
+    "build": "bun run --filter './packages/*' build && bun run --filter './apps/*' build",
+    "typecheck": "bun run --filter './packages/*' --filter './apps/*' typecheck",
+    "test": "bun run --filter './packages/*' --filter './apps/*' test"
   },
   "devDependencies": {
     "@types/node": "catalog:",

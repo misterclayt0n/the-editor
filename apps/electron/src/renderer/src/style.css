@@ -1,0 +1,46 @@
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #0f0f0f;
+  color: #d4d4d4;
+  font-family: system-ui, sans-serif;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.toolbar {
+  align-items: center;
+  background: #181818;
+  border-bottom: 1px solid #333;
+  display: flex;
+  gap: 12px;
+  padding: 8px 12px;
+}
+
+button {
+  background: #2b2b2b;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #eee;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+.surfaceShell {
+  flex: 1;
+  padding: 16px;
+}
+
+canvas {
+  background: #111;
+  border: 1px solid #333;
+}

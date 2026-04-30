@@ -1,0 +1,35 @@
+{
+  "name": "@the-editor/electron",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main/main.cjs",
+  "scripts": {
+    "dev": "bun run scripts/dev.mjs",
+    "dev:main": "tsdown --watch",
+    "dev:renderer": "vite --host 127.0.0.1",
+    "dev:electron": "bun run scripts/dev-electron.mjs",
+    "build": "tsdown && mkdir -p dist/main && cp src/main/preload.cjs dist/main/preload.cjs && vite build",
+    "start": "electron dist/main/main.cjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@the-editor/contracts": "workspace:*",
+    "@the-editor/default": "workspace:*",
+    "@the-editor/editor": "workspace:*",
+    "@vitejs/plugin-react": "latest",
+    "electron": "latest",
+    "vite": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

@@ -51,6 +51,10 @@ export class RuntimeNativeClient implements RuntimeApi {
       this.session.setSurfaceMeasurements(params.surfaceId, params.metrics);
       return { ok: true };
     },
+    setSoftWrap: async (params: { surfaceId: SurfaceId; softWrap: boolean }): Promise<OkResult> => {
+      this.session.setSurfaceSoftWrap(params.surfaceId, params.softWrap);
+      return { ok: true };
+    },
     snapshot: async (params: { surfaceId: SurfaceId }): Promise<SurfaceSnapshot> => {
       return this.session.snapshotSurfaceState(params.surfaceId) as SurfaceSnapshot;
     },
@@ -107,6 +111,8 @@ export class RuntimeNativeClient implements RuntimeApi {
         return this.surfaces.setViewport(params as Parameters<RuntimeApi["surfaces"]["setViewport"]>[0]);
       case "surfaces.setMetrics":
         return this.surfaces.setMetrics(params as Parameters<RuntimeApi["surfaces"]["setMetrics"]>[0]);
+      case "surfaces.setSoftWrap":
+        return this.surfaces.setSoftWrap(params as Parameters<RuntimeApi["surfaces"]["setSoftWrap"]>[0]);
       case "surfaces.snapshot":
         return this.surfaces.snapshot(params as Parameters<RuntimeApi["surfaces"]["snapshot"]>[0]);
       case "surfaces.setSelection":

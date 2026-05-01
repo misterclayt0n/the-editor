@@ -7,6 +7,7 @@ export declare class NativeRuntimeSession {
   createSurface(documentId: number, viewport?: JsViewport | undefined | null): number
   setSurfaceViewport(surfaceId: number, viewport: JsViewport): void
   setSurfaceMeasurements(surfaceId: number, metrics: JsCellGridMetrics): void
+  setSurfaceSoftWrap(surfaceId: number, softWrap: boolean): void
   snapshotSurfaceState(surfaceId: number): JsSurfaceSnapshot
   setSurfaceSelection(surfaceId: number, selection: JsSelection): void
   applySurfaceTransaction(surfaceId: number, transaction: JsTransaction, selection: JsSelection): void

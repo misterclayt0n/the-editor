@@ -7,6 +7,11 @@ export interface CreateScratchArgs {
   viewport?: Viewport;
 }
 
+export interface OpenFileArgs {
+  path: string;
+  viewport?: Viewport;
+}
+
 export interface RenderActiveSurfaceArgs {
   viewport?: Viewport;
 }
@@ -29,8 +34,54 @@ export function defaultScratch(): EditorModule {
         const state = getDefaultState(editor);
         state.activeDocumentId = document.documentId;
         state.activeSurfaceId = surface.surfaceId;
+        state.activePath = undefined;
         setEditorMode(editor, "normal");
         await refreshActiveSurface(editor, viewport);
+        return state;
+      },
+    });
+
+    editor.commands.register<OpenFileArgs, DefaultEditorState>({
+      id: commandId("file.open"),
+      title: "Open File",
+      async run(_ctx, args) {
+        const viewport = args.viewport ?? defaultViewport();
+        const document = await editor.runtime.documents.openFile({ path: args.path });
+        const surface = await editor.runtime.surfaces.create({
+          documentId: document.documentId,
+          viewport,
+        });
+
+        const state = getDefaultState(editor);
+        state.activeDocumentId = document.documentId;
+        state.activeSurfaceId = surface.surfaceId;
+        state.activePath = args.path;
+        setEditorMode(editor, "normal");
+        await refreshActiveSurface(editor, viewport);
+        return state;
+      },
+    });
+
+    editor.commands.register<undefined, DefaultEditorState>({
+      id: commandId("view.toggleSoftWrap"),
+      title: "Toggle Soft Wrap",
+      async run() {
+        const state = getDefaultState(editor);
+        if (!state.activeSurfaceId) throw new Error("no active surface");
+        state.softWrap = !state.softWrap;
+        await editor.runtime.surfaces.setSoftWrap({ surfaceId: state.activeSurfaceId, softWrap: state.softWrap });
+        await refreshActiveSurface(editor);
+        return state;
+      },
+    });
+
+    editor.commands.register<undefined, DefaultEditorState>({
+      id: commandId("view.toggleAnnotations"),
+      title: "Toggle Annotations",
+      async run() {
+        const state = getDefaultState(editor);
+        state.showAnnotations = !state.showAnnotations;
+        await refreshActiveSurface(editor);
         return state;
       },
     });

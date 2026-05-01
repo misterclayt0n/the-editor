@@ -7,6 +7,9 @@ export interface DefaultEditorState {
   mode: EditorMode;
   activeDocumentId: DocumentId | undefined;
   activeSurfaceId: SurfaceId | undefined;
+  activePath: string | undefined;
+  softWrap: boolean;
+  showAnnotations: boolean;
   lastFrame: RenderFrameDelta | undefined;
 }
 
@@ -19,6 +22,9 @@ export function getDefaultState(editor: EditorHost): DefaultEditorState {
       mode: "normal",
       activeDocumentId: undefined,
       activeSurfaceId: undefined,
+      activePath: undefined,
+      softWrap: false,
+      showAnnotations: true,
       lastFrame: undefined,
     };
     defaultState.set(editor, state);

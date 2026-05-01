@@ -74,7 +74,11 @@ export function configureTextSurface(canvas: HTMLCanvasElement): SurfaceConfigur
   };
 }
 
-export function paintTextSurface(canvas: HTMLCanvasElement, frame: RenderFrameDelta): void {
+export interface PaintTextSurfaceOptions {
+  showAnnotations?: boolean;
+}
+
+export function paintTextSurface(canvas: HTMLCanvasElement, frame: RenderFrameDelta, options: PaintTextSurfaceOptions = {}): void {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
 
@@ -93,6 +97,7 @@ export function paintTextSurface(canvas: HTMLCanvasElement, frame: RenderFrameDe
   paintSelections(ctx, frame, metrics);
   paintRows(ctx, frame, rows, metrics);
   paintCursors(ctx, frame, rows, metrics);
+  if (options.showAnnotations ?? true) paintAnnotations(ctx, frame, metrics);
 }
 
 function prepareContext(ctx: CanvasRenderingContext2D, dpr: number): void {
@@ -171,6 +176,19 @@ function paintRows(
       drawCells(ctx, cells, col, cells.length, row.placement.surfaceRow, theme.foreground, metrics);
     }
   }
+}
+
+function paintAnnotations(ctx: CanvasRenderingContext2D, frame: RenderFrameDelta, metrics: RendererMetrics): void {
+  const rows = frame.rowMetadata?.rows ?? [];
+  if (rows.length === 0) return;
+  ctx.fillStyle = "#5f5f5f";
+  ctx.font = `12px ${FONT_FAMILY}`;
+  ctx.textBaseline = "alphabetic";
+  for (const row of rows) {
+    const label = row.docLine === null ? "·" : String(row.docLine + 1).padStart(4, " ");
+    ctx.fillText(label, 4, yForRow(row.surfaceRow, metrics) + metrics.baselineOffset);
+  }
+  ctx.font = FONT;
 }
 
 function paintCursors(

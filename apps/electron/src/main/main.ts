@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
 
@@ -64,6 +64,13 @@ function startPolicyWorker(): void {
     rejectPendingPolicyRequests(new Error(`policy worker exited with code ${code}`));
   });
 }
+
+ipcMain.handle("app:open-file-dialog", async () => {
+  const result = await dialog.showOpenDialog(mainWindow!, {
+    properties: ["openFile"],
+  });
+  return result.canceled ? null : result.filePaths[0];
+});
 
 ipcMain.handle("policy:request", async (_event, request: { method: string; params?: unknown }) => {
   if (!policyWorker) throw new Error("policy worker is not running");

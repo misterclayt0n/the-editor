@@ -200,6 +200,7 @@ export interface RuntimeApi {
     setMetrics(params: { surfaceId: SurfaceId; metrics: CellGridMetrics }): Promise<OkResult>;
     setSoftWrap(params: { surfaceId: SurfaceId; softWrap: boolean }): Promise<OkResult>;
     snapshot(params: { surfaceId: SurfaceId }): Promise<SurfaceSnapshot>;
+    indentForNewline(params: { surfaceId: SurfaceId; pos: number }): Promise<{ indent: string }>;
     setSelection(params: { surfaceId: SurfaceId; selection: SelectionSpec }): Promise<OkResult>;
     applyTransaction(params: {
       surfaceId: SurfaceId;

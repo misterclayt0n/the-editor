@@ -58,6 +58,9 @@ export class RuntimeNativeClient implements RuntimeApi {
     snapshot: async (params: { surfaceId: SurfaceId }): Promise<SurfaceSnapshot> => {
       return this.session.snapshotSurfaceState(params.surfaceId) as SurfaceSnapshot;
     },
+    indentForNewline: async (params: { surfaceId: SurfaceId; pos: number }): Promise<{ indent: string }> => ({
+      indent: this.session.indentForSurfaceNewline(params.surfaceId, params.pos),
+    }),
     setSelection: async (params: { surfaceId: SurfaceId; selection: SelectionSpec }): Promise<OkResult> => {
       this.session.setSurfaceSelection(params.surfaceId, params.selection);
       return { ok: true };
@@ -115,6 +118,8 @@ export class RuntimeNativeClient implements RuntimeApi {
         return this.surfaces.setSoftWrap(params as Parameters<RuntimeApi["surfaces"]["setSoftWrap"]>[0]);
       case "surfaces.snapshot":
         return this.surfaces.snapshot(params as Parameters<RuntimeApi["surfaces"]["snapshot"]>[0]);
+      case "surfaces.indentForNewline":
+        return this.surfaces.indentForNewline(params as Parameters<RuntimeApi["surfaces"]["indentForNewline"]>[0]);
       case "surfaces.setSelection":
         return this.surfaces.setSelection(params as Parameters<RuntimeApi["surfaces"]["setSelection"]>[0]);
       case "surfaces.applyTransaction":

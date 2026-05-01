@@ -10,6 +10,7 @@ export interface DefaultEditorState {
   activePath: string | undefined;
   softWrap: boolean;
   showAnnotations: boolean;
+  preferredColumn: number | undefined;
   lastFrame: RenderFrameDelta | undefined;
 }
 
@@ -25,6 +26,7 @@ export function getDefaultState(editor: EditorHost): DefaultEditorState {
       activePath: undefined,
       softWrap: false,
       showAnnotations: true,
+      preferredColumn: undefined,
       lastFrame: undefined,
     };
     defaultState.set(editor, state);

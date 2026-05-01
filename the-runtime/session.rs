@@ -13,10 +13,12 @@ use std::{
 use ropey::Rope;
 use the_lib::{
   document::Document,
+  indent::indent_for_newline,
   clipboard::{
     ClipboardProvider,
     ClipboardType,
   },
+  syntax::IndentationHeuristic,
   operation::{
     SelectionSpec,
     SurfaceSnapshot,
@@ -663,6 +665,38 @@ impl RuntimeSession {
       selection: selection_to_spec(entry.surface.selection()),
       active_cursor_id: entry.surface.active_cursor().map(|id| id.get()),
     })
+  }
+
+  pub fn indent_for_surface_newline(
+    &mut self,
+    surface: SurfaceHandle,
+    pos: usize,
+  ) -> RuntimeResult<String> {
+    let registry = self.prepare_surface_render(surface)?;
+    let entry = self
+      .surface_entry(surface)
+      .ok_or(RuntimeError::UnknownSurface(surface))?;
+    let document = self
+      .document(entry.document)
+      .ok_or(RuntimeError::UnknownDocument(entry.document))?;
+    let text = document.text().slice(..);
+    let pos = pos.min(text.len_chars());
+    let current_line = text.char_to_line(pos);
+    let state = document.active_syntax();
+    let indent_query = state
+      .and_then(|state| registry.indent_query(state.language_id()).ok().flatten());
+    let syntax = state.map(|state| state.syntax());
+    Ok(indent_for_newline(
+      indent_query,
+      syntax.as_deref(),
+      &IndentationHeuristic::Hybrid,
+      &document.indent_style(),
+      4,
+      text,
+      current_line,
+      pos,
+      current_line,
+    ))
   }
 
   pub fn set_surface_selection(

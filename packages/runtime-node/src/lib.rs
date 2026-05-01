@@ -149,6 +149,14 @@ impl NativeRuntimeSession {
   }
 
   #[napi]
+  pub fn indent_for_surface_newline(&self, surface_id: u32, pos: u32) -> Result<String> {
+    let mut runtime = self.lock()?;
+    runtime
+      .indent_for_surface_newline(surface_handle(surface_id)?, pos as usize)
+      .map_err(runtime_error)
+  }
+
+  #[napi]
   pub fn set_surface_selection(&self, surface_id: u32, selection: JsSelection) -> Result<()> {
     let mut runtime = self.lock()?;
     runtime

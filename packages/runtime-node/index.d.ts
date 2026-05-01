@@ -11,6 +11,7 @@ export declare class NativeRuntimeSession {
   snapshotSurfaceState(surfaceId: number): JsSurfaceSnapshot
   indentForSurfaceNewline(surfaceId: number, pos: number): string
   setSurfaceSelection(surfaceId: number, selection: JsSelection): void
+  executeSurfaceTextCommand(surfaceId: number, command: JsTextCommand): JsTextCommandResult
   applySurfaceTransaction(surfaceId: number, transaction: JsTransaction, selection: JsSelection): void
   renderFrameJson(surfaceId: number, viewport?: JsViewport | undefined | null, sinceGeneration?: number | undefined | null): string
   saveSurfaceDocument(surfaceId: number): void
@@ -41,6 +42,19 @@ export interface JsSurfaceSnapshot {
   text: string
   selection: JsSelection
   activeCursorId?: number
+}
+
+export interface JsTextCommand {
+  kind: string
+  count?: number
+  text?: string
+  indent?: string
+  indentUnit?: string
+  preferredColumn?: number
+}
+
+export interface JsTextCommandResult {
+  preferredColumn?: number
 }
 
 export interface JsTransaction {

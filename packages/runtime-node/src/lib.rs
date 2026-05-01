@@ -11,6 +11,7 @@ use the_runtime::{
   RuntimeSession,
   SelectionSpec,
   SurfaceHandle,
+  TextCommand,
   TransactionSpec,
 };
 
@@ -61,6 +62,21 @@ pub struct JsReplacement {
 #[napi(object)]
 pub struct JsTransaction {
   pub replacements: Vec<JsReplacement>,
+}
+
+#[napi(object)]
+pub struct JsTextCommand {
+  pub kind: String,
+  pub count: Option<u32>,
+  pub text: Option<String>,
+  pub indent: Option<String>,
+  pub indent_unit: Option<String>,
+  pub preferred_column: Option<u32>,
+}
+
+#[napi(object)]
+pub struct JsTextCommandResult {
+  pub preferred_column: Option<u32>,
 }
 
 #[napi(object)]
@@ -165,6 +181,15 @@ impl NativeRuntimeSession {
   }
 
   #[napi]
+  pub fn execute_surface_text_command(&self, surface_id: u32, command: JsTextCommand) -> Result<JsTextCommandResult> {
+    let mut runtime = self.lock()?;
+    let preferred_column = runtime
+      .execute_surface_text_command(surface_handle(surface_id)?, text_command(command)?)
+      .map_err(runtime_error)?;
+    Ok(JsTextCommandResult { preferred_column: preferred_column.map(|col| col as u32) })
+  }
+
+  #[napi]
   pub fn apply_surface_transaction(
     &self,
     surface_id: u32,
@@ -235,6 +260,34 @@ fn selection_spec(selection: JsSelection) -> SelectionSpec {
       head: range.head as usize,
     }).collect(),
   }
+}
+
+fn text_command(command: JsTextCommand) -> Result<TextCommand> {
+  let count = command.count.unwrap_or(1) as usize;
+  Ok(match command.kind.as_str() {
+    "moveCharLeft" => TextCommand::MoveCharLeft { count },
+    "moveCharRight" => TextCommand::MoveCharRight { count },
+    "moveVisualLineUp" => TextCommand::MoveVisualLineUp {
+      count,
+      preferred_column: command.preferred_column.map(|col| col as usize),
+    },
+    "moveVisualLineDown" => TextCommand::MoveVisualLineDown {
+      count,
+      preferred_column: command.preferred_column.map(|col| col as usize),
+    },
+    "gotoLineStart" => TextCommand::GotoLineStart,
+    "gotoLineEnd" => TextCommand::GotoLineEnd,
+    "gotoDocumentStart" => TextCommand::GotoDocumentStart,
+    "gotoDocumentEnd" => TextCommand::GotoDocumentEnd,
+    "insertText" => TextCommand::InsertText { text: command.text.unwrap_or_default() },
+    "insertNewline" => TextCommand::InsertNewline {
+      indent: command.indent.unwrap_or_default(),
+      indent_unit: command.indent_unit.unwrap_or_else(|| "  ".into()),
+    },
+    "deleteBackward" => TextCommand::DeleteBackward,
+    "deleteForward" => TextCommand::DeleteForward,
+    _ => return Err(Error::from_reason(format!("unknown text command {}", command.kind))),
+  })
 }
 
 fn transaction_spec(transaction: JsTransaction) -> TransactionSpec {

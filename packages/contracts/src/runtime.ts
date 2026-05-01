@@ -78,6 +78,24 @@ export interface TransactionSpec {
   replacements: ReplacementSpec[];
 }
 
+export type TextCommand =
+  | { kind: "moveCharLeft"; count?: number }
+  | { kind: "moveCharRight"; count?: number }
+  | { kind: "moveVisualLineUp"; count?: number; preferredColumn?: number }
+  | { kind: "moveVisualLineDown"; count?: number; preferredColumn?: number }
+  | { kind: "gotoLineStart" }
+  | { kind: "gotoLineEnd" }
+  | { kind: "gotoDocumentStart" }
+  | { kind: "gotoDocumentEnd" }
+  | { kind: "insertText"; text: string }
+  | { kind: "insertNewline"; indent?: string; indentUnit?: string }
+  | { kind: "deleteBackward" }
+  | { kind: "deleteForward" };
+
+export interface TextCommandResult {
+  preferredColumn?: number;
+}
+
 export interface SurfaceSnapshot {
   text: string;
   selection: SelectionSpec;
@@ -201,6 +219,7 @@ export interface RuntimeApi {
     setSoftWrap(params: { surfaceId: SurfaceId; softWrap: boolean }): Promise<OkResult>;
     snapshot(params: { surfaceId: SurfaceId }): Promise<SurfaceSnapshot>;
     indentForNewline(params: { surfaceId: SurfaceId; pos: number }): Promise<{ indent: string }>;
+    executeTextCommand(params: { surfaceId: SurfaceId; command: TextCommand }): Promise<TextCommandResult>;
     setSelection(params: { surfaceId: SurfaceId; selection: SelectionSpec }): Promise<OkResult>;
     applyTransaction(params: {
       surfaceId: SurfaceId;

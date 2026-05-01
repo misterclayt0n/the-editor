@@ -23,6 +23,7 @@ pub use the_lib::operation::{
   ReplacementSpec,
   SelectionSpec,
   SurfaceSnapshot,
+  TextCommand,
   TransactionSpec,
 };
 pub use syntax::{

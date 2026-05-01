@@ -9,6 +9,8 @@ import type {
   SurfaceCreated,
   SurfaceId,
   SurfaceSnapshot,
+  TextCommand,
+  TextCommandResult,
   TransactionSpec,
   Viewport,
 } from "@the-editor/contracts/runtime";
@@ -61,6 +63,9 @@ export class RuntimeNativeClient implements RuntimeApi {
     indentForNewline: async (params: { surfaceId: SurfaceId; pos: number }): Promise<{ indent: string }> => ({
       indent: this.session.indentForSurfaceNewline(params.surfaceId, params.pos),
     }),
+    executeTextCommand: async (params: { surfaceId: SurfaceId; command: TextCommand }): Promise<TextCommandResult> => {
+      return this.session.executeSurfaceTextCommand(params.surfaceId, params.command) as TextCommandResult;
+    },
     setSelection: async (params: { surfaceId: SurfaceId; selection: SelectionSpec }): Promise<OkResult> => {
       this.session.setSurfaceSelection(params.surfaceId, params.selection);
       return { ok: true };
@@ -120,6 +125,8 @@ export class RuntimeNativeClient implements RuntimeApi {
         return this.surfaces.snapshot(params as Parameters<RuntimeApi["surfaces"]["snapshot"]>[0]);
       case "surfaces.indentForNewline":
         return this.surfaces.indentForNewline(params as Parameters<RuntimeApi["surfaces"]["indentForNewline"]>[0]);
+      case "surfaces.executeTextCommand":
+        return this.surfaces.executeTextCommand(params as Parameters<RuntimeApi["surfaces"]["executeTextCommand"]>[0]);
       case "surfaces.setSelection":
         return this.surfaces.setSelection(params as Parameters<RuntimeApi["surfaces"]["setSelection"]>[0]);
       case "surfaces.applyTransaction":

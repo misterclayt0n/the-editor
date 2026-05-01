@@ -22,7 +22,10 @@ use the_lib::{
   operation::{
     SelectionSpec,
     SurfaceSnapshot,
+    TextCommand,
+    TextCommandEffect,
     TransactionSpec,
+    execute_text_command,
     selection_from_spec,
     selection_to_spec,
     transaction_from_spec,
@@ -709,6 +712,21 @@ impl RuntimeSession {
       surface.apply_selection(document, selection)
     })??;
     Ok(())
+  }
+
+  pub fn execute_surface_text_command(
+    &mut self,
+    surface: SurfaceHandle,
+    command: TextCommand,
+  ) -> RuntimeResult<Option<usize>> {
+    self.with_surface_document_mut(surface, move |surface, document| -> RuntimeResult<Option<usize>> {
+      let output = execute_text_command(document.text().slice(..), surface.selection(), command)?;
+      match output.effect {
+        TextCommandEffect::Selection(selection) => surface.apply_selection(document, selection)?,
+        TextCommandEffect::Edit(edit) => surface.apply_edit(document, edit)?,
+      }
+      Ok(output.state.preferred_column)
+    })?
   }
 
   pub fn apply_surface_transaction(

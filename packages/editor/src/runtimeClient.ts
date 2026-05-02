@@ -1,17 +1,14 @@
 import type {
   CellGridMetrics,
+  ClipboardKind,
   DocumentId,
   DocumentOpened,
   OkResult,
   RenderFrameDelta,
   RuntimeApi,
-  SelectionSpec,
   SurfaceCreated,
   SurfaceId,
-  SurfaceSnapshot,
-  TextCommand,
-  TextCommandResult,
-  TransactionSpec,
+  SurfaceOperation,
   Viewport,
 } from "@the-editor/contracts/runtime";
 import { NativeRuntimeSession } from "@the-editor/runtime-node";
@@ -57,25 +54,28 @@ export class RuntimeNativeClient implements RuntimeApi {
       this.session.setSurfaceSoftWrap(params.surfaceId, params.softWrap);
       return { ok: true };
     },
-    snapshot: async (params: { surfaceId: SurfaceId }): Promise<SurfaceSnapshot> => {
-      return this.session.snapshotSurfaceState(params.surfaceId) as SurfaceSnapshot;
-    },
-    indentForNewline: async (params: { surfaceId: SurfaceId; pos: number }): Promise<{ indent: string }> => ({
-      indent: this.session.indentForSurfaceNewline(params.surfaceId, params.pos),
-    }),
-    executeTextCommand: async (params: { surfaceId: SurfaceId; command: TextCommand }): Promise<TextCommandResult> => {
-      return this.session.executeSurfaceTextCommand(params.surfaceId, params.command) as TextCommandResult;
-    },
-    setSelection: async (params: { surfaceId: SurfaceId; selection: SelectionSpec }): Promise<OkResult> => {
-      this.session.setSurfaceSelection(params.surfaceId, params.selection);
+    applyOperation: async (params: { surfaceId: SurfaceId; operation: SurfaceOperation }): Promise<OkResult> => {
+      this.session.applySurfaceOperation(params.surfaceId, params.operation);
       return { ok: true };
     },
-    applyTransaction: async (params: {
-      surfaceId: SurfaceId;
-      transaction: TransactionSpec;
-      selection: SelectionSpec;
-    }): Promise<OkResult> => {
-      this.session.applySurfaceTransaction(params.surfaceId, params.transaction, params.selection);
+    commitUndoCheckpoint: async (params: { surfaceId: SurfaceId }): Promise<OkResult> => {
+      this.session.commitSurfaceUndoCheckpoint(params.surfaceId);
+      return { ok: true };
+    },
+    undo: async (params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult> => {
+      this.session.undoSurface(params.surfaceId, params.count ?? 1);
+      return { ok: true };
+    },
+    redo: async (params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult> => {
+      this.session.redoSurface(params.surfaceId, params.count ?? 1);
+      return { ok: true };
+    },
+    earlier: async (params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult> => {
+      this.session.earlierSurface(params.surfaceId, params.count ?? 1);
+      return { ok: true };
+    },
+    later: async (params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult> => {
+      this.session.laterSurface(params.surfaceId, params.count ?? 1);
       return { ok: true };
     },
     renderFrame: async (params: {
@@ -89,6 +89,26 @@ export class RuntimeNativeClient implements RuntimeApi {
         params.sinceGeneration ?? null,
       );
       return JSON.parse(json) as RenderFrameDelta;
+    },
+  };
+
+  readonly registers = {
+    read: async (params: { name: string }): Promise<{ values: string[] | null }> => ({
+      values: this.session.readRegister(params.name) ?? null,
+    }),
+    write: async (params: { name: string; values: string[] }): Promise<OkResult> => {
+      this.session.writeRegister(params.name, params.values);
+      return { ok: true };
+    },
+  };
+
+  readonly clipboard = {
+    read: async (params: { kind: ClipboardKind }): Promise<{ value: string | null }> => ({
+      value: this.session.readClipboard(params.kind) ?? null,
+    }),
+    write: async (params: { kind: ClipboardKind; value: string }): Promise<OkResult> => {
+      this.session.writeClipboard(params.value, params.kind);
+      return { ok: true };
     },
   };
 
@@ -121,18 +141,28 @@ export class RuntimeNativeClient implements RuntimeApi {
         return this.surfaces.setMetrics(params as Parameters<RuntimeApi["surfaces"]["setMetrics"]>[0]);
       case "surfaces.setSoftWrap":
         return this.surfaces.setSoftWrap(params as Parameters<RuntimeApi["surfaces"]["setSoftWrap"]>[0]);
-      case "surfaces.snapshot":
-        return this.surfaces.snapshot(params as Parameters<RuntimeApi["surfaces"]["snapshot"]>[0]);
-      case "surfaces.indentForNewline":
-        return this.surfaces.indentForNewline(params as Parameters<RuntimeApi["surfaces"]["indentForNewline"]>[0]);
-      case "surfaces.executeTextCommand":
-        return this.surfaces.executeTextCommand(params as Parameters<RuntimeApi["surfaces"]["executeTextCommand"]>[0]);
-      case "surfaces.setSelection":
-        return this.surfaces.setSelection(params as Parameters<RuntimeApi["surfaces"]["setSelection"]>[0]);
-      case "surfaces.applyTransaction":
-        return this.surfaces.applyTransaction(params as Parameters<RuntimeApi["surfaces"]["applyTransaction"]>[0]);
+      case "surfaces.applyOperation":
+        return this.surfaces.applyOperation(params as Parameters<RuntimeApi["surfaces"]["applyOperation"]>[0]);
+      case "surfaces.commitUndoCheckpoint":
+        return this.surfaces.commitUndoCheckpoint(params as Parameters<RuntimeApi["surfaces"]["commitUndoCheckpoint"]>[0]);
+      case "surfaces.undo":
+        return this.surfaces.undo(params as Parameters<RuntimeApi["surfaces"]["undo"]>[0]);
+      case "surfaces.redo":
+        return this.surfaces.redo(params as Parameters<RuntimeApi["surfaces"]["redo"]>[0]);
+      case "surfaces.earlier":
+        return this.surfaces.earlier(params as Parameters<RuntimeApi["surfaces"]["earlier"]>[0]);
+      case "surfaces.later":
+        return this.surfaces.later(params as Parameters<RuntimeApi["surfaces"]["later"]>[0]);
       case "surfaces.renderFrame":
         return this.surfaces.renderFrame(params as Parameters<RuntimeApi["surfaces"]["renderFrame"]>[0]);
+      case "registers.read":
+        return this.registers.read(params as Parameters<RuntimeApi["registers"]["read"]>[0]);
+      case "registers.write":
+        return this.registers.write(params as Parameters<RuntimeApi["registers"]["write"]>[0]);
+      case "clipboard.read":
+        return this.clipboard.read(params as Parameters<RuntimeApi["clipboard"]["read"]>[0]);
+      case "clipboard.write":
+        return this.clipboard.write(params as Parameters<RuntimeApi["clipboard"]["write"]>[0]);
       case "resources.save":
         return this.resources.save(params as Parameters<RuntimeApi["resources"]["save"]>[0]);
       default:

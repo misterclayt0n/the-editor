@@ -376,6 +376,24 @@ This is the engine substrate that should stay:
 - sharable across clients
 - independent of product personality and impure services
 
+### Editing operation layering
+The editing operation stack in `the-lib` should be explicit and file-shaped:
+
+```txt
+movement.rs   = movement-related pure logic and movement semantics
+editing.rs    = edit-related pure logic, fragment extraction, paste planning, delete span planning
+operation.rs  = default semantic operations assembled from movement/editing, plus thin named dispatch
+```
+
+Rules:
+- plain functions in `movement.rs` and `editing.rs` are the real `the-lib` API
+- `operation.rs` may add small default semantic policy, but it must stay pure
+- `operation.rs` should return composable pure operation outputs/atoms such as edit application and register writes
+- `execute_operation(...)` is only a convenience bridge for single-step semantic operations
+- `operation.rs` should not contain substantial algorithmic logic; push that down into `movement.rs` or `editing.rs`
+- multi-step workflows such as `open_below(); insert_mode()` or `change_selection(); insert_mode()` belong in TypeScript
+- clipboard/register source-or-target flavored commands belong in TypeScript workflows over runtime APIs, not in `the-lib`
+
 ---
 
 ## What belongs in `the-runtime`
@@ -436,10 +454,16 @@ Put something in TypeScript when it is any of the following:
 - default LSP/search/git UI flows
 - extension loading
 - custom providers for decorations/widgets/completions/code actions/etc.
+- multi-step workflow composition over `the-lib` semantic ops
+- mode transitions, pending-key logic, register choice, and clipboard policy
 
 ### Reasoning
 This is the replaceable product layer.
 If a future distribution wants to redefine the editor's personality, it should mostly live here.
+The important split is:
+- `the-lib` may provide useful single-step semantic defaults
+- TypeScript owns sequencing and workflow composition
+- `the-runtime` supports those workflows but does not define them
 
 ---
 
@@ -796,6 +820,8 @@ The old code is clearly one of:
 - keymaps/modes/hooks
 - app layout and chrome
 - default UI workflows
+- multi-step workflow composition over `the-lib` operations
+- mode transitions, pending-key logic, register choice, or clipboard policy
 
 ---
 
@@ -808,6 +834,8 @@ The old editor is a reference, not a blueprint. Port selectively.
 - `history.rs`
 - `selection.rs`
 - `movement.rs`
+- `editing.rs` for edit primitives, fragment extraction, paste planning, and delete-span planning
+- `operation.rs` for semantic default ops and thin single-step named dispatch
 - `object.rs`
 - `text_object.rs`
 - `match_brackets.rs`
@@ -910,7 +938,9 @@ Reasoning:
 ## Non-negotiable invariants
 
 - `the-lib` must remain the pure editor engine.
+- plain functions in `movement.rs` and `editing.rs` are the real core API; `operation.rs` is the semantic-default and thin-dispatch layer above them.
 - `the-runtime` may be impure, but it must not define the editor's personality.
+- `the-runtime` must not special-case editor command names or hide multi-step workflows.
 - TypeScript may define the editor's personality, but must not own semantic document truth.
 - Clients must not maintain a second semantic document model.
 - Rendering must be retained and incremental.

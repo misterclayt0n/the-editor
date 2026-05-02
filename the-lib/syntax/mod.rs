@@ -10,7 +10,9 @@ pub mod textobject_query;
 
 pub const TREE_SITTER_MATCH_LIMIT: u32 = 256;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+  Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct HighlightKindId(u32);
 
 impl HighlightKindId {

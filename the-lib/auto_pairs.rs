@@ -7,9 +7,9 @@ use thiserror::Error;
 
 use crate::{
   Tendril,
-  operation::Edit,
   grapheme,
   movement::Direction,
+  operation::Edit,
   selection::{
     CursorRange,
     Range,

@@ -230,6 +230,8 @@ The runtime client exposed to TypeScript should be domain-shaped, not a bag of l
 runtime.documents.*
 runtime.resources.*
 runtime.surfaces.*
+runtime.registers.*
+runtime.clipboard.*
 runtime.workspace.*
 runtime.search.*
 runtime.lsp.*
@@ -246,8 +248,14 @@ runtime.documents.close(documentId)
 
 runtime.surfaces.create(documentId, options)
 runtime.surfaces.configure(surfaceId, options)
-runtime.surfaces.applyIntent(surfaceId, intent)
+runtime.surfaces.applyOperation({ surfaceId, operation })
 runtime.surfaces.renderFrame(surfaceId, request)
+
+runtime.registers.read(name)
+runtime.registers.write(name, values)
+
+runtime.clipboard.read(kind)
+runtime.clipboard.write(kind, value)
 
 runtime.resources.save(documentId)
 runtime.resources.saveAs(documentId, path)
@@ -467,8 +475,8 @@ Keyboard, pointer, and composition input flow through explicit ownership seams.
 Browser event
   -> renderer normalizes input
   -> policy worker resolves keymaps/commands
-  -> command dispatch invokes runtime intent
-  -> Rust mutates Document/Surface
+  -> command dispatch invokes runtime operation(s) and runtime support APIs
+  -> Rust mutates Document/Surface or session support state
   -> renderer requests render frame
   -> Canvas painter applies delta
 ```
@@ -490,11 +498,12 @@ Policy worker owns:
 
 Rust owns:
 
-- deterministic native editing intents
+- deterministic native single-step semantic operations
 - movement
 - selection updates
 - history
 - render invalidation
+- session-local support state such as registers
 
 Example:
 
@@ -516,22 +525,40 @@ await editor.commands.dispatch(command);
 ```
 
 ```ts
-// command implementation
-await editor.runtime.surfaces.applyIntent(surfaceId, {
-  kind: "move",
-  direction: "down",
-  count: 1,
+// single-step semantic command
+await editor.runtime.surfaces.applyOperation({
+  surfaceId,
+  operation: { name: "move_visual_line_down", count: 1 },
 });
 ```
 
-Committed text input should be sent to Rust as a coarse intent:
+Committed text input should be sent to Rust as a coarse semantic operation:
 
 ```ts
-await editor.runtime.surfaces.applyIntent(surfaceId, {
-  kind: "insertText",
-  text,
+await editor.runtime.surfaces.applyOperation({
+  surfaceId,
+  operation: { name: "insert_text", text },
 });
 ```
+
+Multi-step workflows remain in TypeScript:
+
+```ts
+await editor.runtime.surfaces.applyOperation({
+  surfaceId,
+  operation: { name: "open_below" },
+});
+await editor.commands.dispatch({ id: commandId("insert_mode") });
+```
+
+Clipboard/register flavored variants are also TypeScript workflows:
+
+```ts
+const values = await editor.runtime.registers.read('"');
+await pasteAfter(surfaceId, values);
+```
+
+The important rule is that TypeScript resolves the source/target policy while Rust owns the actual semantic paste planning.
 
 ---
 

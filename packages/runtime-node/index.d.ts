@@ -8,11 +8,16 @@ export declare class NativeRuntimeSession {
   setSurfaceViewport(surfaceId: number, viewport: JsViewport): void
   setSurfaceMeasurements(surfaceId: number, metrics: JsCellGridMetrics): void
   setSurfaceSoftWrap(surfaceId: number, softWrap: boolean): void
-  snapshotSurfaceState(surfaceId: number): JsSurfaceSnapshot
-  indentForSurfaceNewline(surfaceId: number, pos: number): string
-  setSurfaceSelection(surfaceId: number, selection: JsSelection): void
-  executeSurfaceTextCommand(surfaceId: number, command: JsTextCommand): JsTextCommandResult
-  applySurfaceTransaction(surfaceId: number, transaction: JsTransaction, selection: JsSelection): void
+  applySurfaceOperation(surfaceId: number, operation: JsSurfaceOperation): void
+  commitSurfaceUndoCheckpoint(surfaceId: number): void
+  undoSurface(surfaceId: number, count: number): void
+  redoSurface(surfaceId: number, count: number): void
+  earlierSurface(surfaceId: number, count: number): void
+  laterSurface(surfaceId: number, count: number): void
+  readRegister(name: string): Array<string> | null
+  writeRegister(name: string, values: Array<string>): void
+  readClipboard(kind: string): string | null
+  writeClipboard(value: string, kind: string): void
   renderFrameJson(surfaceId: number, viewport?: JsViewport | undefined | null, sinceGeneration?: number | undefined | null): string
   saveSurfaceDocument(surfaceId: number): void
 }
@@ -22,43 +27,17 @@ export interface JsCellGridMetrics {
   rowHeightPx: number
 }
 
-export interface JsCursorRange {
-  id?: number
-  anchor: number
-  head: number
-}
-
-export interface JsReplacement {
-  start: number
-  end: number
-  text?: string
-}
-
-export interface JsSelection {
-  ranges: Array<JsCursorRange>
-}
-
-export interface JsSurfaceSnapshot {
-  text: string
-  selection: JsSelection
-  activeCursorId?: number
-}
-
-export interface JsTextCommand {
-  kind: string
+export interface JsSurfaceOperation {
+  name: string
   count?: number
   text?: string
+  values?: Array<string>
+  after?: boolean
+  lineEnding?: string
   indent?: string
   indentUnit?: string
-  preferredColumn?: number
-}
-
-export interface JsTextCommandResult {
-  preferredColumn?: number
-}
-
-export interface JsTransaction {
-  replacements: Array<JsReplacement>
+  indentWidth?: number
+  tabWidth?: number
 }
 
 export interface JsViewport {

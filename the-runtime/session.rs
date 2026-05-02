@@ -12,32 +12,24 @@ use std::{
 
 use ropey::Rope;
 use the_lib::{
-  document::Document,
-  indent::indent_for_newline,
   clipboard::{
     ClipboardProvider,
     ClipboardType,
   },
-  syntax::IndentationHeuristic,
+  document::Document,
   operation::{
-    SelectionSpec,
-    SurfaceSnapshot,
-    TextCommand,
-    TextCommandEffect,
-    TransactionSpec,
-    execute_text_command,
-    selection_from_spec,
-    selection_to_spec,
-    transaction_from_spec,
+    OperationAtom,
+    OperationSpec,
+    execute_operation,
   },
   registers::Registers,
   render::{
+    CellGridMetrics,
     CellGridRenderSurface,
     PresentUpdate,
     RenderFrameDelta,
     RetainedFrame,
     SurfaceFrame,
-    CellGridMetrics,
     SurfaceId,
     TextAnnotations,
     TextFormat,
@@ -67,7 +59,9 @@ use crate::{
   },
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+  Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct DocumentHandle(NonZeroU64);
 
 impl DocumentHandle {
@@ -85,7 +79,9 @@ impl DocumentHandle {
   }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+  Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct SurfaceHandle(NonZeroU64);
 
 impl SurfaceHandle {
@@ -102,7 +98,6 @@ impl SurfaceHandle {
     Self::new(*counter).expect("surface handle must be non-zero")
   }
 }
-
 
 #[derive(Debug)]
 pub struct RuntimeDocument {
@@ -176,6 +171,9 @@ pub enum RuntimeError {
 
   #[error(transparent)]
   Transaction(#[from] the_lib::transaction::TransactionError),
+
+  #[error(transparent)]
+  Operation(#[from] the_lib::operation::OperationError),
 
   #[error(transparent)]
   Syntax(#[from] RuntimeSyntaxError),
@@ -290,6 +288,20 @@ impl RuntimeSession {
 
   pub fn registers_mut(&mut self) -> &mut Registers {
     &mut self.registers
+  }
+
+  pub fn read_register(&self, name: char) -> Option<Vec<String>> {
+    self
+      .registers
+      .read(name)
+      .map(|values| values.iter().map(|value| value.to_string()).collect())
+  }
+
+  pub fn write_register(&mut self, name: char, values: Vec<String>) {
+    self.registers.write(
+      name,
+      values.into_iter().map(the_lib::Tendril::from).collect(),
+    );
   }
 
   pub fn resource(&self, resource: ResourceId) -> Option<&Resource> {
@@ -656,93 +668,132 @@ impl RuntimeSession {
     Ok(())
   }
 
-  pub fn snapshot_surface_state(&self, surface: SurfaceHandle) -> RuntimeResult<SurfaceSnapshot> {
-    let entry = self
-      .surface_entry(surface)
-      .ok_or(RuntimeError::UnknownSurface(surface))?;
-    let document = self
-      .document(entry.document)
-      .ok_or(RuntimeError::UnknownDocument(entry.document))?;
-    Ok(SurfaceSnapshot {
-      text: document.text().to_string(),
-      selection: selection_to_spec(entry.surface.selection()),
-      active_cursor_id: entry.surface.active_cursor().map(|id| id.get()),
-    })
-  }
-
-  pub fn indent_for_surface_newline(
+  pub fn apply_surface_operation(
     &mut self,
     surface: SurfaceHandle,
-    pos: usize,
-  ) -> RuntimeResult<String> {
-    let registry = self.prepare_surface_render(surface)?;
-    let entry = self
-      .surface_entry(surface)
-      .ok_or(RuntimeError::UnknownSurface(surface))?;
-    let document = self
-      .document(entry.document)
-      .ok_or(RuntimeError::UnknownDocument(entry.document))?;
-    let text = document.text().slice(..);
-    let pos = pos.min(text.len_chars());
-    let current_line = text.char_to_line(pos);
-    let state = document.active_syntax();
-    let indent_query = state
-      .and_then(|state| registry.indent_query(state.language_id()).ok().flatten());
-    let syntax = state.map(|state| state.syntax());
-    Ok(indent_for_newline(
-      indent_query,
-      syntax.as_deref(),
-      &IndentationHeuristic::Hybrid,
-      &document.indent_style(),
-      4,
-      text,
-      current_line,
-      pos,
-      current_line,
-    ))
-  }
-
-  pub fn set_surface_selection(
-    &mut self,
-    surface: SurfaceHandle,
-    selection: SelectionSpec,
+    operation: OperationSpec,
   ) -> RuntimeResult<()> {
-    let selection = selection_from_spec(selection)?;
-    self.with_surface_document_mut(surface, move |surface, document| {
-      surface.apply_selection(document, selection)
+    let syntax_registry = self.prepare_surface_render(surface)?;
+    let output = {
+      let surface_entry = self
+        .surfaces
+        .get(&surface)
+        .ok_or(RuntimeError::UnknownSurface(surface))?;
+      let document_entry = self
+        .documents
+        .get(&surface_entry.document)
+        .ok_or(RuntimeError::UnknownDocument(surface_entry.document))?;
+      let document = &document_entry.document;
+      let state = document.active_syntax();
+      let indent_query = state.and_then(|state| {
+        syntax_registry
+          .indent_query(state.language_id())
+          .ok()
+          .flatten()
+      });
+      let syntax = state.map(|state| state.syntax());
+      execute_operation(
+        document.text(),
+        surface_entry.surface.selection(),
+        surface_entry.surface.visual_goals(),
+        operation,
+        document.line_ending().as_str(),
+        &document.indent_style(),
+        indent_query,
+        syntax.as_deref(),
+      )?
+    };
+
+    for atom in output.atoms {
+      self.apply_surface_operation_atom(surface, atom)?;
+    }
+
+    Ok(())
+  }
+
+  fn apply_surface_operation_atom(
+    &mut self,
+    surface: SurfaceHandle,
+    atom: OperationAtom,
+  ) -> RuntimeResult<()> {
+    match atom {
+      OperationAtom::Selection(selection) => {
+        self.with_surface_document_mut(surface, move |surface, document| {
+          surface.apply_selection(document, selection)
+        })??;
+      },
+      OperationAtom::Motion(result) => {
+        self.with_surface_document_mut(surface, move |surface, document| {
+          surface.apply_motion_result(document, result)
+        })??;
+      },
+      OperationAtom::Edit(edit) => {
+        self.with_surface_document_mut(surface, move |surface, document| {
+          surface.apply_edit(document, edit)
+        })??;
+      },
+      OperationAtom::RegisterWrite(write) => {
+        self.registers.write(write.name, write.values);
+      },
+    }
+    Ok(())
+  }
+
+  pub fn commit_surface_undo_checkpoint(&mut self, surface: SurfaceHandle) -> RuntimeResult<()> {
+    self.with_surface_document_mut(surface, |surface, _document| {
+      surface.commit_undo_checkpoint()
     })??;
     Ok(())
   }
 
-  pub fn execute_surface_text_command(
-    &mut self,
-    surface: SurfaceHandle,
-    command: TextCommand,
-  ) -> RuntimeResult<Option<usize>> {
-    self.with_surface_document_mut(surface, move |surface, document| -> RuntimeResult<Option<usize>> {
-      let output = execute_text_command(document.text().slice(..), surface.selection(), command)?;
-      match output.effect {
-        TextCommandEffect::Selection(selection) => surface.apply_selection(document, selection)?,
-        TextCommandEffect::Edit(edit) => surface.apply_edit(document, edit)?,
+  pub fn undo_surface(&mut self, surface: SurfaceHandle, count: usize) -> RuntimeResult<()> {
+    let count = count.max(1);
+    self.with_surface_document_mut(surface, move |surface, document| {
+      for _ in 0..count {
+        if !surface.undo(document)? {
+          break;
+        }
       }
-      Ok(output.state.preferred_column)
-    })?
+      Ok::<_, the_lib::surface::SurfaceError>(())
+    })??;
+    Ok(())
   }
 
-  pub fn apply_surface_transaction(
-    &mut self,
-    surface: SurfaceHandle,
-    transaction: TransactionSpec,
-    selection: SelectionSpec,
-  ) -> RuntimeResult<()> {
-    let selection = selection_from_spec(selection)?;
-    self.with_surface_document_mut(surface, move |surface, document| -> RuntimeResult<()> {
-      let transaction = transaction_from_spec(document.text().len_chars(), transaction)?;
-      surface.apply_edit(document, the_lib::operation::Edit {
-        transaction,
-        selection,
-      })?;
-      Ok(())
+  pub fn redo_surface(&mut self, surface: SurfaceHandle, count: usize) -> RuntimeResult<()> {
+    let count = count.max(1);
+    self.with_surface_document_mut(surface, move |surface, document| {
+      for _ in 0..count {
+        if !surface.redo(document)? {
+          break;
+        }
+      }
+      Ok::<_, the_lib::surface::SurfaceError>(())
+    })??;
+    Ok(())
+  }
+
+  pub fn earlier_surface(&mut self, surface: SurfaceHandle, count: usize) -> RuntimeResult<()> {
+    let count = count.max(1);
+    self.with_surface_document_mut(surface, move |surface, document| {
+      for _ in 0..count {
+        if !surface.earlier(document, the_lib::history::UndoKind::Steps(1))? {
+          break;
+        }
+      }
+      Ok::<_, the_lib::surface::SurfaceError>(())
+    })??;
+    Ok(())
+  }
+
+  pub fn later_surface(&mut self, surface: SurfaceHandle, count: usize) -> RuntimeResult<()> {
+    let count = count.max(1);
+    self.with_surface_document_mut(surface, move |surface, document| {
+      for _ in 0..count {
+        if !surface.later(document, the_lib::history::UndoKind::Steps(1))? {
+          break;
+        }
+      }
+      Ok::<_, the_lib::surface::SurfaceError>(())
     })??;
     Ok(())
   }
@@ -1090,53 +1141,104 @@ mod tests {
   }
 
   #[test]
-  fn apply_surface_transaction_inserts_text() {
+  fn apply_surface_operation_undo_redo_respect_count() {
     let mut runtime = RuntimeSession::default();
     let document = runtime.create_scratch(Rope::from("hello")).unwrap();
     let surface = runtime.create_surface(document).unwrap();
 
     runtime
-      .apply_surface_transaction(
-        surface,
-        the_lib::operation::TransactionSpec {
-          replacements: vec![the_lib::operation::ReplacementSpec {
-            start: 0,
-            end: 0,
-            text: Some("!".into()),
-          }],
-        },
-        the_lib::operation::SelectionSpec {
-          ranges: vec![the_lib::operation::CursorRangeSpec {
-            id: None,
-            anchor: 1,
-            head: 1,
-          }],
-        },
-      )
+      .apply_surface_operation(surface, OperationSpec {
+        name:         "insert_text".into(),
+        count:        None,
+        text:         Some("!".into()),
+        values:       None,
+        after:        None,
+        line_ending:  None,
+        indent:       None,
+        indent_unit:  None,
+        indent_width: None,
+        tab_width:    None,
+      })
       .unwrap();
-
-    assert_eq!(runtime.document(document).unwrap().text().to_string(), "!hello");
-  }
-
-  #[test]
-  fn set_surface_selection_moves_primary_cursor() {
-    let mut runtime = RuntimeSession::default();
-    let document = runtime.create_scratch(Rope::from("hello")).unwrap();
-    let surface = runtime.create_surface(document).unwrap();
-
     runtime
-      .set_surface_selection(surface, the_lib::operation::SelectionSpec {
-        ranges: vec![the_lib::operation::CursorRangeSpec {
-          id: None,
-          anchor: 5,
-          head: 5,
-        }],
+      .apply_surface_operation(surface, OperationSpec {
+        name:         "insert_text".into(),
+        count:        None,
+        text:         Some("?".into()),
+        values:       None,
+        after:        None,
+        line_ending:  None,
+        indent:       None,
+        indent_unit:  None,
+        indent_width: None,
+        tab_width:    None,
       })
       .unwrap();
 
-    let range = runtime.surface(surface).unwrap().primary_range();
-    assert_eq!(range.anchor, 5);
-    assert_eq!(range.head, 5);
+    assert_eq!(
+      runtime.document(document).unwrap().text().to_string(),
+      "!?hello"
+    );
+
+    runtime.undo_surface(surface, 2).unwrap();
+    assert_eq!(
+      runtime.document(document).unwrap().text().to_string(),
+      "hello"
+    );
+
+    runtime.redo_surface(surface, 2).unwrap();
+    assert_eq!(
+      runtime.document(document).unwrap().text().to_string(),
+      "!?hello"
+    );
+  }
+
+  #[test]
+  fn yank_and_paste_use_runtime_registers() {
+    let mut runtime = RuntimeSession::default();
+    let document = runtime.create_scratch(Rope::from("hello")).unwrap();
+    let surface = runtime.create_surface(document).unwrap();
+
+    runtime
+      .with_surface_document_mut(surface, |surface, document| {
+        surface.apply_selection(document, the_lib::selection::Selection::single(0, 5))
+      })
+      .unwrap()
+      .unwrap();
+    runtime
+      .apply_surface_operation(surface, OperationSpec {
+        name:         "yank".into(),
+        count:        None,
+        text:         None,
+        values:       None,
+        after:        None,
+        line_ending:  None,
+        indent:       None,
+        indent_unit:  None,
+        indent_width: None,
+        tab_width:    None,
+      })
+      .unwrap();
+    let values = runtime.read_register('"').unwrap();
+    runtime
+      .apply_surface_operation(surface, OperationSpec {
+        name:         "paste".into(),
+        count:        None,
+        text:         None,
+        values:       Some(values),
+        after:        Some(true),
+        line_ending:  None,
+        indent:       None,
+        indent_unit:  None,
+        indent_width: None,
+        tab_width:    None,
+      })
+      .unwrap();
+
+    assert_eq!(
+      runtime.document(document).unwrap().text().to_string(),
+      "hellohello"
+    );
   }
 
   #[test]

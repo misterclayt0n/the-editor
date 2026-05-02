@@ -5,7 +5,6 @@ use crate::{
     Document,
     DocumentError,
   },
-  operation::Edit,
   history::{
     History,
     HistoryError,
@@ -16,6 +15,7 @@ use crate::{
     MotionResult,
     VisualGoals,
   },
+  operation::Edit,
   render::{
     BlockWidget,
     CellGridMetrics,
@@ -47,6 +47,7 @@ use crate::{
     LanguageRegistry,
     SyntaxGeneration,
   },
+  transaction::TransactionError,
 };
 
 #[derive(Debug, Error)]
@@ -59,6 +60,9 @@ pub enum SurfaceError {
 
   #[error(transparent)]
   Selection(#[from] SelectionError),
+
+  #[error(transparent)]
+  Transaction(#[from] TransactionError),
 
   #[error("selection is out of bounds for document length {len}")]
   SelectionOutOfBounds { len: usize },
@@ -125,15 +129,23 @@ impl SurfaceViewSpec {
 }
 
 #[derive(Debug)]
+struct PendingHistoryCommit {
+  before:          ropey::Rope,
+  transaction:     crate::transaction::Transaction,
+  selection_after: Selection,
+}
+
+#[derive(Debug)]
 pub struct Surface {
-  selection:     Selection,
-  active_cursor: Option<CursorId>,
-  visual_goals:  VisualGoals,
-  history:       History,
-  viewport:      Viewport,
-  layout_index:  LayoutIndex,
-  render:        CellGridRenderSurface,
-  syntax_cache:  VisibleSyntaxCache,
+  selection:      Selection,
+  active_cursor:  Option<CursorId>,
+  visual_goals:   VisualGoals,
+  history:        History,
+  pending_commit: Option<PendingHistoryCommit>,
+  viewport:       Viewport,
+  layout_index:   LayoutIndex,
+  render:         CellGridRenderSurface,
+  syntax_cache:   VisibleSyntaxCache,
 }
 
 impl Surface {
@@ -161,6 +173,7 @@ impl Surface {
       selection,
       visual_goals: VisualGoals::new(),
       history,
+      pending_commit: None,
       viewport,
       layout_index: LayoutIndex::default(),
       render,
@@ -385,10 +398,7 @@ impl Surface {
       old_end_line,
       new_end_line,
     });
-    self
-      .history
-      .commit(&before, edit.transaction.clone(), edit.selection.clone())
-      .expect("preflighted surface edit commit must succeed");
+    self.queue_history_commit(before, edit.transaction.clone(), edit.selection.clone())?;
 
     self.finish_selection_update(
       document,
@@ -431,7 +441,47 @@ impl Surface {
     Ok(())
   }
 
+  pub fn commit_undo_checkpoint(&mut self) -> Result<()> {
+    let Some(pending) = self.pending_commit.take() else {
+      return Ok(());
+    };
+    self.history.commit(
+      &pending.before,
+      pending.transaction,
+      pending.selection_after,
+    )?;
+    Ok(())
+  }
+
+  fn queue_history_commit(
+    &mut self,
+    before: ropey::Rope,
+    transaction: crate::transaction::Transaction,
+    selection_after: Selection,
+  ) -> Result<()> {
+    if transaction.changes().is_empty() {
+      return Ok(());
+    }
+
+    match self.pending_commit.take() {
+      None => {
+        self.pending_commit = Some(PendingHistoryCommit {
+          before,
+          transaction,
+          selection_after,
+        });
+      },
+      Some(mut pending) => {
+        pending.transaction = pending.transaction.compose(transaction)?;
+        pending.selection_after = selection_after;
+        self.pending_commit = Some(pending);
+      },
+    }
+    Ok(())
+  }
+
   pub fn undo(&mut self, document: &mut Document) -> Result<bool> {
+    self.commit_undo_checkpoint()?;
     let Some(jump) = self.history.undo() else {
       return Ok(false);
     };
@@ -440,6 +490,7 @@ impl Surface {
   }
 
   pub fn redo(&mut self, document: &mut Document) -> Result<bool> {
+    self.commit_undo_checkpoint()?;
     let Some(jump) = self.history.redo() else {
       return Ok(false);
     };
@@ -448,6 +499,7 @@ impl Surface {
   }
 
   pub fn earlier(&mut self, document: &mut Document, kind: UndoKind) -> Result<bool> {
+    self.commit_undo_checkpoint()?;
     let jump = self.history.earlier(kind)?;
     if jump.is_empty() {
       return Ok(false);
@@ -457,6 +509,7 @@ impl Surface {
   }
 
   pub fn later(&mut self, document: &mut Document, kind: UndoKind) -> Result<bool> {
+    self.commit_undo_checkpoint()?;
     let jump = self.history.later(kind)?;
     if jump.is_empty() {
       return Ok(false);
@@ -705,7 +758,11 @@ impl Surface {
   }
 
   fn ensure_document_matches_history(&self, document: &Document) -> Result<()> {
-    let expected = self.history.current_len();
+    let expected = self
+      .pending_commit
+      .as_ref()
+      .map(|pending| pending.transaction.changes().len_after())
+      .unwrap_or_else(|| self.history.current_len());
     let got = document.text().len_chars();
     if expected != got {
       return Err(SurfaceError::DocumentHistoryLengthMismatch { expected, got });
@@ -851,6 +908,7 @@ mod tests {
     };
 
     surface.apply_edit(&mut document, edit).unwrap();
+    surface.commit_undo_checkpoint().unwrap();
 
     assert_eq!(document.text().to_string(), "hello world");
     assert_eq!(surface.history().current_len(), 11);
@@ -952,6 +1010,29 @@ mod tests {
 
     assert_eq!(surface.viewport().first_col, 0);
     assert_eq!(surface.viewport().first_row, 0);
+  }
+
+  #[test]
+  fn pending_edits_are_grouped_until_undo_checkpoint() {
+    let mut document = Document::new(Rope::from(""));
+    let mut surface = Surface::new(&document, render_surface(), viewport()).unwrap();
+
+    surface
+      .apply_edit(&mut document, Edit {
+        transaction: Transaction::insert_at(0, 0, "a").unwrap(),
+        selection:   Selection::new(smallvec::smallvec![Range::point(1)]).unwrap(),
+      })
+      .unwrap();
+    surface
+      .apply_edit(&mut document, Edit {
+        transaction: Transaction::insert_at(1, 1, "b").unwrap(),
+        selection:   Selection::new(smallvec::smallvec![Range::point(2)]).unwrap(),
+      })
+      .unwrap();
+
+    surface.commit_undo_checkpoint().unwrap();
+    assert!(surface.undo(&mut document).unwrap());
+    assert_eq!(document.text().to_string(), "");
   }
 
   #[test]

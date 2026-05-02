@@ -3,23 +3,22 @@ use std::sync::Mutex;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use ropey::Rope;
-use the_lib::render::{CellGridMetrics, Viewport};
+use the_lib::render::{
+  CellGridMetrics,
+  Viewport,
+};
 use the_runtime::{
-  CursorRangeSpec,
   DocumentHandle,
-  ReplacementSpec,
+  OperationSpec,
   RuntimeSession,
-  SelectionSpec,
   SurfaceHandle,
-  TextCommand,
-  TransactionSpec,
 };
 
 #[napi(object)]
 pub struct JsViewport {
-  pub first_row: u32,
-  pub row_count: u32,
-  pub first_col: u32,
+  pub first_row:  u32,
+  pub row_count:  u32,
+  pub first_col:  u32,
   pub wrap_width: u32,
 }
 
@@ -41,49 +40,17 @@ impl From<JsViewport> for Viewport {
 }
 
 #[napi(object)]
-pub struct JsCursorRange {
-  pub id: Option<u32>,
-  pub anchor: u32,
-  pub head: u32,
-}
-
-#[napi(object)]
-pub struct JsSelection {
-  pub ranges: Vec<JsCursorRange>,
-}
-
-#[napi(object)]
-pub struct JsReplacement {
-  pub start: u32,
-  pub end: u32,
-  pub text: Option<String>,
-}
-
-#[napi(object)]
-pub struct JsTransaction {
-  pub replacements: Vec<JsReplacement>,
-}
-
-#[napi(object)]
-pub struct JsTextCommand {
-  pub kind: String,
-  pub count: Option<u32>,
-  pub text: Option<String>,
-  pub indent: Option<String>,
-  pub indent_unit: Option<String>,
-  pub preferred_column: Option<u32>,
-}
-
-#[napi(object)]
-pub struct JsTextCommandResult {
-  pub preferred_column: Option<u32>,
-}
-
-#[napi(object)]
-pub struct JsSurfaceSnapshot {
-  pub text: String,
-  pub selection: JsSelection,
-  pub active_cursor_id: Option<u32>,
+pub struct JsSurfaceOperation {
+  pub name:         String,
+  pub count:        Option<u32>,
+  pub text:         Option<String>,
+  pub values:       Option<Vec<String>>,
+  pub after:        Option<bool>,
+  pub line_ending:  Option<String>,
+  pub indent:       Option<String>,
+  pub indent_unit:  Option<String>,
+  pub indent_width: Option<u32>,
+  pub tab_width:    Option<u32>,
 }
 
 #[napi]
@@ -137,7 +104,11 @@ impl NativeRuntimeSession {
   }
 
   #[napi]
-  pub fn set_surface_measurements(&self, surface_id: u32, metrics: JsCellGridMetrics) -> Result<()> {
+  pub fn set_surface_measurements(
+    &self,
+    surface_id: u32,
+    metrics: JsCellGridMetrics,
+  ) -> Result<()> {
     let mut runtime = self.lock()?;
     runtime
       .set_surface_measurements(
@@ -156,54 +127,83 @@ impl NativeRuntimeSession {
   }
 
   #[napi]
-  pub fn snapshot_surface_state(&self, surface_id: u32) -> Result<JsSurfaceSnapshot> {
-    let runtime = self.lock()?;
-    runtime
-      .snapshot_surface_state(surface_handle(surface_id)?)
-      .map(js_snapshot)
-      .map_err(runtime_error)
-  }
-
-  #[napi]
-  pub fn indent_for_surface_newline(&self, surface_id: u32, pos: u32) -> Result<String> {
-    let mut runtime = self.lock()?;
-    runtime
-      .indent_for_surface_newline(surface_handle(surface_id)?, pos as usize)
-      .map_err(runtime_error)
-  }
-
-  #[napi]
-  pub fn set_surface_selection(&self, surface_id: u32, selection: JsSelection) -> Result<()> {
-    let mut runtime = self.lock()?;
-    runtime
-      .set_surface_selection(surface_handle(surface_id)?, selection_spec(selection))
-      .map_err(runtime_error)
-  }
-
-  #[napi]
-  pub fn execute_surface_text_command(&self, surface_id: u32, command: JsTextCommand) -> Result<JsTextCommandResult> {
-    let mut runtime = self.lock()?;
-    let preferred_column = runtime
-      .execute_surface_text_command(surface_handle(surface_id)?, text_command(command)?)
-      .map_err(runtime_error)?;
-    Ok(JsTextCommandResult { preferred_column: preferred_column.map(|col| col as u32) })
-  }
-
-  #[napi]
-  pub fn apply_surface_transaction(
+  pub fn apply_surface_operation(
     &self,
     surface_id: u32,
-    transaction: JsTransaction,
-    selection: JsSelection,
+    operation: JsSurfaceOperation,
   ) -> Result<()> {
     let mut runtime = self.lock()?;
     runtime
-      .apply_surface_transaction(
-        surface_handle(surface_id)?,
-        transaction_spec(transaction),
-        selection_spec(selection),
-      )
+      .apply_surface_operation(surface_handle(surface_id)?, operation_spec(operation))
       .map_err(runtime_error)
+  }
+
+  #[napi]
+  pub fn commit_surface_undo_checkpoint(&self, surface_id: u32) -> Result<()> {
+    let mut runtime = self.lock()?;
+    runtime
+      .commit_surface_undo_checkpoint(surface_handle(surface_id)?)
+      .map_err(runtime_error)
+  }
+
+  #[napi]
+  pub fn undo_surface(&self, surface_id: u32, count: u32) -> Result<()> {
+    let mut runtime = self.lock()?;
+    runtime
+      .undo_surface(surface_handle(surface_id)?, count as usize)
+      .map_err(runtime_error)
+  }
+
+  #[napi]
+  pub fn redo_surface(&self, surface_id: u32, count: u32) -> Result<()> {
+    let mut runtime = self.lock()?;
+    runtime
+      .redo_surface(surface_handle(surface_id)?, count as usize)
+      .map_err(runtime_error)
+  }
+
+  #[napi]
+  pub fn earlier_surface(&self, surface_id: u32, count: u32) -> Result<()> {
+    let mut runtime = self.lock()?;
+    runtime
+      .earlier_surface(surface_handle(surface_id)?, count as usize)
+      .map_err(runtime_error)
+  }
+
+  #[napi]
+  pub fn later_surface(&self, surface_id: u32, count: u32) -> Result<()> {
+    let mut runtime = self.lock()?;
+    runtime
+      .later_surface(surface_handle(surface_id)?, count as usize)
+      .map_err(runtime_error)
+  }
+
+  #[napi]
+  pub fn read_register(&self, name: String) -> Result<Option<Vec<String>>> {
+    let runtime = self.lock()?;
+    let name = register_name(&name)?;
+    Ok(runtime.read_register(name))
+  }
+
+  #[napi]
+  pub fn write_register(&self, name: String, values: Vec<String>) -> Result<()> {
+    let mut runtime = self.lock()?;
+    let name = register_name(&name)?;
+    runtime.write_register(name, values);
+    Ok(())
+  }
+
+  #[napi]
+  pub fn read_clipboard(&self, kind: String) -> Result<Option<String>> {
+    let runtime = self.lock()?;
+    Ok(runtime.read_clipboard(clipboard_type(&kind)?).ok())
+  }
+
+  #[napi]
+  pub fn write_clipboard(&self, value: String, kind: String) -> Result<()> {
+    let runtime = self.lock()?;
+    let _ = runtime.write_clipboard(&value, clipboard_type(&kind)?);
+    Ok(())
   }
 
   #[napi]
@@ -245,72 +245,47 @@ impl NativeRuntimeSession {
 }
 
 fn document_handle(id: u32) -> Result<DocumentHandle> {
-  DocumentHandle::new(u64::from(id)).ok_or_else(|| Error::from_reason(format!("invalid document id {id}")))
+  DocumentHandle::new(u64::from(id))
+    .ok_or_else(|| Error::from_reason(format!("invalid document id {id}")))
 }
 
 fn surface_handle(id: u32) -> Result<SurfaceHandle> {
-  SurfaceHandle::new(u64::from(id)).ok_or_else(|| Error::from_reason(format!("invalid surface id {id}")))
+  SurfaceHandle::new(u64::from(id))
+    .ok_or_else(|| Error::from_reason(format!("invalid surface id {id}")))
 }
 
-fn selection_spec(selection: JsSelection) -> SelectionSpec {
-  SelectionSpec {
-    ranges: selection.ranges.into_iter().map(|range| CursorRangeSpec {
-      id: range.id.map(u64::from),
-      anchor: range.anchor as usize,
-      head: range.head as usize,
-    }).collect(),
+fn operation_spec(operation: JsSurfaceOperation) -> OperationSpec {
+  OperationSpec {
+    name:         operation.name,
+    count:        operation.count.map(|count| count as usize),
+    text:         operation.text,
+    values:       operation.values,
+    after:        operation.after,
+    line_ending:  operation.line_ending,
+    indent:       operation.indent,
+    indent_unit:  operation.indent_unit,
+    indent_width: operation.indent_width.map(|width| width as usize),
+    tab_width:    operation.tab_width.map(|width| width as usize),
   }
 }
 
-fn text_command(command: JsTextCommand) -> Result<TextCommand> {
-  let count = command.count.unwrap_or(1) as usize;
-  Ok(match command.kind.as_str() {
-    "moveCharLeft" => TextCommand::MoveCharLeft { count },
-    "moveCharRight" => TextCommand::MoveCharRight { count },
-    "moveVisualLineUp" => TextCommand::MoveVisualLineUp {
-      count,
-      preferred_column: command.preferred_column.map(|col| col as usize),
+fn register_name(name: &str) -> Result<char> {
+  let mut chars = name.chars();
+  match (chars.next(), chars.next()) {
+    (Some(ch), None) => Ok(ch),
+    _ => {
+      Err(Error::from_reason(
+        "register name must be a single character",
+      ))
     },
-    "moveVisualLineDown" => TextCommand::MoveVisualLineDown {
-      count,
-      preferred_column: command.preferred_column.map(|col| col as usize),
-    },
-    "gotoLineStart" => TextCommand::GotoLineStart,
-    "gotoLineEnd" => TextCommand::GotoLineEnd,
-    "gotoDocumentStart" => TextCommand::GotoDocumentStart,
-    "gotoDocumentEnd" => TextCommand::GotoDocumentEnd,
-    "insertText" => TextCommand::InsertText { text: command.text.unwrap_or_default() },
-    "insertNewline" => TextCommand::InsertNewline {
-      indent: command.indent.unwrap_or_default(),
-      indent_unit: command.indent_unit.unwrap_or_else(|| "  ".into()),
-    },
-    "deleteBackward" => TextCommand::DeleteBackward,
-    "deleteForward" => TextCommand::DeleteForward,
-    _ => return Err(Error::from_reason(format!("unknown text command {}", command.kind))),
-  })
-}
-
-fn transaction_spec(transaction: JsTransaction) -> TransactionSpec {
-  TransactionSpec {
-    replacements: transaction.replacements.into_iter().map(|replacement| ReplacementSpec {
-      start: replacement.start as usize,
-      end: replacement.end as usize,
-      text: replacement.text,
-    }).collect(),
   }
 }
 
-fn js_snapshot(snapshot: the_runtime::SurfaceSnapshot) -> JsSurfaceSnapshot {
-  JsSurfaceSnapshot {
-    text: snapshot.text,
-    active_cursor_id: snapshot.active_cursor_id.map(|id| id as u32),
-    selection: JsSelection {
-      ranges: snapshot.selection.ranges.into_iter().map(|range| JsCursorRange {
-        id: range.id.map(|id| id as u32),
-        anchor: range.anchor as u32,
-        head: range.head as u32,
-      }).collect(),
-    },
+fn clipboard_type(kind: &str) -> Result<the_lib::clipboard::ClipboardType> {
+  match kind {
+    "Clipboard" => Ok(the_lib::clipboard::ClipboardType::Clipboard),
+    "Selection" => Ok(the_lib::clipboard::ClipboardType::Selection),
+    _ => Err(Error::from_reason(format!("unknown clipboard kind {kind}"))),
   }
 }
 

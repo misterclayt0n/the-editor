@@ -58,49 +58,21 @@ export interface OkResult {
   ok: true;
 }
 
-export interface CursorRangeSpec {
-  id?: number;
-  anchor: number;
-  head: number;
-}
 
-export interface SelectionSpec {
-  ranges: CursorRangeSpec[];
-}
-
-export interface ReplacementSpec {
-  start: number;
-  end: number;
+export interface SurfaceOperation {
+  name: string;
+  count?: number;
   text?: string;
+  values?: string[];
+  after?: boolean;
+  lineEnding?: string;
+  indent?: string;
+  indentUnit?: string;
+  indentWidth?: number;
+  tabWidth?: number;
 }
 
-export interface TransactionSpec {
-  replacements: ReplacementSpec[];
-}
-
-export type TextCommand =
-  | { kind: "moveCharLeft"; count?: number }
-  | { kind: "moveCharRight"; count?: number }
-  | { kind: "moveVisualLineUp"; count?: number; preferredColumn?: number }
-  | { kind: "moveVisualLineDown"; count?: number; preferredColumn?: number }
-  | { kind: "gotoLineStart" }
-  | { kind: "gotoLineEnd" }
-  | { kind: "gotoDocumentStart" }
-  | { kind: "gotoDocumentEnd" }
-  | { kind: "insertText"; text: string }
-  | { kind: "insertNewline"; indent?: string; indentUnit?: string }
-  | { kind: "deleteBackward" }
-  | { kind: "deleteForward" };
-
-export interface TextCommandResult {
-  preferredColumn?: number;
-}
-
-export interface SurfaceSnapshot {
-  text: string;
-  selection: SelectionSpec;
-  activeCursorId?: number;
-}
+export type ClipboardKind = "Clipboard" | "Selection";
 
 export interface RowPlacement {
   surfaceRow: number;
@@ -217,20 +189,25 @@ export interface RuntimeApi {
     setViewport(params: { surfaceId: SurfaceId; viewport: Viewport }): Promise<OkResult>;
     setMetrics(params: { surfaceId: SurfaceId; metrics: CellGridMetrics }): Promise<OkResult>;
     setSoftWrap(params: { surfaceId: SurfaceId; softWrap: boolean }): Promise<OkResult>;
-    snapshot(params: { surfaceId: SurfaceId }): Promise<SurfaceSnapshot>;
-    indentForNewline(params: { surfaceId: SurfaceId; pos: number }): Promise<{ indent: string }>;
-    executeTextCommand(params: { surfaceId: SurfaceId; command: TextCommand }): Promise<TextCommandResult>;
-    setSelection(params: { surfaceId: SurfaceId; selection: SelectionSpec }): Promise<OkResult>;
-    applyTransaction(params: {
-      surfaceId: SurfaceId;
-      transaction: TransactionSpec;
-      selection: SelectionSpec;
-    }): Promise<OkResult>;
+    applyOperation(params: { surfaceId: SurfaceId; operation: SurfaceOperation }): Promise<OkResult>;
+    commitUndoCheckpoint(params: { surfaceId: SurfaceId }): Promise<OkResult>;
+    undo(params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult>;
+    redo(params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult>;
+    earlier(params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult>;
+    later(params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult>;
     renderFrame(params: {
       surfaceId: SurfaceId;
       viewport?: Viewport;
       sinceGeneration?: number | null;
     }): Promise<RenderFrameDelta>;
+  };
+  registers: {
+    read(params: { name: string }): Promise<{ values: string[] | null }>;
+    write(params: { name: string; values: string[] }): Promise<OkResult>;
+  };
+  clipboard: {
+    read(params: { kind: ClipboardKind }): Promise<{ value: string | null }>;
+    write(params: { kind: ClipboardKind; value: string }): Promise<OkResult>;
   };
   resources: {
     save(params: { surfaceId: SurfaceId }): Promise<OkResult>;

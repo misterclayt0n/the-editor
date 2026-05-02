@@ -18,15 +18,8 @@ pub use session::{
   RuntimeSurface,
   SurfaceHandle,
 };
-pub use the_lib::operation::{
-  CursorRangeSpec,
-  ReplacementSpec,
-  SelectionSpec,
-  SurfaceSnapshot,
-  TextCommand,
-  TransactionSpec,
-};
 pub use syntax::{
   FilesystemSyntaxResources,
   RuntimeSyntax,
 };
+pub use the_lib::operation::OperationSpec;

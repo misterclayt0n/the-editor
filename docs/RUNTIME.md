@@ -73,7 +73,7 @@ That would pollute the pure engine with:
 - file paths
 - save policy
 - grammar loading
-- clipboard commands
+- clipboard backend integration
 - subprocesses
 - watches
 - LSP state
@@ -143,6 +143,21 @@ That means:
 - `the-runtime` should expose honest native capabilities
 - it should not define the editor's personality
 - it should not become a giant built-in command/UI system
+
+## Runtime command boundary
+`the-runtime` may support command execution, but only as a generic adapter over `the-lib`.
+
+It may:
+- forward named single-step semantic operations to `the-lib`
+- generically apply returned pure operation atoms/effects such as selection updates, motion results, edits, and register writes
+- expose explicit session/resource domains such as registers, clipboard, files, and syntax services
+
+It must not:
+- special-case editor command names
+- define multi-step workflows
+- define mode/keymap/pending-key behavior
+- decide register choice or clipboard mirroring policy
+- become a second command system beside TypeScript
 
 ---
 
@@ -286,7 +301,7 @@ Scratch docs may remain unassigned unless the caller opts into syntax explicitly
 - `ClipboardType`
 - `NoClipboard`
 
-`the-runtime` should provide the real platform/process-backed provider(s).
+`the-runtime` should provide the real platform/process-backed provider(s) and expose clipboard as an explicit coarse runtime domain. Clipboard-targeted commands remain TypeScript workflows.
 
 ### 5. Session-wide registers ownership
 We already decided registers belong above `Surface`.
@@ -294,7 +309,7 @@ We already decided registers belong above `Surface`.
 So v1 runtime should own:
 - one `Registers` object per `RuntimeSession`
 
-This gives a natural place for session-wide yank/put state and later clipboard integration.
+This gives a natural place for session-wide yank/put state. The runtime should expose registers as an explicit coarse domain so TypeScript can build register-aware workflows without runtime command branching.
 
 ---
 
@@ -426,10 +441,17 @@ impl RuntimeSession {
   pub fn surface(&self, handle: SurfaceHandle) -> Option<&Surface>;
   pub fn surface_mut(&mut self, handle: SurfaceHandle) -> Option<&mut Surface>;
 
+  pub fn apply_surface_operation(&mut self, surface: SurfaceHandle, op: OperationSpec) -> Result<()>;
+
+  pub fn read_clipboard(&self, ty: ClipboardType) -> Result<String>;
+  pub fn write_clipboard(&self, value: &str, ty: ClipboardType) -> Result<()>;
+
   pub fn registers(&self) -> &Registers;
   pub fn registers_mut(&mut self) -> &mut Registers;
 }
 ```
+
+The important behavioral rule is that `apply_surface_operation(...)` stays generic. It may forward named single-step semantic ops into `the-lib` and apply returned pure atoms/effects, but it must not grow command-specific workflow branches.
 
 This is illustrative, not frozen.
 

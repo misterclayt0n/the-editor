@@ -75,17 +75,6 @@ export function defaultScratch(): EditorModule {
       },
     });
 
-    editor.commands.register<undefined, DefaultEditorState>({
-      id: commandId("view.toggleAnnotations"),
-      title: "Toggle Annotations",
-      async run() {
-        const state = getDefaultState(editor);
-        state.showAnnotations = !state.showAnnotations;
-        await refreshActiveSurface(editor);
-        return state;
-      },
-    });
-
     editor.commands.register<RenderActiveSurfaceArgs | undefined, RenderFrame>({
       id: commandId("surface.renderActive"),
       title: "Render Active Surface",

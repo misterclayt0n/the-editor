@@ -50,11 +50,6 @@ async function handlePolicyRequest(request: PolicyRequest): Promise<void> {
         result = postSessionState();
         break;
       }
-      case "view.toggleAnnotations": {
-        await editor.commands.dispatch({ id: "view.toggleAnnotations" });
-        result = postSessionState();
-        break;
-      }
       case "input.keyDown": {
         await handleKeyInput(editor, request.params as KeyInput);
         result = postSessionState();
@@ -89,7 +84,6 @@ function postSessionState() {
     activeSurfaceId: state.activeSurfaceId,
     activePath: state.activePath,
     softWrap: state.softWrap,
-    showAnnotations: state.showAnnotations,
     frame: state.lastFrame,
   };
   parentPort?.postMessage(payload);

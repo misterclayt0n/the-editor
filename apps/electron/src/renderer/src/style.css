@@ -19,133 +19,15 @@ body,
 }
 
 body {
-  background: #0f0f0f;
+  background: #101010;
   color: #d7d7d7;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 .app {
   background: #101010;
-  display: flex;
-  flex-direction: column;
   height: 100%;
   min-width: 0;
-}
-
-.toolbar {
-  align-items: center;
-  background: linear-gradient(180deg, #202020, #181818);
-  border-bottom: 1px solid #303030;
-  display: grid;
-  flex: 0 0 auto;
-  gap: 12px;
-  grid-template-columns: minmax(150px, 1fr) auto minmax(160px, 1fr);
-  min-height: 46px;
-  padding: 7px 10px;
-}
-
-.titleGroup,
-.statusGroup,
-.toolbarActions {
-  align-items: center;
-  display: flex;
-  min-width: 0;
-}
-
-.titleGroup {
-  gap: 10px;
-}
-
-.titleGroup strong {
-  color: #f1f1f1;
-  flex: 0 0 auto;
-  font-size: 13px;
-  letter-spacing: 0.01em;
-}
-
-.fileName {
-  color: #9f9f9f;
-  font-family: Iosevka, ui-monospace, monospace;
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.toolbarActions {
-  background: #141414;
-  border: 1px solid #2c2c2c;
-  border-radius: 9px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-  gap: 4px;
-  justify-content: center;
-  padding: 3px;
-}
-
-.statusGroup {
-  gap: 8px;
-  justify-content: flex-end;
-}
-
-.modeBadge {
-  background: #2b3750;
-  border: 1px solid #3f5279;
-  border-radius: 999px;
-  color: #d8e6ff;
-  flex: 0 0 auto;
-  font-family: Iosevka, ui-monospace, monospace;
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  line-height: 1;
-  padding: 5px 8px;
-}
-
-.statusText {
-  color: #8f8f8f;
-  font-size: 12px;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-button {
-  background: transparent;
-  border: 0;
-  border-radius: 6px;
-  color: #cfcfcf;
-  cursor: pointer;
-  flex: 0 0 auto;
-  font: inherit;
-  font-size: 12px;
-  line-height: 1;
-  padding: 7px 9px;
-}
-
-button:hover {
-  background: #252525;
-  color: #ffffff;
-}
-
-button:active {
-  background: #303030;
-}
-
-button.toggle {
-  color: #9a9a9a;
-}
-
-button.toggle.active {
-  background: #263421;
-  color: #bce3a9;
-}
-
-.surfaceShell {
-  background: #101010;
-  flex: 1;
-  min-height: 0;
-  min-width: 0;
-  padding: 0;
 }
 
 canvas {

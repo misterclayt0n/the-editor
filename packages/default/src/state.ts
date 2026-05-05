@@ -9,7 +9,6 @@ export interface DefaultEditorState {
   activeSurfaceId: SurfaceId | undefined;
   activePath: string | undefined;
   softWrap: boolean;
-  showAnnotations: boolean;
   preferredColumn: number | undefined;
   lastFrame: RenderFrame | undefined;
 }
@@ -25,7 +24,6 @@ export function getDefaultState(editor: EditorHost): DefaultEditorState {
       activeSurfaceId: undefined,
       activePath: undefined,
       softWrap: false,
-      showAnnotations: true,
       preferredColumn: undefined,
       lastFrame: undefined,
     };

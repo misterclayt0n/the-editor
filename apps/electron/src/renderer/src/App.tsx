@@ -7,23 +7,13 @@ import "./style.css";
 function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [frame, setFrame] = useState<RenderFrame | undefined>();
-  const [mode, setMode] = useState("NORMAL");
-  const [status, setStatus] = useState("booting");
-  const [activePath, setActivePath] = useState<string | undefined>();
-  const [softWrap, setSoftWrap] = useState(false);
-  const [showAnnotations, setShowAnnotations] = useState(true);
 
   useEffect(() => {
     return window.theEditor.onPolicyEvent((event) => {
       if (!isObject(event)) return;
-      if (event.type === "policy.ready") setStatus("ready");
-      if (event.type === "policy.error") setStatus(String(event.message ?? "policy error"));
-      if (event.type === "default.sessionChanged") {
-        if (typeof event.mode === "string") setMode(event.mode.toUpperCase());
-        setActivePath(typeof event.activePath === "string" ? event.activePath : undefined);
-        if (typeof event.softWrap === "boolean") setSoftWrap(event.softWrap);
-        if (typeof event.showAnnotations === "boolean") setShowAnnotations(event.showAnnotations);
-        if (isObject(event.frame)) setFrame(event.frame as unknown as RenderFrame);
+      if (event.type === "policy.error") console.error(String(event.message ?? "policy error"));
+      if (event.type === "default.sessionChanged" && isObject(event.frame)) {
+        setFrame(event.frame as unknown as RenderFrame);
       }
     });
   }, []);
@@ -35,7 +25,7 @@ function App() {
       if (!input) return;
       event.preventDefault();
       void window.theEditor.policyRequest("input.keyDown", input).catch((error) => {
-        setStatus(error instanceof Error ? error.message : String(error));
+        console.error(error);
       });
     };
 
@@ -52,7 +42,7 @@ function App() {
     const configure = () => {
       const config = configureTextSurface(canvas);
       void window.theEditor.policyRequest("surface.configure", config).catch((error) => {
-        setStatus(error instanceof Error ? error.message : String(error));
+        console.error(error);
       });
     };
 
@@ -72,84 +62,14 @@ function App() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !frame) return;
-    paintTextSurface(canvas, frame, { showAnnotations });
-  }, [frame, showAnnotations]);
-
-  async function openFile() {
-    setStatus("opening file");
-    try {
-      const path = await window.theEditor.openFileDialog();
-      if (!path) {
-        setStatus("ready");
-        return;
-      }
-      await window.theEditor.policyRequest("file.open", { path });
-      setStatus("ready");
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function toggleSoftWrap() {
-    try {
-      await window.theEditor.policyRequest("view.toggleSoftWrap");
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function toggleAnnotations() {
-    try {
-      await window.theEditor.policyRequest("view.toggleAnnotations");
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function resetScratch() {
-    setStatus("resetting scratch");
-    try {
-      await window.theEditor.policyRequest("default.createScratch", {
-        text: "",
-        viewport: { firstRow: 0, rowCount: 24, firstCol: 0, wrapWidth: 100 },
-      });
-      setStatus("ready");
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
-    }
-  }
+    paintTextSurface(canvas, frame);
+  }, [frame]);
 
   return (
     <main className="app">
-      <header className="toolbar">
-        <div className="titleGroup">
-          <strong>The Editor</strong>
-          <span className="fileName" title={activePath ?? "Scratch"}>{activePath ? basename(activePath) : "Scratch"}</span>
-        </div>
-        <div className="toolbarActions">
-          <button onClick={() => void openFile()}>Open File</button>
-          <button onClick={() => void resetScratch()}>Scratch</button>
-          <button className={softWrap ? "toggle active" : "toggle"} onClick={() => void toggleSoftWrap()}>
-            Wrap {softWrap ? "On" : "Off"}
-          </button>
-          <button className={showAnnotations ? "toggle active" : "toggle"} onClick={() => void toggleAnnotations()}>
-            Annotations {showAnnotations ? "On" : "Off"}
-          </button>
-        </div>
-        <div className="statusGroup">
-          <span className="modeBadge">{mode}</span>
-          <span className="statusText">{status}</span>
-        </div>
-      </header>
-      <section className="surfaceShell">
-        <canvas ref={canvasRef} />
-      </section>
+      <canvas ref={canvasRef} />
     </main>
   );
-}
-
-function basename(path: string): string {
-  return path.split(/[\\/]/).pop() || path;
 }
 
 function toKeyInput(event: KeyboardEvent): { key: string; text?: string } | undefined {

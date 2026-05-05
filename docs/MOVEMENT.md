@@ -165,16 +165,12 @@ Movement is one of the main consumers of the pure render kernel.
 
 Vertical and visual motions depend on:
 - `TextFormat`
-- `TextAnnotations`
 - wrap width
 - document-visual mapping helpers in `render/layout_index.rs`
-
-`render/visual_position.rs` may remain as a thin compatibility adapter, but it is not the authoritative seam.
 
 The movement module should consume these as **immutable explicit inputs**.
 
 It should **not**:
-- mutate annotations
 - own viewport state
 - own a render surface
 - own persistent interaction state
@@ -383,7 +379,7 @@ The exact implementation can vary, but the public API should feel close to this:
 use ropey::RopeSlice;
 
 use crate::{
-  render::{TextAnnotations, TextFormat},
+  render::TextFormat,
   selection::{CursorId, Selection},
 };
 
@@ -416,7 +412,6 @@ pub struct VisualGoals { ... }
 
 pub struct MovementContext<'a> {
   pub text_format: &'a TextFormat,
-  pub annotations: &'a TextAnnotations,
   pub wrap_width: usize,
 }
 
@@ -490,7 +485,6 @@ Rewrite:
 - selection-centric behavior
 - visual-goal handling
 - render helper integration to current `render/layout_index.rs` document-visual mapping seam
-- annotation handling to immutable `TextAnnotations`
 - tests to current behavior-first style
 
 Move out:

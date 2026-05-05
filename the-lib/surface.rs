@@ -17,17 +17,11 @@ use crate::{
   },
   operation::Edit,
   render::{
-    BlockWidget,
     CellGridMetrics,
     CellGridRenderSurface,
     CursorSemantics,
-    FrameRequest,
-    PresentUpdate,
-    RenderFrameDelta,
-    RetainedFrame,
-    SurfaceFrame,
+    RenderFrame,
     SyntaxSpan,
-    TextAnnotations,
     TextFormat,
     Viewport,
     layout_index::{
@@ -111,8 +105,6 @@ pub struct SurfaceViewSpec {
   pub format:           TextFormat,
   pub measurements:     CellGridMetrics,
   pub cursor_semantics: CursorSemantics,
-  pub annotations:      TextAnnotations,
-  pub widgets:          Vec<BlockWidget>,
 }
 
 impl SurfaceViewSpec {
@@ -122,8 +114,6 @@ impl SurfaceViewSpec {
       format: TextFormat::default(),
       measurements: CellGridMetrics::default(),
       cursor_semantics: CursorSemantics::Cell,
-      annotations: TextAnnotations::default(),
-      widgets: Vec::new(),
     }
   }
 }
@@ -214,8 +204,6 @@ impl Surface {
       format:           self.render.text_format().clone(),
       measurements:     self.render.measurements(),
       cursor_semantics: self.render.cursor_semantics(),
-      annotations:      self.render.text_annotations().clone(),
-      widgets:          self.render.widgets().to_vec(),
     }
   }
 
@@ -224,8 +212,6 @@ impl Surface {
     self.set_text_format(spec.format);
     self.set_measurements(spec.measurements);
     self.set_cursor_semantics(spec.cursor_semantics);
-    self.set_text_annotations(spec.annotations);
-    self.set_widgets(spec.widgets);
   }
 
   pub fn render_surface(&self) -> &CellGridRenderSurface {
@@ -250,10 +236,6 @@ impl Surface {
 
   pub fn visible_syntax(&self) -> &[SyntaxSpan] {
     self.render.visible_syntax()
-  }
-
-  pub fn render_generation(&self) -> u64 {
-    self.render.generation()
   }
 
   pub fn text_format(&self) -> &TextFormat {
@@ -284,19 +266,6 @@ impl Surface {
     self.reveal_primary_cursor(document, RevealMode::Minimal);
   }
 
-  pub fn text_annotations(&self) -> &TextAnnotations {
-    self.render.text_annotations()
-  }
-
-  pub fn set_text_annotations(&mut self, annotations: TextAnnotations) {
-    if self.render.text_annotations() == &annotations {
-      return;
-    }
-    self.render.set_text_annotations(annotations);
-    self.layout_index.invalidate_all();
-    self.invalidate_visible_syntax_cache();
-  }
-
   pub fn measurements(&self) -> CellGridMetrics {
     self.render.measurements()
   }
@@ -306,7 +275,6 @@ impl Surface {
       return;
     }
     self.render.set_measurements(measurements);
-    self.layout_index.invalidate_widgets();
     self.invalidate_visible_syntax_cache();
   }
 
@@ -316,19 +284,6 @@ impl Surface {
 
   pub fn set_cursor_semantics(&mut self, semantics: CursorSemantics) {
     self.render.set_cursor_semantics(semantics);
-  }
-
-  pub fn widgets(&self) -> &[BlockWidget] {
-    self.render.widgets()
-  }
-
-  pub fn set_widgets(&mut self, widgets: Vec<BlockWidget>) {
-    if self.render.widgets() == widgets.as_slice() {
-      return;
-    }
-    self.render.set_widgets(widgets);
-    self.layout_index.invalidate_widgets();
-    self.invalidate_visible_syntax_cache();
   }
 
   pub fn set_active_cursor(&mut self, active_cursor: Option<CursorId>) -> Result<()> {
@@ -549,9 +504,6 @@ impl Surface {
       text_revision: document.revision(),
       format: render.text_format(),
       wrap_width: self.viewport.wrap_width,
-      annotations: render.text_annotations(),
-      widgets: render.widgets(),
-      measurements: render.measurements(),
     };
     let Some(position) = self.layout_index.position_for_char(inputs, char_idx) else {
       return;
@@ -607,50 +559,22 @@ impl Surface {
     &mut self,
     document: &Document,
     syntax_registry: Option<&LanguageRegistry>,
-    since_generation: Option<u64>,
-  ) -> RenderFrameDelta {
+  ) -> RenderFrame {
     self.sync_visible_syntax(document, syntax_registry);
     self.render.render_frame_with_index(
       document.text().slice(..),
       document.revision(),
-      FrameRequest {
-        viewport: self.viewport,
-        since_generation,
-      },
+      self.viewport,
       &mut self.layout_index,
     )
-  }
-
-  pub fn snapshot(
-    &mut self,
-    document: &Document,
-    syntax_registry: Option<&LanguageRegistry>,
-  ) -> SurfaceFrame {
-    let delta = self.raw_frame_delta(document, syntax_registry, None);
-    SurfaceFrame::from(&delta)
-  }
-
-  pub fn present(
-    &mut self,
-    document: &Document,
-    syntax_registry: Option<&LanguageRegistry>,
-    retained: &mut RetainedFrame,
-  ) -> PresentUpdate {
-    let delta = self.raw_frame_delta(
-      document,
-      syntax_registry,
-      (!retained.is_empty()).then_some(retained.generation()),
-    );
-    retained.apply_delta(&delta)
   }
 
   pub fn render(
     &mut self,
     document: &Document,
     syntax_registry: Option<&LanguageRegistry>,
-    since_generation: Option<u64>,
-  ) -> RenderFrameDelta {
-    self.raw_frame_delta(document, syntax_registry, since_generation)
+  ) -> RenderFrame {
+    self.raw_frame_delta(document, syntax_registry)
   }
 
   fn finish_selection_update(
@@ -857,7 +781,6 @@ mod tests {
     },
     render::{
       SurfaceId,
-      TextAnnotations,
       TextFormat,
     },
     selection::Range,
@@ -865,11 +788,7 @@ mod tests {
   };
 
   fn render_surface() -> CellGridRenderSurface {
-    CellGridRenderSurface::new(
-      SurfaceId::new(1).unwrap(),
-      TextFormat::default(),
-      TextAnnotations::default(),
-    )
+    CellGridRenderSurface::new(SurfaceId::new(1).unwrap(), TextFormat::default())
   }
 
   fn viewport() -> Viewport {

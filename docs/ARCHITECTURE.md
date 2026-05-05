@@ -100,7 +100,7 @@ Purpose:
 - pure editor engine
 - semantic text state
 - deterministic editing operations
-- built-in retained cell-grid layout and render-delta production
+- built-in cell-grid layout and visible-frame projection
 
 Reasoning:
 - this is where correctness, invariants, and hot-path performance matter most
@@ -192,7 +192,7 @@ It owns things like:
 - surface-local undo/redo history
 - viewport/scroll state
 - reveal behavior
-- retained render state via `CellGridRenderSurface`
+- cell-grid view state via `CellGridRenderSurface`
 - render capabilities/options
 - per-view interaction state
 
@@ -201,7 +201,7 @@ A `Surface` is not a pane tree, tab, or app widget. It is the native editor/view
 Reasoning:
 - selection does not belong on `Document` if many views can show the same text
 - history restores exact committed selection snapshots and is therefore surface/session-local
-- a surface is the right unit for retained rendering and render deltas
+- a surface is the right unit for cell-grid view/layout state
 - pane/tab/split layout is product composition and should stay above the native engine/runtime
 
 ### Native service/session handles
@@ -324,7 +324,7 @@ Examples:
 - single-line behavior
 - render options
 - visible decoration layers
-- retained render state
+- cell-grid view state
 - readonly-as-view-policy
 
 Reasoning:
@@ -350,8 +350,7 @@ Put something in `the-lib` when it is any of the following:
 - hot-path editor math
 - syntax/tree-derived state tied to text
 - selection/cursor primitives
-- retained layout/render semantics
-- generic annotation/decorations that participate in layout and rendering
+- viewport-first cell-grid layout/projection semantics
 - reusable editing primitives expressed as text/selection/syntax -> result or transaction
 
 ### Examples
@@ -367,7 +366,7 @@ Put something in `the-lib` when it is any of the following:
 - syntax state and queries
 - diagnostic/annotation data structures if they are generic and text-bound
 - viewport/scroll/wrap/fold/visual-row mapping
-- retained render surfaces and render deltas
+- cell-grid surfaces and visible-frame projection
 
 ### Reasoning
 This is the engine substrate that should stay:
@@ -498,7 +497,7 @@ Good:
 
 ```ts
 runtime.documents.applyTransaction(documentId, tx)
-runtime.surfaces.renderFrame({ surfaceId, viewport, sinceGeneration })
+runtime.surfaces.renderFrame({ surfaceId, viewport })
 ```
 
 Bad:
@@ -528,11 +527,11 @@ Reasoning:
 - the client should retain presentation, not semantics
 - semantic queries should go back to Rust
 
-### Rule 4: Rendering is retained and incremental
+### Rule 4: Rendering should stay pure and viewport-first
 
 Reasoning:
-- full rebuilt snapshots are too expensive
-- scroll and small edits must not serialize unrelated state
+- Rust should own cell-grid layout truth
+- clients should own painting and richer presentation policy
 
 ### Rule 5: App/chrome state is separate from surface render state
 
@@ -546,20 +545,17 @@ Reasoning:
 The built-in cell-grid renderer is split into two stages.
 
 ```txt
-Rust (`the-lib`):   viewport-first retained cell-grid layout + render-delta production
-Client:             retained presentation scene + native painting
+Rust (`the-lib`):   viewport-first cell-grid layout + visible-frame projection
+Client:             native painting and presentation scene
 TypeScript:         orchestration + providers + surface composition
 ```
 
 Rust owns the built-in monospace path:
 - viewport-first cell-grid text layout
 - visible-row mapping
-- column-based wrap and inline text-annotation participation
-- widget row insertion
-- retained visible-window state
-- sparse checkpoint/origin caches
-- dirty tracking
-- render delta production
+- column-based wrap
+- visible-window resume/indexing helpers
+- visible-frame projection
 
 Client owns:
 - painting
@@ -569,12 +565,12 @@ Client owns:
 - non-cell-grid layout/rendering paths
 
 TypeScript owns:
-- decoration/widget/provider composition
+- decoration/provider composition
 - deciding which surfaces exist and how they are arranged
 
 The important rendering decision is this:
 
-> `CellGridRenderSurface` is a retained **visible-window renderer**, not a whole-document layout owner.
+> `CellGridRenderSurface` is a viewport-first **cell-grid projection helper**, not a whole-document layout owner.
 
 There is no document-wide layout cache at the center of the architecture.
 Rows, row metadata, selections, cursors, and syntax spans should all derive from a single shared visible-layout pass for the viewport plus a small margin.
@@ -732,7 +728,7 @@ Examples:
 - surface render generation
 
 Reasoning:
-- enough for invalidation, staleness checks, event ordering, and render deltas
+- enough for invalidation, staleness checks, and event ordering
 - avoids overdesigning revision identity too early
 - richer history identity can still exist internally where needed
 
@@ -848,13 +844,10 @@ The old editor is a reference, not a blueprint. Port selectively.
 - `syntax.rs`
 - render modules:
   - `render/text_format.rs`
-  - `render/text_annotations.rs`
   - `render/doc_formatter.rs`
   - `render/layout_index.rs`
   - `render/visible_layout.rs`
-  - `render/row_diff.rs`
-  - `render/layer_projection.rs`
-  - `render/visual_position.rs` as a thin compatibility adapter only
+    - `render/layer_projection.rs`
 - reworked `document.rs`
 - reworked `surface.rs` (the old `view.rs` concept folded into the new surface model)
 - narrowed `diagnostics.rs` if treated as generic semantic/render data
@@ -912,8 +905,7 @@ The first goal is not a user-facing milestone. It is a boundary milestone:
   - viewport/scroll
   - render cache and dirty state
 - deterministic editing primitives
-- annotations/decorations
-- retained render-delta path
+- viewport-first cell-grid frame projection
 
 ### `the-runtime` must provide
 - resource model
@@ -943,8 +935,8 @@ Reasoning:
 - `the-runtime` must not special-case editor command names or hide multi-step workflows.
 - TypeScript may define the editor's personality, but must not own semantic document truth.
 - Clients must not maintain a second semantic document model.
-- Rendering must be retained and incremental.
-- Features like soft wrap, inline annotations, widgets, and syntax must not disable the incremental path.
+- Rendering must stay pure and viewport-first.
+- Features like soft wrap and syntax must not disable the incremental path.
 - Pane/tab/split/workspace layout belongs above Rust native document/surface truth.
 - Documents are resource-agnostic.
 - Resources are first-class runtime objects.
@@ -1000,10 +992,10 @@ Documents are resource-agnostic semantic text objects.
 Movement, text objects, indent, surround, comment, match-brackets, auto-pairs, and similar operations are native editor semantics and often hot-path.
 
 ### 8. Should Rust own actual client painting?
-**Decision:** no. Rust produces layout and render deltas; the client paints.
+**Decision:** no. Rust produces layout and visible frames; the client paints.
 
 **Reasoning:**
-Painting is platform-specific. Layout and retained rendering are editor-semantic.
+Painting is platform-specific. Layout and cell-grid projection are editor-semantic.
 
 ### 9. Should `the-lib` include built-in UI products like command line or command palette?
 **Decision:** no.

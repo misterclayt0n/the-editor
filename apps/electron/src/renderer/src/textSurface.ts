@@ -1,4 +1,4 @@
-import type { CellGridMetrics, CursorPlacement, RenderFrameDelta, RenderRow, SyntaxSpan, Viewport } from "@the-editor/contracts/runtime";
+import type { CellGridMetrics, CursorPlacement, RenderFrame, RenderRow, SyntaxSpan, Viewport } from "@the-editor/contracts/runtime";
 
 export interface SurfaceConfiguration {
   viewport: Viewport;
@@ -78,7 +78,7 @@ export interface PaintTextSurfaceOptions {
   showAnnotations?: boolean;
 }
 
-export function paintTextSurface(canvas: HTMLCanvasElement, frame: RenderFrameDelta, options: PaintTextSurfaceOptions = {}): void {
+export function paintTextSurface(canvas: HTMLCanvasElement, frame: RenderFrame, options: PaintTextSurfaceOptions = {}): void {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
 
@@ -92,7 +92,7 @@ export function paintTextSurface(canvas: HTMLCanvasElement, frame: RenderFrameDe
   ctx.fillRect(0, 0, cssWidth, cssHeight);
 
   const rows = new Map<number, RenderRow>();
-  for (const row of frame.changedRows) rows.set(row.placement.surfaceRow, row);
+  for (const row of frame.rows) rows.set(row.surfaceRow, row);
 
   paintSelections(ctx, frame, metrics);
   paintRows(ctx, frame, rows, metrics);
@@ -130,8 +130,8 @@ function measureCellWidth(ctx: CanvasRenderingContext2D): number {
   return ctx.measureText(sample).width / sample.length;
 }
 
-function paintSelections(ctx: CanvasRenderingContext2D, frame: RenderFrameDelta, metrics: RendererMetrics): void {
-  const spans = frame.layers.selections?.spans ?? [];
+function paintSelections(ctx: CanvasRenderingContext2D, frame: RenderFrame, metrics: RendererMetrics): void {
+  const spans = frame.selections;
   ctx.fillStyle = theme.selectionBackground;
   for (const span of spans) {
     const x = xForCol(span.startCol, metrics);
@@ -143,43 +143,43 @@ function paintSelections(ctx: CanvasRenderingContext2D, frame: RenderFrameDelta,
 
 function paintRows(
   ctx: CanvasRenderingContext2D,
-  frame: RenderFrameDelta,
+  frame: RenderFrame,
   rows: Map<number, RenderRow>,
   metrics: RendererMetrics,
 ): void {
-  const syntaxByRow = syntaxSpansByRow(frame.layers.syntax?.spans ?? []);
+  const syntaxByRow = syntaxSpansByRow(frame.syntax);
   for (const row of rows.values()) {
     const cells = cellsForText(row.text);
-    const spans = syntaxByRow.get(row.placement.surfaceRow) ?? [];
+    const spans = syntaxByRow.get(row.surfaceRow) ?? [];
     if (spans.length === 0) {
-      drawCells(ctx, cells, 0, cells.length, row.placement.surfaceRow, theme.foreground, metrics);
+      drawCells(ctx, cells, 0, cells.length, row.surfaceRow, theme.foreground, metrics);
       continue;
     }
 
     let col = 0;
     for (const span of spans) {
       if (span.startCol > col) {
-        drawCells(ctx, cells, col, span.startCol, row.placement.surfaceRow, theme.foreground, metrics);
+        drawCells(ctx, cells, col, span.startCol, row.surfaceRow, theme.foreground, metrics);
       }
       drawCells(
         ctx,
         cells,
         span.startCol,
         span.endCol,
-        row.placement.surfaceRow,
+        row.surfaceRow,
         theme.syntax[span.kind] ?? theme.foreground,
         metrics,
       );
       col = Math.max(col, span.endCol);
     }
     if (col < cells.length) {
-      drawCells(ctx, cells, col, cells.length, row.placement.surfaceRow, theme.foreground, metrics);
+      drawCells(ctx, cells, col, cells.length, row.surfaceRow, theme.foreground, metrics);
     }
   }
 }
 
-function paintAnnotations(ctx: CanvasRenderingContext2D, frame: RenderFrameDelta, metrics: RendererMetrics): void {
-  const rows = frame.rowMetadata?.rows ?? [];
+function paintAnnotations(ctx: CanvasRenderingContext2D, frame: RenderFrame, metrics: RendererMetrics): void {
+  const rows = frame.rows;
   if (rows.length === 0) return;
   ctx.fillStyle = "#5f5f5f";
   ctx.font = `12px ${FONT_FAMILY}`;
@@ -193,11 +193,11 @@ function paintAnnotations(ctx: CanvasRenderingContext2D, frame: RenderFrameDelta
 
 function paintCursors(
   ctx: CanvasRenderingContext2D,
-  frame: RenderFrameDelta,
+  frame: RenderFrame,
   rows: Map<number, RenderRow>,
   metrics: RendererMetrics,
 ): void {
-  for (const cursor of frame.layers.cursors?.cursors ?? []) {
+  for (const cursor of frame.cursors) {
     if (cursor.semantics === "InsertionPoint") paintBarCursor(ctx, cursor, metrics);
     else paintBlockCursor(ctx, cursor, rows.get(cursor.surfaceRow), metrics);
   }

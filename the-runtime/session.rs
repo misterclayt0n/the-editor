@@ -26,12 +26,8 @@ use the_lib::{
   render::{
     CellGridMetrics,
     CellGridRenderSurface,
-    PresentUpdate,
-    RenderFrameDelta,
-    RetainedFrame,
-    SurfaceFrame,
+    RenderFrame,
     SurfaceId,
-    TextAnnotations,
     TextFormat,
     Viewport,
   },
@@ -387,32 +383,10 @@ impl RuntimeSession {
     Ok(advanced)
   }
 
-  pub fn render_surface(
-    &mut self,
-    surface: SurfaceHandle,
-    since_generation: Option<u64>,
-  ) -> RuntimeResult<RenderFrameDelta> {
+  pub fn render_surface(&mut self, surface: SurfaceHandle) -> RuntimeResult<RenderFrame> {
     let registry = self.prepare_surface_render(surface)?;
     self.with_surface_document_mut(surface, move |surface, document| {
-      surface.raw_frame_delta(document, Some(registry.as_ref()), since_generation)
-    })
-  }
-
-  pub fn snapshot_surface(&mut self, surface: SurfaceHandle) -> RuntimeResult<SurfaceFrame> {
-    let registry = self.prepare_surface_render(surface)?;
-    self.with_surface_document_mut(surface, move |surface, document| {
-      surface.snapshot(document, Some(registry.as_ref()))
-    })
-  }
-
-  pub fn present_surface(
-    &mut self,
-    surface: SurfaceHandle,
-    retained: &mut RetainedFrame,
-  ) -> RuntimeResult<PresentUpdate> {
-    let registry = self.prepare_surface_render(surface)?;
-    self.with_surface_document_mut(surface, move |surface, document| {
-      surface.present(document, Some(registry.as_ref()), retained)
+      surface.raw_frame_delta(document, Some(registry.as_ref()))
     })
   }
 
@@ -811,7 +785,6 @@ impl RuntimeSession {
     let render = CellGridRenderSurface::new(
       SurfaceId::new(handle.get()).expect("runtime surface handle must be non-zero"),
       TextFormat::default(),
-      TextAnnotations::default(),
     );
     let surface = Surface::new(&document_ref.document, render, viewport)?;
 
@@ -1254,17 +1227,16 @@ mod tests {
       .create_surface_with_viewport(document, Viewport::new(0, 20, 0, 120))
       .unwrap();
 
-    let frame = runtime.render_surface(surface, None).unwrap();
+    let frame = runtime.render_surface(surface).unwrap();
 
-    let syntax = frame.layers.syntax.expect("syntax layer delta");
     let visible_rows = frame
-      .changed_rows
+      .rows
       .iter()
-      .map(|row| (row.placement.surface_row, row.text.to_string()))
+      .map(|row| (row.surface_row, row.text.to_string()))
       .collect::<Vec<_>>();
 
-    let named_spans = syntax
-      .spans
+    let named_spans = frame
+      .syntax
       .iter()
       .filter_map(|span| {
         runtime
@@ -1274,8 +1246,8 @@ mod tests {
           .map(|name| (span.surface_row, span.start_col, span.end_col, name))
       })
       .collect::<Vec<_>>();
-    let colored_rows = syntax
-      .spans
+    let colored_rows = frame
+      .syntax
       .iter()
       .map(|span| span.surface_row)
       .collect::<std::collections::BTreeSet<_>>();
@@ -1290,8 +1262,8 @@ mod tests {
       colored_rows.contains(&first_nonempty_row),
       "expected syntax highlighting on first non-empty visible row {first_nonempty_row}; \
        rows={visible_rows:?}, spans={:?}",
-      syntax
-        .spans
+      frame
+        .syntax
         .iter()
         .take(20)
         .map(|span| (span.surface_row, span.start_col, span.end_col))
@@ -1300,8 +1272,8 @@ mod tests {
     assert!(
       !named_spans.is_empty(),
       "expected highlight names to resolve; spans={:?}",
-      syntax
-        .spans
+      frame
+        .syntax
         .iter()
         .take(20)
         .map(|span| (span.surface_row, span.start_col, span.end_col, span.kind))

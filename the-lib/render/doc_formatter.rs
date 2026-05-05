@@ -1,11 +1,7 @@
 //! Low-level visual document traversal.
 //!
-//! `DocumentFormatter` turns document text plus layout policy and text
-//! annotations into a stream of formatted graphemes with visual `(row, col)`
-//! positions.
-//!
-//! This is a foundational render-kernel primitive. It is intentionally public,
-//! but it is not the final retained-render API.
+//! `DocumentFormatter` turns document text plus layout policy into a stream of
+//! formatted graphemes with visual `(row, col)` positions.
 
 use std::{
   cmp::Ordering,
@@ -17,17 +13,13 @@ use the_stdx::rope::{
   RopeGraphemes,
   RopeSliceExt,
 };
-use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
   grapheme::{
     Grapheme,
     GraphemeStr,
   },
-  render::{
-    text_annotations::TextAnnotations,
-    text_format::TextFormat,
-  },
+  render::text_format::TextFormat,
 };
 
 const MAX_BLOCK_CHARS: usize = 4096;
@@ -179,7 +171,6 @@ impl<'a> GraphemeWithSource<'a> {
 pub struct DocumentFormatter<'a> {
   text_format: &'a TextFormat,
   wrap_width:  usize,
-  annotations: super::text_annotations::TextAnnotationsCursor<'a>,
 
   visual_pos: Position,
   graphemes:  RopeGraphemes<'a>,
@@ -187,29 +178,21 @@ pub struct DocumentFormatter<'a> {
   line_pos:   usize,
   exhausted:  bool,
 
-  inline_annotation_buf: Vec<GraphemeStr<'static>>,
-  inline_annotation_idx: usize,
-  peeked_grapheme:       Option<GraphemeWithSource<'a>>,
-  word_buf:              Vec<GraphemeWithSource<'a>>,
-  word_i:                usize,
-  indent_level:          Option<usize>,
+  peeked_grapheme: Option<GraphemeWithSource<'a>>,
+  word_buf:        Vec<GraphemeWithSource<'a>>,
+  word_i:          usize,
+  indent_level:    Option<usize>,
 }
 
 impl<'a> DocumentFormatter<'a> {
-  pub fn new(
-    text: RopeSlice<'a>,
-    text_format: &'a TextFormat,
-    wrap_width: usize,
-    annotations: &'a TextAnnotations,
-  ) -> Self {
-    Self::new_at_char(text, text_format, wrap_width, annotations, 0)
+  pub fn new(text: RopeSlice<'a>, text_format: &'a TextFormat, wrap_width: usize) -> Self {
+    Self::new_at_char(text, text_format, wrap_width, 0)
   }
 
   pub(crate) fn new_at_char(
     text: RopeSlice<'a>,
     text_format: &'a TextFormat,
     wrap_width: usize,
-    annotations: &'a TextAnnotations,
     char_idx: usize,
   ) -> Self {
     let (block_char_idx, block_line_idx) = prev_checkpoint(text, char_idx);
@@ -217,7 +200,6 @@ impl<'a> DocumentFormatter<'a> {
       text,
       text_format,
       wrap_width,
-      annotations,
       block_char_idx,
       block_line_idx,
     )
@@ -227,7 +209,6 @@ impl<'a> DocumentFormatter<'a> {
     text: RopeSlice<'a>,
     text_format: &'a TextFormat,
     wrap_width: usize,
-    annotations: &'a TextAnnotations,
     char_idx: usize,
     line_idx: usize,
   ) -> Self {
@@ -235,7 +216,6 @@ impl<'a> DocumentFormatter<'a> {
       text,
       text_format,
       wrap_width,
-      annotations,
       char_idx,
       line_idx,
       Position::default(),
@@ -247,14 +227,12 @@ impl<'a> DocumentFormatter<'a> {
     text: RopeSlice<'a>,
     text_format: &'a TextFormat,
     wrap_width: usize,
-    annotations: &'a TextAnnotations,
     checkpoint: FormatterCheckpoint,
   ) -> Self {
     Self::new_exact_with_state(
       text,
       text_format,
       wrap_width,
-      annotations,
       checkpoint.char_idx,
       checkpoint.line_idx,
       checkpoint.visual_pos,
@@ -266,25 +244,19 @@ impl<'a> DocumentFormatter<'a> {
     text: RopeSlice<'a>,
     text_format: &'a TextFormat,
     wrap_width: usize,
-    annotations: &'a TextAnnotations,
     char_idx: usize,
     line_idx: usize,
     visual_pos: Position,
     indent_level: Option<usize>,
   ) -> Self {
-    let annotations = annotations.cursor_at(text, char_idx);
-
     Self {
       text_format,
       wrap_width: wrap_width.max(1),
-      annotations,
       visual_pos,
       graphemes: text.slice(char_idx..).graphemes(),
       char_pos: char_idx,
       line_pos: line_idx,
       exhausted: false,
-      inline_annotation_buf: Vec::new(),
-      inline_annotation_idx: 0,
       peeked_grapheme: None,
       word_buf: Vec::with_capacity(64),
       word_i: 0,
@@ -297,10 +269,7 @@ impl<'a> DocumentFormatter<'a> {
   }
 
   pub(crate) fn checkpoint(&self) -> Option<FormatterCheckpoint> {
-    if self.word_i < self.word_buf.len()
-      || self.peeked_grapheme.is_some()
-      || self.inline_annotation_idx < self.inline_annotation_buf.len()
-    {
+    if self.word_i < self.word_buf.len() || self.peeked_grapheme.is_some() {
       return None;
     }
 
@@ -312,47 +281,11 @@ impl<'a> DocumentFormatter<'a> {
     })
   }
 
-  fn next_inline_annotation_grapheme(&mut self, char_pos: usize) -> Option<GraphemeStr<'static>> {
-    loop {
-      if self.inline_annotation_idx < self.inline_annotation_buf.len() {
-        let index = self.inline_annotation_idx;
-        self.inline_annotation_idx += 1;
-        return Some(replace(
-          &mut self.inline_annotation_buf[index],
-          GraphemeStr::from(""),
-        ));
-      }
-
-      self.inline_annotation_buf.clear();
-      self.inline_annotation_idx = 0;
-
-      let annotation = self.annotations.next_inline_annotation_at(char_pos)?;
-      self.inline_annotation_buf = UnicodeSegmentation::graphemes(annotation.text.as_str(), true)
-        .map(|grapheme| GraphemeStr::from(grapheme.to_owned()))
-        .collect();
-    }
-  }
-
-  fn advance_grapheme(&mut self, col: usize, char_pos: usize) -> Option<GraphemeWithSource<'a>> {
-    if let Some(grapheme) = self.next_inline_annotation_grapheme(char_pos) {
-      return Some(GraphemeWithSource::new(
-        grapheme,
-        col,
-        self.text_format.tab_width,
-        GraphemeSource::VirtualText,
-      ));
-    }
-
+  fn advance_grapheme(&mut self, col: usize, _char_pos: usize) -> Option<GraphemeWithSource<'a>> {
     if let Some(grapheme) = self.graphemes.next_grapheme() {
       let codepoints = grapheme.len_chars() as u32;
-      let grapheme = self
-        .annotations
-        .grapheme_substitution_at(char_pos)
-        .map(|substitution| GraphemeStr::from(substitution.grapheme.to_string()))
-        .unwrap_or_else(|| grapheme_str(grapheme));
-
       return Some(GraphemeWithSource::new(
-        grapheme,
+        grapheme_str(grapheme),
         col,
         self.text_format.tab_width,
         GraphemeSource::Document { codepoints },
@@ -552,14 +485,7 @@ mod tests {
   };
   use crate::{
     grapheme::Grapheme,
-    render::{
-      text_annotations::{
-        GraphemeSubstitution,
-        InlineAnnotation,
-        TextAnnotations,
-      },
-      text_format::TextFormat,
-    },
+    render::text_format::TextFormat,
   };
 
   fn collect_visible(formatter: DocumentFormatter<'_>) -> Vec<FormattedGrapheme<'_>> {
@@ -580,10 +506,7 @@ mod tests {
   fn formatter_emits_eof_sentinel() {
     let rope = Rope::from("hi");
     let format = TextFormat::default();
-    let annotations = TextAnnotations::default();
-
-    let items =
-      DocumentFormatter::new(rope.slice(..), &format, 20, &annotations).collect::<Vec<_>>();
+    let items = DocumentFormatter::new(rope.slice(..), &format, 20).collect::<Vec<_>>();
 
     assert!(
       items
@@ -596,13 +519,7 @@ mod tests {
   fn formatter_tracks_visual_positions() {
     let rope = Rope::from("a\nb");
     let format = TextFormat::default();
-    let annotations = TextAnnotations::default();
-    let items = collect_visible(DocumentFormatter::new(
-      rope.slice(..),
-      &format,
-      20,
-      &annotations,
-    ));
+    let items = collect_visible(DocumentFormatter::new(rope.slice(..), &format, 20));
 
     assert_eq!(items[0].visual_pos, Position::new(0, 0));
     assert_eq!(items[1].raw, Grapheme::Newline);
@@ -611,57 +528,13 @@ mod tests {
   }
 
   #[test]
-  fn formatter_inserts_inline_annotations() {
-    let rope = Rope::from("ab");
-    let format = TextFormat::default();
-    let mut annotations = TextAnnotations::default();
-    annotations.add_inline_annotation(InlineAnnotation::new(1, "X").unwrap());
-
-    let items = collect_visible(DocumentFormatter::new(
-      rope.slice(..),
-      &format,
-      20,
-      &annotations,
-    ));
-
-    assert_eq!(items[0].char_idx, 0);
-    assert_eq!(items[1].char_idx, 1);
-    assert!(items[1].is_virtual());
-    assert_eq!(items[2].char_idx, 1);
-  }
-
-  #[test]
-  fn formatter_applies_grapheme_substitutions() {
-    let rope = Rope::from("ab");
-    let format = TextFormat::default();
-    let mut annotations = TextAnnotations::default();
-    annotations.add_grapheme_substitution(GraphemeSubstitution::new(1, "Z").unwrap());
-
-    let items = collect_visible(DocumentFormatter::new(
-      rope.slice(..),
-      &format,
-      20,
-      &annotations,
-    ));
-
-    assert_eq!(items[1].char_idx, 1);
-    assert_eq!(items[1].raw, Grapheme::Other { g: "Z".into() });
-  }
-
-  #[test]
   fn formatter_emits_wrap_indicator() {
     let rope = Rope::from("hello world");
     let mut format = TextFormat::default();
     format.soft_wrap = true;
     format.set_wrap_indicator("↪");
-    let annotations = TextAnnotations::default();
 
-    let items = collect_visible(DocumentFormatter::new(
-      rope.slice(..),
-      &format,
-      5,
-      &annotations,
-    ));
+    let items = collect_visible(DocumentFormatter::new(rope.slice(..), &format, 5));
 
     assert!(items.iter().any(|grapheme| {
       grapheme.is_virtual() && grapheme.raw == Grapheme::Other { g: "↪".into() }

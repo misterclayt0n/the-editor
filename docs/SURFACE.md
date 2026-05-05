@@ -25,8 +25,8 @@ It is responsible for:
 - owning per-surface `History`
 - owning logical viewport/scroll state
 - owning reveal policy/helpers
-- owning retained rendering state via the built-in `CellGridRenderSurface`
-- coordinating text edits with document mutation, selection updates, history, cursor repair, visual goals, and cell-grid render invalidation
+- owning cell-grid view state via the built-in `CellGridRenderSurface`
+- coordinating text edits with document mutation, selection updates, history, cursor repair, visual goals, and visible-frame projection inputs
 
 It is **not** responsible for:
 - owning document text truth
@@ -58,7 +58,7 @@ If two splits show the same text, they still need independent:
 - visual goals
 - histories
 - scroll positions
-- retained render state
+- cell-grid view state
 
 Those things therefore cannot live on `Document`.
 
@@ -140,11 +140,10 @@ If surface-level scroll state later diverges from raw render input, a dedicated 
 
 That means the following remain per-surface retained cell-grid inputs/state:
 - `TextFormat`
-- narrowed `TextAnnotations` for inline inserted text and grapheme substitutions only
+- render view state stays limited to viewport, wrap format, metrics, and cursor semantics
 - visible syntax baseline/enrichment caches
-- widgets
 - `CellGridMetrics`
-- retained visible-window rows/layers/checkpoints/dirtiness
+- visible syntax cache and layout/projection inputs
 
 ---
 
@@ -229,14 +228,11 @@ Not necessarily exactly that, but close.
 
 ### Why own `CellGridRenderSurface` directly?
 Because render state is already clearly per-surface state:
-- retained visible-row identity
-- visible-window checkpoint/origin caches
-- selection/cursor/syntax layers
-- widgets
+- visible syntax cache
 - measurements
 - viewport-shaped rendering behavior
 
-`CellGridRenderSurface` should be viewport-first, not a whole-document layout owner. Keeping it inside `Surface` keeps reveal, viewport state, and retained visible cell-grid rendering close to the session object that actually uses them.
+`CellGridRenderSurface` should be viewport-first, not a whole-document layout owner. Keeping it inside `Surface` keeps reveal, viewport state, and cell-grid projection inputs close to the session object that actually uses them.
 
 This does not claim that all clients must use this renderer. It is the built-in path for TUI, REPL, test, and monospace GUI clients.
 
@@ -377,7 +373,7 @@ That means `Surface` should likely expose things like:
 
 This makes `Surface` feel like the real per-view object rather than forcing callers to juggle two peer objects for one view.
 
-`CellGridRenderSurface` may remain public and focused, but it should increasingly feel like a viewport-first retained visible-window subsystem.
+`CellGridRenderSurface` may remain public and focused, but it should increasingly feel like a viewport-first cell-grid projection helper.
 
 ---
 
@@ -449,7 +445,7 @@ impl Surface {
   pub fn apply_edit(&mut self, document: &mut Document, edit: Edit) -> Result<()>;
   pub fn apply_selection(&mut self, document: &Document, selection: Selection);
 
-  pub fn render(&mut self, document: &Document, since_generation: Option<u64>) -> RenderFrameDelta;
+  pub fn render(&mut self, document: &Document) -> RenderFrame;
 }
 ```
 
@@ -465,7 +461,7 @@ This is illustrative, not frozen.
 - viewport
 - reveal logic
 - visual goals
-- retained render state
+- cell-grid view state
 
 These are not runtime services.
 These are not product chrome.

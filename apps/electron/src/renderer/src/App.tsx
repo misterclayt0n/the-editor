@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import type { RenderFrameDelta } from "@the-editor/contracts/runtime";
+import type { RenderFrame } from "@the-editor/contracts/runtime";
 import { configureTextSurface, loadEditorFont, paintTextSurface } from "./textSurface.js";
 import "./style.css";
 
 function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [frame, setFrame] = useState<RenderFrameDelta | undefined>();
+  const [frame, setFrame] = useState<RenderFrame | undefined>();
   const [mode, setMode] = useState("NORMAL");
   const [status, setStatus] = useState("booting");
   const [activePath, setActivePath] = useState<string | undefined>();
@@ -23,7 +23,7 @@ function App() {
         setActivePath(typeof event.activePath === "string" ? event.activePath : undefined);
         if (typeof event.softWrap === "boolean") setSoftWrap(event.softWrap);
         if (typeof event.showAnnotations === "boolean") setShowAnnotations(event.showAnnotations);
-        if (isObject(event.frame)) setFrame(event.frame as unknown as RenderFrameDelta);
+        if (isObject(event.frame)) setFrame(event.frame as unknown as RenderFrame);
       }
     });
   }, []);

@@ -25,7 +25,7 @@ This document extends `docs/ARCHITECTURE.md`. The core rule remains:
 The editor is a native Rust editor platform with a programmable TypeScript product layer and an Electron client adapter.
 
 ```txt
-Rust engine (`the-lib`)        text/state/editing invariants + cell-grid render deltas
+Rust engine (`the-lib`)        text/state/editing invariants + cell-grid frame projection
 Rust runtime (`the-runtime`)   resources, sessions, services, file IO, search, LSP, watches
 Node native runtime package     napi-rs wrapper around `the-runtime`
 TypeScript editor substrate    hooks, dispatch, commands, keymaps, layout, modules
@@ -153,7 +153,7 @@ createScratch(text)
 openFile(path)
 createSurface(documentId, viewport)
 setSurfaceViewport(surfaceId, viewport)
-renderFrame(surfaceId, viewport, sinceGeneration)
+renderFrame(surfaceId, viewport)
 saveSurfaceDocument(surfaceId)
 ```
 
@@ -213,7 +213,6 @@ The native bridge is synchronous internally today, but exposed to TypeScript beh
 The important rule is unchanged:
 
 - keep runtime APIs coarse-grained
-- keep render deltas retained and incremental
 - keep hot text/layout work in Rust
 - do not expose chatty per-row/per-token APIs
 - benchmark native serialization costs once the Electron loop exists
@@ -292,7 +291,6 @@ The renderer may use a narrow runtime render bridge:
 runtime.surfaces.renderFrame({
   surfaceId,
   viewport,
-  sinceGeneration,
 });
 ```
 
@@ -311,10 +309,10 @@ Renderer:
   measures viewport size
   tracks concrete scroll/pixel state
   requests render frames for visible surfaces
-  paints returned render deltas
+  paints returned render frames
 
 Rust:
-  owns layout, retained render state, selection truth, document truth
+  owns cell-grid layout truth, selection truth, document truth
 ```
 
 The renderer must not use the render bridge to make semantic editor decisions.
@@ -340,7 +338,6 @@ Canvas2D:
   cursors
   selections
   syntax spans
-  widgets participating in cell-grid rendering
 ```
 
 React must not be in the text-paint hot path.
@@ -348,13 +345,13 @@ React must not be in the text-paint hot path.
 Bad:
 
 ```txt
-RenderFrameDelta -> React state -> row components -> span components
+RenderFrame -> React state -> row components -> span components
 ```
 
 Good:
 
 ```txt
-RenderFrameDelta -> imperative SurfacePainter.applyDelta() -> canvas paint
+RenderFrame -> imperative SurfacePainter.paintFrame() -> canvas paint
 ```
 
 The surface painter should be an adapter:
@@ -362,8 +359,7 @@ The surface painter should be an adapter:
 ```ts
 interface SurfacePainter {
   resize(size: PixelSize, metrics: CellGridMetrics): void;
-  applyDelta(delta: RenderFrameDelta): void;
-  paint(damage?: Damage): void;
+  paintFrame(frame: RenderFrame): void;
   dispose(): void;
 }
 ```
@@ -437,7 +433,7 @@ Rust owns:
 ```txt
 Document
 Surface
-RenderFrameDelta
+RenderFrame
 Selection/history/viewport per Surface
 ```
 

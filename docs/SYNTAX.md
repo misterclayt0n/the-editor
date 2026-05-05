@@ -59,7 +59,7 @@ The architecture should read like this:
 ```txt
 Document      = text truth + syntax truth
 Surface       = per-view/editor-session state + visible syntax caches
-CellGridRenderSurface = retained render subsystem, syntax-agnostic
+CellGridRenderSurface = cell-grid projection subsystem, syntax-agnostic
 Runtime       = syntax scheduling/orchestration and asset loading
 ```
 
@@ -107,7 +107,7 @@ The complete model has four layers:
 1. Persistent syntax truth
 2. Incremental syntax advancement
 3. Visible-range extraction
-4. Render-facing retained visible caches
+4. Render-facing visible projections
 ```
 
 ### 1. Persistent syntax truth
@@ -119,7 +119,7 @@ Document defines the pure state machine; runtime drives it with bounded foregrou
 ### 3. Visible-range extraction
 Surface/runtime pull byte-oriented visible runs from syntax truth on demand.
 
-### 4. Render-facing retained visible caches
+### 4. Render-facing visible projections
 Surface converts extracted runs into row-local render payloads by projecting them through the current visible layout; `CellGridRenderSurface` remains syntax-agnostic.
 
 ---
@@ -371,20 +371,20 @@ Instead:
 - `Document` exposes syntax truth/extraction
 - runtime advances freshness
 - `Surface` requests visible extraction for its viewport
-- `Surface` projects that through the current visible layout into retained render-facing payloads
-- `CellGridRenderSurface` diffs and emits those payloads
+- `Surface` projects that through the current visible layout into render-facing payloads
+- `CellGridRenderSurface` emits full visible frames from those payloads
 
 ---
 
 ### 15. Keep `CellGridRenderSurface` syntax-agnostic
 **Decision:** yes.
 
-`CellGridRenderSurface` should retain rows/layers and diff row-local syntax payloads, but not own syntax query policy or syntax truth.
+`CellGridRenderSurface` should project row-local syntax payloads, but not own syntax query policy or syntax truth.
 
 This preserves the clean object split:
 - document = truth
 - surface = editor/view adapter
-- render surface = retained renderer
+- render surface = cell-grid projection helper
 
 ---
 
@@ -893,7 +893,7 @@ Document-owned persistent layered syntax truth
 + explicit invalidation and generations
 + runtime-owned budgeted advancement and scheduling
 + surface-owned visible extraction caches
-+ syntax-agnostic retained rendering
++ syntax-agnostic cell-grid projection
 + tier-1 structural baseline
 + tier-2 semantic/locals enrichment
 ```

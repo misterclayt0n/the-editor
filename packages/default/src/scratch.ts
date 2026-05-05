@@ -1,4 +1,4 @@
-import type { RenderFrameDelta, Viewport } from "@the-editor/contracts/runtime";
+import type { RenderFrame, Viewport } from "@the-editor/contracts/runtime";
 import { commandId, type EditorHost, type EditorModule } from "@the-editor/editor";
 import { getDefaultState, refreshActiveSurface, setEditorMode, type DefaultEditorState } from "./state.js";
 
@@ -86,7 +86,7 @@ export function defaultScratch(): EditorModule {
       },
     });
 
-    editor.commands.register<RenderActiveSurfaceArgs | undefined, RenderFrameDelta>({
+    editor.commands.register<RenderActiveSurfaceArgs | undefined, RenderFrame>({
       id: commandId("surface.renderActive"),
       title: "Render Active Surface",
       async run(_ctx, args) {

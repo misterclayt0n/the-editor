@@ -4,7 +4,7 @@ import type {
   DocumentId,
   DocumentOpened,
   OkResult,
-  RenderFrameDelta,
+  RenderFrame,
   RuntimeApi,
   SurfaceCreated,
   SurfaceId,
@@ -81,14 +81,9 @@ export class RuntimeNativeClient implements RuntimeApi {
     renderFrame: async (params: {
       surfaceId: SurfaceId;
       viewport?: Viewport;
-      sinceGeneration?: number | null;
-    }): Promise<RenderFrameDelta> => {
-      const json = this.session.renderFrameJson(
-        params.surfaceId,
-        params.viewport ?? null,
-        params.sinceGeneration ?? null,
-      );
-      return JSON.parse(json) as RenderFrameDelta;
+    }): Promise<RenderFrame> => {
+      const json = this.session.renderFrameJson(params.surfaceId, params.viewport ?? null);
+      return JSON.parse(json) as RenderFrame;
     },
   };
 

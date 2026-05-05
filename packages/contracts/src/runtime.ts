@@ -74,44 +74,12 @@ export interface SurfaceOperation {
 
 export type ClipboardKind = "Clipboard" | "Selection";
 
-export interface RowPlacement {
-  surfaceRow: number;
-  yPx: number;
-  heightPx: number;
-}
-
 export interface RenderRow {
-  id: number;
-  generation: number;
-  placement: RowPlacement;
-  text: string;
-}
-
-export interface RowMove {
-  id: number;
-  from: RowPlacement | null;
-  to: RowPlacement;
-}
-
-export type RowKind = "Document" | { Widget: { widgetId: number; fragment: number } };
-
-export interface RowMetadata {
-  rowId: number;
   surfaceRow: number;
-  kind: RowKind;
+  text: string;
   docLine: number | null;
   startsLogicalLine: boolean;
   wrappedContinuation: boolean;
-}
-
-export interface RowMetadataDelta {
-  rows: RowMetadata[];
-}
-
-export interface Damage {
-  full: boolean;
-  startRow: number;
-  endRow: number;
 }
 
 export interface SelectionSpan {
@@ -119,8 +87,6 @@ export interface SelectionSpan {
   surfaceRow: number;
   startCol: number;
   endCol: number;
-  xPx: number;
-  widthPx: number;
 }
 
 export type CursorSemantics = "InsertionPoint" | "Cell";
@@ -129,10 +95,6 @@ export interface CursorPlacement {
   cursorId: number;
   surfaceRow: number;
   col: number;
-  xPx: number;
-  yPx: number;
-  widthPx: number;
-  heightPx: number;
   semantics: CursorSemantics;
 }
 
@@ -140,40 +102,15 @@ export interface SyntaxSpan {
   surfaceRow: number;
   startCol: number;
   endCol: number;
-  xPx: number;
-  widthPx: number;
   kind: number;
 }
 
-export interface WidgetPlacement {
-  widgetId: number;
-  surfaceRow: number;
-  rowSpan: number;
-  xPx: number;
-  yPx: number;
-  widthPx: number;
-  heightPx: number;
-}
-
-export interface LayerDeltaSet {
-  gutters: Record<string, never> | null;
-  selections: { spans: SelectionSpan[] } | null;
-  cursors: { cursors: CursorPlacement[] } | null;
-  syntax: { spans: SyntaxSpan[] } | null;
-  overlays: Record<string, never> | null;
-  widgets: { widgets: WidgetPlacement[] } | null;
-}
-
-export interface RenderFrameDelta {
+export interface RenderFrame {
   surfaceId: SurfaceId;
-  generation: number;
-  full: boolean;
-  retainedRows: RowMove[];
-  changedRows: RenderRow[];
-  removedRows: number[];
-  rowMetadata: RowMetadataDelta | null;
-  layers: LayerDeltaSet;
-  damage: Damage;
+  rows: RenderRow[];
+  selections: SelectionSpan[];
+  cursors: CursorPlacement[];
+  syntax: SyntaxSpan[];
 }
 
 export interface RuntimeApi {
@@ -198,8 +135,7 @@ export interface RuntimeApi {
     renderFrame(params: {
       surfaceId: SurfaceId;
       viewport?: Viewport;
-      sinceGeneration?: number | null;
-    }): Promise<RenderFrameDelta>;
+    }): Promise<RenderFrame>;
   };
   registers: {
     read(params: { name: string }): Promise<{ values: string[] | null }>;

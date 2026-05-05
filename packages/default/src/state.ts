@@ -1,4 +1,4 @@
-import type { DocumentId, RenderFrameDelta, SurfaceId, Viewport } from "@the-editor/contracts/runtime";
+import type { DocumentId, RenderFrame, SurfaceId, Viewport } from "@the-editor/contracts/runtime";
 import { commandId, type EditorHost, type KeyInput } from "@the-editor/editor";
 
 export type EditorMode = "normal" | "insert" | "select";
@@ -11,7 +11,7 @@ export interface DefaultEditorState {
   softWrap: boolean;
   showAnnotations: boolean;
   preferredColumn: number | undefined;
-  lastFrame: RenderFrameDelta | undefined;
+  lastFrame: RenderFrame | undefined;
 }
 
 const defaultState = new WeakMap<EditorHost, DefaultEditorState>();
@@ -46,7 +46,6 @@ export async function refreshActiveSurface(editor: EditorHost, viewport?: Viewpo
   state.lastFrame = await editor.runtime.surfaces.renderFrame({
     surfaceId: state.activeSurfaceId,
     viewport,
-    sinceGeneration: null,
   });
   return state;
 }

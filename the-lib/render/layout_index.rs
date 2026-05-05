@@ -1,5 +1,3 @@
-use std::cmp::Ordering;
-
 use ropey::RopeSlice;
 
 use super::{
@@ -8,9 +6,6 @@ use super::{
     FormatterCheckpoint,
     Position,
   },
-  layers::BlockWidget,
-  measurement::CellGridMetrics,
-  text_annotations::TextAnnotations,
   text_format::TextFormat,
 };
 use crate::grapheme::Grapheme;
@@ -20,32 +15,15 @@ const WRAP_CHECKPOINT_CHAR_STRIDE: usize = 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct LayoutSignature {
-  wrap_width:  usize,
-  format:      TextFormat,
-  annotations: TextAnnotations,
+  wrap_width: usize,
+  format:     TextFormat,
 }
 
 impl LayoutSignature {
   fn from_inputs(inputs: LayoutInputs<'_>) -> Self {
     Self {
-      wrap_width:  inputs.wrap_width,
-      format:      inputs.format.clone(),
-      annotations: inputs.annotations.clone(),
-    }
-  }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct WidgetSignature {
-  widgets:      Vec<BlockWidget>,
-  measurements: CellGridMetrics,
-}
-
-impl WidgetSignature {
-  fn from_inputs(inputs: LayoutInputs<'_>) -> Self {
-    Self {
-      widgets:      inputs.widgets.to_vec(),
-      measurements: inputs.measurements,
+      wrap_width: inputs.wrap_width,
+      format:     inputs.format.clone(),
     }
   }
 }
@@ -120,14 +98,6 @@ impl FenwickTree {
     sum
   }
 
-  fn set(&mut self, index: usize, old_value: usize, new_value: usize) {
-    if new_value >= old_value {
-      self.add(index, (new_value - old_value) as isize);
-    } else {
-      self.add(index, -((old_value - new_value) as isize));
-    }
-  }
-
   fn add(&mut self, index: usize, delta: isize) {
     let mut index = index + 1;
     while index <= self.tree.len() {
@@ -144,13 +114,11 @@ impl FenwickTree {
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct LayoutIndex {
-  signature:               Option<LayoutSignature>,
-  widget_signature:        Option<WidgetSignature>,
-  text_revision:           Option<u64>,
-  line_metrics:            Vec<LineLayoutMetrics>,
-  visual_row_tree:         FenwickTree,
-  widget_rows_before_line: Vec<usize>,
-  pending_text_change:     Option<TextChangeSummary>,
+  signature:           Option<LayoutSignature>,
+  text_revision:       Option<u64>,
+  line_metrics:        Vec<LineLayoutMetrics>,
+  visual_row_tree:     FenwickTree,
+  pending_text_change: Option<TextChangeSummary>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -159,28 +127,19 @@ pub(crate) struct LayoutInputs<'a> {
   pub(crate) text_revision: u64,
   pub(crate) format:        &'a TextFormat,
   pub(crate) wrap_width:    usize,
-  pub(crate) annotations:   &'a TextAnnotations,
-  pub(crate) widgets:       &'a [BlockWidget],
-  pub(crate) measurements:  CellGridMetrics,
 }
 
 impl LayoutIndex {
   pub(crate) fn invalidate_all(&mut self) {
     self.signature = None;
-    self.widget_signature = None;
     self.text_revision = None;
     self.line_metrics.clear();
     self.visual_row_tree.clear();
-    self.widget_rows_before_line.clear();
     self.pending_text_change = Some(TextChangeSummary {
       start_line:   0,
       old_end_line: 0,
       new_end_line: 0,
     });
-  }
-
-  pub(crate) fn invalidate_widgets(&mut self) {
-    self.widget_signature = None;
   }
 
   pub(crate) fn note_text_change(&mut self, change: TextChangeSummary) {
@@ -195,29 +154,17 @@ impl LayoutIndex {
   pub(crate) fn ensure(&mut self, inputs: LayoutInputs<'_>) {
     let next_signature = LayoutSignature::from_inputs(inputs);
     let layout_changed = self.signature.as_ref() != Some(&next_signature);
-    let next_widget_signature = WidgetSignature::from_inputs(inputs);
-    let widgets_changed = self.widget_signature.as_ref() != Some(&next_widget_signature);
 
     if layout_changed {
       self.signature = Some(next_signature);
-      self.widget_signature = Some(next_widget_signature);
       self.rebuild_full(inputs);
       self.text_revision = Some(inputs.text_revision);
       self.pending_text_change = None;
       return;
     }
 
-    if widgets_changed {
-      self.widget_signature = Some(next_widget_signature);
-      self.rebuild_widget_rows_before_line(inputs.text, inputs.widgets, inputs.measurements);
-    }
-
     if self.text_revision == Some(inputs.text_revision) {
       return;
-    }
-
-    if !widgets_changed {
-      self.rebuild_widget_rows_before_line(inputs.text, inputs.widgets, inputs.measurements);
     }
 
     if !inputs.format.soft_wrap {
@@ -237,7 +184,6 @@ impl LayoutIndex {
   }
 
   fn rebuild_full(&mut self, inputs: LayoutInputs<'_>) {
-    self.rebuild_widget_rows_before_line(inputs.text, inputs.widgets, inputs.measurements);
     if inputs.format.soft_wrap {
       self.rebuild_soft_wrap_metrics(inputs);
     } else {
@@ -261,42 +207,28 @@ impl LayoutIndex {
       return;
     }
 
-    let start_line = change.start_line.min(line_count.saturating_sub(1));
-    let old_end_line = change
+    let start = change.start_line.min(line_count.saturating_sub(1));
+    let remove_end = change
       .old_end_line
-      .min(self.line_metrics.len().saturating_sub(1))
-      .max(start_line);
-    let new_end_line = change
-      .new_end_line
-      .min(line_count.saturating_sub(1))
-      .max(start_line);
-    let old_count = old_end_line - start_line + 1;
-    let new_count = new_end_line - start_line + 1;
+      .min(self.line_metrics.len().saturating_sub(1));
+    let remove_len = if start <= remove_end {
+      remove_end - start + 1
+    } else {
+      0
+    };
+    let insert_end = change.new_end_line.min(line_count.saturating_sub(1));
+    let replacement = if start <= insert_end {
+      (start..=insert_end)
+        .map(|line_idx| build_line_metrics(inputs, line_idx))
+        .collect::<Vec<_>>()
+    } else {
+      Vec::new()
+    };
 
-    if self.line_metrics.len() != line_count || old_count != new_count {
-      self.line_metrics.splice(
-        start_line..start_line + old_count,
-        std::iter::repeat_with(LineLayoutMetrics::default).take(new_count),
-      );
-      if self.line_metrics.len() != line_count {
-        self.rebuild_soft_wrap_metrics(inputs);
-        return;
-      }
-      for line_idx in start_line..start_line + new_count {
-        self.line_metrics[line_idx] = build_line_metrics(inputs, line_idx);
-      }
-      self.rebuild_visual_row_tree();
-      return;
-    }
-
-    for line_idx in start_line..start_line + new_count {
-      let old_visual_row_count = self.line_metrics[line_idx].visual_row_count;
-      let new_metrics = build_line_metrics(inputs, line_idx);
-      self
-        .visual_row_tree
-        .set(line_idx, old_visual_row_count, new_metrics.visual_row_count);
-      self.line_metrics[line_idx] = new_metrics;
-    }
+    self
+      .line_metrics
+      .splice(start..start.saturating_add(remove_len), replacement);
+    self.rebuild_visual_row_tree();
   }
 
   fn rebuild_visual_row_tree(&mut self) {
@@ -306,32 +238,6 @@ impl LayoutIndex {
         .iter()
         .map(|metrics| metrics.visual_row_count),
     );
-  }
-
-  fn rebuild_widget_rows_before_line(
-    &mut self,
-    text: RopeSlice<'_>,
-    widgets: &[BlockWidget],
-    measurements: CellGridMetrics,
-  ) {
-    let line_count = text.len_lines().max(1);
-    self.widget_rows_before_line.clear();
-    self.widget_rows_before_line.reserve(line_count);
-
-    let mut total = 0usize;
-    let mut next_widget = 0usize;
-    let last_line = line_count.saturating_sub(1);
-    for line_idx in 0..line_count {
-      while let Some(widget) = widgets.get(next_widget) {
-        let widget_line = widget.after_line.min(last_line);
-        if widget_line >= line_idx {
-          break;
-        }
-        total += widget_row_span(widget.measured_height_px, measurements.row_height_px);
-        next_widget += 1;
-      }
-      self.widget_rows_before_line.push(total);
-    }
   }
 
   pub(crate) fn line_for_char(&self, text: RopeSlice<'_>, char_idx: usize) -> usize {
@@ -347,13 +253,7 @@ impl LayoutIndex {
   }
 
   pub(crate) fn surface_row_for_line(&self, line_idx: usize) -> usize {
-    self.doc_visual_row_for_line(line_idx).saturating_add(
-      self
-        .widget_rows_before_line
-        .get(line_idx)
-        .copied()
-        .unwrap_or(0),
-    )
+    self.doc_visual_row_for_line(line_idx)
   }
 
   pub(crate) fn line_for_surface_row(&self, text: RopeSlice<'_>, surface_row: usize) -> usize {
@@ -399,18 +299,9 @@ impl LayoutIndex {
     let line_idx = self.line_for_surface_row(inputs.text, surface_row);
     let line_start_char = inputs.text.line_to_char(line_idx);
     let line_doc_visual_row = self.doc_visual_row_for_line(line_idx);
-    let line_surface_row = self.surface_row_for_line(line_idx);
 
     let checkpoint = if inputs.format.soft_wrap {
-      let target_doc_row = surface_row
-        .saturating_sub(
-          self
-            .widget_rows_before_line
-            .get(line_idx)
-            .copied()
-            .unwrap_or(0),
-        )
-        .saturating_sub(line_doc_visual_row);
+      let target_doc_row = surface_row.saturating_sub(line_doc_visual_row);
       checkpoint_for_visible_start(
         self.line_metrics.get(line_idx),
         line_start_char,
@@ -429,7 +320,7 @@ impl LayoutIndex {
     LayoutStart {
       line_idx,
       line_doc_visual_row,
-      surface_row: line_surface_row.saturating_add(checkpoint.visual_pos.row),
+      surface_row: line_doc_visual_row.saturating_add(checkpoint.visual_pos.row),
       checkpoint,
     }
   }
@@ -442,7 +333,6 @@ fn build_line_metrics(inputs: LayoutInputs<'_>, line_idx: usize) -> LineLayoutMe
     text,
     inputs.format,
     inputs.wrap_width,
-    inputs.annotations,
     line_start_char,
     line_idx,
   );
@@ -576,18 +466,11 @@ fn position_in_line(
       text,
       inputs.format,
       inputs.wrap_width,
-      inputs.annotations,
       line_start,
       line_idx,
     )
   } else {
-    DocumentFormatter::new_at_checkpoint(
-      text,
-      inputs.format,
-      inputs.wrap_width,
-      inputs.annotations,
-      checkpoint,
-    )
+    DocumentFormatter::new_at_checkpoint(text, inputs.format, inputs.wrap_width, checkpoint)
   };
 
   let mut last_row = checkpoint.visual_pos.row;
@@ -623,118 +506,6 @@ fn position_in_line(
   })
 }
 
-pub(crate) fn visual_offset_from_block(
-  text: RopeSlice<'_>,
-  anchor: usize,
-  pos: usize,
-  text_format: &TextFormat,
-  wrap_width: usize,
-  annotations: &TextAnnotations,
-) -> (Position, usize) {
-  let mut last_pos = Position::default();
-  let mut formatter =
-    DocumentFormatter::new_at_char(text, text_format, wrap_width, annotations, anchor);
-  let block_start = formatter.next_char_pos();
-
-  while let Some(grapheme) = formatter.next() {
-    last_pos = grapheme.visual_pos;
-    if formatter.next_char_pos() > pos {
-      return (grapheme.visual_pos, block_start);
-    }
-  }
-
-  (last_pos, block_start)
-}
-
-pub(crate) fn char_idx_at_visual_block_offset(
-  text: RopeSlice<'_>,
-  anchor: usize,
-  row: usize,
-  column: usize,
-  text_format: &TextFormat,
-  wrap_width: usize,
-  annotations: &TextAnnotations,
-) -> (usize, usize) {
-  let mut formatter =
-    DocumentFormatter::new_at_char(text, text_format, wrap_width, annotations, anchor);
-  let mut last_char_idx = formatter.next_char_pos();
-  let mut found_non_virtual_on_row = false;
-  let mut last_row = 0;
-
-  for grapheme in &mut formatter {
-    match grapheme.visual_pos.row.cmp(&row) {
-      Ordering::Equal => {
-        if grapheme.visual_pos.col + grapheme.width() > column {
-          if !grapheme.is_virtual() {
-            return (grapheme.char_idx, 0);
-          }
-          if found_non_virtual_on_row {
-            return (last_char_idx, 0);
-          }
-        } else if !grapheme.is_virtual() {
-          found_non_virtual_on_row = true;
-          last_char_idx = grapheme.char_idx;
-        }
-      },
-      Ordering::Greater if found_non_virtual_on_row => return (last_char_idx, 0),
-      Ordering::Greater => return (last_char_idx, row - last_row),
-      Ordering::Less => {
-        if !grapheme.is_virtual() {
-          last_row = grapheme.visual_pos.row;
-          last_char_idx = grapheme.char_idx;
-        }
-      },
-    }
-  }
-
-  (formatter.next_char_pos(), 0)
-}
-
-pub(crate) fn char_idx_at_visual_offset(
-  text: RopeSlice<'_>,
-  mut anchor: usize,
-  mut row_offset: isize,
-  column: usize,
-  text_format: &TextFormat,
-  wrap_width: usize,
-  annotations: &TextAnnotations,
-) -> (usize, usize) {
-  let mut pos = anchor;
-
-  loop {
-    let (visual_pos_in_block, block_char_offset) =
-      visual_offset_from_block(text, anchor, pos, text_format, wrap_width, annotations);
-    row_offset += visual_pos_in_block.row as isize;
-    anchor = block_char_offset;
-
-    if row_offset >= 0 {
-      break;
-    }
-    if block_char_offset == 0 {
-      row_offset = 0;
-      break;
-    }
-
-    pos = anchor;
-    anchor -= 1;
-  }
-
-  char_idx_at_visual_block_offset(
-    text,
-    anchor,
-    row_offset as usize,
-    column,
-    text_format,
-    wrap_width,
-    annotations,
-  )
-}
-
-fn widget_row_span(height_px: u32, row_height_px: u32) -> usize {
-  let row_height_px = row_height_px.max(1);
-  height_px.max(1).div_ceil(row_height_px) as usize
-}
-
 #[cfg(test)]
 mod tests {
   use ropey::Rope;
@@ -746,16 +517,12 @@ mod tests {
     let rope = Rope::from_str("abcdefghij\nklmnopqrst\n");
     let mut format = TextFormat::default();
     format.soft_wrap = true;
-    let annotations = TextAnnotations::default();
     let mut index = LayoutIndex::default();
     index.ensure(LayoutInputs {
       text:          rope.slice(..),
       text_revision: 1,
       format:        &format,
       wrap_width:    8,
-      annotations:   &annotations,
-      widgets:       &[],
-      measurements:  CellGridMetrics::default(),
     });
 
     assert_eq!(index.doc_visual_row_for_line(0), 0);
@@ -766,90 +533,16 @@ mod tests {
   }
 
   #[test]
-  fn visual_row_prefix_sums_accumulate_all_previous_lines() {
-    let rope = Rope::from_str("a\nb\nc\nd\n");
-    let mut format = TextFormat::default();
-    format.soft_wrap = true;
-    let annotations = TextAnnotations::default();
-    let mut index = LayoutIndex::default();
-    index.ensure(LayoutInputs {
-      text:          rope.slice(..),
-      text_revision: 1,
-      format:        &format,
-      wrap_width:    80,
-      annotations:   &annotations,
-      widgets:       &[],
-      measurements:  CellGridMetrics::default(),
-    });
-
-    assert_eq!(index.doc_visual_row_for_line(0), 0);
-    assert_eq!(index.doc_visual_row_for_line(1), 1);
-    assert_eq!(index.doc_visual_row_for_line(2), 2);
-    assert_eq!(index.doc_visual_row_for_line(3), 3);
-  }
-
-  #[test]
-  fn widget_changes_update_surface_rows_without_text_revision_change() {
-    let rope = Rope::from_str("abcdefghij\nklmnopqrst\n");
-    let mut format = TextFormat::default();
-    format.soft_wrap = true;
-    let annotations = TextAnnotations::default();
-    let measurements = CellGridMetrics::default();
-    let mut index = LayoutIndex::default();
-    let no_widgets = Vec::new();
-    index.ensure(LayoutInputs {
-      text: rope.slice(..),
-      text_revision: 1,
-      format: &format,
-      wrap_width: 5,
-      annotations: &annotations,
-      widgets: &no_widgets,
-      measurements,
-    });
-    let visual_rows_before_line_one = index.doc_visual_row_for_line(1);
-    assert_eq!(index.surface_row_for_line(1), visual_rows_before_line_one);
-
-    let widgets = vec![BlockWidget::after_line(
-      crate::render::WidgetId::new(1).unwrap(),
-      0,
-      10,
-      measurements.row_height_px * 2,
-    )];
-    index.ensure(LayoutInputs {
-      text: rope.slice(..),
-      text_revision: 1,
-      format: &format,
-      wrap_width: 5,
-      annotations: &annotations,
-      widgets: &widgets,
-      measurements,
-    });
-
-    assert_eq!(
-      index.doc_visual_row_for_line(1),
-      visual_rows_before_line_one
-    );
-    assert_eq!(
-      index.surface_row_for_line(1),
-      visual_rows_before_line_one + 2
-    );
-  }
-
-  #[test]
   fn incremental_same_line_change_updates_only_that_line_count() {
     let rope = Rope::from_str("abcdefghij\nklmnopqrst\n");
     let mut format = TextFormat::default();
     format.soft_wrap = true;
-    let annotations = TextAnnotations::default();
     let mut index = LayoutIndex::default();
     index.ensure(LayoutInputs {
       text:          rope.slice(..),
       text_revision: 1,
       format:        &format,
       wrap_width:    8,
-      annotations:   &annotations,
-      widgets:       &[],
-      measurements:  CellGridMetrics::default(),
     });
     let original_second = index.line_metrics[1].visual_row_count;
 
@@ -864,9 +557,6 @@ mod tests {
       text_revision: 2,
       format:        &format,
       wrap_width:    8,
-      annotations:   &annotations,
-      widgets:       &[],
-      measurements:  CellGridMetrics::default(),
     });
 
     assert_eq!(index.line_metrics[1].visual_row_count, original_second);

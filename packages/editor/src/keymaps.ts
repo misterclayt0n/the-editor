@@ -192,6 +192,27 @@ export class KeymapRegistry {
     };
   }
 
+  async pressScopes(scopes: readonly string[], input: KeyInput): Promise<KeymapPressResult> {
+    const filtered = scopes.filter((scope) => scope.trim().length > 0);
+    if (!filtered.length) return { kind: "not-found" };
+
+    if (this.pendingKeys.length && this.activeScope && filtered.includes(this.activeScope)) {
+      return this.press(this.activeScope, input);
+    }
+
+    if (this.pendingKeys.length && this.activeScope && !filtered.includes(this.activeScope)) {
+      this.reset();
+    }
+
+    for (const scope of filtered) {
+      const result = await this.press(scope, input);
+      if (result.kind === "not-found") continue;
+      return result;
+    }
+
+    return { kind: "not-found" };
+  }
+
   private rebuildRoots(): void {
     this.roots.clear();
     const ctx: KeymapContext = { editor: this.editor };

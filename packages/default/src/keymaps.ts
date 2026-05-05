@@ -1,7 +1,14 @@
-import { keymap, type EditorModule, type KeymapNodeSpec } from "@the-editor/editor";
+import { dispatch, keymap, type EditorModule, type KeymapNodeSpec } from "@the-editor/editor";
 
 export function defaultKeymaps(): EditorModule {
   return (editor) => {
+    editor.interaction.registerProfile({
+      id: "default.helix",
+      title: "Default Helix",
+      description: "First-party Helix-shaped interaction profile",
+    });
+    editor.interaction.useProfile("default.helix");
+
     const normalTree = keymap("Normal mode", {
         "h | left": "move_char_left",
         "j | down": "move_visual_line_down",
@@ -58,7 +65,7 @@ export function defaultKeymaps(): EditorModule {
           // ".": "goto_last_modification",
           // w: "goto_word",
         }),
-        // ":": "command_mode",
+        ":": dispatch("command_palette.open", { initialQuery: ":" }),
 
         i: "insert_mode",
         I: "insert_at_line_start",
@@ -191,6 +198,7 @@ export function defaultKeymaps(): EditorModule {
         // "A-!": "shell_append_output",
         // $: "shell_keep_pipe",
         // "C-z": "suspend",
+        "C-p": "command_palette.open",
 
         // "C-a": "increment",
         // "C-x": "decrement",
@@ -252,6 +260,7 @@ export function defaultKeymaps(): EditorModule {
       scope: "insert",
       tree: keymap("Insert mode", {
         esc: "normal_mode",
+        "C-p": "command_palette.open",
 
         // "C-s": "commit_undo_checkpoint",
         // "C-x": "completion",

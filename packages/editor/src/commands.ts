@@ -11,6 +11,9 @@ export interface CommandContext {
 export interface Command<TArgs = unknown, TResult = unknown> {
   id: CommandId;
   title?: string;
+  category?: string;
+  hidden?: boolean;
+  keywords?: string[];
   run(ctx: CommandContext, args: TArgs): TResult | Promise<TResult>;
 }
 

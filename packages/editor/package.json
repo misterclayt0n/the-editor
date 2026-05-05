@@ -16,10 +16,20 @@
       "types": "./src/runtimeClient.ts",
       "import": "./dist/runtimeClient.mjs",
       "require": "./dist/runtimeClient.cjs"
+    },
+    "./ui": {
+      "types": "./src/ui.ts",
+      "import": "./dist/ui.mjs",
+      "require": "./dist/ui.cjs"
+    },
+    "./workbench": {
+      "types": "./src/workbench.ts",
+      "import": "./dist/workbench.mjs",
+      "require": "./dist/workbench.cjs"
     }
   },
   "scripts": {
-    "build": "tsdown src/index.ts src/runtimeClient.ts src/editorHost.ts src/disposable.ts src/contributions.ts src/hooks.ts src/commands.ts src/keymaps.ts src/modules.ts --format esm,cjs --dts --clean",
+    "build": "tsdown src/index.ts src/runtimeClient.ts src/editorHost.ts src/disposable.ts src/contributions.ts src/hooks.ts src/commands.ts src/keymaps.ts src/modules.ts src/ui.ts src/workbench.ts src/diagnostics.ts --format esm,cjs --dts --clean",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"
   },

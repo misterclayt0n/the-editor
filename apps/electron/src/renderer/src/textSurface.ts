@@ -1,4 +1,5 @@
 import type { CellGridMetrics, CursorPlacement, RenderFrame, RenderRow, SyntaxSpan, Viewport } from "@the-editor/contracts/runtime";
+import type { BufferDecoration, InlineTextDecoration, RangeDecoration } from "@the-editor/editor";
 
 export interface SurfaceConfiguration {
   viewport: Viewport;
@@ -74,7 +75,7 @@ export function configureTextSurface(canvas: HTMLCanvasElement): SurfaceConfigur
   };
 }
 
-export function paintTextSurface(canvas: HTMLCanvasElement, frame: RenderFrame): void {
+export function paintTextSurface(canvas: HTMLCanvasElement, frame: RenderFrame, decorations: BufferDecoration[] = []): void {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
 
@@ -91,7 +92,10 @@ export function paintTextSurface(canvas: HTMLCanvasElement, frame: RenderFrame):
   for (const row of frame.rows) rows.set(row.surfaceRow, row);
 
   paintSelections(ctx, frame, metrics);
+  paintDecorationRanges(ctx, decorations, metrics);
   paintRows(ctx, frame, rows, metrics);
+  paintInlineTextDecorations(ctx, decorations, metrics);
+  paintDecorationUnderlines(ctx, decorations, metrics);
   paintCursors(ctx, frame, rows, metrics);
 }
 
@@ -136,6 +140,17 @@ function paintSelections(ctx: CanvasRenderingContext2D, frame: RenderFrame, metr
   }
 }
 
+function paintDecorationRanges(
+  ctx: CanvasRenderingContext2D,
+  decorations: BufferDecoration[],
+  metrics: RendererMetrics,
+): void {
+  for (const decoration of decorations) {
+    if (decoration.kind !== "range" || !decoration.background) continue;
+    paintRangeDecoration(ctx, decoration, metrics, decoration.background);
+  }
+}
+
 function paintRows(
   ctx: CanvasRenderingContext2D,
   frame: RenderFrame,
@@ -170,6 +185,35 @@ function paintRows(
     if (col < cells.length) {
       drawCells(ctx, cells, col, cells.length, row.surfaceRow, theme.foreground, metrics);
     }
+  }
+}
+
+function paintInlineTextDecorations(
+  ctx: CanvasRenderingContext2D,
+  decorations: BufferDecoration[],
+  metrics: RendererMetrics,
+): void {
+  for (const decoration of decorations) {
+    if (decoration.kind !== "inlineText") continue;
+    paintInlineTextDecoration(ctx, decoration, metrics);
+  }
+}
+
+function paintDecorationUnderlines(
+  ctx: CanvasRenderingContext2D,
+  decorations: BufferDecoration[],
+  metrics: RendererMetrics,
+): void {
+  for (const decoration of decorations) {
+    if (decoration.kind !== "range" || !decoration.underline) continue;
+    const y = yForRow(decoration.surfaceRow, metrics) + metrics.rowHeight - 2;
+    ctx.fillStyle = decoration.underline;
+    ctx.fillRect(
+      xForCol(decoration.startCol, metrics),
+      y,
+      Math.max(metrics.cellWidth, (decoration.endCol - decoration.startCol) * metrics.cellWidth),
+      1,
+    );
   }
 }
 
@@ -208,6 +252,33 @@ function paintBlockCursor(
     ctx.fillStyle = theme.cursorForeground;
     ctx.fillText(cell, x, y + metrics.baselineOffset);
   }
+}
+
+function paintRangeDecoration(
+  ctx: CanvasRenderingContext2D,
+  decoration: RangeDecoration,
+  metrics: RendererMetrics,
+  color: string,
+): void {
+  ctx.fillStyle = color;
+  ctx.fillRect(
+    xForCol(decoration.startCol, metrics),
+    yForRow(decoration.surfaceRow, metrics),
+    Math.max(metrics.cellWidth, (decoration.endCol - decoration.startCol) * metrics.cellWidth),
+    metrics.rowHeight,
+  );
+}
+
+function paintInlineTextDecoration(
+  ctx: CanvasRenderingContext2D,
+  decoration: InlineTextDecoration,
+  metrics: RendererMetrics,
+): void {
+  ctx.save();
+  ctx.globalAlpha = decoration.opacity ?? 0.65;
+  ctx.fillStyle = decoration.foreground ?? "#7f8ea3";
+  ctx.fillText(decoration.text, xForCol(decoration.col, metrics), yForRow(decoration.surfaceRow, metrics) + metrics.baselineOffset);
+  ctx.restore();
 }
 
 function drawCells(

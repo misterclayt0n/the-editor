@@ -13,8 +13,16 @@
       "require": "./dist/index.cjs"
     }
   },
+  "editor": {
+    "id": "default",
+    "title": "Default Distribution",
+    "runtime": "./src/runtime.ts",
+    "interaction": "./src/interaction.ts",
+    "ui": "./src/ui.tsx",
+    "defaultTargets": ["runtime", "interaction", "ui"]
+  },
   "scripts": {
-    "build": "tsdown src/index.ts src/scratch.ts src/keymaps.ts --format esm,cjs --dts --clean",
+    "build": "tsdown src/index.ts src/scratch.ts src/keymaps.ts src/runtime.ts src/interaction.ts --format esm,cjs --dts --clean",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"
   },

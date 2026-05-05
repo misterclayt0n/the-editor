@@ -1,5 +1,5 @@
 import type { DocumentId, RenderFrame, SurfaceId, Viewport } from "@the-editor/contracts/runtime";
-import { commandId, type EditorHost, type KeyInput } from "@the-editor/editor";
+import { commandId, type BufferDecoration, type EditorHost, type KeyInput, type RoleSnapshot } from "@the-editor/editor";
 
 export type EditorMode = "normal" | "insert" | "select";
 
@@ -11,25 +11,24 @@ export interface DefaultEditorState {
   softWrap: boolean;
   preferredColumn: number | undefined;
   lastFrame: RenderFrame | undefined;
+  decorations: BufferDecoration[];
+  roleStates: Record<string, RoleSnapshot>;
 }
 
-const defaultState = new WeakMap<EditorHost, DefaultEditorState>();
+const defaultEditorStateSlot = "default.editor.state";
 
 export function getDefaultState(editor: EditorHost): DefaultEditorState {
-  let state = defaultState.get(editor);
-  if (!state) {
-    state = {
-      mode: "normal",
-      activeDocumentId: undefined,
-      activeSurfaceId: undefined,
-      activePath: undefined,
-      softWrap: false,
-      preferredColumn: undefined,
-      lastFrame: undefined,
-    };
-    defaultState.set(editor, state);
-  }
-  return state;
+  return editor.stateSlot(defaultEditorStateSlot, () => ({
+    mode: "normal",
+    activeDocumentId: undefined,
+    activeSurfaceId: undefined,
+    activePath: undefined,
+    softWrap: false,
+    preferredColumn: undefined,
+    lastFrame: undefined,
+    decorations: [],
+    roleStates: {},
+  }));
 }
 
 export function setEditorMode(editor: EditorHost, mode: EditorMode): DefaultEditorState {
@@ -40,17 +39,30 @@ export function setEditorMode(editor: EditorHost, mode: EditorMode): DefaultEdit
 
 export async function refreshActiveSurface(editor: EditorHost, viewport?: Viewport): Promise<DefaultEditorState> {
   const state = getDefaultState(editor);
-  if (!state.activeSurfaceId) return state;
-  state.lastFrame = await editor.runtime.surfaces.renderFrame({
-    surfaceId: state.activeSurfaceId,
-    viewport,
+  if (state.activeSurfaceId) {
+    state.lastFrame = await editor.runtime.surfaces.renderFrame({
+      surfaceId: state.activeSurfaceId,
+      viewport,
+    });
+  }
+  state.roleStates = editor.roles.snapshotAll();
+  state.decorations = await editor.decorations.collect({
+    mode: state.mode,
+    activeDocumentId: state.activeDocumentId,
+    activeSurfaceId: state.activeSurfaceId,
+    activePath: state.activePath,
+    frame: state.lastFrame,
   });
   return state;
 }
 
 export async function handleKeyInput(editor: EditorHost, input: KeyInput): Promise<DefaultEditorState> {
   const state = getDefaultState(editor);
-  const result = await editor.keymaps.press(state.mode, input);
+  const scopes = editor.focus.scopes(state.mode);
+  const result = await editor.keymaps.pressScopes(scopes, input);
+  const focus = editor.focus.current();
+  const paletteFocused = focus.kind === "role" && focus.role === "commandPalette";
+  const editorFocused = focus.kind === "editor";
 
   if (result.kind === "matched") {
     for (const dispatch of result.dispatches) {
@@ -60,7 +72,16 @@ export async function handleKeyInput(editor: EditorHost, input: KeyInput): Promi
     return state;
   }
 
-  if (state.mode === "insert" && input.text) {
+  if (paletteFocused && input.text) {
+    await editor.commands.dispatch({
+      id: commandId("command_palette.appendText"),
+      args: { text: input.text },
+    });
+    await refreshActiveSurface(editor);
+    return state;
+  }
+
+  if (editorFocused && state.mode === "insert" && input.text) {
     await editor.commands.dispatch({
       id: commandId("edit.insertText"),
       args: { text: input.text },

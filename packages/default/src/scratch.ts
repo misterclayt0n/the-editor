@@ -36,6 +36,7 @@ export function defaultScratch(): EditorModule {
         state.activeSurfaceId = surface.surfaceId;
         state.activePath = undefined;
         setEditorMode(editor, "normal");
+        editor.focus.setEditor();
         await refreshActiveSurface(editor, viewport);
         return state;
       },
@@ -57,6 +58,7 @@ export function defaultScratch(): EditorModule {
         state.activeSurfaceId = surface.surfaceId;
         state.activePath = args.path;
         setEditorMode(editor, "normal");
+        editor.focus.setEditor();
         await refreshActiveSurface(editor, viewport);
         return state;
       },

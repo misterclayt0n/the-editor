@@ -1,0 +1,73 @@
+import type { EditorModule, KeyInput } from "@the-editor/editor";
+import type { WorkbenchSessionState, WorkbenchSurfaceConfigureRequest } from "@the-editor/editor/workbench";
+import { toDisposable } from "@the-editor/editor";
+import { defaultViewport } from "./scratch.js";
+import { getDefaultState, handleKeyInput, refreshActiveSurface } from "./state.js";
+
+export function defaultWorkbench(): EditorModule {
+  return (editor) => {
+    const boot = editor.hooks.tap("workbench.boot", {
+      id: "default.workbench.boot",
+      async handler() {
+        const state = getDefaultState(editor);
+        if (state.activeSurfaceId) return;
+        await editor.commands.dispatch({
+          id: "scratch.create",
+          args: { text: "", viewport: defaultViewport() },
+        });
+      },
+    });
+
+    const keyInput = editor.hooks.tap("workbench.keyInput", {
+      id: "default.workbench.keyInput",
+      async handler(input: KeyInput) {
+        await handleKeyInput(editor, input);
+        return true;
+      },
+    });
+
+    const surfaceConfigure = editor.hooks.tap("workbench.surfaceConfigure", {
+      id: "default.workbench.surfaceConfigure",
+      async handler(request: WorkbenchSurfaceConfigureRequest) {
+        const state = getDefaultState(editor);
+        if (!state.activeSurfaceId) throw new Error("no active surface");
+        if (request.metrics) {
+          await editor.runtime.surfaces.setMetrics({
+            surfaceId: state.activeSurfaceId,
+            metrics: request.metrics,
+          });
+        }
+        await refreshActiveSurface(editor, request.viewport);
+        return true;
+      },
+    });
+
+    const sessionState = editor.hooks.tap("workbench.sessionState", {
+      id: "default.workbench.sessionState",
+      async handler(): Promise<WorkbenchSessionState> {
+        const state = getDefaultState(editor);
+        await refreshActiveSurface(editor);
+        return {
+          mode: state.mode,
+          activeDocumentId: state.activeDocumentId,
+          activeSurfaceId: state.activeSurfaceId,
+          activePath: state.activePath,
+          softWrap: state.softWrap,
+          frame: state.lastFrame,
+          roles: state.roleStates,
+          tools: editor.tools.snapshotAll(),
+          decorations: state.decorations,
+          diagnostics: editor.diagnostics.all(),
+          focus: editor.focus.current(),
+        };
+      },
+    });
+
+    return toDisposable(() => {
+      boot.dispose();
+      keyInput.dispose();
+      surfaceConfigure.dispose();
+      sessionState.dispose();
+    });
+  };
+}

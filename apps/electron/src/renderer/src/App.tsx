@@ -1,25 +1,51 @@
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { RenderFrame } from "@the-editor/contracts/runtime";
+import type { BufferDecoration } from "@the-editor/editor";
 import { configureTextSurface, loadEditorFont, paintTextSurface } from "./textSurface.js";
+import { RendererPackageRuntime, type WorkbenchSnapshot } from "./uiRuntime.js";
 import "./style.css";
+
+const uiRuntime = new RendererPackageRuntime();
 
 function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [frame, setFrame] = useState<RenderFrame | undefined>();
+  const [decorations, setDecorations] = useState<BufferDecoration[]>([]);
+  const [, setUiRevision] = useState(0);
+
+  useEffect(() => uiRuntime.subscribe(() => {
+    setUiRevision((revision) => revision + 1);
+  }), []);
 
   useEffect(() => {
     return window.theEditor.onPolicyEvent((event) => {
       if (!isObject(event)) return;
       if (event.type === "policy.error") console.error(String(event.message ?? "policy error"));
-      if (event.type === "default.sessionChanged" && isObject(event.frame)) {
-        setFrame(event.frame as unknown as RenderFrame);
+      if (event.type === "default.sessionChanged") {
+        if (isObject(event.frame)) setFrame(event.frame as unknown as RenderFrame);
+        setDecorations(Array.isArray(event.decorations) ? event.decorations as BufferDecoration[] : []);
+        const snapshot: WorkbenchSnapshot = {
+          roles: (isObject(event.roles) ? event.roles : {}) as WorkbenchSnapshot["roles"],
+          packages: (Array.isArray(event.packages) ? event.packages : []) as WorkbenchSnapshot["packages"],
+          diagnostics: (Array.isArray(event.diagnostics) ? event.diagnostics : []) as WorkbenchSnapshot["diagnostics"],
+          interaction: isObject(event.interaction) ? event.interaction as unknown as WorkbenchSnapshot["interaction"] : undefined,
+          tools: (Array.isArray(event.tools) ? event.tools : []) as WorkbenchSnapshot["tools"],
+          decorations: (Array.isArray(event.decorations) ? event.decorations : []) as WorkbenchSnapshot["decorations"],
+          focus: isObject(event.focus) ? event.focus as WorkbenchSnapshot["focus"] : undefined,
+        };
+        void uiRuntime.update(snapshot).then(() => {
+          setUiRevision((revision) => revision + 1);
+        }).catch((error) => {
+          console.error(error);
+        });
       }
     });
   }, []);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (isEditableTarget(event.target)) return;
       if (event.metaKey) return;
       const input = toKeyInput(event);
       if (!input) return;
@@ -62,12 +88,36 @@ function App() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !frame) return;
-    paintTextSurface(canvas, frame);
-  }, [frame]);
+    paintTextSurface(canvas, frame, decorations);
+  }, [frame, decorations]);
+
+  const leftSidebar = uiRuntime.renderToolRoot("leftSidebar");
+  const rightSidebar = uiRuntime.renderToolRoot("rightSidebar");
+  const bottomPanel = uiRuntime.renderToolRoot("bottomPanel");
+  const editorAdjacent = uiRuntime.renderToolRoot("editorAdjacent");
+  const overlayModal = uiRuntime.renderToolRoot("overlayModal");
+  const overlayFloating = uiRuntime.renderToolRoot("overlayFloating");
 
   return (
-    <main className="app">
-      <canvas ref={canvasRef} />
+    <main className="workbench">
+      <section className="workbenchMainRow">
+        {leftSidebar ? <aside className="workbenchSidebar left">{leftSidebar}</aside> : null}
+        <section className="workbenchCenterColumn">
+          <div className="workbenchEditorArea">
+            <canvas ref={canvasRef} />
+            {editorAdjacent ? <div className="workbenchEditorAdjacent">{editorAdjacent}</div> : null}
+          </div>
+          {bottomPanel ? <section className="workbenchBottomPanel">{bottomPanel}</section> : null}
+          <footer className="workbenchStatuslineRoot">{uiRuntime.renderRole("statusline")}</footer>
+        </section>
+        {rightSidebar ? <aside className="workbenchSidebar right">{rightSidebar}</aside> : null}
+      </section>
+
+      <div className="workbenchOverlayRoot">
+        {overlayModal}
+        {overlayFloating}
+        {uiRuntime.renderRole("commandPalette")}
+      </div>
     </main>
   );
 }
@@ -135,6 +185,13 @@ function namedKey(key: string): string | undefined {
     default:
       return undefined;
   }
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target instanceof HTMLInputElement) return true;
+  if (target instanceof HTMLTextAreaElement) return true;
+  return target.isContentEditable;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

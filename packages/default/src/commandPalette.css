@@ -1,0 +1,158 @@
+.commandPaletteOverlay {
+  inset: 0;
+  position: absolute;
+}
+
+.commandPaletteBackdrop {
+  background: rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(8px);
+  inset: 0;
+  position: absolute;
+}
+
+.commandPaletteViewport {
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: max(16px, 4vh) 16px;
+  position: absolute;
+}
+
+.commandPaletteShell {
+  align-self: flex-start;
+  max-width: 640px;
+  transform: translateY(0);
+  width: 100%;
+}
+
+.commandPalettePanel {
+  background: rgba(26, 26, 26, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 0;
+  border-radius: 20px 20px 0 0;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.42);
+  overflow: hidden;
+  position: relative;
+}
+
+.commandPalettePanel::before {
+  border: 1px solid rgba(255, 255, 255, 0.03);
+  border-radius: 19px 19px 0 0;
+  content: "";
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+}
+
+.commandPaletteInputRow {
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  display: flex;
+  gap: 10px;
+  min-height: 56px;
+  padding: 0 14px;
+}
+
+.commandPaletteSearchIcon {
+  color: #8f949c;
+  flex: 0 0 auto;
+  height: 18px;
+  width: 18px;
+}
+
+.commandPaletteInput {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: #f2f4f8;
+  flex: 1 1 auto;
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.4;
+  min-width: 0;
+  outline: none;
+  padding: 14px 0;
+}
+
+.commandPaletteInput::placeholder {
+  color: #858b95;
+}
+
+.commandPaletteInput::-ms-clear {
+  display: none;
+}
+
+.commandPaletteItems {
+  max-height: min(420px, calc(70vh - 56px));
+  overflow: auto;
+  padding: 8px;
+}
+
+.commandPaletteItem {
+  -webkit-tap-highlight-color: transparent;
+  background: transparent;
+  border: 0;
+  border-radius: 12px;
+  color: inherit;
+  cursor: default;
+  display: block;
+  padding: 8px 10px;
+  text-align: left;
+  user-select: none;
+  width: 100%;
+}
+
+.commandPaletteItem.active {
+  background: #2a2f38;
+  color: #f8fafc;
+}
+
+.commandPaletteItemMain {
+  align-items: baseline;
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+}
+
+.commandPaletteTitle {
+  color: #f3f4f6;
+  flex: 1 1 auto;
+  font-size: 14px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commandPaletteDetail {
+  color: #9198a1;
+  flex: 0 0 auto;
+  font-family: Iosevka, ui-monospace, monospace;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commandPaletteItem.active .commandPaletteDetail {
+  color: #c4cad3;
+}
+
+.commandPaletteEmpty {
+  color: #8c929c;
+  font-size: 13px;
+  padding: 16px 12px;
+}
+
+.commandPaletteFooter {
+  align-items: center;
+  background: rgba(20, 20, 20, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0 0 20px 20px;
+  color: #8f949c;
+  display: flex;
+  font-size: 12px;
+  justify-content: space-between;
+  padding: 10px 16px;
+  user-select: none;
+}

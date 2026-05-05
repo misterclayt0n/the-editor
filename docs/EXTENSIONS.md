@@ -6,7 +6,7 @@ It answers these questions:
 
 1. What does “100% extensible” actually mean here?
 2. What stays in the stable host shell, and what becomes swappable?
-3. What is a role, a surface, and an interaction profile?
+3. What is a role, a tool, and an interaction profile?
 4. How should `:reload` work?
 5. How do we support arbitrary UI, weird apps, and native-backed extensions without turning the workbench into mush?
 
@@ -58,16 +58,16 @@ The host still owns:
 - persistence
 - extension runtime
 - reload/disposal
-- editor surface mounting
+- editor text surface mounting
 
 But most product behavior above that should be swappable.
 
-### 2. Typed roles + surfaces
+### 2. Typed roles + tools
 
 The extension model has two important UI categories:
 
 - **roles** = replaceable built-in responsibilities
-- **surfaces** = pluggable mounted UI apps/panes
+- **tools** = pluggable mounted UI apps/panes
 
 ### 3. One extension package, split entrypoints
 
@@ -101,7 +101,7 @@ base profile + overlays
 
 Host-owned:
 
-- documents/surfaces/session truth
+- documents/text surfaces/session truth
 - workbench layout truth
 - focus truth
 - command/keymap/profile activation
@@ -161,7 +161,7 @@ That includes:
 ### 10. Roles are scarce and special
 
 Roles should stay small in number.
-Everything else should be a surface.
+Everything else should be a tool.
 
 ### 11. Host owns focus and key routing
 
@@ -185,8 +185,8 @@ editor.insert
 editor.select
 palette
 dialog
-surface.<id>
-surface-kind.<kind>
+tool.<id>
+tool-kind.<kind>
 ```
 
 ### 13. Interaction profiles compose workflows from stable primitives
@@ -196,9 +196,12 @@ They should compose different behaviors from shared lower-level primitives.
 
 ---
 
-## Roles vs surfaces
+## Roles vs tools
 
 This distinction is important.
+
+> **Naming note:** a workbench **tool** is not the Rust/native text `Surface` from `the-lib/surface.rs`.
+> In this document, **tool** means a mounted workbench app or pane.
 
 ## Roles
 
@@ -228,9 +231,9 @@ commandPalette role
   module decides how it looks and behaves
 ```
 
-## Surfaces
+## Tools
 
-A **surface** is a mounted UI app or pane.
+A **tool** is a mounted UI app or pane.
 The host provides a root.
 The module owns the subtree inside that root.
 
@@ -246,7 +249,7 @@ Examples:
 - inspector
 - arbitrary experimental panel
 
-A surface has:
+A tool has:
 
 - a host root target
 - light metadata
@@ -257,7 +260,7 @@ A surface has:
 
 ```txt
 roles    = replaceable built-ins
-surfaces = pluggable apps/panes
+tools = pluggable apps/panes
 ```
 
 ---
@@ -269,7 +272,7 @@ The host shell must stay stable and predictable.
 It owns:
 
 - workbench layout tree
-- root allocation for roles and surfaces
+- root allocation for roles and tools
 - focus graph
 - key routing and scope activation
 - workbench/session persistence
@@ -294,7 +297,7 @@ An extension package can own any mix of:
 - keymaps
 - interaction profile overlays
 - role implementations
-- surface implementations
+- tool implementations
 - palette providers
 - themes/tokens
 - runtime services/workflows
@@ -317,21 +320,21 @@ my-extension/
   theme.ts
 ```
 
-Example manifest shape:
+Current first-pass manifest shape:
 
 ```json
 {
   "name": "@acme/the-editor-extension",
   "editor": {
+    "title": "Acme Extension",
     "runtime": "./runtime.ts",
     "ui": "./ui.tsx",
     "interaction": "./interaction.ts",
-    "theme": "./theme.ts"
+    "theme": "./theme.ts",
+    "defaultTargets": ["runtime", "interaction", "ui"]
   }
 }
 ```
-
-This is schematic, not final syntax.
 
 ### Why split entrypoints
 
@@ -380,7 +383,7 @@ Lives in the renderer.
 Owns things like:
 
 - role components
-- surface components
+- tool components
 - arbitrary React trees
 - canvas/WebGL apps
 - local UI state
@@ -420,7 +423,7 @@ That means:
 
 - runtime targets may load Node/native-backed modules
 - runtime targets may talk to local processes or OS APIs
-- surface apps may talk to their runtime half through host channels
+- tool apps may talk to their runtime half through host channels
 
 The recommended rule is:
 
@@ -493,14 +496,14 @@ Roles should remain few because every role creates a real product contract.
 
 ---
 
-## Surface contracts
+## Tool contracts
 
-Surfaces should have a lighter contract.
+Tools should have a lighter contract.
 They are closer to mounted apps.
 
-Expected surface metadata:
+Expected tool metadata:
 
-- `surfaceTypeId`
+- `toolTypeId`
 - title
 - icon
 - root target
@@ -509,17 +512,17 @@ Expected surface metadata:
 - focus behavior
 - maybe instance policy (`singleton` vs `multi-instance`)
 
-Inside the root, the surface owns its subtree.
+Inside the root, the tool owns its subtree.
 
 The host should be able to do things like:
 
-- open surface type X
-- reopen prior persisted surfaces
-- focus surface Y
-- close surface Y
-- reload surface package Z
+- open tool type X
+- reopen prior persisted tools
+- focus tool Y
+- close tool Y
+- reload tool package Z
 
-But the host should not care how the surface internally renders itself.
+But the host should not care how the tool internally renders itself.
 
 ---
 
@@ -553,17 +556,17 @@ role.statusline     = "@acme/minimal-statusline"
 
 ---
 
-## Surface multiplicity
+## Tool multiplicity
 
-Unlike roles, surfaces may have many instances.
+Unlike roles, tools may have many instances.
 
 Examples:
 
-- one terminal surface type, many terminal instances
-- one preview surface type, many preview instances
-- one Doom surface type, maybe one or many instances depending on declaration
+- one terminal tool type, many terminal instances
+- one preview tool type, many preview instances
+- one Doom tool type, maybe one or many instances depending on declaration
 
-Recommended surface instance policies:
+Recommended tool instance policies:
 
 - `singleton`
 - `singleton-per-workspace`
@@ -640,8 +643,8 @@ editor.insert
 editor.select
 palette
 dialog
-surface.<instanceId>
-surface-kind.<surfaceTypeId>
+tool.<instanceId>
+tool-kind.<toolTypeId>
 ```
 
 This gives enough structure for:
@@ -649,7 +652,7 @@ This gives enough structure for:
 - editor modal behavior
 - palette-specific controls
 - dialog confirm/cancel
-- Doom-local controls
+- tool-local controls
 - global escape hatches
 
 ---
@@ -663,7 +666,7 @@ The command palette is the most important role to get right.
 The host owns:
 
 - command registry
-- surface registry hooks
+- tool registry hooks
 - file/symbol/search/picker providers
 - history/recents
 - palette provider registry
@@ -704,13 +707,13 @@ This is how “make it look and feel like X” becomes real without rewriting ev
 
 Examples:
 
-- document/surface/session state
+- document/text-surface/session state
 - layout truth
 - active role selections
 - active interaction profile selection
 - palette history
 - recent commands
-- persisted open surfaces
+- persisted open tools
 - focus restoration info
 
 ## Module-owned local state
@@ -767,9 +770,9 @@ Examples:
 1. identify package/target scope
 2. dispose that contribution scope
 3. keep host-owned canonical state intact
-4. reload module code
+4. reload target source code from disk
 5. re-register contributions
-6. remount roles/surfaces
+6. remount roles/tools
 7. reattach state where applicable
 8. restore focus if possible
 ```
@@ -788,7 +791,7 @@ The host should:
 - dispose in reverse registration order where needed
 - isolate renderer mount failures to the package/target when possible
 - fall back gracefully if a role implementation fails to load
-- surface diagnostics for failed reloads
+- tool diagnostics for failed reloads
 
 If a palette package fails to reload, the host should be able to fall back to a known-good palette role.
 
@@ -847,7 +850,7 @@ That is the seed of the bigger extension system.
 Instead of inventing a separate weird extension world later, we should evolve the existing substrate into:
 
 - role registry
-- surface registry
+- tool registry
 - interaction profile registry
 - palette provider registry
 - reload command support
@@ -905,10 +908,10 @@ Contributes:
 
 Contributes:
 
-- surface type `doom`
+- tool type `doom`
 - optional runtime save/state/native helpers
 
-The host treats it as a surface, not as a role.
+The host treats it as a tool, not as a role.
 
 ---
 
@@ -934,9 +937,9 @@ First roles:
 - `commandPalette`
 - `statusline`
 
-### 3. Build a surface registry
+### 3. Build a tool registry
 
-First surface targets:
+First tool targets:
 
 - left panel
 - right panel
@@ -961,10 +964,10 @@ If the built-in palette itself uses the public role system, then the seam is hon
 
 First package-level, then target-level.
 
-### 7. Add one arbitrary surface app
+### 7. Add one arbitrary tool app
 
 Something intentionally weird is good here.
-A Doom surface is not a joke architecturally; it is a stress test that proves the subtree model is real.
+A Doom tool is not a joke architecturally; it is a stress test that proves the subtree model is real.
 
 ---
 
@@ -990,7 +993,7 @@ The target architecture is:
 ```txt
 stable host shell
   + typed replaceable roles
-  + pluggable surfaces
+  + pluggable tools
   + first-class interaction profiles
   + explicit reload lifecycle
   + host-owned focus/layout/state truth

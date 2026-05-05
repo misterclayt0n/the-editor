@@ -1,0 +1,61 @@
+.doomLabOverlay {
+  background: rgba(10, 10, 14, 0.94);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  inset: 0;
+  padding: 20px;
+  pointer-events: auto;
+  position: absolute;
+}
+
+.doomLabChrome {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.doomLabTitle {
+  color: #f3f4f6;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.doomLabMeta,
+.doomLabHint {
+  color: #9aa3b2;
+  font-size: 12px;
+}
+
+.doomLabActions {
+  display: flex;
+  gap: 8px;
+}
+
+.doomLabButton {
+  background: #1b1f29;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  color: #e5e7eb;
+  cursor: pointer;
+  font: inherit;
+  padding: 8px 12px;
+  text-decoration: none;
+}
+
+.doomLabFrameWrap {
+  background: #000;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.doomLabFrame {
+  border: 0;
+  display: block;
+  height: 100%;
+  width: 100%;
+}

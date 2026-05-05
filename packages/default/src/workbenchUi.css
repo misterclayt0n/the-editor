@@ -1,0 +1,172 @@
+.statusline {
+  align-items: center;
+  color: #a7acb6;
+  display: flex;
+  gap: 12px;
+  height: 100%;
+  padding: 0 10px;
+}
+
+.statuslineSegment {
+  font-family: Iosevka, ui-monospace, monospace;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.statuslineSegment.mode {
+  color: #f4bf75;
+  font-weight: 700;
+}
+
+.statuslineSegment.path {
+  color: #e5e7eb;
+  flex: 1 1 auto;
+}
+
+.statuslineSegment.meta,
+.statuslineSegment.diagnostics {
+  color: #8b93a3;
+}
+
+.inspectorPanel {
+  background: #111319;
+  color: #d7dae0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.inspectorHeader {
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 12px;
+}
+
+.inspectorBody {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+
+.inspectorSection {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+  min-height: 0;
+  padding: 12px;
+}
+
+.inspectorSection h3 {
+  color: #f3f4f6;
+  font-size: 13px;
+  margin: 0 0 10px;
+}
+
+.inspectorSection.diagnostics {
+  grid-column: span 1;
+}
+
+.inspectorRow,
+.inspectorRoleCard {
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  padding: 10px 0 0;
+}
+
+.inspectorRoleCard:first-of-type,
+.inspectorRow:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.inspectorLabel {
+  color: #f3f4f6;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.inspectorSubtle {
+  color: #8a91a1;
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.inspectorRoleHeader {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.inspectorBadge {
+  background: rgba(244, 191, 117, 0.12);
+  border: 1px solid rgba(244, 191, 117, 0.2);
+  border-radius: 999px;
+  color: #f4bf75;
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+.inspectorRoleActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.inspectorButton {
+  background: #191c24;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  color: #d3d7df;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 6px 10px;
+}
+
+.inspectorButton.active {
+  border-color: rgba(76, 122, 255, 0.4);
+  color: #f3f6ff;
+}
+
+.inspectorWarning {
+  color: #f4bf75;
+  font-size: 12px;
+  margin-top: 10px;
+}
+
+.diagnosticRow {
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  padding: 10px 0 0;
+}
+
+.diagnosticRow:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.diagnosticRow.error .diagnosticMessage {
+  color: #fca5a5;
+}
+
+.diagnosticRow.warn .diagnosticMessage {
+  color: #f4bf75;
+}
+
+.diagnosticMessage {
+  color: #e5e7eb;
+  font-size: 12px;
+}
+
+.diagnosticDetails {
+  color: #8a91a1;
+  font-family: Iosevka, ui-monospace, monospace;
+  font-size: 11px;
+  margin-top: 4px;
+  white-space: pre-wrap;
+}

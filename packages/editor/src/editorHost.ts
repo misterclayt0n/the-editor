@@ -1,13 +1,23 @@
 import type { RuntimeApi } from "@the-editor/contracts/runtime";
 import { CommandRegistry } from "./commands.js";
 import { ContributionRegistry, moduleId, type ModuleId } from "./contributions.js";
+import { DecorationRegistry } from "./decorations.js";
+import { DiagnosticRegistry } from "./diagnostics.js";
 import { DisposableStore } from "./disposable.js";
+import { FocusRegistry } from "./focus.js";
 import { Hooks } from "./hooks.js";
+import { InteractionRegistry } from "./interaction.js";
 import { KeymapRegistry } from "./keymaps.js";
 import { ModuleRegistry, type EditorModule, type EditorModuleRegistration } from "./modules.js";
+import { PackageRegistry, type PackageTargetAdapterMap } from "./packages.js";
+import { CommandPaletteRegistry } from "./palette.js";
+import { RoleRegistry } from "./roles.js";
+import { ToolRegistry } from "./tools.js";
+import { WorkbenchController } from "./workbench.js";
 
 export interface EditorHostOptions {
   runtime: RuntimeApi;
+  packageTargetAdapters?: PackageTargetAdapterMap;
 }
 
 const anonymousModuleId = moduleId("<anonymous>");
@@ -16,15 +26,26 @@ export class EditorHost {
   readonly runtime: RuntimeApi;
   readonly hooks = new Hooks();
   readonly contributions = new ContributionRegistry();
+  readonly diagnostics = new DiagnosticRegistry();
   readonly commands = new CommandRegistry(this);
   readonly keymaps = new KeymapRegistry(this);
   readonly modules = new ModuleRegistry(this);
+  readonly packages: PackageRegistry;
+  readonly roles = new RoleRegistry(this);
+  readonly palette = new CommandPaletteRegistry(this);
+  readonly tools = new ToolRegistry(this);
+  readonly interaction = new InteractionRegistry(this);
+  readonly decorations = new DecorationRegistry(this);
+  readonly focus = new FocusRegistry(this);
+  readonly workbench = new WorkbenchController(this);
 
   private readonly disposables = new DisposableStore();
+  private readonly stateSlots = new Map<string, unknown>();
   private moduleStack: ModuleId[] = [];
 
   constructor(options: EditorHostOptions) {
     this.runtime = options.runtime;
+    this.packages = new PackageRegistry(this, options.packageTargetAdapters);
   }
 
   async use(module: EditorModule | EditorModuleRegistration, id?: string): Promise<void> {
@@ -53,10 +74,31 @@ export class EditorHost {
     }
   }
 
+  stateSlot<T>(key: string, init: () => T): T {
+    if (this.stateSlots.has(key)) return this.stateSlots.get(key) as T;
+    const value = init();
+    this.stateSlots.set(key, value);
+    return value;
+  }
+
+  getStateSlot<T>(key: string): T | undefined {
+    return this.stateSlots.get(key) as T | undefined;
+  }
+
+  setStateSlot<T>(key: string, value: T): T {
+    this.stateSlots.set(key, value);
+    return value;
+  }
+
+  deleteStateSlot(key: string): void {
+    this.stateSlots.delete(key);
+  }
+
   dispose(): void {
     for (const id of this.modules.all().reverse()) {
       this.modules.unload(id);
     }
+    this.stateSlots.clear();
     this.disposables.dispose();
   }
 }

@@ -53,6 +53,29 @@ const RUST_OPERATIONS = [
   "unindent",
 ] as const;
 
+const CHECKPOINT_AFTER_OPERATION = new Set<string>([
+  "insert_text",
+  "insert_tab",
+  "smart_tab",
+  "insert_newline",
+  "open_above",
+  "open_below",
+  "delete_char_backward",
+  "delete_char_forward",
+  "delete_selection",
+  "delete_selection_noyank",
+  "delete_word_backward",
+  "delete_word_forward",
+  "kill_to_line_start",
+  "kill_to_line_end",
+  "paste",
+  "switch_case",
+  "switch_to_uppercase",
+  "switch_to_lowercase",
+  "indent",
+  "unindent",
+]);
+
 export function defaultEditing(): EditorModule {
   return (editor) => {
     editor.commands.register({ id: commandId("normal_mode"), title: "Normal Mode", run: () => applyMode(editor, "normal") });
@@ -276,6 +299,9 @@ async function applyOperation(editor: EditorHost, operation: SurfaceOperation): 
     surfaceId: activeSurfaceId(editor),
     operation,
   });
+  if (getDefaultState(editor).mode !== "insert" && CHECKPOINT_AFTER_OPERATION.has(operation.name)) {
+    await editor.runtime.surfaces.commitUndoCheckpoint({ surfaceId: activeSurfaceId(editor) });
+  }
 }
 
 function activeSurfaceId(editor: EditorHost): SurfaceId {

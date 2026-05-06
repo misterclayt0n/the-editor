@@ -1,5 +1,5 @@
-import type { EditorModule } from "@the-editor/editor";
-import { defineTheme } from "@the-editor/editor";
+import type { CommandPaletteItem, EditorModule } from "@the-editor/editor";
+import { commandId, defineTheme, matchesCommandPaletteItem } from "@the-editor/editor";
 import { importedThemes } from "./themes/generated/index.js";
 
 export const defaultDarkTheme = defineTheme({
@@ -87,11 +87,68 @@ export const defaultDarkTheme = defineTheme({
   },
 });
 
+const themePaletteQueryPrefixes = [":theme", "theme"] as const;
+
 const themeModule: EditorModule = (editor) => {
   editor.themes.register(defaultDarkTheme);
   for (const theme of importedThemes) {
     editor.themes.register(theme);
   }
+
+  editor.commands.register<void, void>({
+    id: commandId("theme.select"),
+    title: "Theme: Select Theme",
+    category: "Workbench",
+    keywords: ["theme", "colorscheme", "appearance", "palette"],
+    async run() {
+      await editor.commands.dispatch({
+        id: commandId("command_palette.open"),
+        args: { initialQuery: ":theme " },
+      });
+    },
+  });
+
+  editor.commands.register<{ id: string }, void>({
+    id: commandId("theme.set"),
+    title: "Set Theme",
+    hidden: true,
+    run(_ctx, args) {
+      editor.themes.activate(args.id);
+    },
+  });
+
+  editor.palette.registerProvider({
+    id: "default.themes",
+    title: "Themes",
+    priority: 90,
+    provide(_ctx, query) {
+      const themeQuery = parseThemePaletteQuery(query);
+      if (themeQuery === undefined) return [];
+      const snapshot = editor.themes.snapshot();
+      const activeId = snapshot.active?.id;
+      const items: CommandPaletteItem[] = snapshot.available.map((theme) => ({
+        id: `theme:${theme.id}`,
+        title: `Theme: ${theme.title ?? theme.id}`,
+        detail: theme.id === activeId ? `${theme.id} · active` : theme.id,
+        group: "Themes",
+        keywords: ["theme", "colorscheme", theme.id, theme.title ?? ""],
+        command: {
+          id: commandId("theme.set"),
+          args: { id: theme.id },
+        },
+      }));
+      return items.filter((item) => matchesCommandPaletteItem(themeQuery, item));
+    },
+  });
 };
+
+function parseThemePaletteQuery(query: string): string | undefined {
+  const trimmed = query.trim();
+  for (const prefix of themePaletteQueryPrefixes) {
+    if (trimmed === prefix) return "";
+    if (trimmed.startsWith(`${prefix} `)) return trimmed.slice(prefix.length).trim();
+  }
+  return undefined;
+}
 
 export default themeModule;

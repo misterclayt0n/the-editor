@@ -1,11 +1,30 @@
-use std::sync::Mutex;
+use std::{
+  num::NonZeroU64,
+  sync::Mutex,
+};
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use ropey::Rope;
-use the_lib::render::{
-  CellGridMetrics,
-  Viewport,
+use smallvec::SmallVec;
+use the_lib::{
+  operation::Edit,
+  render::{
+    CellGridMetrics,
+    Viewport,
+  },
+  selection::{
+    CursorId,
+    CursorRange,
+    Range,
+    Selection,
+  },
+  transaction::{
+    Replacement,
+    ReplacementOverlapPolicy,
+    Span,
+    Transaction,
+  },
 };
 use the_runtime::{
   DocumentHandle,
@@ -51,6 +70,26 @@ pub struct JsSurfaceOperation {
   pub indent_unit:  Option<String>,
   pub indent_width: Option<u32>,
   pub tab_width:    Option<u32>,
+}
+
+#[napi(object)]
+pub struct JsSurfaceSelectionRange {
+  pub cursor_id: u32,
+  pub anchor:    u32,
+  pub head:      u32,
+}
+
+#[napi(object)]
+pub struct JsSurfaceChange {
+  pub start: u32,
+  pub end:   u32,
+  pub text:  Option<String>,
+}
+
+#[napi(object)]
+pub struct JsSurfaceEdit {
+  pub changes:   Option<Vec<JsSurfaceChange>>,
+  pub selection: Option<Vec<JsSurfaceSelectionRange>>,
 }
 
 #[napi]
@@ -135,6 +174,72 @@ impl NativeRuntimeSession {
     let mut runtime = self.lock()?;
     runtime
       .apply_surface_operation(surface_handle(surface_id)?, operation_spec(operation))
+      .map_err(runtime_error)
+  }
+
+  #[napi]
+  pub fn read_surface_text(&self, surface_id: u32) -> Result<String> {
+    let runtime = self.lock()?;
+    let surface = surface_handle(surface_id)?;
+    let document = runtime
+      .document_for_surface(surface)
+      .and_then(|document| runtime.document(document))
+      .ok_or_else(|| Error::from_reason(format!("unknown surface {surface_id}")))?;
+    Ok(document.text().to_string())
+  }
+
+  #[napi]
+  pub fn read_surface_line_ending(&self, surface_id: u32) -> Result<String> {
+    let runtime = self.lock()?;
+    let surface = surface_handle(surface_id)?;
+    let document = runtime
+      .document_for_surface(surface)
+      .and_then(|document| runtime.document(document))
+      .ok_or_else(|| Error::from_reason(format!("unknown surface {surface_id}")))?;
+    Ok(document.line_ending().as_str().to_string())
+  }
+
+  #[napi]
+  pub fn read_surface_selection(&self, surface_id: u32) -> Result<Vec<JsSurfaceSelectionRange>> {
+    let runtime = self.lock()?;
+    let selection = runtime
+      .surface(surface_handle(surface_id)?)
+      .ok_or_else(|| Error::from_reason(format!("unknown surface {surface_id}")))?
+      .selection();
+    Ok(
+      selection
+        .iter()
+        .map(|cursor| {
+          JsSurfaceSelectionRange {
+            cursor_id: cursor.id.get() as u32,
+            anchor:    cursor.range.anchor as u32,
+            head:      cursor.range.head as u32,
+          }
+        })
+        .collect(),
+    )
+  }
+
+  #[napi]
+  pub fn apply_surface_edit(&self, surface_id: u32, edit: JsSurfaceEdit) -> Result<()> {
+    let mut runtime = self.lock()?;
+    let surface = surface_handle(surface_id)?;
+    let document_len = runtime
+      .document_for_surface(surface)
+      .and_then(|document| runtime.document(document))
+      .ok_or_else(|| Error::from_reason(format!("unknown surface {surface_id}")))?
+      .text()
+      .len_chars();
+    let current_selection = runtime
+      .surface(surface)
+      .ok_or_else(|| Error::from_reason(format!("unknown surface {surface_id}")))?
+      .selection()
+      .clone();
+    runtime
+      .apply_surface_edit(
+        surface,
+        js_surface_edit(edit, document_len, &current_selection)?,
+      )
       .map_err(runtime_error)
   }
 
@@ -260,6 +365,64 @@ fn operation_spec(operation: JsSurfaceOperation) -> OperationSpec {
     indent_width: operation.indent_width.map(|width| width as usize),
     tab_width:    operation.tab_width.map(|width| width as usize),
   }
+}
+
+fn js_surface_edit(edit: JsSurfaceEdit, len: usize, current_selection: &Selection) -> Result<Edit> {
+  let had_selection = edit.selection.is_some();
+  let selection = match edit.selection {
+    Some(selection) => {
+      Selection::from_cursors(
+        selection
+          .into_iter()
+          .map(|range| {
+            let cursor_id = CursorId::new(
+              NonZeroU64::new(u64::from(range.cursor_id))
+                .ok_or_else(|| Error::from_reason("cursor id must be non-zero"))?,
+            );
+            Ok(CursorRange {
+              id:    cursor_id,
+              range: Range::new(range.anchor as usize, range.head as usize),
+            })
+          })
+          .collect::<Result<SmallVec<[CursorRange; 1]>>>()?,
+      )
+      .map_err(|err| Error::from_reason(err.to_string()))?
+    },
+    None => current_selection.clone(),
+  };
+
+  let transaction = match edit.changes {
+    Some(changes) if !changes.is_empty() => {
+      Transaction::from_replacements(
+        len,
+        changes.into_iter().map(|change| {
+          Replacement {
+            span: Span {
+              start: change.start as usize,
+              end:   change.end as usize,
+            },
+            text: change.text.map(Into::into),
+          }
+        }),
+        ReplacementOverlapPolicy::Reject,
+      )
+      .map_err(|err| Error::from_reason(err.to_string()))?
+    },
+    _ => Transaction::empty(len),
+  };
+
+  let selection = if had_selection {
+    selection
+  } else {
+    selection
+      .map(transaction.changes())
+      .map_err(|err| Error::from_reason(err.to_string()))?
+  };
+
+  Ok(Edit {
+    transaction,
+    selection,
+  })
 }
 
 fn register_name(name: &str) -> Result<char> {

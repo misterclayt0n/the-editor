@@ -72,6 +72,29 @@ export interface SurfaceOperation {
   tabWidth?: number;
 }
 
+export interface SurfaceSelectionRange {
+  cursorId: number;
+  anchor: number;
+  head: number;
+}
+
+export interface SurfaceChange {
+  start: number;
+  end: number;
+  text?: string;
+}
+
+export interface SurfaceState {
+  text: string;
+  lineEnding: string;
+  selection: SurfaceSelectionRange[];
+}
+
+export interface SurfaceEdit {
+  changes?: SurfaceChange[];
+  selection?: SurfaceSelectionRange[];
+}
+
 export type ClipboardKind = "Clipboard" | "Selection";
 
 export interface RenderRow {
@@ -127,6 +150,8 @@ export interface RuntimeApi {
     setMetrics(params: { surfaceId: SurfaceId; metrics: CellGridMetrics }): Promise<OkResult>;
     setSoftWrap(params: { surfaceId: SurfaceId; softWrap: boolean }): Promise<OkResult>;
     applyOperation(params: { surfaceId: SurfaceId; operation: SurfaceOperation }): Promise<OkResult>;
+    readState(params: { surfaceId: SurfaceId }): Promise<SurfaceState>;
+    applyEdit(params: { surfaceId: SurfaceId; edit: SurfaceEdit }): Promise<OkResult>;
     commitUndoCheckpoint(params: { surfaceId: SurfaceId }): Promise<OkResult>;
     undo(params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult>;
     redo(params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult>;

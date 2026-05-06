@@ -13,6 +13,7 @@ napi = { version = "3.8.6", default-features = false, features = ["napi8"] }
 napi-derive = "3.5.5"
 ropey.workspace = true
 serde_json.workspace = true
+smallvec.workspace = true
 
 the-runtime = { path = "../../the-runtime" }
 the-lib = { path = "../../the-lib" }

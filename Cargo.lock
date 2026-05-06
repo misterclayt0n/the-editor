@@ -1227,6 +1227,7 @@ dependencies = [
  "napi-derive",
  "ropey",
  "serde_json",
+ "smallvec",
  "the-lib",
  "the-runtime",
 ]

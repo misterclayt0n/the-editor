@@ -9,6 +9,10 @@ export declare class NativeRuntimeSession {
   setSurfaceMeasurements(surfaceId: number, metrics: JsCellGridMetrics): void
   setSurfaceSoftWrap(surfaceId: number, softWrap: boolean): void
   applySurfaceOperation(surfaceId: number, operation: JsSurfaceOperation): void
+  readSurfaceText(surfaceId: number): string
+  readSurfaceLineEnding(surfaceId: number): string
+  readSurfaceSelection(surfaceId: number): Array<JsSurfaceSelectionRange>
+  applySurfaceEdit(surfaceId: number, edit: JsSurfaceEdit): void
   commitSurfaceUndoCheckpoint(surfaceId: number): void
   undoSurface(surfaceId: number, count: number): void
   redoSurface(surfaceId: number, count: number): void
@@ -27,6 +31,17 @@ export interface JsCellGridMetrics {
   rowHeightPx: number
 }
 
+export interface JsSurfaceChange {
+  start: number
+  end: number
+  text?: string
+}
+
+export interface JsSurfaceEdit {
+  changes?: Array<JsSurfaceChange>
+  selection?: Array<JsSurfaceSelectionRange>
+}
+
 export interface JsSurfaceOperation {
   name: string
   count?: number
@@ -38,6 +53,12 @@ export interface JsSurfaceOperation {
   indentUnit?: string
   indentWidth?: number
   tabWidth?: number
+}
+
+export interface JsSurfaceSelectionRange {
+  cursorId: number
+  anchor: number
+  head: number
 }
 
 export interface JsViewport {

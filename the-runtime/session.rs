@@ -642,6 +642,17 @@ impl RuntimeSession {
     Ok(())
   }
 
+  pub fn apply_surface_edit(
+    &mut self,
+    surface: SurfaceHandle,
+    edit: the_lib::operation::Edit,
+  ) -> RuntimeResult<()> {
+    self.with_surface_document_mut(surface, move |surface, document| {
+      surface.apply_edit(document, edit)
+    })??;
+    Ok(())
+  }
+
   pub fn apply_surface_operation(
     &mut self,
     surface: SurfaceHandle,

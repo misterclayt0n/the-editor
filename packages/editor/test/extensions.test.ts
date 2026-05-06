@@ -15,6 +15,8 @@ function createRuntimeStub(): RuntimeApi {
       setMetrics: async () => ({ ok: true }),
       setSoftWrap: async () => ({ ok: true }),
       applyOperation: async () => ({ ok: true }),
+      readState: async () => ({ text: "", lineEnding: "\n", selection: [{ cursorId: 1, anchor: 0, head: 0 }] }),
+      applyEdit: async () => ({ ok: true }),
       commitUndoCheckpoint: async () => ({ ok: true }),
       undo: async () => ({ ok: true }),
       redo: async () => ({ ok: true }),

@@ -7,8 +7,10 @@ import type {
   RenderFrame,
   RuntimeApi,
   SurfaceCreated,
+  SurfaceEdit,
   SurfaceId,
   SurfaceOperation,
+  SurfaceState,
   Viewport,
 } from "@the-editor/contracts/runtime";
 import { NativeRuntimeSession } from "@the-editor/runtime-node";
@@ -56,6 +58,15 @@ export class RuntimeNativeClient implements RuntimeApi {
     },
     applyOperation: async (params: { surfaceId: SurfaceId; operation: SurfaceOperation }): Promise<OkResult> => {
       this.session.applySurfaceOperation(params.surfaceId, params.operation);
+      return { ok: true };
+    },
+    readState: async (params: { surfaceId: SurfaceId }): Promise<SurfaceState> => ({
+      text: this.session.readSurfaceText(params.surfaceId),
+      lineEnding: this.session.readSurfaceLineEnding(params.surfaceId),
+      selection: this.session.readSurfaceSelection(params.surfaceId),
+    }),
+    applyEdit: async (params: { surfaceId: SurfaceId; edit: SurfaceEdit }): Promise<OkResult> => {
+      this.session.applySurfaceEdit(params.surfaceId, params.edit);
       return { ok: true };
     },
     commitUndoCheckpoint: async (params: { surfaceId: SurfaceId }): Promise<OkResult> => {
@@ -138,6 +149,10 @@ export class RuntimeNativeClient implements RuntimeApi {
         return this.surfaces.setSoftWrap(params as Parameters<RuntimeApi["surfaces"]["setSoftWrap"]>[0]);
       case "surfaces.applyOperation":
         return this.surfaces.applyOperation(params as Parameters<RuntimeApi["surfaces"]["applyOperation"]>[0]);
+      case "surfaces.readState":
+        return this.surfaces.readState(params as Parameters<RuntimeApi["surfaces"]["readState"]>[0]);
+      case "surfaces.applyEdit":
+        return this.surfaces.applyEdit(params as Parameters<RuntimeApi["surfaces"]["applyEdit"]>[0]);
       case "surfaces.commitUndoCheckpoint":
         return this.surfaces.commitUndoCheckpoint(params as Parameters<RuntimeApi["surfaces"]["commitUndoCheckpoint"]>[0]);
       case "surfaces.undo":

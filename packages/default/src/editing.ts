@@ -1,5 +1,12 @@
-import type { SurfaceId, SurfaceOperation } from "@the-editor/contracts/runtime";
-import { commandId, type EditorHost, type EditorModule } from "@the-editor/editor";
+import type {
+  SurfaceChange,
+  SurfaceEdit,
+  SurfaceId,
+  SurfaceOperation,
+  SurfaceSelectionRange,
+  SurfaceState,
+} from "@the-editor/contracts/runtime";
+import { commandId, type CommandDispatch, type EditorHost, type EditorModule, type KeyInput } from "@the-editor/editor";
 import { getDefaultState, setEditorMode } from "./state.js";
 
 const RUST_OPERATIONS = [
@@ -53,6 +60,69 @@ const RUST_OPERATIONS = [
   "unindent",
 ] as const;
 
+type FindCharMotionState = {
+  kind: "findCharMotion";
+  ch: string;
+  direction: "forward" | "backward";
+  inclusive: boolean;
+  extend: boolean;
+  count: number;
+};
+
+type PendingInputState =
+  | {
+    kind: "findChar";
+    direction: "forward" | "backward";
+    inclusive: boolean;
+    extend: boolean;
+    count: number;
+  }
+  | {
+    kind: "replaceSelection";
+  };
+
+type LastMotionState = CommandDispatch | FindCharMotionState;
+
+const pendingInputSlot = "default.editing.pendingInput";
+const lastMotionSlot = "default.editing.lastMotion";
+
+const MOTION_COMMANDS = new Set<string>([
+  "move_char_left",
+  "move_char_right",
+  "extend_char_left",
+  "extend_char_right",
+  "move_visual_line_up",
+  "move_visual_line_down",
+  "extend_visual_line_up",
+  "extend_visual_line_down",
+  "move_next_word_start",
+  "move_prev_word_start",
+  "move_next_word_end",
+  "extend_next_word_start",
+  "extend_prev_word_start",
+  "extend_next_word_end",
+  "goto_line_start",
+  "goto_line_end",
+  "goto_line_end_newline",
+  "goto_first_nonwhitespace",
+  "goto_document_start",
+  "goto_file_start",
+  "goto_document_end",
+  "goto_last_line",
+  "extend_to_line_start",
+  "extend_to_line_end",
+  "extend_to_file_start",
+  "extend_to_file_end",
+  "extend_to_last_line",
+  "extend_line_below",
+  "extend_line_above",
+  "extend_line_up",
+]);
+
+const SEGMENTER = typeof Intl !== "undefined" && "Segmenter" in Intl
+  ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+  : undefined;
+
 const CHECKPOINT_AFTER_OPERATION = new Set<string>([
   "insert_text",
   "insert_tab",
@@ -84,6 +154,97 @@ export function defaultEditing(): EditorModule {
     editor.commands.register({ id: commandId("mode.insert"), title: "Insert Mode", run: () => applyMode(editor, "insert") });
     editor.commands.register({ id: commandId("select_mode"), title: "Select Mode", run: () => applyMode(editor, "select") });
     editor.commands.register({ id: commandId("exit_select_mode"), title: "Exit Select Mode", run: () => applyMode(editor, "normal") });
+
+    editor.hooks.tap("workbench.keyInput", {
+      id: "default.editing.pendingInput",
+      priority: 100,
+      async handler(input: KeyInput) {
+        const pending = takePendingInput(editor);
+        if (!pending) return undefined;
+        await handlePendingInput(editor, pending, input);
+        return true;
+      },
+    });
+
+    editor.commands.register<{ count?: number } | undefined, void>({
+      id: commandId("find_next_char"),
+      title: "Find Next Char",
+      run(_ctx, args) {
+        setPendingInput(editor, {
+          kind: "findChar",
+          direction: "forward",
+          inclusive: true,
+          extend: false,
+          count: args?.count ?? 1,
+        });
+      },
+    });
+    editor.commands.register<{ count?: number } | undefined, void>({
+      id: commandId("find_till_char"),
+      title: "Find Till Char",
+      run(_ctx, args) {
+        setPendingInput(editor, {
+          kind: "findChar",
+          direction: "forward",
+          inclusive: false,
+          extend: false,
+          count: args?.count ?? 1,
+        });
+      },
+    });
+    editor.commands.register<{ count?: number } | undefined, void>({
+      id: commandId("find_prev_char"),
+      title: "Find Prev Char",
+      run(_ctx, args) {
+        setPendingInput(editor, {
+          kind: "findChar",
+          direction: "backward",
+          inclusive: true,
+          extend: false,
+          count: args?.count ?? 1,
+        });
+      },
+    });
+    editor.commands.register<{ count?: number } | undefined, void>({
+      id: commandId("till_prev_char"),
+      title: "Till Prev Char",
+      run(_ctx, args) {
+        setPendingInput(editor, {
+          kind: "findChar",
+          direction: "backward",
+          inclusive: false,
+          extend: false,
+          count: args?.count ?? 1,
+        });
+      },
+    });
+    editor.commands.register<void, void>({
+      id: commandId("replace"),
+      title: "Replace",
+      run() {
+        setPendingInput(editor, { kind: "replaceSelection" });
+      },
+    });
+    editor.commands.register<void, void>({
+      id: commandId("replace_with_yanked"),
+      title: "Replace With Yanked",
+      async run() {
+        await replaceWithRegister(editor, '"');
+      },
+    });
+    editor.commands.register<void, void>({
+      id: commandId("repeat_last_motion"),
+      title: "Repeat Last Motion",
+      async run() {
+        const motion = getLastMotion(editor);
+        if (!motion) return;
+        if (isFindCharMotionState(motion)) {
+          await findCharImpl(editor, motion.ch, motion.direction, motion.inclusive, motion.extend, motion.count);
+          return;
+        }
+        await editor.commands.dispatch(motion);
+      },
+    });
 
     for (const name of RUST_OPERATIONS) registerOperation(editor, name);
 
@@ -262,8 +423,290 @@ function registerOperation(
     title: name,
     async run(_ctx, args) {
       await applyOperation(editor, operation(args));
+      if (MOTION_COMMANDS.has(name)) {
+        setLastMotion(editor, {
+          id: commandId(name),
+          args: args ? { ...args } : undefined,
+        });
+      }
     },
   });
+}
+
+function setPendingInput(editor: EditorHost, pending: PendingInputState | undefined): void {
+  editor.setStateSlot(pendingInputSlot, pending);
+}
+
+function takePendingInput(editor: EditorHost): PendingInputState | undefined {
+  const pending = editor.getStateSlot<PendingInputState | undefined>(pendingInputSlot);
+  editor.deleteStateSlot(pendingInputSlot);
+  return pending;
+}
+
+function isFindCharMotionState(motion: LastMotionState): motion is FindCharMotionState {
+  return (motion as FindCharMotionState).kind === "findCharMotion";
+}
+
+function setLastMotion(editor: EditorHost, motion: LastMotionState | undefined): void {
+  editor.setStateSlot(lastMotionSlot, motion);
+}
+
+function getLastMotion(editor: EditorHost): LastMotionState | undefined {
+  return editor.getStateSlot<LastMotionState | undefined>(lastMotionSlot);
+}
+
+async function handlePendingInput(
+  editor: EditorHost,
+  pending: PendingInputState,
+  input: KeyInput,
+): Promise<void> {
+  switch (pending.kind) {
+    case "findChar": {
+      const ch = firstCodePoint(input.text);
+      if (!ch) return;
+      await findCharImpl(editor, ch, pending.direction, pending.inclusive, pending.extend, pending.count);
+      setLastMotion(editor, {
+        kind: "findCharMotion",
+        ch,
+        direction: pending.direction,
+        inclusive: pending.inclusive,
+        extend: pending.extend,
+        count: pending.count,
+      });
+      return;
+    }
+    case "replaceSelection": {
+      if (input.key === "ret") {
+        await replaceSelectionWithStr(editor, (await readActiveSurfaceState(editor)).lineEnding);
+        return;
+      }
+      const ch = firstCodePoint(input.text);
+      if (!ch) return;
+      await replaceSelectionWithStr(editor, ch);
+      return;
+    }
+  }
+}
+
+async function findCharImpl(
+  editor: EditorHost,
+  ch: string,
+  direction: "forward" | "backward",
+  inclusive: boolean,
+  extend: boolean,
+  count: number,
+): Promise<void> {
+  const state = await readActiveSurfaceState(editor);
+  const boundaries = graphemeBoundaries(state.text);
+  const chars = Array.from(state.text);
+  const nextSelection = state.selection.map((range) => {
+    const cursor = rangeCursor(range, boundaries, chars.length);
+    const searchPos = findCharSearchStart(
+      range,
+      direction,
+      inclusive,
+      cursor,
+      boundaries,
+      chars.length,
+    );
+    const found = direction === "forward"
+      ? findNthNext(chars, ch, searchPos, count)
+      : findNthPrev(chars, ch, searchPos, count);
+    if (found === undefined) return range;
+
+    const target = inclusive
+      ? found
+      : direction === "forward"
+        ? Math.max(0, found - 1)
+        : found + 1;
+
+    return (extend || getDefaultState(editor).mode === "select")
+      ? rangePutCursor(range, boundaries, chars.length, target, true)
+      : rangePutCursor({ ...range, anchor: cursor, head: cursor }, boundaries, chars.length, target, true);
+  });
+
+  await applyEdit(editor, { selection: nextSelection });
+}
+
+async function replaceSelectionWithStr(editor: EditorHost, replacement: string): Promise<void> {
+  const state = await readActiveSurfaceState(editor);
+  const boundaries = graphemeBoundaries(state.text);
+  const chars = Array.from(state.text);
+  const changes = state.selection.flatMap((range) => {
+    const from = Math.min(range.anchor, range.head);
+    const to = range.anchor === range.head
+      ? nextGraphemeBoundary(boundaries, from, chars.length)
+      : Math.max(range.anchor, range.head);
+    const graphemeCount = graphemeCountInRange(boundaries, from, to);
+    if (graphemeCount === 0) return [];
+    return [{
+      start: from,
+      end: to,
+      text: replacement.repeat(graphemeCount),
+    } satisfies SurfaceChange];
+  });
+
+  if (changes.length) {
+    await applyEdit(editor, { changes }, true);
+  }
+  if (getDefaultState(editor).mode === "select") {
+    await applyMode(editor, "normal");
+  }
+}
+
+async function replaceWithRegister(editor: EditorHost, name: string): Promise<void> {
+  const { values } = await editor.runtime.registers.read({ name });
+  const replacement = values?.[0];
+  if (!replacement) {
+    await applyMode(editor, "normal");
+    return;
+  }
+
+  const state = await readActiveSurfaceState(editor);
+  const boundaries = graphemeBoundaries(state.text);
+  const chars = Array.from(state.text);
+  const changes = state.selection.map((range) => ({
+    start: Math.min(range.anchor, range.head),
+    end: range.anchor === range.head
+      ? nextGraphemeBoundary(boundaries, Math.min(range.anchor, range.head), chars.length)
+      : Math.max(range.anchor, range.head),
+    text: replacement,
+  } satisfies SurfaceChange));
+
+  await applyEdit(editor, { changes }, true);
+  await applyMode(editor, "normal");
+}
+
+async function readActiveSurfaceState(editor: EditorHost): Promise<SurfaceState> {
+  return editor.runtime.surfaces.readState({ surfaceId: activeSurfaceId(editor) });
+}
+
+async function applyEdit(editor: EditorHost, edit: SurfaceEdit, checkpoint = false): Promise<void> {
+  await editor.runtime.surfaces.applyEdit({
+    surfaceId: activeSurfaceId(editor),
+    edit,
+  });
+  if (checkpoint && getDefaultState(editor).mode !== "insert") {
+    await editor.runtime.surfaces.commitUndoCheckpoint({ surfaceId: activeSurfaceId(editor) });
+  }
+}
+
+function findCharSearchStart(
+  range: SurfaceSelectionRange,
+  direction: "forward" | "backward",
+  inclusive: boolean,
+  cursor: number,
+  boundaries: readonly number[],
+  len: number,
+): number {
+  const isEmpty = range.anchor === range.head;
+  if (direction === "forward") {
+    if (isEmpty) return Math.min(cursor + 1, len);
+    if (inclusive) return Math.min(nextGraphemeBoundary(boundaries, cursor, len), len);
+    return Math.min(nextGraphemeBoundary(boundaries, cursor, len) + 1, len);
+  }
+
+  if (isEmpty) return cursor;
+  if (inclusive) return Math.max(0, cursor - 1);
+  return Math.max(0, prevGraphemeBoundary(boundaries, cursor) - 1);
+}
+
+function graphemeBoundaries(text: string): number[] {
+  const boundaries: number[] = [];
+  let index = 0;
+  if (SEGMENTER) {
+    for (const segment of SEGMENTER.segment(text)) {
+      boundaries.push(index);
+      index += Array.from(segment.segment).length;
+    }
+  } else {
+    for (const ch of Array.from(text)) {
+      boundaries.push(index);
+      index += Array.from(ch).length;
+    }
+  }
+  return boundaries;
+}
+
+function nextGraphemeBoundary(boundaries: readonly number[], charIdx: number, len: number): number {
+  for (const boundary of boundaries) {
+    if (boundary > charIdx) return boundary;
+  }
+  return len;
+}
+
+function prevGraphemeBoundary(boundaries: readonly number[], charIdx: number): number {
+  let previous = 0;
+  for (const boundary of boundaries) {
+    if (boundary >= charIdx) break;
+    previous = boundary;
+  }
+  return previous;
+}
+
+function graphemeCountInRange(boundaries: readonly number[], start: number, end: number): number {
+  let count = 0;
+  for (const boundary of boundaries) {
+    if (boundary < start) continue;
+    if (boundary >= end) break;
+    count += 1;
+  }
+  return count;
+}
+
+function rangeCursor(range: SurfaceSelectionRange, boundaries: readonly number[], len: number): number {
+  if (range.head > range.anchor) {
+    return prevGraphemeBoundary(boundaries, range.head);
+  }
+  return Math.min(range.head, len);
+}
+
+function rangePutCursor(
+  range: SurfaceSelectionRange,
+  boundaries: readonly number[],
+  len: number,
+  charIdx: number,
+  extend: boolean,
+): SurfaceSelectionRange {
+  const target = Math.max(0, Math.min(charIdx, len));
+  if (!extend) {
+    return { ...range, anchor: target, head: target };
+  }
+
+  const anchor = range.head >= range.anchor
+    ? (target < range.anchor ? nextGraphemeBoundary(boundaries, range.anchor, len) : range.anchor)
+    : (target >= range.anchor ? prevGraphemeBoundary(boundaries, range.anchor) : range.anchor);
+
+  if (anchor <= target) {
+    return { ...range, anchor, head: nextGraphemeBoundary(boundaries, target, len) };
+  }
+
+  return { ...range, anchor, head: target };
+}
+
+function findNthNext(chars: readonly string[], ch: string, start: number, count: number): number | undefined {
+  let remaining = Math.max(1, count);
+  for (let index = Math.max(0, start); index < chars.length; index += 1) {
+    if (chars[index] !== ch) continue;
+    remaining -= 1;
+    if (remaining === 0) return index;
+  }
+  return undefined;
+}
+
+function findNthPrev(chars: readonly string[], ch: string, start: number, count: number): number | undefined {
+  let remaining = Math.max(1, count);
+  if (!chars.length) return undefined;
+  for (let index = Math.min(Math.max(0, start), chars.length - 1); index >= 0; index -= 1) {
+    if (chars[index] !== ch) continue;
+    remaining -= 1;
+    if (remaining === 0) return index;
+  }
+  return undefined;
+}
+
+function firstCodePoint(text: string | undefined): string | undefined {
+  return text ? Array.from(text)[0] : undefined;
 }
 
 async function applyMode(editor: EditorHost, mode: "normal" | "insert" | "select"): Promise<void> {

@@ -65,6 +65,84 @@ describe("default editing commands", () => {
     ]);
   });
 
+  it("matches brackets in normal and select mode", async () => {
+    const editor = await createTestEditor("(ab)");
+
+    await editor.commands.dispatch({ id: commandId("match_brackets") });
+
+    let state = await editor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(editor).activeSurfaceId!,
+    });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 3, head: 3 }]);
+
+    const selectEditor = await createTestEditor("(ab)");
+    await selectEditor.commands.dispatch({ id: commandId("select_mode") });
+    await selectEditor.commands.dispatch({ id: commandId("extend_match_brackets") });
+
+    state = await selectEditor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(selectEditor).activeSurfaceId!,
+    });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 0, head: 4 }]);
+  });
+
+  it("adds, deletes, and replaces surrounds through pending input", async () => {
+    const addEditor = await createTestEditor("ab");
+    await addEditor.commands.dispatch({ id: commandId("select_mode") });
+    await addEditor.commands.dispatch({ id: commandId("extend_next_char") });
+    await handleWorkbenchKeyInput(addEditor, { key: "b", text: "b" });
+
+    await addEditor.commands.dispatch({ id: commandId("surround_add") });
+    await handleWorkbenchKeyInput(addEditor, { key: "(", text: "(" });
+
+    let state = await addEditor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(addEditor).activeSurfaceId!,
+    });
+    expect(state.text).toBe("(ab)");
+    expect(getDefaultState(addEditor).mode).toBe("normal");
+
+    const editor = await createTestEditor("(ab)");
+    await editor.commands.dispatch({ id: commandId("move_char_right") });
+    await editor.commands.dispatch({ id: commandId("surround_replace") });
+    await handleWorkbenchKeyInput(editor, { key: "(", text: "(" });
+    await handleWorkbenchKeyInput(editor, { key: "[", text: "[" });
+
+    state = await editor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(editor).activeSurfaceId!,
+    });
+    expect(state.text).toBe("[ab]");
+
+    await editor.commands.dispatch({ id: commandId("surround_delete") });
+    await handleWorkbenchKeyInput(editor, { key: "[", text: "[" });
+
+    state = await editor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(editor).activeSurfaceId!,
+    });
+    expect(state.text).toBe("ab");
+  });
+
+  it("selects textobjects from pending input", async () => {
+    const editor = await createTestEditor("hello world");
+    await editor.commands.dispatch({ id: commandId("move_char_right"), args: { count: 1 } });
+
+    await editor.commands.dispatch({ id: commandId("select_textobject_inner") });
+    await handleWorkbenchKeyInput(editor, { key: "w", text: "w" });
+
+    let state = await editor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(editor).activeSurfaceId!,
+    });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 0, head: 5 }]);
+
+    const pairEditor = await createTestEditor("(ab)");
+    await pairEditor.commands.dispatch({ id: commandId("move_char_right") });
+    await pairEditor.commands.dispatch({ id: commandId("select_textobject_around") });
+    await handleWorkbenchKeyInput(pairEditor, { key: "m", text: "m" });
+
+    state = await pairEditor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(pairEditor).activeSurfaceId!,
+    });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 0, head: 4 }]);
+  });
+
   it("replaces the grapheme under the cursor from pending replace input", async () => {
     const editor = await createTestEditor("hello");
 

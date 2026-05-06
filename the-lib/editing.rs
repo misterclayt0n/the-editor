@@ -35,6 +35,7 @@ use crate::{
     Selection,
     SelectionError,
   },
+  surround,
   syntax::{
     IndentQuery,
     IndentationHeuristic,
@@ -65,6 +66,9 @@ pub enum EditingError {
 
   #[error(transparent)]
   AutoPairs(#[from] AutoPairsError),
+
+  #[error(transparent)]
+  Surround(#[from] surround::Error),
 }
 
 pub type Result<T> = std::result::Result<T, EditingError>;
@@ -475,6 +479,102 @@ pub fn indent(doc: &Rope, selection: &Selection, indent_unit: &str, count: usize
   edit_and_map_selection(doc, selection, replacements)
 }
 
+pub fn surround_add(
+  doc: &Rope,
+  selection: &Selection,
+  open: impl Into<Tendril>,
+  close: impl Into<Tendril>,
+) -> Result<Edit> {
+  let open = open.into();
+  let close = close.into();
+  let surround_len = open.chars().count() + close.chars().count();
+  let mut replacements = Vec::with_capacity(selection.len() * 2);
+  let mut cursors: SmallVec<[CursorRange; 1]> = SmallVec::with_capacity(selection.len());
+  let mut offset = 0usize;
+
+  for cursor in selection.iter() {
+    let range = cursor.range;
+    replacements.push(Replacement::insert(range.from(), open.clone()));
+    replacements.push(Replacement::insert(range.to(), close.clone()));
+    cursors.push(CursorRange {
+      id:    cursor.id,
+      range: Range::new(offset + range.from(), offset + range.to() + surround_len)
+        .with_direction(range.direction()),
+    });
+    offset += surround_len;
+  }
+
+  build_edit(doc.len_chars(), replacements, cursors)
+}
+
+pub fn surround_delete(
+  doc: &Rope,
+  selection: &Selection,
+  syntax: Option<&Syntax>,
+  surround_ch: Option<char>,
+  count: usize,
+) -> Result<Edit> {
+  let text = doc.slice(..);
+  let mut positions = surround::get_surround_pos(syntax, text, selection, surround_ch, count)?;
+  positions.sort_unstable();
+
+  let replacements = positions
+    .into_iter()
+    .flat_map(|(open, close)| {
+      let open_end = next_grapheme_boundary(text, open);
+      let close_end = next_grapheme_boundary(text, close);
+      [
+        Replacement::delete(Span {
+          start: open,
+          end:   open_end,
+        }),
+        Replacement::delete(Span {
+          start: close,
+          end:   close_end,
+        }),
+      ]
+    })
+    .collect();
+
+  edit_and_map_selection(doc, selection, replacements)
+}
+
+pub fn surround_replace(
+  doc: &Rope,
+  selection: &Selection,
+  syntax: Option<&Syntax>,
+  target: char,
+  replacement: char,
+  count: usize,
+) -> Result<Edit> {
+  let text = doc.slice(..);
+  let positions = surround::get_surround_pos(syntax, text, selection, Some(target), count)?;
+  let (open, close) = surround_pair_chars(replacement);
+  let mut replacements = Vec::with_capacity(positions.len() * 2);
+
+  for (open_pos, close_pos) in positions {
+    let open_end = next_grapheme_boundary(text, open_pos);
+    let close_end = next_grapheme_boundary(text, close_pos);
+    replacements.push(Replacement::replace(
+      Span {
+        start: open_pos,
+        end:   open_end,
+      },
+      Tendril::from(open.to_string().as_str()),
+    ));
+    replacements.push(Replacement::replace(
+      Span {
+        start: close_pos,
+        end:   close_end,
+      },
+      Tendril::from(close.to_string().as_str()),
+    ));
+  }
+
+  replacements.sort_by_key(|replacement| replacement.span.start);
+  edit_and_map_selection(doc, selection, replacements)
+}
+
 pub fn paste(
   doc: &Rope,
   selection: &Selection,
@@ -752,6 +852,19 @@ fn replace_selected_text(
   }
 
   build_edit(doc.len_chars(), replacements, cursors)
+}
+
+fn surround_pair_chars(ch: char) -> (char, char) {
+  match ch {
+    '(' | ')' => ('(', ')'),
+    '[' | ']' => ('[', ']'),
+    '{' | '}' => ('{', '}'),
+    '<' | '>' => ('<', '>'),
+    '"' => ('"', '"'),
+    '\'' => ('\'', '\''),
+    '`' => ('`', '`'),
+    _ => (ch, ch),
+  }
 }
 
 fn build_edit(

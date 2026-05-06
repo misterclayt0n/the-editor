@@ -193,7 +193,7 @@ fn find_enclosing_bracket_plaintext(text: RopeSlice, pos: usize) -> Option<usize
   None
 }
 
-fn find_matching_bracket_plaintext(text: RopeSlice, pos: usize) -> Option<usize> {
+pub(crate) fn find_matching_bracket_plaintext(text: RopeSlice, pos: usize) -> Option<usize> {
   if pos >= text.len_chars() {
     return None;
   }

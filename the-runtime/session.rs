@@ -686,6 +686,7 @@ impl RuntimeSession {
         &document.indent_style(),
         indent_query,
         syntax.as_deref(),
+        Some(syntax_registry.as_ref()),
       )?
     };
 

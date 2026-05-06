@@ -18,6 +18,8 @@ const RUST_OPERATIONS = [
   "move_visual_line_down",
   "extend_visual_line_up",
   "extend_visual_line_down",
+  "match_brackets",
+  "extend_match_brackets",
   "move_next_word_start",
   "move_prev_word_start",
   "move_next_word_end",
@@ -85,6 +87,27 @@ type PendingInputState =
   }
   | {
     kind: "replaceSelection";
+  }
+  | {
+    kind: "surroundAdd";
+  }
+  | {
+    kind: "surroundDelete";
+    count: number;
+  }
+  | {
+    kind: "surroundReplaceTarget";
+    count: number;
+  }
+  | {
+    kind: "surroundReplaceWith";
+    count: number;
+    target: string;
+  }
+  | {
+    kind: "selectTextObject";
+    textObjectKind: "around" | "inside";
+    count: number;
   };
 
 type LastMotionState = CommandDispatch | FindCharMotionState;
@@ -101,6 +124,8 @@ const MOTION_COMMANDS = new Set<string>([
   "move_visual_line_down",
   "extend_visual_line_up",
   "extend_visual_line_down",
+  "match_brackets",
+  "extend_match_brackets",
   "move_next_word_start",
   "move_prev_word_start",
   "move_next_word_end",
@@ -151,6 +176,9 @@ const CHECKPOINT_AFTER_OPERATION = new Set<string>([
   "kill_to_line_start",
   "kill_to_line_end",
   "paste",
+  "surround_add",
+  "surround_delete",
+  "surround_replace",
   "switch_case",
   "switch_to_uppercase",
   "switch_to_lowercase",
@@ -294,6 +322,41 @@ export function defaultEditing(): EditorModule {
       title: "Replace With Yanked",
       async run() {
         await replaceWithRegister(editor, '"');
+      },
+    });
+    editor.commands.register<void, void>({
+      id: commandId("surround_add"),
+      title: "Surround Add",
+      run() {
+        setPendingInput(editor, { kind: "surroundAdd" });
+      },
+    });
+    editor.commands.register<{ count?: number } | undefined, void>({
+      id: commandId("surround_delete"),
+      title: "Surround Delete",
+      run(_ctx, args) {
+        setPendingInput(editor, { kind: "surroundDelete", count: args?.count ?? 1 });
+      },
+    });
+    editor.commands.register<{ count?: number } | undefined, void>({
+      id: commandId("surround_replace"),
+      title: "Surround Replace",
+      run(_ctx, args) {
+        setPendingInput(editor, { kind: "surroundReplaceTarget", count: args?.count ?? 1 });
+      },
+    });
+    editor.commands.register<{ count?: number } | undefined, void>({
+      id: commandId("select_textobject_around"),
+      title: "Select Textobject Around",
+      run(_ctx, args) {
+        setPendingInput(editor, { kind: "selectTextObject", textObjectKind: "around", count: args?.count ?? 1 });
+      },
+    });
+    editor.commands.register<{ count?: number } | undefined, void>({
+      id: commandId("select_textobject_inner"),
+      title: "Select Textobject Inner",
+      run(_ctx, args) {
+        setPendingInput(editor, { kind: "selectTextObject", textObjectKind: "inside", count: args?.count ?? 1 });
       },
     });
     editor.commands.register<void, void>({
@@ -576,6 +639,53 @@ async function handlePendingInput(
       const ch = firstCodePoint(input.text);
       if (!ch) return;
       await replaceSelectionWithStr(editor, ch);
+      return;
+    }
+    case "surroundAdd": {
+      const text = input.key === "ret"
+        ? (await readActiveSurfaceState(editor)).lineEnding
+        : firstCodePoint(input.text);
+      if (!text) return;
+      await applyOperation(editor, { name: "surround_add", text });
+      if (getDefaultState(editor).mode === "select") await applyMode(editor, "normal");
+      return;
+    }
+    case "surroundDelete": {
+      const ch = firstCodePoint(input.text);
+      if (input.key !== "m" && !ch) return;
+      await applyOperation(editor, {
+        name: "surround_delete",
+        count: pending.count,
+        text: input.key === "m" ? undefined : ch,
+      });
+      if (getDefaultState(editor).mode === "select") await applyMode(editor, "normal");
+      return;
+    }
+    case "surroundReplaceTarget": {
+      const ch = firstCodePoint(input.text);
+      if (!ch) return;
+      setPendingInput(editor, { kind: "surroundReplaceWith", count: pending.count, target: ch });
+      return;
+    }
+    case "surroundReplaceWith": {
+      const ch = firstCodePoint(input.text);
+      if (!ch) return;
+      await applyOperation(editor, {
+        name: "surround_replace",
+        count: pending.count,
+        values: [pending.target, ch],
+      });
+      if (getDefaultState(editor).mode === "select") await applyMode(editor, "normal");
+      return;
+    }
+    case "selectTextObject": {
+      const ch = firstCodePoint(input.text);
+      if (!ch) return;
+      await applyOperation(editor, {
+        name: pending.textObjectKind === "around" ? "select_textobject_around" : "select_textobject_inner",
+        count: pending.count,
+        text: ch,
+      });
       return;
     }
   }

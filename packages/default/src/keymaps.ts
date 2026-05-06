@@ -103,7 +103,14 @@ export function defaultKeymaps(): EditorModule {
         X: "extend_to_line_bounds",
         "A-x": "shrink_to_line_bounds",
 
-        // m: keymap("Match", { m/s/r/d/a/i }),
+        m: keymap("Match", {
+          m: "match_brackets",
+          s: "surround_add",
+          r: "surround_replace",
+          d: "surround_delete",
+          a: "select_textobject_around",
+          i: "select_textobject_inner",
+        }),
         // "[": keymap("Left bracket", { d/D/g/G/f/t/a/c/e/T/p/x/space }),
         // "]": keymap("Right bracket", { d/D/g/G/f/t/a/c/e/T/p/x/space }),
 
@@ -243,6 +250,14 @@ export function defaultKeymaps(): EditorModule {
         esc: "exit_select_mode",
 
         v: "normal_mode",
+        m: keymap("Match", {
+          m: "extend_match_brackets",
+          s: "surround_add",
+          r: "surround_replace",
+          d: "surround_delete",
+          a: "select_textobject_around",
+          i: "select_textobject_inner",
+        }),
         g: keymap("Goto", {
           ...((normalTree.bindings.g as KeymapNodeSpec).bindings),
           g: "extend_to_file_start",

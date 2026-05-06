@@ -120,9 +120,10 @@ impl SurfaceViewSpec {
 
 #[derive(Debug)]
 struct PendingHistoryCommit {
-  before:          ropey::Rope,
-  transaction:     crate::transaction::Transaction,
-  selection_after: Selection,
+  before:           ropey::Rope,
+  transaction:      crate::transaction::Transaction,
+  selection_before: Selection,
+  selection_after:  Selection,
 }
 
 #[derive(Debug)]
@@ -403,6 +404,7 @@ impl Surface {
     self.history.commit(
       &pending.before,
       pending.transaction,
+      pending.selection_before,
       pending.selection_after,
     )?;
     Ok(())
@@ -423,6 +425,7 @@ impl Surface {
         self.pending_commit = Some(PendingHistoryCommit {
           before,
           transaction,
+          selection_before: self.selection.clone(),
           selection_after,
         });
       },
@@ -977,6 +980,36 @@ mod tests {
     assert!(surface.redo(&mut document).unwrap());
     assert_eq!(document.text().to_string(), "hello!");
     assert_eq!(surface.selection().ranges(), &[Range::point(6)]);
+  }
+
+  #[test]
+  fn undo_restores_selection_that_existed_before_an_edit_checkpoint() {
+    let mut document = Document::new(Rope::from("int {\n\n}"));
+    let mut surface = Surface::new(&document, render_surface(), viewport()).unwrap();
+
+    surface
+      .apply_selection(&document, Selection::single(0, 3))
+      .unwrap();
+    let len = document.text().len_chars();
+    surface
+      .apply_edit(&mut document, Edit {
+        transaction: Transaction::from_replacements(
+          len,
+          [
+            crate::transaction::Replacement::insert(0, "\""),
+            crate::transaction::Replacement::insert(3, "\""),
+          ],
+          crate::transaction::ReplacementOverlapPolicy::Reject,
+        )
+        .unwrap(),
+        selection: Selection::single(0, 5),
+      })
+      .unwrap();
+    surface.commit_undo_checkpoint().unwrap();
+
+    assert!(surface.undo(&mut document).unwrap());
+    assert_eq!(document.text().to_string(), "int {\n\n}");
+    assert_eq!(surface.selection().ranges(), &[Range::new(0, 3)]);
   }
 
   #[test]

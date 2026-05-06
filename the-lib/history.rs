@@ -83,12 +83,13 @@ pub struct History {
 
 #[derive(Debug, Clone)]
 struct Revision {
-  parent:          usize,
-  last_child:      Option<NonZeroUsize>,
-  transaction:     Transaction,
-  inversion:       Transaction,
-  timestamp:       Instant,
-  selection_after: Selection,
+  parent:           usize,
+  last_child:       Option<NonZeroUsize>,
+  transaction:      Transaction,
+  inversion:        Transaction,
+  timestamp:        Instant,
+  selection_before: Selection,
+  selection_after:  Selection,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -121,6 +122,7 @@ impl History {
         transaction: Transaction::empty(initial_len),
         inversion: Transaction::empty(initial_len),
         timestamp,
+        selection_before: initial_selection.clone(),
         selection_after: initial_selection,
       }],
       current:   0,
@@ -177,15 +179,23 @@ impl History {
     &mut self,
     before: &Rope,
     transaction: Transaction,
+    selection_before: Selection,
     selection_after: Selection,
   ) -> Result<RevisionId> {
-    self.commit_at_timestamp(before, transaction, selection_after, Instant::now())
+    self.commit_at_timestamp(
+      before,
+      transaction,
+      selection_before,
+      selection_after,
+      Instant::now(),
+    )
   }
 
   pub fn commit_at_timestamp(
     &mut self,
     before: &Rope,
     transaction: Transaction,
+    selection_before: Selection,
     selection_after: Selection,
     timestamp: Instant,
   ) -> Result<RevisionId> {
@@ -203,6 +213,7 @@ impl History {
         got: transaction.changes().len(),
       });
     }
+    validate_selection_bounds(&selection_before, transaction.changes().len())?;
     validate_selection_bounds(&selection_after, transaction.changes().len_after())?;
 
     let inversion = transaction.invert(before)?;
@@ -214,6 +225,7 @@ impl History {
       transaction,
       inversion,
       timestamp,
+      selection_before,
       selection_after,
     });
     self.current = new_current;
@@ -230,16 +242,22 @@ impl History {
       return None;
     }
     let current = &self.revisions[self.current];
-    Some(self.jump_from_parts(self.current, current.parent, vec![
-      current.inversion.clone(),
-    ]))
+    Some(HistoryJump {
+      source: RevisionId(self.current),
+      target: RevisionId(current.parent),
+      transactions: vec![current.inversion.clone()],
+      selection: current.selection_before.clone(),
+    })
   }
 
   pub fn redo(&self) -> Option<HistoryJump> {
     let child = self.revisions[self.current].last_child?.get();
-    Some(self.jump_from_parts(self.current, child, vec![
-      self.revisions[child].transaction.clone(),
-    ]))
+    Some(self.jump_from_parts(
+      self.current,
+      child,
+      vec![self.revisions[child].transaction.clone()],
+      self.revisions[child].selection_after.clone(),
+    ))
   }
 
   pub fn jump_to(&self, revision: RevisionId) -> Result<HistoryJump> {
@@ -312,18 +330,24 @@ impl History {
     source: usize,
     target: usize,
     transactions: Vec<Transaction>,
+    selection: Selection,
   ) -> HistoryJump {
     HistoryJump {
       source: RevisionId(source),
       target: RevisionId(target),
       transactions,
-      selection: self.revisions[target].selection_after.clone(),
+      selection,
     }
   }
 
   fn jump_between(&self, source: usize, target: usize) -> HistoryJump {
     if source == target {
-      return self.jump_from_parts(source, target, Vec::new());
+      return self.jump_from_parts(
+        source,
+        target,
+        Vec::new(),
+        self.revisions[target].selection_after.clone(),
+      );
     }
 
     let lca = self.lowest_common_ancestor(source, target);
@@ -341,7 +365,15 @@ impl History {
       )
       .collect();
 
-    self.jump_from_parts(source, target, transactions)
+    let selection = if down.is_empty() {
+      self.revisions[*up.last().expect("backward jump must undo at least one revision")]
+        .selection_before
+        .clone()
+    } else {
+      self.revisions[target].selection_after.clone()
+    };
+
+    self.jump_from_parts(source, target, transactions, selection)
   }
 
   fn composed_between(&self, from: usize, to: usize) -> Result<Option<Transaction>> {
@@ -473,9 +505,10 @@ mod test {
     selection_after: Selection,
   ) -> RevisionId {
     let before = doc.clone();
+    let selection_before = history.current_selection().clone();
     transaction.apply(doc).unwrap();
     history
-      .commit(&before, transaction, selection_after)
+      .commit(&before, transaction, selection_before, selection_after)
       .unwrap()
   }
 
@@ -509,7 +542,7 @@ mod test {
     let tx = Transaction::insert_at(doc.len_chars(), 5, "!").unwrap();
     tx.apply(&mut doc).unwrap();
     let rev1 = history
-      .commit_at_timestamp(&before, tx, after_selection.clone(), t1)
+      .commit_at_timestamp(&before, tx, root_selection.clone(), after_selection.clone(), t1)
       .unwrap();
 
     assert_eq!(rev1, RevisionId::new(1));
@@ -536,6 +569,7 @@ mod test {
       history.commit(
         &Rope::from("hell"),
         Transaction::insert_at(5, 5, "!").unwrap(),
+        Selection::point(0),
         Selection::point(6),
       ),
       Err(HistoryError::CommitLengthMismatch {
@@ -548,6 +582,7 @@ mod test {
       history.commit(
         &before,
         Transaction::insert_at(4, 4, "!").unwrap(),
+        Selection::point(0),
         Selection::point(5),
       ),
       Err(HistoryError::CommitLengthMismatch {
@@ -560,6 +595,7 @@ mod test {
       history.commit(
         &before,
         Transaction::insert_at(5, 5, "!").unwrap(),
+        Selection::point(0),
         Selection::point(99),
       ),
       Err(HistoryError::SelectionOutOfBounds { len: 6 })
@@ -729,14 +765,14 @@ mod test {
     let tx = Transaction::insert_at(1, 1, "b").unwrap();
     tx.apply(&mut doc).unwrap();
     history
-      .commit_at_timestamp(&before, tx, Selection::point(2), t(10))
+      .commit_at_timestamp(&before, tx, Selection::point(0), Selection::point(2), t(10))
       .unwrap();
 
     let before = doc.clone();
     let tx = Transaction::insert_at(2, 2, "c").unwrap();
     tx.apply(&mut doc).unwrap();
     history
-      .commit_at_timestamp(&before, tx, Selection::point(3), t(20))
+      .commit_at_timestamp(&before, tx, Selection::point(2), Selection::point(3), t(20))
       .unwrap();
 
     let jump = history.jump_to(RevisionId::new(1)).unwrap();

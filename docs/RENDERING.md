@@ -107,6 +107,94 @@ JS / Electron still owns:
 - decorations / overlays
 - any richer product UI
 
+## Electron ligature shaping
+
+The current Electron renderer intentionally allows browser/font shaping, including ligatures.
+
+This lives in:
+
+- `apps/electron/src/renderer/src/textSurface.ts`
+
+### How it works
+
+Rust still projects the visible frame in **cell-grid coordinates**:
+
+- `RenderRow.text`
+- selection spans in cols
+- cursor placements in cols
+- syntax spans in cols
+
+Electron then paints that frame on canvas.
+
+The important renderer change was:
+
+- **before**: draw one cell at a time with `fillText(cell, x, y)`
+- **now**: draw contiguous row/span text with one `fillText(text, x, y)` call
+
+That gives the browser a whole shaped text run like:
+
+- `===`
+- `->`
+- `!=`
+
+instead of isolated single-cell glyph draws, so ligatures can form.
+
+### Concrete implementation details
+
+In `textSurface.ts` we do two important things:
+
+1. enable normal font shaping
+   - `ctx.fontKerning = "normal"`
+2. paint text runs instead of per-cell glyphs
+   - `drawCells(...)` now joins the requested cell slice into a string and paints it with one `fillText(...)`
+
+`paintRows(...)` still respects syntax spans, but each span is now painted as a shaped run instead of character-by-character.
+
+### What did **not** change
+
+We did **not** change the Rust render contract.
+
+Rust still decides:
+
+- row breaks
+- wrap layout
+- visible rows
+- selection columns
+- cursor columns
+- syntax columns
+
+Electron still uses the cell-grid metrics from the current font to configure the viewport and to place:
+
+- selections
+- decorations
+- cursors
+
+So the architecture is still:
+
+- Rust = cell-grid projection truth
+- Electron = shaped painting policy
+
+### Debugging note
+
+If ligature rendering introduces visual bugs, the most likely place to inspect first is:
+
+- `apps/electron/src/renderer/src/textSurface.ts`
+
+especially these responsibilities:
+
+- `measureCellWidth(...)`
+- `paintRows(...)`
+- `drawCells(...)`
+- cursor painting vs shaped text positioning
+- selection rect painting vs shaped text positioning
+
+The likely class of bugs is:
+
+- text visually shaped as one run
+- but cursor/selection rectangles still positioned from cell-grid columns
+
+That tradeoff is currently intentional.
+
 ## Why `LayoutIndex` still matters
 
 Even after slimming the render system down, `LayoutIndex` is still important because `Surface` depends on it for:

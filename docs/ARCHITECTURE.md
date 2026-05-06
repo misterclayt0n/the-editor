@@ -29,6 +29,8 @@ A prompt, text input, code editor, minimap, diff experience, or coding-agent sur
 
 The built-in renderer is explicitly a **monospace cell-grid renderer**. It is client-agnostic in the sense that a TUI, REPL, Electron canvas, native GUI, or test harness can paint its output, but it is not a universal proportional-font layout engine.
 
+A client may still choose to do extra paint-time shaping policy on top of that projection. For example, the current Electron canvas renderer paints row/span text as browser-shaped runs so ligatures can appear, while still using Rust's cell-grid row/col projection for viewport layout, selections, and cursor placement.
+
 The default editor experience is only one distribution. In the future, an alternate distribution should be able to replace most of the product layer in TypeScript, including commands, hooks, keymaps, layout, and UI composition.
 
 ---

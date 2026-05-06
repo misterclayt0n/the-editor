@@ -105,7 +105,7 @@ function prepareContext(ctx: CanvasRenderingContext2D, dpr: number): void {
   ctx.font = FONT;
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
-  ctx.fontKerning = "none";
+  ctx.fontKerning = "normal";
 }
 
 interface RendererMetrics {
@@ -124,7 +124,7 @@ function rendererMetrics(ctx: CanvasRenderingContext2D): RendererMetrics {
 
 function measureCellWidth(ctx: CanvasRenderingContext2D): number {
   ctx.font = FONT;
-  ctx.fontKerning = "none";
+  ctx.fontKerning = "normal";
   const sample = "mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm";
   return ctx.measureText(sample).width / sample.length;
 }
@@ -290,13 +290,17 @@ function drawCells(
   color: string,
   metrics: RendererMetrics,
 ): void {
+  const text = textForCols(cells, startCol, endCol);
+  if (!text) return;
   ctx.fillStyle = color;
-  const y = yForRow(row, metrics) + metrics.baselineOffset;
-  for (let col = startCol; col < endCol && col < cells.length; col++) {
-    const cell = cells[col];
-    if (cell === "\t") continue;
-    ctx.fillText(cell, xForCol(col, metrics), y);
-  }
+  ctx.fillText(text, xForCol(startCol, metrics), yForRow(row, metrics) + metrics.baselineOffset);
+}
+
+function textForCols(cells: string[], startCol: number, endCol: number): string {
+  return cells
+    .slice(startCol, Math.min(endCol, cells.length))
+    .filter((cell) => cell !== "\t")
+    .join("");
 }
 
 function cellsForText(text: string): string[] {

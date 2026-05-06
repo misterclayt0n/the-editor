@@ -9,6 +9,7 @@
   background: var(--theme-ui-command-palette-backdrop-bg, var(--theme-palette-overlay, rgba(0, 0, 0, 0.32)));
   backdrop-filter: blur(8px);
   border: 0;
+  cursor: default;
   inset: 0;
   padding: 0;
   position: absolute;
@@ -23,64 +24,80 @@
 }
 
 .commandPaletteShell {
+  --commandPaletteAccent: var(--theme-palette-accent, #009fff);
+  --commandPaletteBg: var(--theme-ui-command-palette-bg, var(--theme-ui-popup-bg, var(--theme-ui-menu-bg, var(--theme-background, #141415))));
+  --commandPaletteFg: var(--theme-ui-command-palette-fg, var(--theme-ui-popup-fg, var(--theme-ui-menu-fg, var(--theme-ui-text-fg, var(--theme-foreground, #d7d7d7)))));
+  --commandPaletteFgMuted: var(--theme-ui-command-palette-detail-fg, var(--theme-ui-text-inactive-fg, #84848a));
+  --commandPaletteBorder: var(--theme-ui-command-palette-border-fg, var(--theme-ui-popup-border-fg, var(--theme-ui-background-separator-fg, rgba(255, 255, 255, 0.08))));
+  --commandPaletteInputBg: color-mix(in lab, var(--commandPaletteFg) 2%, var(--commandPaletteBg));
+  --commandPaletteHoverBg: color-mix(in lab, var(--commandPaletteAccent) 10%, var(--commandPaletteBg));
+  --commandPaletteSelectedBg: var(--theme-ui-command-palette-list-selected-bg, var(--theme-ui-menu-selected-bg, color-mix(in lab, var(--commandPaletteAccent) 14%, var(--commandPaletteBg))));
+  --commandPaletteSelectedFg: var(--theme-ui-command-palette-list-selected-fg, var(--theme-ui-menu-selected-fg, var(--commandPaletteFg)));
   align-self: flex-start;
-  max-width: 640px;
-  transform: translateY(0);
+  max-width: 720px;
   width: 100%;
 }
 
-.commandPalettePanel {
-  background: var(--theme-ui-command-palette-bg, var(--theme-ui-popup-bg, var(--theme-ui-menu-bg, var(--theme-background, rgba(26, 26, 26, 0.96)))));
-  border: 1px solid var(--theme-ui-command-palette-border-fg, var(--theme-ui-popup-border-fg, var(--theme-ui-background-separator-fg, rgba(255, 255, 255, 0.08))));
-  border-bottom: 0;
-  border-radius: 20px 20px 0 0;
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
-  color: var(--theme-ui-command-palette-fg, var(--theme-ui-popup-fg, var(--theme-ui-menu-fg, var(--theme-ui-text-fg, var(--theme-foreground, #f2f4f8)))));
+.commandPaletteSurface {
+  background: var(--commandPaletteBg);
+  border: 1px solid var(--commandPaletteBorder);
+  border-radius: 14px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+  color: var(--commandPaletteFg);
   overflow: hidden;
   position: relative;
 }
 
-.commandPalettePanel::before {
-  border: 1px solid var(--theme-ui-command-palette-border-subtle-fg, var(--theme-ui-popup-border-fg, var(--theme-ui-background-separator-fg, rgba(255, 255, 255, 0.03))));
-  border-radius: 19px 19px 0 0;
+.commandPaletteSurface::before {
+  border: 1px solid color-mix(in lab, var(--commandPaletteBorder) 45%, transparent);
+  border-radius: 13px;
   content: "";
   inset: 0;
   pointer-events: none;
   position: absolute;
 }
 
+.commandPalettePanel {
+  min-height: 0;
+  padding: 10px;
+  position: relative;
+}
+
 .commandPaletteInputRow {
   align-items: center;
-  border-bottom: 1px solid var(--theme-ui-command-palette-border-fg, var(--theme-ui-popup-border-fg, var(--theme-ui-background-separator-fg, rgba(255, 255, 255, 0.07))));
+  background: var(--commandPaletteInputBg);
+  border: 1px solid var(--commandPaletteBorder);
+  border-radius: 10px;
   display: flex;
   gap: 10px;
-  min-height: 56px;
-  padding: 0 14px;
+  min-height: 32px;
+  padding: 0 11px;
 }
 
 .commandPaletteSearchIcon {
-  color: var(--theme-ui-command-palette-icon-fg, var(--theme-ui-text-inactive-fg, var(--theme-ui-text-fg, #8f949c)));
+  color: var(--theme-ui-command-palette-icon-fg, var(--commandPaletteFgMuted));
   flex: 0 0 auto;
-  height: 18px;
-  width: 18px;
+  height: 16px;
+  width: 16px;
 }
 
 .commandPaletteInput {
   appearance: none;
   background: transparent;
   border: 0;
-  color: var(--theme-ui-command-palette-fg, var(--theme-ui-popup-fg, var(--theme-ui-menu-fg, var(--theme-ui-text-fg, #f2f4f8))));
+  color: var(--commandPaletteFg);
   flex: 1 1 auto;
   font-family: inherit;
-  font-size: 15px;
-  line-height: 1.4;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 32px;
   min-width: 0;
   outline: none;
-  padding: 14px 0;
+  padding: 0;
 }
 
 .commandPaletteInput::placeholder {
-  color: var(--theme-ui-command-palette-placeholder-fg, var(--theme-ui-text-inactive-fg, var(--theme-ui-text-fg, #858b95)));
+  color: color-mix(in lab, var(--commandPaletteFg) 65%, var(--commandPaletteBg));
 }
 
 .commandPaletteInput::-ms-clear {
@@ -88,25 +105,24 @@
 }
 
 .commandPaletteItems {
-  max-height: min(420px, calc(70vh - 56px));
+  margin-top: 8px;
+  max-height: min(420px, calc(70vh - 68px));
   overflow: auto;
   overscroll-behavior: contain;
-  padding: 8px;
-  scroll-padding-block: 8px;
+  padding: 0;
+  scroll-padding-block: 4px;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
 
 .commandPaletteItems::-webkit-scrollbar {
-  height: 10px;
-  width: 10px;
+  height: 6px;
+  width: 6px;
 }
 
 .commandPaletteItems::-webkit-scrollbar-thumb {
-  background: var(--theme-ui-command-palette-border-fg, var(--theme-ui-popup-border-fg, rgba(255, 255, 255, 0.16)));
-  border: 2px solid transparent;
+  background: color-mix(in lab, var(--commandPaletteFg) 24%, var(--commandPaletteBg));
   border-radius: 999px;
-  background-clip: padding-box;
 }
 
 .commandPaletteItems::-webkit-scrollbar-track {
@@ -115,36 +131,54 @@
 
 .commandPaletteItem {
   -webkit-tap-highlight-color: transparent;
+  align-items: center;
   background: transparent;
   border: 0;
-  border-radius: 12px;
+  border-radius: 9px;
   color: inherit;
   cursor: pointer;
-  display: block;
-  padding: 8px 10px;
-  scroll-margin-block: 8px;
+  display: flex;
+  min-height: 32px;
+  padding: 0 10px;
+  position: relative;
+  scroll-margin-block: 4px;
   text-align: left;
   transition: background-color 120ms ease, color 120ms ease;
   user-select: none;
   width: 100%;
 }
 
-.commandPaletteItem.active {
-  background: var(--theme-ui-command-palette-list-selected-bg, var(--theme-ui-menu-selected-bg, var(--theme-ui-selection-bg, #2a2f38)));
-  color: var(--theme-ui-command-palette-list-selected-fg, var(--theme-ui-menu-selected-fg, var(--theme-ui-text-focus-fg, var(--theme-ui-text-fg, #f8fafc))));
+.commandPaletteItem:hover {
+  background: var(--commandPaletteHoverBg);
+}
+
+.commandPaletteItem[data-active="true"] {
+  background: var(--commandPaletteSelectedBg);
+  color: var(--commandPaletteSelectedFg);
+}
+
+.commandPaletteItem[data-active="true"]::after {
+  border: 1px solid color-mix(in lab, var(--commandPaletteAccent) 70%, var(--commandPaletteBorder));
+  border-radius: 9px;
+  content: "";
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
 }
 
 .commandPaletteItemMain {
-  align-items: baseline;
+  align-items: center;
   display: flex;
   gap: 12px;
   min-width: 0;
+  width: 100%;
 }
 
 .commandPaletteTitle {
-  color: var(--theme-ui-command-palette-title-fg, var(--theme-ui-command-palette-fg, var(--theme-ui-popup-fg, var(--theme-ui-menu-fg, var(--theme-ui-text-focus-fg, var(--theme-ui-text-fg, #f3f4f6))))));
+  color: var(--theme-ui-command-palette-title-fg, var(--commandPaletteFg));
   flex: 1 1 auto;
-  font-size: 14px;
+  font-size: 13px;
+  line-height: 1.35;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -152,34 +186,34 @@
 }
 
 .commandPaletteDetail {
-  color: var(--theme-ui-command-palette-detail-fg, var(--theme-ui-text-inactive-fg, var(--theme-ui-text-fg, #9198a1)));
+  color: var(--theme-ui-command-palette-detail-fg, var(--commandPaletteFgMuted));
   flex: 0 0 auto;
   font-family: Iosevka, ui-monospace, monospace;
   font-size: 12px;
+  line-height: 1.35;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.commandPaletteItem.active .commandPaletteDetail {
-  color: var(--theme-ui-command-palette-detail-selected-fg, var(--theme-ui-command-palette-list-selected-fg, var(--theme-ui-menu-selected-fg, var(--theme-ui-text-focus-fg, var(--theme-ui-text-fg, #c4cad3)))));
+.commandPaletteItem[data-active="true"] .commandPaletteDetail {
+  color: var(--theme-ui-command-palette-detail-selected-fg, color-mix(in lab, var(--commandPaletteSelectedFg) 72%, var(--commandPaletteSelectedBg)));
 }
 
 .commandPaletteEmpty {
-  color: var(--theme-ui-command-palette-placeholder-fg, var(--theme-ui-text-inactive-fg, var(--theme-ui-text-fg, #8c929c)));
+  color: var(--theme-ui-command-palette-placeholder-fg, var(--commandPaletteFgMuted));
   font-size: 13px;
-  padding: 16px 12px;
+  padding: 10px;
 }
 
 .commandPaletteFooter {
   align-items: center;
-  background: var(--theme-ui-command-palette-footer-bg, var(--theme-ui-popup-bg, var(--theme-ui-menu-bg, rgba(20, 20, 20, 0.98))));
-  border: 1px solid var(--theme-ui-command-palette-border-fg, var(--theme-ui-popup-border-fg, var(--theme-ui-background-separator-fg, rgba(255, 255, 255, 0.08))));
-  border-radius: 0 0 20px 20px;
-  color: var(--theme-ui-command-palette-footer-fg, var(--theme-ui-text-inactive-fg, var(--theme-ui-text-fg, #8f949c)));
+  border-top: 1px solid var(--commandPaletteBorder);
+  color: var(--theme-ui-command-palette-footer-fg, var(--commandPaletteFgMuted));
   display: flex;
   font-size: 12px;
+  gap: 12px;
   justify-content: space-between;
-  padding: 10px 16px;
+  padding: 10px 14px;
   user-select: none;
 }

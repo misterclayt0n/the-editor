@@ -90,72 +90,75 @@ function CommandPaletteOverlay({
       />
       <div className="commandPaletteViewport">
         <div className="commandPaletteShell">
-          <div className="commandPalettePanel">
-            <div className="commandPaletteInputRow">
-              <CommandPaletteSearchIcon />
-              <input
-                ref={inputRef}
-                className="commandPaletteInput"
-                placeholder={state.placeholder || "Type a command"}
-                spellCheck={false}
-                value={state.query}
-                onChange={(event) => {
-                  void dispatch({ id: "command_palette.setQuery", args: { query: event.target.value } });
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "ArrowUp") {
-                    event.preventDefault();
-                    void dispatch({ id: "command_palette.moveSelection", args: { delta: -1 } });
-                    return;
-                  }
-                  if (event.key === "ArrowDown") {
-                    event.preventDefault();
-                    void dispatch({ id: "command_palette.moveSelection", args: { delta: 1 } });
-                    return;
-                  }
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    void dispatch({ id: "command_palette.accept" });
-                    return;
-                  }
-                  if (event.key === "Escape") {
-                    event.preventDefault();
-                    void dispatch({ id: "command_palette.close" });
-                  }
-                }}
-              />
-            </div>
-            <div ref={itemsRef} className="commandPaletteItems">
-              {state.items.length ? state.items.map((item, index) => {
-                const isActive = index === state.selectedIndex;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className={isActive ? "commandPaletteItem active" : "commandPaletteItem"}
-                    onMouseMove={() => {
-                      if (isActive) return;
-                      void dispatch({ id: "command_palette.selectIndex", args: { index } });
-                    }}
-                    onMouseDown={(event) => {
+          <div className="commandPaletteSurface">
+            <div className="commandPalettePanel">
+              <div className="commandPaletteInputRow">
+                <CommandPaletteSearchIcon />
+                <input
+                  ref={inputRef}
+                  className="commandPaletteInput"
+                  placeholder={state.placeholder || "Type a command"}
+                  spellCheck={false}
+                  value={state.query}
+                  onChange={(event) => {
+                    void dispatch({ id: "command_palette.setQuery", args: { query: event.target.value } });
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "ArrowUp") {
                       event.preventDefault();
-                    }}
-                    onClick={() => {
-                      void dispatch({ id: "command_palette.selectIndex", args: { index } }).then(() => dispatch({ id: "command_palette.accept" }));
-                    }}
-                  >
-                    <div className="commandPaletteItemMain">
-                      <div className="commandPaletteTitle">{item.title}</div>
-                      {item.detail ? <div className="commandPaletteDetail">{item.detail}</div> : null}
-                    </div>
-                  </button>
-                );
-              }) : <div className="commandPaletteEmpty">No matching commands</div>}
+                      void dispatch({ id: "command_palette.moveSelection", args: { delta: -1 } });
+                      return;
+                    }
+                    if (event.key === "ArrowDown") {
+                      event.preventDefault();
+                      void dispatch({ id: "command_palette.moveSelection", args: { delta: 1 } });
+                      return;
+                    }
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      void dispatch({ id: "command_palette.accept" });
+                      return;
+                    }
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      void dispatch({ id: "command_palette.close" });
+                    }
+                  }}
+                />
+              </div>
+              <div ref={itemsRef} className="commandPaletteItems">
+                {state.items.length ? state.items.map((item, index) => {
+                  const isActive = index === state.selectedIndex;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className="commandPaletteItem"
+                      data-active={isActive ? "true" : undefined}
+                      onMouseMove={() => {
+                        if (isActive) return;
+                        void dispatch({ id: "command_palette.selectIndex", args: { index } });
+                      }}
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                      }}
+                      onClick={() => {
+                        void dispatch({ id: "command_palette.selectIndex", args: { index } }).then(() => dispatch({ id: "command_palette.accept" }));
+                      }}
+                    >
+                      <div className="commandPaletteItemMain">
+                        <div className="commandPaletteTitle">{item.title}</div>
+                        {item.detail ? <div className="commandPaletteDetail">{item.detail}</div> : null}
+                      </div>
+                    </button>
+                  );
+                }) : <div className="commandPaletteEmpty">No matching commands</div>}
+              </div>
             </div>
-          </div>
-          <div className="commandPaletteFooter">
-            <span>Enter to run</span>
-            <span>Esc to close</span>
+            <div className="commandPaletteFooter">
+              <span>Enter to run</span>
+              <span>Esc to close</span>
+            </div>
           </div>
         </div>
       </div>

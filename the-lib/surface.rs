@@ -783,7 +783,10 @@ mod tests {
       SurfaceId,
       TextFormat,
     },
-    selection::Range,
+    selection::{
+      Range,
+      Selection,
+    },
     transaction::Transaction,
   };
 
@@ -974,5 +977,55 @@ mod tests {
     assert!(surface.redo(&mut document).unwrap());
     assert_eq!(document.text().to_string(), "hello!");
     assert_eq!(surface.selection().ranges(), &[Range::point(6)]);
+  }
+
+  #[test]
+  fn render_shows_cursor_in_empty_document() {
+    let document = Document::new(Rope::from(""));
+    let mut surface = Surface::new(&document, render_surface(), viewport()).unwrap();
+
+    let frame = surface.render(&document, None);
+
+    assert_eq!(frame.rows.len(), 1);
+    assert_eq!(frame.rows[0].text.to_string(), "");
+    assert_eq!(frame.cursors.len(), 1);
+    assert_eq!(frame.cursors[0].surface_row, 0);
+    assert_eq!(frame.cursors[0].col, 0);
+  }
+
+  #[test]
+  fn render_shows_cursor_on_trailing_empty_line() {
+    let document = Document::new(Rope::from("abc\n"));
+    let mut surface = Surface::new(&document, render_surface(), viewport()).unwrap();
+    surface
+      .apply_selection(&document, Selection::new(smallvec::smallvec![Range::point(4)]).unwrap())
+      .unwrap();
+
+    let frame = surface.render(&document, None);
+
+    assert_eq!(frame.rows.len(), 2);
+    assert_eq!(frame.rows[1].text.to_string(), "");
+    assert_eq!(frame.rows[1].doc_line, Some(1));
+    assert!(frame.rows[1].starts_logical_line);
+    assert!(!frame.rows[1].wrapped_continuation);
+    assert_eq!(frame.cursors.len(), 1);
+    assert_eq!(frame.cursors[0].surface_row, 1);
+    assert_eq!(frame.cursors[0].col, 0);
+  }
+
+  #[test]
+  fn render_selection_includes_newline_cell() {
+    let document = Document::new(Rope::from("abc\n"));
+    let mut surface = Surface::new(&document, render_surface(), viewport()).unwrap();
+    surface
+      .apply_selection(&document, Selection::single(0, 4))
+      .unwrap();
+
+    let frame = surface.render(&document, None);
+
+    assert_eq!(frame.selections.len(), 1);
+    assert_eq!(frame.selections[0].surface_row, 0);
+    assert_eq!(frame.selections[0].start_col, 0);
+    assert_eq!(frame.selections[0].end_col, 4);
   }
 }

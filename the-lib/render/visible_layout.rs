@@ -209,9 +209,14 @@ impl<'a> VisibleLayoutBuilder<'a> {
             row_end_col_abs: grapheme.visual_pos.col,
             metadata:        VisibleRowMetadata {
               doc_line:             Some(grapheme.line_idx),
-              starts_logical_line:  false,
-              wrapped_continuation: true,
+              starts_logical_line:  true,
+              wrapped_continuation: false,
             },
+          });
+          cursor_positions.push(CursorPosition {
+            char_idx:        grapheme.char_idx,
+            surface_row_abs: current_surface_row_abs,
+            col_abs:         grapheme.visual_pos.col,
           });
         }
         break;
@@ -252,6 +257,17 @@ impl<'a> VisibleLayoutBuilder<'a> {
         && current_surface_row_abs < window_end_row
       {
         let row_end_col_abs = current.as_ref().map(|row| row.row_end_col_abs).unwrap_or(0);
+        units.push(VisibleUnit {
+          surface_row_abs: current_surface_row_abs,
+          char_start: grapheme.char_idx,
+          char_end: grapheme.char_idx + grapheme.doc_chars(),
+          byte_start: self.text.char_to_byte(grapheme.char_idx),
+          byte_end: self
+            .text
+            .char_to_byte(grapheme.char_idx + grapheme.doc_chars()),
+          start_col_abs: row_end_col_abs,
+          end_col_abs: row_end_col_abs + 1,
+        });
         cursor_positions.push(CursorPosition {
           char_idx:        grapheme.char_idx,
           surface_row_abs: current_surface_row_abs,
@@ -273,6 +289,11 @@ impl<'a> VisibleLayoutBuilder<'a> {
           starts_logical_line:  true,
           wrapped_continuation: false,
         },
+      });
+      cursor_positions.push(CursorPosition {
+        char_idx:        0,
+        surface_row_abs: 0,
+        col_abs:         0,
       });
     }
 

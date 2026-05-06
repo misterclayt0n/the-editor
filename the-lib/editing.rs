@@ -544,12 +544,14 @@ pub fn surround_replace(
   selection: &Selection,
   syntax: Option<&Syntax>,
   target: char,
-  replacement: char,
+  open: impl Into<Tendril>,
+  close: impl Into<Tendril>,
   count: usize,
 ) -> Result<Edit> {
   let text = doc.slice(..);
   let positions = surround::get_surround_pos(syntax, text, selection, Some(target), count)?;
-  let (open, close) = surround_pair_chars(replacement);
+  let open = open.into();
+  let close = close.into();
   let mut replacements = Vec::with_capacity(positions.len() * 2);
 
   for (open_pos, close_pos) in positions {
@@ -560,14 +562,14 @@ pub fn surround_replace(
         start: open_pos,
         end:   open_end,
       },
-      Tendril::from(open.to_string().as_str()),
+      open.clone(),
     ));
     replacements.push(Replacement::replace(
       Span {
         start: close_pos,
         end:   close_end,
       },
-      Tendril::from(close.to_string().as_str()),
+      close.clone(),
     ));
   }
 
@@ -852,19 +854,6 @@ fn replace_selected_text(
   }
 
   build_edit(doc.len_chars(), replacements, cursors)
-}
-
-fn surround_pair_chars(ch: char) -> (char, char) {
-  match ch {
-    '(' | ')' => ('(', ')'),
-    '[' | ']' => ('[', ']'),
-    '{' | '}' => ('{', '}'),
-    '<' | '>' => ('<', '>'),
-    '"' => ('"', '"'),
-    '\'' => ('\'', '\''),
-    '`' => ('`', '`'),
-    _ => (ch, ch),
-  }
 }
 
 fn build_edit(

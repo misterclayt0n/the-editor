@@ -344,35 +344,137 @@ pub fn execute_operation(
         match_brackets_selection(text, selection, syntax, true),
       )))
     },
-    "select_textobject_around" => {
+    "select_word_around" => {
+      Ok(OperationOutput::atom(OperationAtom::Selection(
+        text_object::word(
+          text,
+          selection.clone(),
+          TextObjectKind::Around,
+          count,
+          false,
+        ),
+      )))
+    },
+    "select_word_inner" => {
+      Ok(OperationOutput::atom(OperationAtom::Selection(
+        text_object::word(
+          text,
+          selection.clone(),
+          TextObjectKind::Inside,
+          count,
+          false,
+        ),
+      )))
+    },
+    "select_long_word_around" => {
+      Ok(OperationOutput::atom(OperationAtom::Selection(
+        text_object::word(text, selection.clone(), TextObjectKind::Around, count, true),
+      )))
+    },
+    "select_long_word_inner" => {
+      Ok(OperationOutput::atom(OperationAtom::Selection(
+        text_object::word(text, selection.clone(), TextObjectKind::Inside, count, true),
+      )))
+    },
+    "select_paragraph_around" => {
+      Ok(OperationOutput::atom(OperationAtom::Selection(
+        text_object::paragraph(text, selection.clone(), TextObjectKind::Around, count),
+      )))
+    },
+    "select_paragraph_inner" => {
+      Ok(OperationOutput::atom(OperationAtom::Selection(
+        text_object::paragraph(text, selection.clone(), TextObjectKind::Inside, count),
+      )))
+    },
+    "select_closest_pair_around" => {
+      Ok(OperationOutput::atom(OperationAtom::Selection(
+        text_object::closest_pair(
+          syntax,
+          text,
+          selection.clone(),
+          TextObjectKind::Around,
+          count,
+        ),
+      )))
+    },
+    "select_closest_pair_inner" => {
+      Ok(OperationOutput::atom(OperationAtom::Selection(
+        text_object::closest_pair(
+          syntax,
+          text,
+          selection.clone(),
+          TextObjectKind::Inside,
+          count,
+        ),
+      )))
+    },
+    "select_pair_around" => {
       let Some(ch) = spec.text.as_deref().and_then(|text| text.chars().next()) else {
         return Ok(OperationOutput::none());
       };
       Ok(OperationOutput::atom(OperationAtom::Selection(
-        select_text_object(
-          text,
-          selection,
+        text_object::pair(
           syntax,
-          registry,
+          text,
+          selection.clone(),
           TextObjectKind::Around,
           ch,
           count,
-        )?,
+        ),
       )))
     },
-    "select_textobject_inner" => {
+    "select_pair_inner" => {
       let Some(ch) = spec.text.as_deref().and_then(|text| text.chars().next()) else {
         return Ok(OperationOutput::none());
       };
       Ok(OperationOutput::atom(OperationAtom::Selection(
-        select_text_object(
-          text,
-          selection,
+        text_object::pair(
           syntax,
-          registry,
+          text,
+          selection.clone(),
           TextObjectKind::Inside,
           ch,
           count,
+        ),
+      )))
+    },
+    "select_syntax_object_around" => {
+      let Some(object_name) = spec.text.as_deref() else {
+        return Ok(OperationOutput::none());
+      };
+      let (Some(syntax), Some(registry)) = (syntax, registry) else {
+        return Ok(OperationOutput::atom(OperationAtom::Selection(
+          selection.clone(),
+        )));
+      };
+      Ok(OperationOutput::atom(OperationAtom::Selection(
+        text_object::syntax_named(
+          syntax,
+          registry,
+          text,
+          selection.clone(),
+          TextObjectKind::Around,
+          object_name,
+        )?,
+      )))
+    },
+    "select_syntax_object_inner" => {
+      let Some(object_name) = spec.text.as_deref() else {
+        return Ok(OperationOutput::none());
+      };
+      let (Some(syntax), Some(registry)) = (syntax, registry) else {
+        return Ok(OperationOutput::atom(OperationAtom::Selection(
+          selection.clone(),
+        )));
+      };
+      Ok(OperationOutput::atom(OperationAtom::Selection(
+        text_object::syntax_named(
+          syntax,
+          registry,
+          text,
+          selection.clone(),
+          TextObjectKind::Inside,
+          object_name,
         )?,
       )))
     },
@@ -431,17 +533,17 @@ pub fn execute_operation(
       )))
     },
     "surround_add" => {
-      let Some(text) = spec.text else {
+      let Some(values) = spec.values else {
         return Ok(OperationOutput::none());
       };
-      let (open, close) = if text.chars().count() == 1 {
-        let ch = text.chars().next().expect("single char checked");
-        surround_pair_for_char(ch)
-      } else {
-        (text.clone(), text)
+      let Some(open) = values.first() else {
+        return Ok(OperationOutput::none());
+      };
+      let Some(close) = values.get(1) else {
+        return Ok(OperationOutput::none());
       };
       Ok(OperationOutput::atom(OperationAtom::Edit(
-        editing::surround_add(doc, selection, open, close)?,
+        editing::surround_add(doc, selection, open.clone(), close.clone())?,
       )))
     },
     "surround_delete" => {
@@ -451,17 +553,28 @@ pub fn execute_operation(
       )))
     },
     "surround_replace" => {
+      let Some(target) = spec.text.as_deref().and_then(|text| text.chars().next()) else {
+        return Ok(OperationOutput::none());
+      };
       let Some(values) = spec.values else {
         return Ok(OperationOutput::none());
       };
-      let Some(target) = values.first().and_then(|value| value.chars().next()) else {
+      let Some(open) = values.first() else {
         return Ok(OperationOutput::none());
       };
-      let Some(replacement) = values.get(1).and_then(|value| value.chars().next()) else {
+      let Some(close) = values.get(1) else {
         return Ok(OperationOutput::none());
       };
       Ok(OperationOutput::atom(OperationAtom::Edit(
-        editing::surround_replace(doc, selection, syntax, target, replacement, count)?,
+        editing::surround_replace(
+          doc,
+          selection,
+          syntax,
+          target,
+          open.clone(),
+          close.clone(),
+          count,
+        )?,
       )))
     },
 
@@ -602,102 +715,6 @@ fn match_brackets_selection(
       .map(|matched| range.put_cursor(text, matched, extend))
       .unwrap_or(range)
   })
-}
-
-fn select_text_object(
-  text: RopeSlice,
-  selection: &Selection,
-  syntax: Option<&Syntax>,
-  registry: Option<&LanguageRegistry>,
-  kind: TextObjectKind,
-  ch: char,
-  count: usize,
-) -> Result<Selection> {
-  match ch {
-    'w' => {
-      Ok(text_object::word(
-        text,
-        selection.clone(),
-        kind,
-        count,
-        false,
-      ))
-    },
-    'W' => {
-      Ok(text_object::word(
-        text,
-        selection.clone(),
-        kind,
-        count,
-        true,
-      ))
-    },
-    'p' => Ok(text_object::paragraph(text, selection.clone(), kind, count)),
-    'm' => {
-      Ok(text_object::closest_pair(
-        syntax,
-        text,
-        selection.clone(),
-        kind,
-        count,
-      ))
-    },
-    't' => syntax_named_text_object(syntax, registry, text, selection, kind, "class"),
-    'f' => syntax_named_text_object(syntax, registry, text, selection, kind, "function"),
-    'a' => syntax_named_text_object(syntax, registry, text, selection, kind, "parameter"),
-    'c' => syntax_named_text_object(syntax, registry, text, selection, kind, "comment"),
-    'T' => syntax_named_text_object(syntax, registry, text, selection, kind, "test"),
-    'e' => syntax_named_text_object(syntax, registry, text, selection, kind, "entry"),
-    'x' => syntax_named_text_object(syntax, registry, text, selection, kind, "xml-element"),
-    ch if !ch.is_ascii_alphanumeric() => {
-      Ok(text_object::pair(
-        syntax,
-        text,
-        selection.clone(),
-        kind,
-        ch,
-        count,
-      ))
-    },
-    _ => Ok(selection.clone()),
-  }
-}
-
-fn syntax_named_text_object(
-  syntax: Option<&Syntax>,
-  registry: Option<&LanguageRegistry>,
-  text: RopeSlice,
-  selection: &Selection,
-  kind: TextObjectKind,
-  object_name: &str,
-) -> Result<Selection> {
-  match (syntax, registry) {
-    (Some(syntax), Some(registry)) => {
-      Ok(text_object::syntax_named(
-        syntax,
-        registry,
-        text,
-        selection.clone(),
-        kind,
-        object_name,
-      )?)
-    },
-    _ => Ok(selection.clone()),
-  }
-}
-
-fn surround_pair_for_char(ch: char) -> (String, String) {
-  let (open, close) = match ch {
-    '(' | ')' => ('(', ')'),
-    '[' | ']' => ('[', ']'),
-    '{' | '}' => ('{', '}'),
-    '<' | '>' => ('<', '>'),
-    '"' => ('"', '"'),
-    '\'' => ('\'', '\''),
-    '`' => ('`', '`'),
-    _ => (ch, ch),
-  };
-  (open.to_string(), close.to_string())
 }
 
 pub fn select_all(text: RopeSlice) -> Selection {

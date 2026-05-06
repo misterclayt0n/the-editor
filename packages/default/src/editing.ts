@@ -642,11 +642,11 @@ async function handlePendingInput(
       return;
     }
     case "surroundAdd": {
-      const text = input.key === "ret"
-        ? (await readActiveSurfaceState(editor)).lineEnding
-        : firstCodePoint(input.text);
-      if (!text) return;
-      await applyOperation(editor, { name: "surround_add", text });
+      const pair = input.key === "ret"
+        ? newlineSurroundPair((await readActiveSurfaceState(editor)).lineEnding)
+        : surroundPairForInput(firstCodePoint(input.text));
+      if (!pair) return;
+      await applyOperation(editor, { name: "surround_add", values: pair });
       if (getDefaultState(editor).mode === "select") await applyMode(editor, "normal");
       return;
     }
@@ -668,12 +668,13 @@ async function handlePendingInput(
       return;
     }
     case "surroundReplaceWith": {
-      const ch = firstCodePoint(input.text);
-      if (!ch) return;
+      const pair = surroundPairForInput(firstCodePoint(input.text));
+      if (!pair) return;
       await applyOperation(editor, {
         name: "surround_replace",
         count: pending.count,
-        values: [pending.target, ch],
+        text: pending.target,
+        values: pair,
       });
       if (getDefaultState(editor).mode === "select") await applyMode(editor, "normal");
       return;
@@ -681,11 +682,9 @@ async function handlePendingInput(
     case "selectTextObject": {
       const ch = firstCodePoint(input.text);
       if (!ch) return;
-      await applyOperation(editor, {
-        name: pending.textObjectKind === "around" ? "select_textobject_around" : "select_textobject_inner",
-        count: pending.count,
-        text: ch,
-      });
+      const operation = textObjectOperationForInput(pending.textObjectKind, ch, pending.count);
+      if (!operation) return;
+      await applyOperation(editor, operation);
       return;
     }
   }
@@ -852,6 +851,72 @@ async function applyEdit(editor: EditorHost, edit: SurfaceEdit, checkpoint = fal
   });
   if (checkpoint && getDefaultState(editor).mode !== "insert") {
     await editor.runtime.surfaces.commitUndoCheckpoint({ surfaceId: activeSurfaceId(editor) });
+  }
+}
+
+function surroundPairForInput(ch: string | undefined): [string, string] | undefined {
+  if (!ch) return undefined;
+  switch (ch) {
+    case "(":
+    case ")":
+      return ["(", ")"];
+    case "[":
+    case "]":
+      return ["[", "]"];
+    case "{":
+    case "}":
+      return ["{", "}"];
+    case "<":
+    case ">":
+      return ["<", ">"];
+    case '"':
+      return ['"', '"'];
+    case "'":
+      return ["'", "'"];
+    case "`":
+      return ["`", "`"];
+    default:
+      return [ch, ch];
+  }
+}
+
+function newlineSurroundPair(lineEnding: string): [string, string] {
+  return [lineEnding, lineEnding];
+}
+
+function textObjectOperationForInput(
+  kind: "around" | "inside",
+  ch: string,
+  count: number,
+): SurfaceOperation | undefined {
+  const suffix = kind === "inside" ? "inner" : "around";
+  switch (ch) {
+    case "w":
+      return { name: `select_word_${suffix}`, count };
+    case "W":
+      return { name: `select_long_word_${suffix}`, count };
+    case "p":
+      return { name: `select_paragraph_${suffix}`, count };
+    case "m":
+      return { name: `select_closest_pair_${suffix}`, count };
+    case "t":
+      return { name: `select_syntax_object_${suffix}`, count, text: "class" };
+    case "f":
+      return { name: `select_syntax_object_${suffix}`, count, text: "function" };
+    case "a":
+      return { name: `select_syntax_object_${suffix}`, count, text: "parameter" };
+    case "c":
+      return { name: `select_syntax_object_${suffix}`, count, text: "comment" };
+    case "T":
+      return { name: `select_syntax_object_${suffix}`, count, text: "test" };
+    case "e":
+      return { name: `select_syntax_object_${suffix}`, count, text: "entry" };
+    case "x":
+      return { name: `select_syntax_object_${suffix}`, count, text: "xml-element" };
+    default:
+      return ch.match(/^[^A-Za-z0-9]$/)
+        ? { name: `select_pair_${suffix}`, count, text: ch }
+        : undefined;
   }
 }
 

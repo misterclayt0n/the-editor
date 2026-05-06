@@ -13,5 +13,6 @@ export * from "./packages.js";
 export * from "./palette.js";
 export * from "./roles.js";
 export * from "./runtimeClient.js";
+export * from "./themes.js";
 export * from "./tools.js";
 export * from "./workbench.js";

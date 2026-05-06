@@ -1,0 +1,346 @@
+import { defineTheme } from "@the-editor/editor";
+
+export default defineTheme({
+  "id": "modus_operandi_tinted",
+  "title": "Modus Operandi Tinted",
+  "palette": {
+    "bg-main": "#fbf7f0",
+    "bg-dim": "#efe9dd",
+    "fg-main": "#000000",
+    "fg-dim": "#595959",
+    "fg-alt": "#193668",
+    "bg-active": "#c9b9b0",
+    "bg-inactive": "#dfd5cf",
+    "red": "#a60000",
+    "red-warmer": "#972500",
+    "red-cooler": "#a0132f",
+    "red-faint": "#7f0000",
+    "red-intense": "#d00000",
+    "green": "#006800",
+    "green-warmer": "#316500",
+    "green-cooler": "#00663f",
+    "green-faint": "#2a5045",
+    "green-intense": "#008900",
+    "yellow": "#6f5500",
+    "yellow-warmer": "#884900",
+    "yellow-cooler": "#7a4f2f",
+    "yellow-faint": "#624416",
+    "yellow-intense": "#808000",
+    "blue": "#0031a9",
+    "blue-warmer": "#354fcf",
+    "blue-cooler": "#0000b0",
+    "blue-faint": "#003497",
+    "blue-intense": "#0000ff",
+    "magenta": "#721045",
+    "magenta-warmer": "#8f0075",
+    "magenta-cooler": "#531ab6",
+    "magenta-faint": "#7c318f",
+    "magenta-intense": "#dd22dd",
+    "cyan": "#005e8b",
+    "cyan-warmer": "#3f578f",
+    "cyan-cooler": "#005f5f",
+    "cyan-faint": "#005077",
+    "cyan-intense": "#008899",
+    "bg-red-intense": "#ff8f88",
+    "bg-green-intense": "#8adf80",
+    "bg-yellow-intense": "#f3d000",
+    "bg-blue-intense": "#bfc9ff",
+    "bg-magenta-intense": "#dfa0f0",
+    "bg-cyan-intense": "#a4d5f9",
+    "bg-red-subtle": "#ffcfbf",
+    "bg-green-subtle": "#b3fabf",
+    "bg-yellow-subtle": "#fff576",
+    "bg-blue-subtle": "#ccdfff",
+    "bg-magenta-subtle": "#ffddff",
+    "bg-cyan-subtle": "#bfefff",
+    "bg-red-nuanced": "#ffe8f0",
+    "bg-green-nuanced": "#e0f5e0",
+    "bg-yellow-nuanced": "#f9ead0",
+    "bg-blue-nuanced": "#ebebff",
+    "bg-magenta-nuanced": "#f6e7ff",
+    "bg-cyan-nuanced": "#e1f3fc",
+    "bg-completion": "#f0c1cf",
+    "bg-hl-line": "#f1d5d0",
+    "bg-mode-line-active": "#cab9b2",
+    "fg-mode-line-active": "#000000",
+    "bg-mode-line-inactive": "#dfd9cf",
+    "fg-mode-line-inactive": "#585858",
+    "modeline-err": "#7f0000",
+    "modeline-warning": "#5f0070",
+    "modeline-info": "#002580",
+    "bg-added": "#c3ebc1",
+    "fg-added": "#005000",
+    "bg-changed": "#ffdfa9",
+    "fg-changed": "#553d00",
+    "bg-removed": "#f4d0cf",
+    "fg-removed": "#8f1313",
+    "bg-paren-match": "#7fdfcf",
+    "border": "#9f9690",
+    "bg-region": "#c2bcb5",
+    "border-mode-line-active": "#545454",
+    "border-mode-line-inactive": "#a59a94",
+    "bg-tab-bar": "#e0d4ce",
+    "bg-tab-current": "#fbf7f0",
+    "bg-tab-other": "#c8b8b2"
+  },
+  "styles": {
+    "type": "cyan-cooler",
+    "constructor": "cyan-cooler",
+    "constant": "blue-cooler",
+    "constant.character.escape": "magenta",
+    "string": "blue-warmer",
+    "string.regexp": "magenta-faint",
+    "string.special": "blue-faint",
+    "comment": "red-faint",
+    "variable.parameter": "cyan",
+    "variable.builtin": "magenta-cooler",
+    "label": "fg-dim",
+    "keyword": "magenta-cooler",
+    "keyword.directive": "red-cooler",
+    "function": "magenta",
+    "function.macro": "magenta-warmer",
+    "punctuation": "fg-dim",
+    "tag": "magenta",
+    "attribute": "cyan-cooler",
+    "namespace": "blue-cooler",
+    "special": "red-cooler",
+    "markup.heading.marker": "fg-dim",
+    "markup.heading.1": {
+      "fg": "fg-main",
+      "modifiers": [
+        "bold"
+      ]
+    },
+    "markup.heading.2": {
+      "fg": "yellow-faint",
+      "modifiers": [
+        "bold"
+      ]
+    },
+    "markup.heading.3": {
+      "fg": "fg-alt",
+      "modifiers": [
+        "bold"
+      ]
+    },
+    "markup.heading.4": {
+      "fg": "magenta",
+      "modifiers": [
+        "bold"
+      ]
+    },
+    "markup.heading.5": {
+      "fg": "green-faint",
+      "modifiers": [
+        "bold"
+      ]
+    },
+    "markup.heading.6": {
+      "fg": "red-faint",
+      "modifiers": [
+        "bold"
+      ]
+    },
+    "markup.list": "fg-dim",
+    "markup.list.checked": {
+      "fg": "yellow-warmer"
+    },
+    "markup.list.unchecked": {
+      "fg": "yellow-warmer"
+    },
+    "markup.bold": {
+      "modifiers": [
+        "bold"
+      ]
+    },
+    "markup.italic": {
+      "modifiers": [
+        "italic"
+      ]
+    },
+    "markup.strikethrough": {
+      "modifiers": [
+        "crossed_out"
+      ]
+    },
+    "markup.link.url": {
+      "fg": "cyan"
+    },
+    "markup.link.text": {
+      "fg": "blue-warmer",
+      "modifiers": [
+        "underlined"
+      ]
+    },
+    "markup.raw.block": {
+      "bg": "bg-dim"
+    },
+    "markup.raw.inline": {
+      "fg": "green-cooler"
+    },
+    "diff.plus": {
+      "fg": "fg-added",
+      "bg": "bg-added"
+    },
+    "diff.plus.gutter": "green-intense",
+    "diff.minus": {
+      "fg": "fg-removed",
+      "bg": "bg-removed"
+    },
+    "diff.minus.gutter": "red-intense",
+    "diff.delta": {
+      "fg": "fg-changed",
+      "bg": "bg-changed"
+    },
+    "diff.delta.gutter": "yellow-intense",
+    "ui.background": {
+      "bg": "bg-main"
+    },
+    "ui.linenr": {
+      "fg": "fg-dim",
+      "bg": "bg-dim"
+    },
+    "ui.linenr.selected": {
+      "fg": "fg-main",
+      "bg": "bg-active"
+    },
+    "ui.statusline": {
+      "fg": "fg-mode-line-active",
+      "bg": "bg-mode-line-active"
+    },
+    "ui.statusline.inactive": {
+      "fg": "fg-mode-line-inactive",
+      "bg": "bg-mode-line-inactive"
+    },
+    "ui.statusline.normal": {
+      "fg": "blue-warmer"
+    },
+    "ui.statusline.insert": {
+      "fg": "green-warmer"
+    },
+    "ui.statusline.select": {
+      "fg": "magenta-warmer"
+    },
+    "ui.popup": {
+      "fg": "fg-main",
+      "bg": "bg-dim"
+    },
+    "ui.window": {
+      "fg": "fg-dim"
+    },
+    "ui.help": {
+      "fg": "fg-main",
+      "bg": "bg-active"
+    },
+    "ui.gutter": {
+      "bg": "bg-dim"
+    },
+    "ui.text": "fg-main",
+    "ui.text.directory": "blue",
+    "ui.text.focus": {
+      "fg": "fg-main",
+      "bg": "bg-completion",
+      "modifiers": [
+        "bold"
+      ]
+    },
+    "ui.text.inactive": {
+      "fg": "fg-dim"
+    },
+    "ui.virtual": "bg-active",
+    "ui.virtual.ruler": {
+      "bg": "bg-dim"
+    },
+    "ui.virtual.inlay-hint": {
+      "fg": "fg-dim",
+      "modifiers": [
+        "italic"
+      ]
+    },
+    "ui.virtual.jump-label": {
+      "fg": "yellow-cooler",
+      "modifiers": [
+        "bold"
+      ]
+    },
+    "ui.selection": {
+      "fg": "fg-main",
+      "bg": "bg-inactive"
+    },
+    "ui.selection.primary": {
+      "fg": "fg-main",
+      "bg": "bg-active"
+    },
+    "ui.cursor": {
+      "fg": "bg-main",
+      "bg": "fg-main"
+    },
+    "ui.cursor.primary": {
+      "fg": "bg-main",
+      "bg": "red-intense"
+    },
+    "ui.cursor.match": {
+      "fg": "fg-main",
+      "bg": "bg-paren-match"
+    },
+    "ui.cursorline.primary": {
+      "bg": "bg-hl-line"
+    },
+    "ui.highlight": {
+      "bg": "bg-hl-line"
+    },
+    "ui.menu": {
+      "fg": "fg-main",
+      "bg": "bg-dim"
+    },
+    "ui.menu.selected": {
+      "fg": "fg-main",
+      "bg": "bg-completion",
+      "modifiers": [
+        "bold"
+      ]
+    },
+    "ui.menu.scroll": {
+      "fg": "fg-dim",
+      "bg": "bg-cyan-intense"
+    },
+    "diagnostic.error": {
+      "underline": {
+        "color": "red-intense",
+        "style": "curl"
+      }
+    },
+    "diagnostic.warning": {
+      "underline": {
+        "color": "yellow-intense",
+        "style": "curl"
+      }
+    },
+    "diagnostic.info": {
+      "underline": {
+        "color": "cyan-intense",
+        "style": "curl"
+      }
+    },
+    "diagnostic.hint": {
+      "underline": {
+        "color": "blue-intense",
+        "style": "curl"
+      }
+    },
+    "diagnostic.unnecessary": {
+      "modifiers": [
+        "dim"
+      ]
+    },
+    "diagnostic.deprecated": {
+      "modifiers": [
+        "crossed_out"
+      ]
+    },
+    "error": "red",
+    "warning": "yellow-warmer",
+    "info": "cyan-cooler",
+    "hint": "blue-cooler"
+  }
+});

@@ -1,8 +1,9 @@
 import * as React from "react";
 import * as ReactJsxRuntime from "react/jsx-runtime";
 import ts from "typescript";
-import type { PackageSnapshot, ToolRootTarget } from "@the-editor/editor";
+import type { PackageSnapshot, ThemeSnapshot, ToolRootTarget } from "@the-editor/editor";
 import type { DiagnosticEntry } from "@the-editor/editor";
+import { themeCssVariables } from "@the-editor/editor/themes";
 import * as editorUiModule from "@the-editor/editor/ui";
 import { createUiHost, type EditorUiModule, type WorkbenchSnapshot } from "@the-editor/editor/ui";
 
@@ -12,7 +13,7 @@ type LoadedTarget = {
   dispose(): void;
   path: string;
   version: number;
-  target: "ui" | "theme";
+  target: "ui";
 };
 
 export class RendererPackageRuntime {
@@ -25,11 +26,12 @@ export class RendererPackageRuntime {
   private readonly listeners = new Set<() => void>();
   private readonly loaded = new Map<string, LoadedTarget>();
   private readonly localDiagnostics = new Map<string, DiagnosticEntry>();
+  private readonly appliedThemeVariables = new Set<string>();
 
   async update(snapshot: WorkbenchSnapshot): Promise<void> {
-    const desired = new Map<string, { moduleKey: string; path: string; version: number; target: "ui" | "theme" }>();
+    const desired = new Map<string, { moduleKey: string; path: string; version: number; target: "ui" }>();
     for (const pkg of snapshot.packages) {
-      for (const target of ["ui", "theme"] as const) {
+      for (const target of ["ui"] as const) {
         if (!pkg.loadedTargets.includes(target)) continue;
         const path = pkg.entrypointPaths[target];
         const version = pkg.loadVersions[target];
@@ -78,6 +80,7 @@ export class RendererPackageRuntime {
       ...snapshot,
       diagnostics: [...(snapshot.diagnostics ?? []), ...this.localDiagnostics.values()],
     });
+    this.applyTheme(snapshot);
 
     if (changed) this.emitChange();
   }
@@ -103,7 +106,7 @@ export class RendererPackageRuntime {
     };
   }
 
-  private async instantiate(moduleKey: string, entryPath: string, version: number, target: "ui" | "theme"): Promise<LoadedTarget> {
+  private async instantiate(moduleKey: string, entryPath: string, version: number, target: "ui"): Promise<LoadedTarget> {
     const contributionModuleId = `${moduleKey}@${version}`;
     const loader = new RendererSourceModuleLoader(contributionModuleId, version);
     const activate = loader.loadDefault<EditorUiModule>(entryPath);
@@ -136,7 +139,7 @@ export class RendererPackageRuntime {
 
   private reportUiDiagnostic(
     moduleKey: string,
-    next: { moduleKey: string; path: string; version: number; target: "ui" | "theme" },
+    next: { moduleKey: string; path: string; version: number; target: "ui" },
     error: unknown,
   ): boolean {
     const id = `ui:${moduleKey}`;
@@ -157,6 +160,28 @@ export class RendererPackageRuntime {
 
   private clearUiDiagnostic(moduleKey: string): void {
     this.localDiagnostics.delete(`ui:${moduleKey}`);
+  }
+
+  private applyTheme(snapshot: WorkbenchSnapshot): void {
+    this.setThemeVariables(snapshot.theme);
+    const root = document.documentElement;
+    const activeThemeId = snapshot.theme?.active?.id ?? "";
+    if (activeThemeId) root.setAttribute("data-theme-id", activeThemeId);
+    else root.removeAttribute("data-theme-id");
+  }
+
+  private setThemeVariables(theme?: ThemeSnapshot): void {
+    const rootStyle = document.documentElement.style;
+    for (const name of this.appliedThemeVariables) {
+      rootStyle.removeProperty(name);
+    }
+    this.appliedThemeVariables.clear();
+
+    const variables = themeCssVariables(theme?.active);
+    for (const [name, value] of Object.entries(variables)) {
+      rootStyle.setProperty(name, value);
+      this.appliedThemeVariables.add(name);
+    }
   }
 
   private emitChange(): void {

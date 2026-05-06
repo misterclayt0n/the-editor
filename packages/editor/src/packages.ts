@@ -170,10 +170,10 @@ export class PackageRegistry {
       } else {
         this.editor.focus.restoreTarget(capturedFocus);
       }
-      this.editor.workbench.invalidate("roles", "tools", "focus", "decorations");
+      this.editor.workbench.invalidate("roles", "tools", "focus", "decorations", "theme");
     } catch (error) {
       this.editor.focus.restoreTarget(capturedFocus);
-      this.editor.workbench.invalidate("roles", "tools", "focus", "decorations");
+      this.editor.workbench.invalidate("roles", "tools", "focus", "decorations", "theme");
       throw error;
     }
   }
@@ -235,7 +235,7 @@ export class PackageRegistry {
 
     pkg.loadVersions.set(target, nextVersion);
     pkg.loadedTargets.add(target);
-    this.editor.workbench.invalidate("roles", "tools", "decorations", "focus", "interaction");
+    this.editor.workbench.invalidate("roles", "tools", "decorations", "focus", "interaction", "theme");
   }
 
   private async unloadTarget(pkg: RegisteredPackage, target: PackageTargetKind): Promise<void> {
@@ -272,7 +272,7 @@ export class PackageRegistry {
     }
 
     pkg.loadedTargets.delete(target);
-    this.editor.workbench.invalidate("roles", "tools", "decorations", "focus", "interaction");
+    this.editor.workbench.invalidate("roles", "tools", "decorations", "focus", "interaction", "theme");
   }
 
   private targetsToLoad(manifest: EditorPackageManifest, target?: PackageTargetKind): PackageTargetKind[] {

@@ -140,6 +140,9 @@ export interface RuntimeApi {
   server: {
     ping(): Promise<OkResult>;
   };
+  syntax: {
+    highlightLegend(): Promise<Record<number, string>>;
+  };
   documents: {
     openFile(params: { path: string }): Promise<DocumentOpened>;
     createScratch(params: { text?: string }): Promise<DocumentOpened>;

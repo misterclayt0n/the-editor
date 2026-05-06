@@ -121,6 +121,8 @@ async function postSessionState() {
     packages: editor.packages.snapshot(),
     diagnostics: state.diagnostics ?? [],
     interaction: editor.interaction.snapshot(),
+    theme: state.theme ?? editor.themes.snapshot(),
+    syntaxLegend: state.syntaxLegend ?? {},
   };
   parentPort?.postMessage(payload);
   return payload;

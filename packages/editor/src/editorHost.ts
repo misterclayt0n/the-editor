@@ -12,6 +12,7 @@ import { ModuleRegistry, type EditorModule, type EditorModuleRegistration } from
 import { PackageRegistry, type PackageTargetAdapterMap } from "./packages.js";
 import { CommandPaletteRegistry } from "./palette.js";
 import { RoleRegistry } from "./roles.js";
+import { ThemeRegistry } from "./themes.js";
 import { ToolRegistry } from "./tools.js";
 import { WorkbenchController } from "./workbench.js";
 
@@ -37,6 +38,7 @@ export class EditorHost {
   readonly interaction = new InteractionRegistry(this);
   readonly decorations = new DecorationRegistry(this);
   readonly focus = new FocusRegistry(this);
+  readonly themes = new ThemeRegistry(this);
   readonly workbench = new WorkbenchController(this);
 
   private readonly disposables = new DisposableStore();

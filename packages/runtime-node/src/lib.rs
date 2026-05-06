@@ -312,6 +312,20 @@ impl NativeRuntimeSession {
   }
 
   #[napi]
+  pub fn read_syntax_highlight_legend_json(&self) -> Result<String> {
+    let runtime = self.lock()?;
+    let legend = runtime
+      .syntax()
+      .registry()
+      .highlight_names()
+      .into_iter()
+      .enumerate()
+      .map(|(kind, name)| (kind, name))
+      .collect::<std::collections::BTreeMap<usize, String>>();
+    serde_json::to_string(&legend).map_err(|err| Error::from_reason(err.to_string()))
+  }
+
+  #[napi]
   pub fn render_frame_json(&self, surface_id: u32, viewport: Option<JsViewport>) -> Result<String> {
     let mut runtime = self.lock()?;
     let surface = surface_handle(surface_id)?;

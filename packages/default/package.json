@@ -19,10 +19,12 @@
     "runtime": "./src/runtime.ts",
     "interaction": "./src/interaction.ts",
     "ui": "./src/ui.tsx",
-    "defaultTargets": ["runtime", "interaction", "ui"]
+    "theme": "./src/theme.ts",
+    "defaultTargets": ["runtime", "interaction", "ui", "theme"]
   },
   "scripts": {
     "build": "tsdown src/index.ts src/scratch.ts src/keymaps.ts src/runtime.ts src/interaction.ts --format esm,cjs --dts --clean",
+    "import:themes": "bun run ./scripts/importThemes.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"
   },

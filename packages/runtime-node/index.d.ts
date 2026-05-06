@@ -22,6 +22,7 @@ export declare class NativeRuntimeSession {
   writeRegister(name: string, values: Array<string>): void
   readClipboard(kind: string): string | null
   writeClipboard(value: string, kind: string): void
+  readSyntaxHighlightLegendJson(): string
   renderFrameJson(surfaceId: number, viewport?: JsViewport | undefined | null): string
   saveSurfaceDocument(surfaceId: number): void
 }

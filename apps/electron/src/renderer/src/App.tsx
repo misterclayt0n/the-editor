@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { RenderFrame } from "@the-editor/contracts/runtime";
-import type { BufferDecoration } from "@the-editor/editor";
+import type { BufferDecoration, ThemeSnapshot } from "@the-editor/editor";
 import { configureTextSurface, loadEditorFont, paintTextSurface } from "./textSurface.js";
 import { RendererPackageRuntime, type WorkbenchSnapshot } from "./uiRuntime.js";
 import "./style.css";
@@ -12,6 +12,8 @@ function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [frame, setFrame] = useState<RenderFrame | undefined>();
   const [decorations, setDecorations] = useState<BufferDecoration[]>([]);
+  const [theme, setTheme] = useState<ThemeSnapshot | undefined>();
+  const [syntaxLegend, setSyntaxLegend] = useState<Record<number, string>>({});
   const [, setUiRevision] = useState(0);
 
   useEffect(() => uiRuntime.subscribe(() => {
@@ -33,7 +35,11 @@ function App() {
           tools: (Array.isArray(event.tools) ? event.tools : []) as WorkbenchSnapshot["tools"],
           decorations: (Array.isArray(event.decorations) ? event.decorations : []) as WorkbenchSnapshot["decorations"],
           focus: isObject(event.focus) ? event.focus as WorkbenchSnapshot["focus"] : undefined,
+          theme: isObject(event.theme) ? event.theme as unknown as ThemeSnapshot : undefined,
+          syntaxLegend: isObject(event.syntaxLegend) ? event.syntaxLegend as Record<number, string> : {},
         };
+        setTheme(snapshot.theme);
+        setSyntaxLegend(snapshot.syntaxLegend ?? {});
         void uiRuntime.update(snapshot).then(() => {
           setUiRevision((revision) => revision + 1);
         }).catch((error) => {
@@ -88,8 +94,8 @@ function App() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !frame) return;
-    paintTextSurface(canvas, frame, decorations);
-  }, [frame, decorations]);
+    paintTextSurface(canvas, frame, decorations, theme, syntaxLegend);
+  }, [frame, decorations, theme, syntaxLegend]);
 
   const leftSidebar = uiRuntime.renderToolRoot("leftSidebar");
   const rightSidebar = uiRuntime.renderToolRoot("rightSidebar");

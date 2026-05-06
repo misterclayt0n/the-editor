@@ -19,13 +19,13 @@ body,
 }
 
 body {
-  background: #101010;
-  color: #d7d7d7;
+  background: var(--theme-background, #101010);
+  color: var(--theme-foreground, #d7d7d7);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 .workbench {
-  background: #101010;
+  background: var(--theme-background, #101010);
   height: 100%;
   min-width: 0;
   position: relative;
@@ -57,8 +57,8 @@ body {
 }
 
 .workbenchSidebar {
-  background: #111111;
-  border-inline-end: 1px solid rgba(255, 255, 255, 0.04);
+  background: var(--theme-ui-menu-bg, #111111);
+  border-inline-end: 1px solid var(--theme-ui-background-separator-fg, rgba(255, 255, 255, 0.04));
   display: flex;
   flex: 0 0 280px;
   min-width: 0;
@@ -70,15 +70,15 @@ body {
 }
 
 .workbenchBottomPanel {
-  background: #121212;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  background: var(--theme-ui-menu-selected-bg, #121212);
+  border-top: 1px solid var(--theme-ui-inspector-border-fg, rgba(255, 255, 255, 0.05));
   flex: 0 0 220px;
   min-height: 0;
 }
 
 .workbenchStatuslineRoot {
-  background: #141414;
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  background: var(--theme-ui-statusline-bg, #141414);
+  border-top: 1px solid var(--theme-ui-background-separator-fg, rgba(255, 255, 255, 0.04));
   flex: 0 0 28px;
   min-height: 28px;
 }
@@ -90,7 +90,7 @@ body {
 }
 
 canvas {
-  background: #101010;
+  background: var(--theme-background, #101010);
   display: block;
   height: 100%;
   width: 100%;

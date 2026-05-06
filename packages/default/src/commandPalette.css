@@ -4,7 +4,7 @@
 }
 
 .commandPaletteBackdrop {
-  background: rgba(0, 0, 0, 0.32);
+  background: var(--theme-ui-command-palette-backdrop-bg, rgba(0, 0, 0, 0.32));
   backdrop-filter: blur(8px);
   inset: 0;
   position: absolute;
@@ -26,8 +26,8 @@
 }
 
 .commandPalettePanel {
-  background: rgba(26, 26, 26, 0.96);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--theme-ui-command-palette-bg, rgba(26, 26, 26, 0.96));
+  border: 1px solid var(--theme-ui-command-palette-border-fg, rgba(255, 255, 255, 0.08));
   border-bottom: 0;
   border-radius: 20px 20px 0 0;
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.42);
@@ -36,7 +36,7 @@
 }
 
 .commandPalettePanel::before {
-  border: 1px solid rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--theme-ui-command-palette-border-subtle-fg, rgba(255, 255, 255, 0.03));
   border-radius: 19px 19px 0 0;
   content: "";
   inset: 0;
@@ -46,7 +46,7 @@
 
 .commandPaletteInputRow {
   align-items: center;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  border-bottom: 1px solid var(--theme-ui-command-palette-border-fg, rgba(255, 255, 255, 0.07));
   display: flex;
   gap: 10px;
   min-height: 56px;
@@ -54,7 +54,7 @@
 }
 
 .commandPaletteSearchIcon {
-  color: #8f949c;
+  color: var(--theme-ui-command-palette-icon-fg, #8f949c);
   flex: 0 0 auto;
   height: 18px;
   width: 18px;
@@ -64,7 +64,7 @@
   appearance: none;
   background: transparent;
   border: 0;
-  color: #f2f4f8;
+  color: var(--theme-ui-command-palette-fg, #f2f4f8);
   flex: 1 1 auto;
   font-family: inherit;
   font-size: 15px;
@@ -75,7 +75,7 @@
 }
 
 .commandPaletteInput::placeholder {
-  color: #858b95;
+  color: var(--theme-ui-command-palette-placeholder-fg, #858b95);
 }
 
 .commandPaletteInput::-ms-clear {
@@ -103,8 +103,8 @@
 }
 
 .commandPaletteItem.active {
-  background: #2a2f38;
-  color: #f8fafc;
+  background: var(--theme-ui-command-palette-list-selected-bg, #2a2f38);
+  color: var(--theme-ui-command-palette-list-selected-fg, #f8fafc);
 }
 
 .commandPaletteItemMain {
@@ -115,7 +115,7 @@
 }
 
 .commandPaletteTitle {
-  color: #f3f4f6;
+  color: var(--theme-ui-text-focus-fg, #f3f4f6);
   flex: 1 1 auto;
   font-size: 14px;
   min-width: 0;
@@ -125,7 +125,7 @@
 }
 
 .commandPaletteDetail {
-  color: #9198a1;
+  color: var(--theme-ui-command-palette-detail-fg, #9198a1);
   flex: 0 0 auto;
   font-family: Iosevka, ui-monospace, monospace;
   font-size: 12px;
@@ -135,21 +135,21 @@
 }
 
 .commandPaletteItem.active .commandPaletteDetail {
-  color: #c4cad3;
+  color: var(--theme-ui-command-palette-detail-selected-fg, #c4cad3);
 }
 
 .commandPaletteEmpty {
-  color: #8c929c;
+  color: var(--theme-ui-command-palette-placeholder-fg, #8c929c);
   font-size: 13px;
   padding: 16px 12px;
 }
 
 .commandPaletteFooter {
   align-items: center;
-  background: rgba(20, 20, 20, 0.98);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--theme-ui-command-palette-footer-bg, rgba(20, 20, 20, 0.98));
+  border: 1px solid var(--theme-ui-command-palette-border-fg, rgba(255, 255, 255, 0.08));
   border-radius: 0 0 20px 20px;
-  color: #8f949c;
+  color: var(--theme-ui-command-palette-footer-fg, #8f949c);
   display: flex;
   font-size: 12px;
   justify-content: space-between;

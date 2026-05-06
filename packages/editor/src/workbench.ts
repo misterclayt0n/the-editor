@@ -4,6 +4,7 @@ import type { DiagnosticEntry } from "./diagnostics.js";
 import type { EditorHost } from "./editorHost.js";
 import type { FocusTarget } from "./focus.js";
 import type { RoleSnapshot } from "./roles.js";
+import type { ThemeSnapshot } from "./themes.js";
 import type { ToolSnapshot } from "./tools.js";
 
 export interface WorkbenchKeyInput {
@@ -23,7 +24,8 @@ export type WorkbenchInvalidationKind =
   | "tools"
   | "decorations"
   | "focus"
-  | "interaction";
+  | "interaction"
+  | "theme";
 
 export interface WorkbenchSessionState {
   mode?: string;
@@ -37,6 +39,8 @@ export interface WorkbenchSessionState {
   decorations?: BufferDecoration[];
   diagnostics?: DiagnosticEntry[];
   focus?: FocusTarget;
+  theme?: ThemeSnapshot;
+  syntaxLegend?: Record<number, string>;
 }
 
 export class WorkbenchController {

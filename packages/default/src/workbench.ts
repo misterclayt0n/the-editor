@@ -59,6 +59,8 @@ export function defaultWorkbench(): EditorModule {
           decorations: state.decorations,
           diagnostics: editor.diagnostics.all(),
           focus: editor.focus.current(),
+          theme: editor.themes.snapshot(),
+          syntaxLegend: state.syntaxLegend,
         };
       },
     });

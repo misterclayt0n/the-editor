@@ -1,5 +1,6 @@
 import type { CellGridMetrics, CursorPlacement, RenderFrame, RenderRow, SyntaxSpan, Viewport } from "@the-editor/contracts/runtime";
-import type { BufferDecoration, InlineTextDecoration, RangeDecoration } from "@the-editor/editor";
+import type { BufferDecoration, InlineTextDecoration, RangeDecoration, ThemeSnapshot } from "@the-editor/editor";
+import { resolveThemeStyle, type ResolvedThemeDefinition } from "@the-editor/editor/themes";
 
 export interface SurfaceConfiguration {
   viewport: Viewport;
@@ -12,7 +13,7 @@ interface TextSurfaceTheme {
   cursorBackground: string;
   cursorForeground: string;
   selectionBackground: string;
-  syntax: Record<number, string>;
+  syntaxColor(kind: number): string;
 }
 
 const PADDING_PX = 18;
@@ -24,19 +25,12 @@ const SEGMENTER = typeof Intl !== "undefined" && "Segmenter" in Intl
   ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
   : undefined;
 
-const theme: TextSurfaceTheme = {
-  background: "#101010",
-  foreground: "#d8d8d8",
-  cursorBackground: "#e6e6e6",
-  cursorForeground: "#101010",
-  selectionBackground: "#264f78",
-  syntax: {
-    1: "#c586c0",
-    2: "#dcdcaa",
-    3: "#9cdcfe",
-    4: "#ce9178",
-    5: "#6a9955",
-  },
+const fallbackSyntaxScopes: Record<number, string> = {
+  1: "keyword",
+  2: "type",
+  3: "variable",
+  4: "string",
+  5: "comment",
 };
 
 export async function loadEditorFont(): Promise<void> {
@@ -75,7 +69,13 @@ export function configureTextSurface(canvas: HTMLCanvasElement): SurfaceConfigur
   };
 }
 
-export function paintTextSurface(canvas: HTMLCanvasElement, frame: RenderFrame, decorations: BufferDecoration[] = []): void {
+export function paintTextSurface(
+  canvas: HTMLCanvasElement,
+  frame: RenderFrame,
+  decorations: BufferDecoration[] = [],
+  themeSnapshot?: ThemeSnapshot,
+  syntaxLegend: Record<number, string> = {},
+): void {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
 
@@ -83,6 +83,7 @@ export function paintTextSurface(canvas: HTMLCanvasElement, frame: RenderFrame, 
   const cssWidth = canvas.width / dpr;
   const cssHeight = canvas.height / dpr;
   const metrics = rendererMetrics(ctx);
+  const theme = resolveTextSurfaceTheme(themeSnapshot?.active, syntaxLegend);
 
   prepareContext(ctx, dpr);
   ctx.fillStyle = theme.background;
@@ -91,12 +92,12 @@ export function paintTextSurface(canvas: HTMLCanvasElement, frame: RenderFrame, 
   const rows = new Map<number, RenderRow>();
   for (const row of frame.rows) rows.set(row.surfaceRow, row);
 
-  paintSelections(ctx, frame, metrics);
+  paintSelections(ctx, frame, metrics, theme);
   paintDecorationRanges(ctx, decorations, metrics);
-  paintRows(ctx, frame, rows, metrics);
-  paintInlineTextDecorations(ctx, decorations, metrics);
+  paintRows(ctx, frame, rows, metrics, theme);
+  paintInlineTextDecorations(ctx, decorations, metrics, theme);
   paintDecorationUnderlines(ctx, decorations, metrics);
-  paintCursors(ctx, frame, rows, metrics);
+  paintCursors(ctx, frame, rows, metrics, theme);
 }
 
 function prepareContext(ctx: CanvasRenderingContext2D, dpr: number): void {
@@ -129,7 +130,7 @@ function measureCellWidth(ctx: CanvasRenderingContext2D): number {
   return ctx.measureText(sample).width / sample.length;
 }
 
-function paintSelections(ctx: CanvasRenderingContext2D, frame: RenderFrame, metrics: RendererMetrics): void {
+function paintSelections(ctx: CanvasRenderingContext2D, frame: RenderFrame, metrics: RendererMetrics, theme: TextSurfaceTheme): void {
   const spans = frame.selections;
   ctx.fillStyle = theme.selectionBackground;
   for (const span of spans) {
@@ -156,6 +157,7 @@ function paintRows(
   frame: RenderFrame,
   rows: Map<number, RenderRow>,
   metrics: RendererMetrics,
+  theme: TextSurfaceTheme,
 ): void {
   const syntaxByRow = syntaxSpansByRow(frame.syntax);
   for (const row of rows.values()) {
@@ -177,7 +179,7 @@ function paintRows(
         span.startCol,
         span.endCol,
         row.surfaceRow,
-        theme.syntax[span.kind] ?? theme.foreground,
+        theme.syntaxColor(span.kind),
         metrics,
       );
       col = Math.max(col, span.endCol);
@@ -192,10 +194,11 @@ function paintInlineTextDecorations(
   ctx: CanvasRenderingContext2D,
   decorations: BufferDecoration[],
   metrics: RendererMetrics,
+  theme: TextSurfaceTheme,
 ): void {
   for (const decoration of decorations) {
     if (decoration.kind !== "inlineText") continue;
-    paintInlineTextDecoration(ctx, decoration, metrics);
+    paintInlineTextDecoration(ctx, decoration, metrics, theme);
   }
 }
 
@@ -222,14 +225,15 @@ function paintCursors(
   frame: RenderFrame,
   rows: Map<number, RenderRow>,
   metrics: RendererMetrics,
+  theme: TextSurfaceTheme,
 ): void {
   for (const cursor of frame.cursors) {
-    if (cursor.semantics === "InsertionPoint") paintBarCursor(ctx, cursor, metrics);
-    else paintBlockCursor(ctx, cursor, rows.get(cursor.surfaceRow), metrics);
+    if (cursor.semantics === "InsertionPoint") paintBarCursor(ctx, cursor, metrics, theme);
+    else paintBlockCursor(ctx, cursor, rows.get(cursor.surfaceRow), metrics, theme);
   }
 }
 
-function paintBarCursor(ctx: CanvasRenderingContext2D, cursor: CursorPlacement, metrics: RendererMetrics): void {
+function paintBarCursor(ctx: CanvasRenderingContext2D, cursor: CursorPlacement, metrics: RendererMetrics, theme: TextSurfaceTheme): void {
   const width = 2;
   ctx.fillStyle = theme.cursorBackground;
   ctx.fillRect(Math.round(xForCol(cursor.col, metrics)), yForRow(cursor.surfaceRow, metrics), width, metrics.rowHeight);
@@ -240,6 +244,7 @@ function paintBlockCursor(
   cursor: CursorPlacement,
   row: RenderRow | undefined,
   metrics: RendererMetrics,
+  theme: TextSurfaceTheme,
 ): void {
   const cells = cellsForText(row?.text ?? "");
   const cell = cells[cursor.col] ?? " ";
@@ -273,10 +278,11 @@ function paintInlineTextDecoration(
   ctx: CanvasRenderingContext2D,
   decoration: InlineTextDecoration,
   metrics: RendererMetrics,
+  theme: TextSurfaceTheme,
 ): void {
   ctx.save();
   ctx.globalAlpha = decoration.opacity ?? 0.65;
-  ctx.fillStyle = decoration.foreground ?? "#7f8ea3";
+  ctx.fillStyle = decoration.foreground ?? resolveInlineDecorationColor(theme);
   ctx.fillText(decoration.text, xForCol(decoration.col, metrics), yForRow(decoration.surfaceRow, metrics) + metrics.baselineOffset);
   ctx.restore();
 }
@@ -316,6 +322,35 @@ function cellsForText(text: string): string[] {
     }
   }
   return cells;
+}
+
+function resolveTextSurfaceTheme(
+  activeTheme: ResolvedThemeDefinition | undefined,
+  syntaxLegend: Record<number, string>,
+): TextSurfaceTheme {
+  const background = resolveThemeStyle(activeTheme ?? { styles: {} }, "ui.background")?.bg ?? "#101010";
+  const foreground = resolveThemeStyle(activeTheme ?? { styles: {} }, "ui.text")?.fg ?? "#d8d8d8";
+  const selectionBackground = resolveThemeStyle(activeTheme ?? { styles: {} }, "ui.selection")?.bg ?? "#264f78";
+  const cursorStyle = resolveThemeStyle(activeTheme ?? { styles: {} }, "ui.cursor.insert", ["ui.cursor.active.insert", "ui.cursor"]);
+  const cursorBackground = cursorStyle?.bg ?? cursorStyle?.fg ?? "#e6e6e6";
+  const cursorForeground = cursorStyle?.fg ?? background;
+
+  return {
+    background,
+    foreground,
+    selectionBackground,
+    cursorBackground,
+    cursorForeground,
+    syntaxColor(kind) {
+      const scope = syntaxLegend[kind] ?? fallbackSyntaxScopes[kind];
+      if (!scope) return foreground;
+      return resolveThemeStyle(activeTheme ?? { styles: {} }, scope, "ui.text")?.fg ?? foreground;
+    },
+  };
+}
+
+function resolveInlineDecorationColor(theme: TextSurfaceTheme): string {
+  return theme.foreground;
 }
 
 function syntaxSpansByRow(spans: SyntaxSpan[]): Map<number, SyntaxSpan[]> {

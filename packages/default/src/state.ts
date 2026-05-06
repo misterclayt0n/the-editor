@@ -13,6 +13,7 @@ export interface DefaultEditorState {
   lastFrame: RenderFrame | undefined;
   decorations: BufferDecoration[];
   roleStates: Record<string, RoleSnapshot>;
+  syntaxLegend: Record<number, string>;
 }
 
 const defaultEditorStateSlot = "default.editor.state";
@@ -28,6 +29,7 @@ export function getDefaultState(editor: EditorHost): DefaultEditorState {
     lastFrame: undefined,
     decorations: [],
     roleStates: {},
+    syntaxLegend: {},
   }));
 }
 
@@ -39,6 +41,9 @@ export function setEditorMode(editor: EditorHost, mode: EditorMode): DefaultEdit
 
 export async function refreshActiveSurface(editor: EditorHost, viewport?: Viewport): Promise<DefaultEditorState> {
   const state = getDefaultState(editor);
+  if (!Object.keys(state.syntaxLegend).length) {
+    state.syntaxLegend = await editor.runtime.syntax.highlightLegend();
+  }
   if (state.activeSurfaceId) {
     state.lastFrame = await editor.runtime.surfaces.renderFrame({
       surfaceId: state.activeSurfaceId,

@@ -31,6 +31,14 @@ export class RuntimeNativeClient implements RuntimeApi {
     ping: async (): Promise<OkResult> => ({ ok: true }),
   };
 
+  readonly syntax = {
+    highlightLegend: async (): Promise<Record<number, string>> => {
+      const read = (this.session as { readSyntaxHighlightLegendJson?: () => string }).readSyntaxHighlightLegendJson;
+      if (typeof read !== "function") return {};
+      return JSON.parse(read.call(this.session)) as Record<number, string>;
+    },
+  };
+
   readonly documents = {
     openFile: async (params: { path: string }): Promise<DocumentOpened> => ({
       documentId: this.session.openFile(params.path) as DocumentId,
@@ -135,6 +143,8 @@ export class RuntimeNativeClient implements RuntimeApi {
     switch (method) {
       case "server.ping":
         return this.server.ping();
+      case "syntax.highlightLegend":
+        return this.syntax.highlightLegend();
       case "documents.openFile":
         return this.documents.openFile(params as Parameters<RuntimeApi["documents"]["openFile"]>[0]);
       case "documents.createScratch":

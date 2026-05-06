@@ -7,6 +7,7 @@ import type { CommandDispatch } from "./commands.js";
 import type { InteractionSnapshot } from "./interaction.js";
 import type { PackageSnapshot } from "./packages.js";
 import { roleId, roleImplementationId, type RoleId, type RoleImplementationId, type RoleSnapshot } from "./roles.js";
+import type { ThemeSnapshot } from "./themes.js";
 import type { ToolRootTarget, ToolSnapshot, ToolTypeId } from "./tools.js";
 
 export interface UiCommandDispatcher {
@@ -21,6 +22,8 @@ export interface WorkbenchSnapshot {
   tools?: ToolSnapshot[];
   decorations?: BufferDecoration[];
   focus?: FocusTarget;
+  theme?: ThemeSnapshot;
+  syntaxLegend?: Record<number, string>;
 }
 
 export interface RoleViewContext<TState = unknown> {
@@ -178,6 +181,8 @@ export class UiHost {
     tools: [],
     decorations: [],
     focus: { kind: "editor" },
+    theme: { available: [] },
+    syntaxLegend: {},
   };
 
   constructor(readonly commands: UiCommandDispatcher) {}

@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { RuntimeApi } from "@the-editor/contracts/runtime";
-import { commandId, createEditorHost, defineEditorPackage, roleImplementationId, toolTypeId } from "../src/index.js";
+import { commandId, createEditorHost, defineEditorPackage, defineTheme, resolveThemeStyle, roleImplementationId, toolTypeId } from "../src/index.js";
 
 function createRuntimeStub(): RuntimeApi {
   return {
     server: { ping: async () => ({ ok: true }) },
+    syntax: {
+      highlightLegend: async () => ({}),
+    },
     documents: {
       openFile: async () => ({ documentId: 1 as never }),
       createScratch: async () => ({ documentId: 1 as never }),
@@ -208,5 +211,36 @@ describe("extension registries", () => {
 
     await editor.packages.reload("demo.ui/ui");
     expect(editor.packages.snapshot()[0]?.loadVersions).toEqual({ ui: 2 });
+  });
+
+  it("resolves theme palette entries and dotted fallback styles", async () => {
+    const editor = createEditorHost({ runtime: createRuntimeStub() });
+
+    await editor.use({
+      id: "themes.demo",
+      activate: (host) => {
+        host.themes.register(defineTheme({
+          id: "demo.dark",
+          palette: {
+            text: "#dddddd",
+            panel: "#111111",
+            accent: "#ffcc66",
+          },
+          styles: {
+            "ui.menu": { bg: "panel", fg: "text" },
+            "ui.menu.selected": { bg: "accent" },
+          },
+        }));
+      },
+    });
+
+    editor.themes.activate("demo.dark");
+    const active = editor.themes.active();
+    expect(active?.id).toBe("demo.dark");
+    expect(editor.themes.getColor("accent")).toBe("#ffcc66");
+    expect(resolveThemeStyle(active!, "ui.menu.selected")).toEqual({
+      bg: "#ffcc66",
+      fg: "#dddddd",
+    });
   });
 });

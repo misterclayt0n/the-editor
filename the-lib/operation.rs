@@ -181,6 +181,21 @@ pub fn execute_operation(
         movement::move_next_word_end_selection(text, selection, count),
       )))
     },
+    "move_next_long_word_start" => {
+      Ok(OperationOutput::atom(OperationAtom::Selection(
+        movement::move_next_long_word_start_selection(text, selection, count),
+      )))
+    },
+    "move_prev_long_word_start" => {
+      Ok(OperationOutput::atom(OperationAtom::Selection(
+        movement::move_prev_long_word_start_selection(text, selection, count),
+      )))
+    },
+    "move_next_long_word_end" => {
+      Ok(OperationOutput::atom(OperationAtom::Selection(
+        movement::move_next_long_word_end_selection(text, selection, count),
+      )))
+    },
     "extend_next_word_start" => {
       Ok(OperationOutput::atom(OperationAtom::Selection(
         movement::extend_next_word_start(text, selection, count),
@@ -194,6 +209,21 @@ pub fn execute_operation(
     "extend_next_word_end" => {
       Ok(OperationOutput::atom(OperationAtom::Selection(
         movement::extend_next_word_end(text, selection, count),
+      )))
+    },
+    "extend_next_long_word_start" => {
+      Ok(OperationOutput::atom(OperationAtom::Selection(
+        movement::extend_next_long_word_start(text, selection, count),
+      )))
+    },
+    "extend_prev_long_word_start" => {
+      Ok(OperationOutput::atom(OperationAtom::Selection(
+        movement::extend_prev_long_word_start(text, selection, count),
+      )))
+    },
+    "extend_next_long_word_end" => {
+      Ok(OperationOutput::atom(OperationAtom::Selection(
+        movement::extend_next_long_word_end(text, selection, count),
       )))
     },
 

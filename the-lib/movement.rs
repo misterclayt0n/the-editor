@@ -299,6 +299,39 @@ pub fn move_next_word_end_selection(
 }
 
 #[must_use]
+pub fn move_next_long_word_start_selection(
+  text: RopeSlice,
+  selection: &Selection,
+  count: usize,
+) -> Selection {
+  selection
+    .clone()
+    .transform(|range| move_next_long_word_start(text, range, count.max(1)))
+}
+
+#[must_use]
+pub fn move_prev_long_word_start_selection(
+  text: RopeSlice,
+  selection: &Selection,
+  count: usize,
+) -> Selection {
+  selection
+    .clone()
+    .transform(|range| move_prev_long_word_start(text, range, count.max(1)))
+}
+
+#[must_use]
+pub fn move_next_long_word_end_selection(
+  text: RopeSlice,
+  selection: &Selection,
+  count: usize,
+) -> Selection {
+  selection
+    .clone()
+    .transform(|range| move_next_long_word_end(text, range, count.max(1)))
+}
+
+#[must_use]
 pub fn extend_next_word_start(text: RopeSlice, selection: &Selection, count: usize) -> Selection {
   selection.clone().transform(|range| {
     let word = move_next_word_start(text, range, count.max(1));
@@ -318,6 +351,42 @@ pub fn extend_prev_word_start(text: RopeSlice, selection: &Selection, count: usi
 pub fn extend_next_word_end(text: RopeSlice, selection: &Selection, count: usize) -> Selection {
   selection.clone().transform(|range| {
     let word = move_next_word_end(text, range, count.max(1));
+    range.put_cursor(text, word.cursor(text), true)
+  })
+}
+
+#[must_use]
+pub fn extend_next_long_word_start(
+  text: RopeSlice,
+  selection: &Selection,
+  count: usize,
+) -> Selection {
+  selection.clone().transform(|range| {
+    let word = move_next_long_word_start(text, range, count.max(1));
+    range.put_cursor(text, word.cursor(text), true)
+  })
+}
+
+#[must_use]
+pub fn extend_prev_long_word_start(
+  text: RopeSlice,
+  selection: &Selection,
+  count: usize,
+) -> Selection {
+  selection.clone().transform(|range| {
+    let word = move_prev_long_word_start(text, range, count.max(1));
+    range.put_cursor(text, word.cursor(text), true)
+  })
+}
+
+#[must_use]
+pub fn extend_next_long_word_end(
+  text: RopeSlice,
+  selection: &Selection,
+  count: usize,
+) -> Selection {
+  selection.clone().transform(|range| {
+    let word = move_next_long_word_end(text, range, count.max(1));
     range.put_cursor(text, word.cursor(text), true)
   })
 }

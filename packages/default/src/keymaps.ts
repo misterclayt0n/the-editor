@@ -34,9 +34,9 @@ export function defaultKeymaps(): EditorModule {
         b: "move_prev_word_start",
         e: "move_next_word_end",
 
-        // W: "move_next_long_word_start",
-        // B: "move_prev_long_word_start",
-        // E: "move_next_long_word_end",
+        W: "move_next_long_word_start",
+        B: "move_prev_long_word_start",
+        E: "move_next_long_word_end",
 
         v: "select_mode",
         // G: "goto_line",
@@ -223,9 +223,9 @@ export function defaultKeymaps(): EditorModule {
         w: "extend_next_word_start",
         b: "extend_prev_word_start",
         e: "extend_next_word_end",
-        // W: "extend_next_long_word_start",
-        // B: "extend_prev_long_word_start",
-        // E: "extend_next_long_word_end",
+        W: "extend_next_long_word_start",
+        B: "extend_prev_long_word_start",
+        E: "extend_next_long_word_end",
 
         // "A-e": "extend_parent_node_end",
         // "A-b": "extend_parent_node_start",

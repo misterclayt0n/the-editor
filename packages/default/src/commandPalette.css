@@ -34,7 +34,7 @@
   border: 1px solid var(--theme-ui-command-palette-border-fg, var(--theme-ui-popup-border-fg, var(--theme-ui-background-separator-fg, rgba(255, 255, 255, 0.08))));
   border-bottom: 0;
   border-radius: 20px 20px 0 0;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.42);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
   color: var(--theme-ui-command-palette-fg, var(--theme-ui-popup-fg, var(--theme-ui-menu-fg, var(--theme-ui-text-fg, var(--theme-foreground, #f2f4f8)))));
   overflow: hidden;
   position: relative;
@@ -90,7 +90,27 @@
 .commandPaletteItems {
   max-height: min(420px, calc(70vh - 56px));
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 8px;
+  scroll-padding-block: 8px;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.commandPaletteItems::-webkit-scrollbar {
+  height: 10px;
+  width: 10px;
+}
+
+.commandPaletteItems::-webkit-scrollbar-thumb {
+  background: var(--theme-ui-command-palette-border-fg, var(--theme-ui-popup-border-fg, rgba(255, 255, 255, 0.16)));
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+.commandPaletteItems::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .commandPaletteItem {
@@ -102,7 +122,9 @@
   cursor: pointer;
   display: block;
   padding: 8px 10px;
+  scroll-margin-block: 8px;
   text-align: left;
+  transition: background-color 120ms ease, color 120ms ease;
   user-select: none;
   width: 100%;
 }

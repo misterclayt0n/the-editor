@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import type { DiagnosticEntry } from "@the-editor/editor";
 import type { EditorUiModule, WorkbenchSnapshot } from "@the-editor/editor/ui";
 import "./commandPalette.css";
@@ -74,9 +74,8 @@ function CommandPaletteOverlay({
     input.setSelectionRange(end, end);
   }, [state.visible]);
 
-  useEffect(() => {
-    const active = itemsRef.current?.querySelector<HTMLElement>(".commandPaletteItem.active");
-    active?.scrollIntoView({ block: "nearest" });
+  useLayoutEffect(() => {
+    scrollActivePaletteItemIntoView(itemsRef.current);
   }, [state.items, state.selectedIndex]);
 
   return (
@@ -127,30 +126,31 @@ function CommandPaletteOverlay({
               />
             </div>
             <div ref={itemsRef} className="commandPaletteItems">
-              {state.items.length ? state.items.map((item, index) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={index === state.selectedIndex ? "commandPaletteItem active" : "commandPaletteItem"}
-                  onMouseEnter={() => {
-                    void dispatch({ id: "command_palette.selectIndex", args: { index } });
-                  }}
-                  onMouseMove={() => {
-                    void dispatch({ id: "command_palette.selectIndex", args: { index } });
-                  }}
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                  }}
-                  onClick={() => {
-                    void dispatch({ id: "command_palette.selectIndex", args: { index } }).then(() => dispatch({ id: "command_palette.accept" }));
-                  }}
-                >
-                  <div className="commandPaletteItemMain">
-                    <div className="commandPaletteTitle">{item.title}</div>
-                    {item.detail ? <div className="commandPaletteDetail">{item.detail}</div> : null}
-                  </div>
-                </button>
-              )) : <div className="commandPaletteEmpty">No matching commands</div>}
+              {state.items.length ? state.items.map((item, index) => {
+                const isActive = index === state.selectedIndex;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={isActive ? "commandPaletteItem active" : "commandPaletteItem"}
+                    onMouseMove={() => {
+                      if (isActive) return;
+                      void dispatch({ id: "command_palette.selectIndex", args: { index } });
+                    }}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                    }}
+                    onClick={() => {
+                      void dispatch({ id: "command_palette.selectIndex", args: { index } }).then(() => dispatch({ id: "command_palette.accept" }));
+                    }}
+                  >
+                    <div className="commandPaletteItemMain">
+                      <div className="commandPaletteTitle">{item.title}</div>
+                      {item.detail ? <div className="commandPaletteDetail">{item.detail}</div> : null}
+                    </div>
+                  </button>
+                );
+              }) : <div className="commandPaletteEmpty">No matching commands</div>}
             </div>
           </div>
           <div className="commandPaletteFooter">
@@ -161,6 +161,26 @@ function CommandPaletteOverlay({
       </div>
     </section>
   );
+}
+
+function scrollActivePaletteItemIntoView(container: HTMLDivElement | null): void {
+  if (!container) return;
+  const active = container.querySelector<HTMLElement>(".commandPaletteItem.active");
+  if (!active) return;
+
+  const margin = 8;
+  const itemTop = active.offsetTop - margin;
+  const itemBottom = active.offsetTop + active.offsetHeight + margin;
+  const viewportTop = container.scrollTop;
+  const viewportBottom = viewportTop + container.clientHeight;
+
+  if (itemTop < viewportTop) {
+    container.scrollTop = itemTop;
+    return;
+  }
+  if (itemBottom > viewportBottom) {
+    container.scrollTop = itemBottom - container.clientHeight;
+  }
 }
 
 function Statusline({ state }: { state: StatuslineViewState | undefined }) {

@@ -109,20 +109,24 @@
   max-height: min(420px, calc(70vh - 68px));
   overflow: auto;
   overscroll-behavior: contain;
-  padding: 0;
+  padding: 0 10px 0 0;
   scroll-padding-block: 4px;
-  scrollbar-gutter: stable;
+  scroll-padding-inline-end: 10px;
+  scrollbar-gutter: stable both-edges;
+  scrollbar-color: color-mix(in lab, var(--commandPaletteFg) 32%, var(--commandPaletteBg)) transparent;
   scrollbar-width: thin;
 }
 
 .commandPaletteItems::-webkit-scrollbar {
-  height: 6px;
-  width: 6px;
+  height: 10px;
+  width: 10px;
 }
 
 .commandPaletteItems::-webkit-scrollbar-thumb {
-  background: color-mix(in lab, var(--commandPaletteFg) 24%, var(--commandPaletteBg));
+  background: color-mix(in lab, var(--commandPaletteFg) 32%, var(--commandPaletteBg));
+  border: 2px solid transparent;
   border-radius: 999px;
+  background-clip: padding-box;
 }
 
 .commandPaletteItems::-webkit-scrollbar-track {
@@ -168,8 +172,9 @@
 
 .commandPaletteItemMain {
   align-items: center;
-  display: flex;
+  display: grid;
   gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
   min-width: 0;
   width: 100%;
 }
@@ -187,10 +192,11 @@
 
 .commandPaletteDetail {
   color: var(--theme-ui-command-palette-detail-fg, var(--commandPaletteFgMuted));
-  flex: 0 0 auto;
   font-family: Iosevka, ui-monospace, monospace;
   font-size: 12px;
+  justify-self: end;
   line-height: 1.35;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

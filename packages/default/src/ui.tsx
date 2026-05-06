@@ -168,7 +168,7 @@ function CommandPaletteOverlay({
 
 function scrollActivePaletteItemIntoView(container: HTMLDivElement | null): void {
   if (!container) return;
-  const active = container.querySelector<HTMLElement>(".commandPaletteItem.active");
+  const active = container.querySelector<HTMLElement>('.commandPaletteItem[data-active="true"]');
   if (!active) return;
 
   const margin = 8;

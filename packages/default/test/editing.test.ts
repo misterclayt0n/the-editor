@@ -19,6 +19,37 @@ async function createTestEditor(text: string) {
 }
 
 describe("default editing commands", () => {
+  it("changes the current selection and enters insert mode", async () => {
+    const editor = await createTestEditor("hello");
+
+    await editor.commands.dispatch({ id: commandId("change_selection") });
+
+    const state = await editor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(editor).activeSurfaceId!,
+    });
+    expect(state.text).toBe("ello");
+    expect(state.lineEnding).toBe("\n");
+    expect(getDefaultState(editor).mode).toBe("insert");
+    await expect(editor.runtime.registers.read({ name: '"' })).resolves.toMatchObject({ values: ["h"] });
+  });
+
+  it("copies the current selection onto the next line", async () => {
+    const editor = await createTestEditor("abc\ndef\nghi");
+    await editor.commands.dispatch({ id: commandId("select_mode") });
+    await editor.commands.dispatch({ id: commandId("extend_next_char") });
+    await handleWorkbenchKeyInput(editor, { key: "b", text: "b" });
+
+    await editor.commands.dispatch({ id: commandId("copy_selection_on_next_line") });
+
+    const state = await editor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(editor).activeSurfaceId!,
+    });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([
+      { anchor: 0, head: 2 },
+      { anchor: 4, head: 6 },
+    ]);
+  });
+
   it("replaces the grapheme under the cursor from pending replace input", async () => {
     const editor = await createTestEditor("hello");
 

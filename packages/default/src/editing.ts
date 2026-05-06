@@ -336,6 +336,35 @@ export function defaultEditing(): EditorModule {
     editor.commands.register({ id: commandId("edit.deleteForward"), title: "Delete Forward", run: () => applyOperation(editor, { name: "delete_char_forward" }) });
 
     editor.commands.register({
+      id: commandId("change_selection"),
+      title: "Change Selection",
+      async run() {
+        await changeSelection(editor, true);
+      },
+    });
+    editor.commands.register({
+      id: commandId("change_selection_noyank"),
+      title: "Change Selection Without Yank",
+      async run() {
+        await changeSelection(editor, false);
+      },
+    });
+    editor.commands.register({
+      id: commandId("copy_selection_on_next_line"),
+      title: "Copy Selection On Next Line",
+      async run() {
+        await copySelectionOnLine(editor, "forward");
+      },
+    });
+    editor.commands.register({
+      id: commandId("copy_selection_on_prev_line"),
+      title: "Copy Selection On Previous Line",
+      async run() {
+        await copySelectionOnLine(editor, "backward");
+      },
+    });
+
+    editor.commands.register({
       id: commandId("delete_selection"),
       title: "Delete Selection",
       async run() {
@@ -592,6 +621,53 @@ async function findCharImpl(
   await applyEdit(editor, { selection: nextSelection });
 }
 
+async function changeSelection(editor: EditorHost, yank: boolean): Promise<void> {
+  const state = await readActiveSurfaceState(editor);
+  const linewise = selectionIsLinewise(state);
+
+  await applyOperation(editor, { name: yank ? "delete_selection" : "delete_selection_noyank" }, false);
+  if (linewise) {
+    await applyOperation(editor, { name: "open_above", lineEnding: "\n" }, false);
+  }
+  await applyMode(editor, "insert");
+}
+
+async function copySelectionOnLine(
+  editor: EditorHost,
+  direction: "forward" | "backward",
+): Promise<void> {
+  const state = await readActiveSurfaceState(editor);
+  const boundaries = graphemeBoundaries(state.text);
+  const chars = Array.from(state.text);
+  const lines = lineInfos(chars);
+  let nextCursorId = state.selection.reduce((max, range) => Math.max(max, range.cursorId), 0) + 1;
+  const selection = [...state.selection];
+
+  for (const range of state.selection) {
+    const positions = rangeLinePositions(range, boundaries, chars.length, lines);
+    if (!positions) continue;
+
+    const height = Math.abs(positions.anchor.line - positions.head.line) + 1;
+    const anchorLine = direction === "forward"
+      ? positions.anchor.line + height
+      : positions.anchor.line - height;
+    const headLine = direction === "forward"
+      ? positions.head.line + height
+      : positions.head.line - height;
+    if (anchorLine < 0 || headLine < 0 || anchorLine >= lines.length || headLine >= lines.length) {
+      continue;
+    }
+
+    const anchorIdx = charAtLineCol(lines, anchorLine, positions.anchor.col);
+    const headIdx = charAtLineCol(lines, headLine, positions.head.col);
+    if (anchorIdx === undefined || headIdx === undefined) continue;
+
+    selection.push(rangePutCursor({ cursorId: nextCursorId++, anchor: anchorIdx, head: anchorIdx }, boundaries, chars.length, headIdx, true));
+  }
+
+  await applyEdit(editor, { selection });
+}
+
 async function replaceSelectionWithStr(editor: EditorHost, replacement: string): Promise<void> {
   const state = await readActiveSurfaceState(editor);
   const boundaries = graphemeBoundaries(state.text);
@@ -653,6 +729,79 @@ async function applyEdit(editor: EditorHost, edit: SurfaceEdit, checkpoint = fal
   if (checkpoint && getDefaultState(editor).mode !== "insert") {
     await editor.runtime.surfaces.commitUndoCheckpoint({ surfaceId: activeSurfaceId(editor) });
   }
+}
+
+function selectionIsLinewise(state: SurfaceState): boolean {
+  const chars = Array.from(state.text);
+  const lineStarts = new Set(lineInfos(chars).map((line) => line.start));
+  return state.selection.every((range) => {
+    const from = Math.min(range.anchor, range.head);
+    const to = Math.max(range.anchor, range.head);
+    return from !== to
+      && lineStarts.has(from)
+      && lineStarts.has(to)
+      && chars.slice(from, to).includes("\n");
+  });
+}
+
+type LineInfo = {
+  start: number;
+  end: number;
+};
+
+function lineInfos(chars: readonly string[]): LineInfo[] {
+  const lines: LineInfo[] = [];
+  let start = 0;
+  for (let index = 0; index < chars.length; index += 1) {
+    if (chars[index] !== "\n") continue;
+    lines.push({ start, end: index + 1 });
+    start = index + 1;
+  }
+  lines.push({ start, end: chars.length });
+  return lines;
+}
+
+function lineAtChar(lines: readonly LineInfo[], charIdx: number): number | undefined {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (charIdx < line.end || (charIdx === line.start && line.start === line.end)) return index;
+  }
+  return undefined;
+}
+
+function charAtLineCol(lines: readonly LineInfo[], line: number, col: number): number | undefined {
+  const info = lines[line];
+  if (!info) return undefined;
+  const idx = info.start + col;
+  return idx < info.end ? idx : undefined;
+}
+
+function rangeLinePositions(
+  range: SurfaceSelectionRange,
+  boundaries: readonly number[],
+  len: number,
+  lines: readonly LineInfo[],
+): { anchor: { line: number; col: number }; head: { line: number; col: number } } | undefined {
+  const anchorChar = range.anchor === range.head
+    ? range.anchor
+    : range.anchor < range.head
+      ? range.anchor
+      : prevGraphemeBoundary(boundaries, range.anchor);
+  const headChar = range.anchor === range.head
+    ? range.head
+    : range.anchor < range.head
+      ? prevGraphemeBoundary(boundaries, range.head)
+      : range.head;
+  if (anchorChar >= len || headChar >= len) return undefined;
+
+  const anchorLine = lineAtChar(lines, anchorChar);
+  const headLine = lineAtChar(lines, headChar);
+  if (anchorLine === undefined || headLine === undefined) return undefined;
+
+  return {
+    anchor: { line: anchorLine, col: anchorChar - lines[anchorLine].start },
+    head: { line: headLine, col: headChar - lines[headLine].start },
+  };
 }
 
 function findCharSearchStart(
@@ -801,12 +950,16 @@ async function mirrorRegisterToClipboard(editor: EditorHost, name: string): Prom
   await editor.runtime.clipboard.write({ kind: "Clipboard", value: values.join("\n") });
 }
 
-async function applyOperation(editor: EditorHost, operation: SurfaceOperation): Promise<void> {
+async function applyOperation(
+  editor: EditorHost,
+  operation: SurfaceOperation,
+  checkpoint = true,
+): Promise<void> {
   await editor.runtime.surfaces.applyOperation({
     surfaceId: activeSurfaceId(editor),
     operation,
   });
-  if (getDefaultState(editor).mode !== "insert" && CHECKPOINT_AFTER_OPERATION.has(operation.name)) {
+  if (checkpoint && getDefaultState(editor).mode !== "insert" && CHECKPOINT_AFTER_OPERATION.has(operation.name)) {
     await editor.runtime.surfaces.commitUndoCheckpoint({ surfaceId: activeSurfaceId(editor) });
   }
 }

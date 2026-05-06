@@ -76,11 +76,11 @@ export function defaultKeymaps(): EditorModule {
 
         d: "delete_selection",
         "A-d": "delete_selection_noyank",
-        // c: "change_selection",
-        // "A-c": "change_selection_noyank",
+        c: "change_selection",
+        "A-c": "change_selection_noyank",
 
-        // C: "copy_selection_on_next_line",
-        // "A-C": "copy_selection_on_prev_line",
+        C: "copy_selection_on_next_line",
+        "A-C": "copy_selection_on_prev_line",
 
         // s: "select_regex",
         // "A-s": "split_selection_on_newline",

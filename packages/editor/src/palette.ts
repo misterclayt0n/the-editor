@@ -86,26 +86,80 @@ export function scoreCommandPaletteItem(query: string, item: Pick<CommandPalette
   const normalizedQuery = normalizePaletteText(query);
   if (!normalizedQuery) return 1;
 
+  const collapsedQuery = collapsePaletteText(normalizedQuery);
   const haystacks = [item.title, item.detail, ...(item.keywords ?? [])]
     .filter(Boolean)
     .map((value) => normalizePaletteText(value!));
 
   let best = 0;
   for (const haystack of haystacks) {
-    if (haystack === normalizedQuery) best = Math.max(best, 1000);
-    else if (haystack.startsWith(normalizedQuery)) best = Math.max(best, 500 - haystack.length);
-    else if (haystack.includes(normalizedQuery)) best = Math.max(best, 250 - haystack.length);
-    else {
-      const words = normalizedQuery.split(/\s+/).filter(Boolean);
-      if (words.length && words.every((word) => haystack.includes(word))) {
-        best = Math.max(best, 100 - haystack.length);
-      }
-    }
+    best = Math.max(best, directPaletteScore(normalizedQuery, haystack));
+    best = Math.max(best, fuzzyPaletteScore(normalizedQuery, haystack));
+
+    if (!collapsedQuery) continue;
+    const collapsedHaystack = collapsePaletteText(haystack);
+    best = Math.max(best, directPaletteScore(collapsedQuery, collapsedHaystack));
+    best = Math.max(best, fuzzyPaletteScore(collapsedQuery, collapsedHaystack));
   }
 
   return best;
 }
 
+function directPaletteScore(query: string, haystack: string): number {
+  if (!query || !haystack) return 0;
+  if (haystack === query) return 1200 - haystack.length;
+  if (haystack.startsWith(query)) return 900 - haystack.length;
+  if (haystack.includes(query)) return 700 - haystack.length;
+
+  const words = query.split(/\s+/).filter(Boolean);
+  if (words.length && words.every((word) => haystack.includes(word))) {
+    return 500 - haystack.length;
+  }
+
+  return 0;
+}
+
+function fuzzyPaletteScore(query: string, haystack: string): number {
+  if (!query || !haystack) return 0;
+
+  let queryIndex = 0;
+  let firstMatch = -1;
+  let score = 0;
+  let consecutive = 0;
+
+  for (let haystackIndex = 0; haystackIndex < haystack.length && queryIndex < query.length; haystackIndex += 1) {
+    if (haystack[haystackIndex] !== query[queryIndex]) {
+      consecutive = 0;
+      continue;
+    }
+
+    if (firstMatch < 0) firstMatch = haystackIndex;
+    score += 10;
+    if (isPaletteWordStart(haystack, haystackIndex)) score += 18;
+    if (consecutive > 0) score += 14 + consecutive * 3;
+    consecutive += 1;
+    queryIndex += 1;
+  }
+
+  if (queryIndex !== query.length) return 0;
+  score -= Math.max(0, haystack.length - query.length);
+  if (firstMatch > 0) score -= Math.min(firstMatch, 40);
+  return Math.max(score, 1);
+}
+
+function isPaletteWordStart(value: string, index: number): boolean {
+  if (index <= 0) return true;
+  return isPaletteSeparator(value[index - 1]);
+}
+
+function collapsePaletteText(value: string): string {
+  return value.replace(/[^a-z0-9]+/g, "");
+}
+
+function isPaletteSeparator(char: string): boolean {
+  return /[^a-z0-9]/.test(char);
+}
+
 function normalizePaletteText(value: string | undefined): string {
-  return (value ?? "").trim().toLowerCase();
+  return (value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 }

@@ -1,12 +1,16 @@
 .commandPaletteOverlay {
   inset: 0;
+  pointer-events: auto;
   position: absolute;
 }
 
 .commandPaletteBackdrop {
+  appearance: none;
   background: var(--theme-ui-command-palette-backdrop-bg, var(--theme-palette-overlay, rgba(0, 0, 0, 0.32)));
   backdrop-filter: blur(8px);
+  border: 0;
   inset: 0;
+  padding: 0;
   position: absolute;
 }
 
@@ -95,7 +99,7 @@
   border: 0;
   border-radius: 12px;
   color: inherit;
-  cursor: default;
+  cursor: pointer;
   display: block;
   padding: 8px 10px;
   text-align: left;

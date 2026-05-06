@@ -228,14 +228,15 @@ export function defaultCommandPalette(): EditorModule {
 
         const prefix = trimmed.startsWith(":reload") ? trimmed.slice(7).trim() : trimmed.startsWith("reload") ? trimmed.slice(6).trim() : "";
         for (const pkg of packages) {
-          if (prefix && !pkg.id.includes(prefix)) continue;
-          items.push({
-            id: `reload:${pkg.id}`,
-            title: `:reload ${pkg.id}`,
-            detail: pkg.loadedTargets.length ? `Targets: ${pkg.loadedTargets.join(", ")}` : "Registered package",
-            keywords: [":reload", "reload", pkg.id],
-            command: { id: commandId("editor.reload"), args: { specifier: pkg.id } },
-          });
+          if (!prefix || pkg.id.includes(prefix)) {
+            items.push({
+              id: `reload:${pkg.id}`,
+              title: `:reload ${pkg.id}`,
+              detail: pkg.loadedTargets.length ? `Targets: ${pkg.loadedTargets.join(", ")}` : "Registered package",
+              keywords: [":reload", "reload", pkg.id],
+              command: { id: commandId("editor.reload"), args: { specifier: pkg.id } },
+            });
+          }
           for (const target of pkg.loadedTargets) {
             const specifier = `${pkg.id}/${target}`;
             if (prefix && !specifier.includes(prefix)) continue;
@@ -243,7 +244,7 @@ export function defaultCommandPalette(): EditorModule {
               id: `reload:${specifier}`,
               title: `:reload ${specifier}`,
               detail: `Reload ${target} target`,
-              keywords: [":reload", "reload", specifier],
+              keywords: [":reload", "reload", specifier, pkg.id, target],
               command: { id: commandId("editor.reload"), args: { specifier } },
             });
           }

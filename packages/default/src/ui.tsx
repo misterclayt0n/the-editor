@@ -64,6 +64,7 @@ function CommandPaletteOverlay({
   dispatch: (dispatch: { id: string; args?: unknown }) => Promise<unknown>;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const itemsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const input = inputRef.current;
@@ -73,9 +74,21 @@ function CommandPaletteOverlay({
     input.setSelectionRange(end, end);
   }, [state.visible]);
 
+  useEffect(() => {
+    const active = itemsRef.current?.querySelector<HTMLElement>(".commandPaletteItem.active");
+    active?.scrollIntoView({ block: "nearest" });
+  }, [state.items, state.selectedIndex]);
+
   return (
     <section className="commandPaletteOverlay">
-      <div className="commandPaletteBackdrop" />
+      <button
+        type="button"
+        className="commandPaletteBackdrop"
+        aria-label="Close command palette"
+        onClick={() => {
+          void dispatch({ id: "command_palette.close" });
+        }}
+      />
       <div className="commandPaletteViewport">
         <div className="commandPaletteShell">
           <div className="commandPalettePanel">
@@ -113,13 +126,16 @@ function CommandPaletteOverlay({
                 }}
               />
             </div>
-            <div className="commandPaletteItems">
+            <div ref={itemsRef} className="commandPaletteItems">
               {state.items.length ? state.items.map((item, index) => (
                 <button
                   key={item.id}
                   type="button"
                   className={index === state.selectedIndex ? "commandPaletteItem active" : "commandPaletteItem"}
                   onMouseEnter={() => {
+                    void dispatch({ id: "command_palette.selectIndex", args: { index } });
+                  }}
+                  onMouseMove={() => {
                     void dispatch({ id: "command_palette.selectIndex", args: { index } });
                   }}
                   onMouseDown={(event) => {

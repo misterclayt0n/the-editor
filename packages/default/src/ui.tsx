@@ -148,9 +148,10 @@ function CommandPaletteOverlay({
 }
 
 function Statusline({ state }: { state: StatuslineViewState | undefined }) {
+  const mode = normalizeStatuslineMode(state?.mode);
   return (
-    <div className="statusline">
-      <div className="statuslineSegment mode">{(state?.mode ?? "normal").toUpperCase()}</div>
+    <div className={`statusline mode-${mode}`}>
+      <div className="statuslineSegment mode">{mode.toUpperCase()}</div>
       <div className="statuslineSegment path">{state?.activePath ?? "[scratch]"}</div>
       <div className="statuslineSegment meta">palette: {state?.selectedCommandPalette ?? state?.activeRoleImplementation ?? "default"}</div>
       <div className="statuslineSegment diagnostics">diagnostics: {state?.diagnosticsCount ?? 0}</div>
@@ -263,6 +264,11 @@ function WorkbenchInspector({
       </div>
     </section>
   );
+}
+
+function normalizeStatuslineMode(mode?: string): string {
+  if (mode === "insert" || mode === "select") return mode;
+  return "normal";
 }
 
 function CommandPaletteSearchIcon() {

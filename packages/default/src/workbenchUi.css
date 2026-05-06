@@ -1,10 +1,26 @@
 .statusline {
   align-items: center;
-  color: var(--theme-ui-statusline-fg, #a7acb6);
+  background: var(--theme-ui-statusline-bg, var(--theme-ui-menu-bg, #141414));
+  color: var(--theme-ui-statusline-fg, var(--theme-ui-text-fg, #a7acb6));
   display: flex;
   gap: 12px;
   height: 100%;
   padding: 0 10px;
+}
+
+.statusline.mode-normal {
+  background: var(--theme-ui-statusline-normal-bg, var(--theme-ui-statusline-bg, var(--theme-ui-menu-bg, #141414)));
+  color: var(--theme-ui-statusline-normal-fg, var(--theme-ui-statusline-fg, var(--theme-ui-text-fg, #a7acb6)));
+}
+
+.statusline.mode-insert {
+  background: var(--theme-ui-statusline-insert-bg, var(--theme-ui-statusline-bg, var(--theme-ui-menu-bg, #141414)));
+  color: var(--theme-ui-statusline-insert-fg, var(--theme-ui-statusline-fg, var(--theme-ui-text-fg, #a7acb6)));
+}
+
+.statusline.mode-select {
+  background: var(--theme-ui-statusline-select-bg, var(--theme-ui-statusline-bg, var(--theme-ui-menu-bg, #141414)));
+  color: var(--theme-ui-statusline-select-fg, var(--theme-ui-statusline-fg, var(--theme-ui-text-fg, #a7acb6)));
 }
 
 .statuslineSegment {
@@ -16,18 +32,19 @@
 }
 
 .statuslineSegment.mode {
-  color: var(--theme-ui-inspector-badge-fg, #f4bf75);
+  color: var(--theme-ui-statusline-mode-fg, currentColor);
   font-weight: 700;
 }
 
 .statuslineSegment.path {
-  color: var(--theme-ui-text-focus-fg, #e5e7eb);
+  color: var(--theme-ui-statusline-path-fg, currentColor);
   flex: 1 1 auto;
 }
 
 .statuslineSegment.meta,
 .statuslineSegment.diagnostics {
-  color: var(--theme-ui-text-inactive-fg, #8b93a3);
+  color: var(--theme-ui-statusline-meta-fg, currentColor);
+  opacity: 0.78;
 }
 
 .inspectorPanel {

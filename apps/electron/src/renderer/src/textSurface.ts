@@ -1,6 +1,6 @@
 import type { CellGridMetrics, CursorPlacement, RenderFrame, RenderRow, SyntaxSpan, Viewport } from "@the-editor/contracts/runtime";
 import type { BufferDecoration, InlineTextDecoration, RangeDecoration, ThemeSnapshot } from "@the-editor/editor";
-import { resolveThemeStyle, type ResolvedThemeDefinition } from "@the-editor/editor/themes";
+import { resolveThemeStyle, resolveThemeStyleLoose, type ResolvedThemeDefinition } from "@the-editor/editor/themes";
 
 export interface SurfaceConfiguration {
   viewport: Viewport;
@@ -344,7 +344,7 @@ function resolveTextSurfaceTheme(
     syntaxColor(kind) {
       const scope = syntaxLegend[kind] ?? fallbackSyntaxScopes[kind];
       if (!scope) return foreground;
-      return resolveThemeStyle(activeTheme ?? { styles: {} }, scope, "ui.text")?.fg ?? foreground;
+      return resolveThemeStyleLoose(activeTheme ?? { styles: {} }, scope, "ui.text")?.fg ?? foreground;
     },
   };
 }

@@ -1,6 +1,10 @@
 import { contributionKind } from "./contributions.js";
 import type { EditorHost } from "./editorHost.js";
 import { toDisposable, type Disposable } from "./disposable.js";
+import type { BuiltinThemeStyleKey } from "./themeStyleKeys.js";
+
+export { builtinThemeStyleKeys } from "./themeStyleKeys.js";
+export type { BuiltinThemeStyleKey } from "./themeStyleKeys.js";
 
 export type ThemeId = string & { readonly __brand?: "ThemeId" };
 export type ThemeModifier = string;
@@ -18,6 +22,22 @@ export interface ThemeStyle {
 }
 
 export type ThemeStyleValue = string | ThemeStyle;
+
+/**
+ * Augment this interface to add new semantic theme entries from extensions.
+ *
+ * declare module "@the-editor/editor/themes" {
+ *   interface ThemeStyleEntryAugmentations {
+ *     "my.tool.panel": ThemeStyleValue;
+ *   }
+ * }
+ */
+export interface ThemeStyleEntryAugmentations {
+  readonly __never?: never;
+}
+
+export type ThemeStyleKey = BuiltinThemeStyleKey | (Exclude<keyof ThemeStyleEntryAugmentations, "__never"> & string);
+export type ThemeStyleFallback = ThemeStyleKey | readonly ThemeStyleKey[];
 
 export interface ThemeGhosttyPalette {
   background?: string;
@@ -105,7 +125,7 @@ export class ThemeRegistry {
 
   constructor(private readonly editor: EditorHost) {}
 
-  register(definition: ThemeDefinition, moduleId = this.editor.currentModuleId()): Disposable {
+  register<const TDefinition extends ThemeDefinition>(definition: ValidateThemeDefinition<TDefinition>, moduleId = this.editor.currentModuleId()): Disposable {
     const id = themeId(definition.id);
     const entry: RegisteredTheme = {
       theme: resolveTheme(definition),
@@ -161,7 +181,7 @@ export class ThemeRegistry {
     return resolveThemeColor(theme, name);
   }
 
-  getStyle(key: string, options: { theme?: ResolvedThemeDefinition; fallback?: string | readonly string[] } = {}): ResolvedThemeStyle | undefined {
+  getStyle(key: ThemeStyleKey, options: { theme?: ResolvedThemeDefinition; fallback?: ThemeStyleFallback } = {}): ResolvedThemeStyle | undefined {
     const theme = options.theme ?? this.active();
     if (!theme || !key) return undefined;
     return resolveThemeStyle(theme, key, options.fallback);
@@ -180,7 +200,17 @@ export class ThemeRegistry {
   }
 }
 
-export function defineTheme(definition: ThemeDefinition): ThemeDefinition {
+type UnknownThemeStyleKeys<TDefinition extends ThemeDefinition> = Exclude<Extract<keyof NonNullable<TDefinition["styles"]>, string>, ThemeStyleKey>;
+
+type ValidateThemeDefinition<TDefinition extends ThemeDefinition> = [UnknownThemeStyleKeys<TDefinition>] extends [never]
+  ? TDefinition
+  : TDefinition & {
+      styles?: NonNullable<TDefinition["styles"]> & {
+        [K in UnknownThemeStyleKeys<TDefinition>]: never;
+      };
+    };
+
+export function defineTheme<const TDefinition extends ThemeDefinition>(definition: ValidateThemeDefinition<TDefinition>): TDefinition {
   return definition;
 }
 
@@ -210,14 +240,22 @@ export function resolveThemeColor(theme: Pick<ResolvedThemeDefinition, "palette"
 
 export function resolveThemeStyle(
   theme: Pick<ResolvedThemeDefinition, "styles">,
+  key: ThemeStyleKey,
+  fallback?: ThemeStyleFallback,
+): ResolvedThemeStyle | undefined {
+  return resolveThemeStyleLoose(theme, key, fallback);
+}
+
+export function resolveThemeStyleLoose(
+  theme: Pick<ResolvedThemeDefinition, "styles">,
   key: string,
   fallback?: string | readonly string[],
 ): ResolvedThemeStyle | undefined {
-  const style = mergeThemeStyles(themeStyleCandidates(key).map((candidate) => theme.styles[candidate]));
+  const style = mergeThemeStyles(themeStyleCandidates(key).map((candidate) => theme.styles[candidate as ThemeStyleKey]));
   if (!isThemeStyleEmpty(style)) return style;
   const fallbacks = fallback === undefined ? [] : Array.isArray(fallback) ? fallback : [fallback];
   for (const next of fallbacks) {
-    const resolved = mergeThemeStyles(themeStyleCandidates(next).map((candidate) => theme.styles[candidate]));
+    const resolved = mergeThemeStyles(themeStyleCandidates(next).map((candidate) => theme.styles[candidate as ThemeStyleKey]));
     if (!isThemeStyleEmpty(resolved)) return resolved;
   }
   return undefined;

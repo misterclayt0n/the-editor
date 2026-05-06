@@ -230,6 +230,58 @@ export function defaultEditing(): EditorModule {
         });
       },
     });
+    editor.commands.register<{ count?: number } | undefined, void>({
+      id: commandId("extend_next_char"),
+      title: "Extend Next Char",
+      run(_ctx, args) {
+        setPendingInput(editor, {
+          kind: "findChar",
+          direction: "forward",
+          inclusive: true,
+          extend: true,
+          count: args?.count ?? 1,
+        });
+      },
+    });
+    editor.commands.register<{ count?: number } | undefined, void>({
+      id: commandId("extend_till_char"),
+      title: "Extend Till Char",
+      run(_ctx, args) {
+        setPendingInput(editor, {
+          kind: "findChar",
+          direction: "forward",
+          inclusive: false,
+          extend: true,
+          count: args?.count ?? 1,
+        });
+      },
+    });
+    editor.commands.register<{ count?: number } | undefined, void>({
+      id: commandId("extend_prev_char"),
+      title: "Extend Prev Char",
+      run(_ctx, args) {
+        setPendingInput(editor, {
+          kind: "findChar",
+          direction: "backward",
+          inclusive: true,
+          extend: true,
+          count: args?.count ?? 1,
+        });
+      },
+    });
+    editor.commands.register<{ count?: number } | undefined, void>({
+      id: commandId("extend_till_prev_char"),
+      title: "Extend Till Prev Char",
+      run(_ctx, args) {
+        setPendingInput(editor, {
+          kind: "findChar",
+          direction: "backward",
+          inclusive: false,
+          extend: true,
+          count: args?.count ?? 1,
+        });
+      },
+    });
     editor.commands.register<void, void>({
       id: commandId("replace"),
       title: "Replace",

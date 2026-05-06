@@ -77,6 +77,33 @@ describe("default editing commands", () => {
     expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 0, head: 5 }]);
   });
 
+  it("extends to the next matching char from select mode", async () => {
+    const editor = await createTestEditor("hello world");
+    await editor.commands.dispatch({ id: commandId("select_mode") });
+
+    await editor.commands.dispatch({ id: commandId("extend_next_char") });
+    await handleWorkbenchKeyInput(editor, { key: "o", text: "o" });
+
+    const state = await editor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(editor).activeSurfaceId!,
+    });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 0, head: 5 }]);
+  });
+
+  it("extends till the previous matching char from select mode", async () => {
+    const editor = await createTestEditor("kaaaaaaaaaaaakaaaaaaaaaaaaax");
+    await editor.commands.dispatch({ id: commandId("goto_line_end") });
+    await editor.commands.dispatch({ id: commandId("select_mode") });
+
+    await editor.commands.dispatch({ id: commandId("extend_till_prev_char") });
+    await handleWorkbenchKeyInput(editor, { key: "k", text: "k" });
+
+    const state = await editor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(editor).activeSurfaceId!,
+    });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 28, head: 14 }]);
+  });
+
   it("repeats till-char motion from the new cursor position", async () => {
     const editor = await createTestEditor("aaaaaaaaaaakaaaaaaaaaaaaak");
 

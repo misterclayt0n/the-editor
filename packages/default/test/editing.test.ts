@@ -50,6 +50,21 @@ describe("default editing commands", () => {
     ]);
   });
 
+  it("copies a cursor to the next matching visual column skipping short lines", async () => {
+    const editor = await createTestEditor("alskd jklasjdlk ajdlksj\n\n\naksdj lajdkla");
+    await editor.commands.dispatch({ id: commandId("move_char_right"), args: { count: 8 } });
+
+    await editor.commands.dispatch({ id: commandId("copy_selection_on_next_line") });
+
+    const state = await editor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(editor).activeSurfaceId!,
+    });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([
+      { anchor: 8, head: 8 },
+      { anchor: 34, head: 35 },
+    ]);
+  });
+
   it("replaces the grapheme under the cursor from pending replace input", async () => {
     const editor = await createTestEditor("hello");
 

@@ -648,21 +648,35 @@ async function copySelectionOnLine(
     if (!positions) continue;
 
     const height = Math.abs(positions.anchor.line - positions.head.line) + 1;
-    const anchorLine = direction === "forward"
-      ? positions.anchor.line + height
-      : positions.anchor.line - height;
-    const headLine = direction === "forward"
-      ? positions.head.line + height
-      : positions.head.line - height;
-    if (anchorLine < 0 || headLine < 0 || anchorLine >= lines.length || headLine >= lines.length) {
-      continue;
+    let offset = height;
+
+    while (true) {
+      const anchorLine = direction === "forward"
+        ? positions.anchor.line + offset
+        : positions.anchor.line - offset;
+      const headLine = direction === "forward"
+        ? positions.head.line + offset
+        : positions.head.line - offset;
+      if (anchorLine < 0 || headLine < 0 || anchorLine >= lines.length || headLine >= lines.length) {
+        break;
+      }
+
+      const anchorIdx = charAtLineCol(lines, anchorLine, positions.anchor.col);
+      const headIdx = charAtLineCol(lines, headLine, positions.head.col);
+      if (anchorIdx !== undefined && headIdx !== undefined) {
+        selection.push(rangePutCursor(
+          { cursorId: nextCursorId++, anchor: anchorIdx, head: anchorIdx },
+          boundaries,
+          chars.length,
+          headIdx,
+          true,
+        ));
+        break;
+      }
+
+      if (anchorLine === 0 && headLine === 0) break;
+      offset += height;
     }
-
-    const anchorIdx = charAtLineCol(lines, anchorLine, positions.anchor.col);
-    const headIdx = charAtLineCol(lines, headLine, positions.head.col);
-    if (anchorIdx === undefined || headIdx === undefined) continue;
-
-    selection.push(rangePutCursor({ cursorId: nextCursorId++, anchor: anchorIdx, head: anchorIdx }, boundaries, chars.length, headIdx, true));
   }
 
   await applyEdit(editor, { selection });

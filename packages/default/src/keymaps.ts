@@ -114,10 +114,10 @@ export function defaultKeymaps(): EditorModule {
         // "[": keymap("Left bracket", { d/D/g/G/f/t/a/c/e/T/p/x/space }),
         // "]": keymap("Right bracket", { d/D/g/G/f/t/a/c/e/T/p/x/space }),
 
-        // "/": "search",
-        // "?": "rsearch",
-        // n: "search_next",
-        // N: "search_prev",
+        "/": "search",
+        "?": "rsearch",
+        n: "search_next",
+        N: "search_prev",
         // "*": "search_selection_detect_word_boundaries",
         // "A-*": "search_selection",
 
@@ -237,8 +237,8 @@ export function defaultKeymaps(): EditorModule {
         // "A-e": "extend_parent_node_end",
         // "A-b": "extend_parent_node_start",
 
-        // n: "extend_search_next",
-        // N: "extend_search_prev",
+        n: "extend_search_next",
+        N: "extend_search_prev",
 
         t: "extend_till_char",
         f: "extend_next_char",

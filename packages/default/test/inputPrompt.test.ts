@@ -1,16 +1,19 @@
 import { describe, expect, it } from "vitest";
+import { handleWorkbenchKeyInput } from "../../editor/src/workbench.js";
 import { commandId, createEditorHost, createRuntimeClient } from "../../editor/src/index.js";
 import { defaultEditing } from "../src/editing.js";
 import { defaultInputPrompt } from "../src/inputPrompt.js";
+import { defaultKeymaps } from "../src/keymaps.js";
 import { defaultScratch } from "../src/scratch.js";
 import { getDefaultState } from "../src/state.js";
 import { defaultWorkbench } from "../src/workbench.js";
 
-async function createTestEditor(text: string) {
+async function createTestEditor(text: string, options?: { keymaps?: boolean }) {
   const editor = createEditorHost({ runtime: createRuntimeClient() });
   await defaultScratch()(editor);
   await defaultEditing()(editor);
   await defaultInputPrompt()(editor);
+  if (options?.keymaps) await defaultKeymaps()(editor);
   await defaultWorkbench()(editor);
   await editor.commands.dispatch({
     id: commandId("scratch.create"),
@@ -78,5 +81,54 @@ describe("input prompt", () => {
       { anchor: 0, head: 3 },
       { anchor: 8, head: 11 },
     ]);
+  });
+
+  it("opens / and ? searches and repeats with n and N", async () => {
+    const editor = await createTestEditor("one two one", { keymaps: true });
+
+    await handleWorkbenchKeyInput(editor, { key: "/", text: "/" });
+    await editor.commands.dispatch({ id: commandId("input_prompt.setQuery"), args: { query: "one" } });
+
+    let snapshot = editor.roles.snapshot("inputPrompt");
+    expect(snapshot?.state).toMatchObject({
+      visible: true,
+      title: "/",
+      query: "one",
+      placeholder: "Search",
+    });
+
+    let state = await editor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(editor).activeSurfaceId!,
+    });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 0, head: 3 }]);
+
+    await editor.commands.dispatch({ id: commandId("input_prompt.accept") });
+
+    const { values } = await editor.runtime.registers.read({ name: "/" });
+    expect(values).toEqual(["one"]);
+
+    await handleWorkbenchKeyInput(editor, { key: "n", text: "n" });
+    state = await editor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(editor).activeSurfaceId!,
+    });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 8, head: 11 }]);
+
+    await handleWorkbenchKeyInput(editor, { key: "N", text: "N" });
+    state = await editor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(editor).activeSurfaceId!,
+    });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 0, head: 3 }]);
+
+    await editor.commands.dispatch({ id: commandId("goto_line_end") });
+    await handleWorkbenchKeyInput(editor, { key: "?", text: "?" });
+    await editor.commands.dispatch({ id: commandId("input_prompt.setQuery"), args: { query: "one" } });
+
+    snapshot = editor.roles.snapshot("inputPrompt");
+    expect(snapshot?.state).toMatchObject({ visible: true, title: "?", query: "one" });
+
+    state = await editor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(editor).activeSurfaceId!,
+    });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 8, head: 11 }]);
   });
 });

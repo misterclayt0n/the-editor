@@ -2,7 +2,8 @@ import type { SurfaceId, SurfaceSelectionRange } from "@the-editor/contracts/run
 import { commandId, roleId, roleImplementationId, type EditorModule } from "@the-editor/editor";
 import { getDefaultState } from "./state.js";
 
-type InputPromptKind = "selectRegex";
+type InputPromptKind = "selectRegex" | "searchForward" | "searchBackward";
+type SearchDirection = "forward" | "backward";
 
 export interface InputPromptRoleState {
   visible: boolean;
@@ -22,6 +23,7 @@ interface ActiveInputPromptState {
   error?: string;
   surfaceId: SurfaceId;
   originalSelection: SurfaceSelectionRange[];
+  extend: boolean;
 }
 
 interface StoredInputPromptState {
@@ -31,6 +33,7 @@ interface StoredInputPromptState {
 const inputPromptRoleId = roleId("inputPrompt");
 const inputPromptImplementationId = roleImplementationId("default.inputPrompt");
 const inputPromptStateSlot = "default.inputPrompt.state";
+const SEARCH_REGISTER = "/";
 
 export function defaultInputPrompt(): EditorModule {
   return (editor) => {
@@ -62,6 +65,54 @@ export function defaultInputPrompt(): EditorModule {
           query: active?.query ?? "",
           error: active?.error,
         } satisfies InputPromptRoleState;
+      },
+    });
+
+    editor.commands.register({
+      id: commandId("search"),
+      title: "Search",
+      async run() {
+        await openInputPrompt(editor, "searchForward");
+      },
+    });
+
+    editor.commands.register({
+      id: commandId("rsearch"),
+      title: "Search Backward",
+      async run() {
+        await openInputPrompt(editor, "searchBackward");
+      },
+    });
+
+    editor.commands.register<{ count?: number }, void>({
+      id: commandId("search_next"),
+      title: "Search Next",
+      async run(_ctx, args) {
+        await repeatStoredSearch(editor, "forward", false, args?.count);
+      },
+    });
+
+    editor.commands.register<{ count?: number }, void>({
+      id: commandId("search_prev"),
+      title: "Search Prev",
+      async run(_ctx, args) {
+        await repeatStoredSearch(editor, "backward", false, args?.count);
+      },
+    });
+
+    editor.commands.register<{ count?: number }, void>({
+      id: commandId("extend_search_next"),
+      title: "Extend Search Next",
+      async run(_ctx, args) {
+        await repeatStoredSearch(editor, "forward", true, args?.count);
+      },
+    });
+
+    editor.commands.register<{ count?: number }, void>({
+      id: commandId("extend_search_prev"),
+      title: "Extend Search Prev",
+      async run(_ctx, args) {
+        await repeatStoredSearch(editor, "backward", true, args?.count);
       },
     });
 
@@ -129,6 +180,7 @@ async function openInputPrompt(editor: Parameters<EditorModule>[0], kind: InputP
     error: undefined,
     surfaceId,
     originalSelection: state.selection.map(cloneRange),
+    extend: isSearchPromptKind(kind) && getDefaultState(editor).mode === "select",
   };
 
   inputPromptState(editor).active = active;
@@ -156,6 +208,12 @@ async function updateInputPromptPreview(
     case "selectRegex":
       await updateSelectRegexPreview(editor, active);
       return;
+    case "searchForward":
+      await updateSearchPreview(editor, active, "forward");
+      return;
+    case "searchBackward":
+      await updateSearchPreview(editor, active, "backward");
+      return;
   }
 }
 
@@ -166,6 +224,9 @@ async function finalizeInputPrompt(
   switch (active.kind) {
     case "selectRegex":
       return finalizeSelectRegex(editor, active);
+    case "searchForward":
+    case "searchBackward":
+      return finalizeSearch(editor, active);
   }
 }
 
@@ -234,6 +295,96 @@ async function finalizeSelectRegex(
   return true;
 }
 
+async function updateSearchPreview(
+  editor: Parameters<EditorModule>[0],
+  active: ActiveInputPromptState,
+  direction: SearchDirection,
+): Promise<void> {
+  if (!active.query) {
+    await editor.runtime.surfaces.applyEdit({
+      surfaceId: active.surfaceId,
+      edit: { selection: active.originalSelection.map(cloneRange) },
+    });
+    active.error = undefined;
+    return;
+  }
+
+  const regex = buildSmartCaseRegex(active.query);
+  if (regex instanceof Error) {
+    active.error = regex.message;
+    return;
+  }
+
+  active.error = undefined;
+  const state = await editor.runtime.surfaces.readState({ surfaceId: active.surfaceId });
+  const nextSelection = searchRegexSelection(state.text, active.originalSelection, regex, direction, active.extend);
+  if (!nextSelection) return;
+
+  await editor.runtime.surfaces.applyEdit({
+    surfaceId: active.surfaceId,
+    edit: { selection: nextSelection },
+  });
+}
+
+async function finalizeSearch(
+  editor: Parameters<EditorModule>[0],
+  active: ActiveInputPromptState,
+): Promise<boolean> {
+  if (!active.query) return true;
+
+  const regex = buildSmartCaseRegex(active.query);
+  if (regex instanceof Error) {
+    active.error = regex.message;
+    return false;
+  }
+
+  active.error = undefined;
+  await editor.runtime.registers.write({ name: SEARCH_REGISTER, values: [active.query] });
+
+  const state = await editor.runtime.surfaces.readState({ surfaceId: active.surfaceId });
+  const nextSelection = searchRegexSelection(
+    state.text,
+    active.originalSelection,
+    regex,
+    searchDirectionForKind(active.kind) ?? "forward",
+    active.extend,
+  );
+  if (!nextSelection) return true;
+
+  await editor.runtime.surfaces.applyEdit({
+    surfaceId: active.surfaceId,
+    edit: { selection: nextSelection },
+  });
+  return true;
+}
+
+async function repeatStoredSearch(
+  editor: Parameters<EditorModule>[0],
+  direction: SearchDirection,
+  extend: boolean,
+  count?: number,
+): Promise<void> {
+  const surfaceId = getDefaultState(editor).activeSurfaceId;
+  if (!surfaceId) return;
+
+  const { values } = await editor.runtime.registers.read({ name: SEARCH_REGISTER });
+  const query = values?.[0];
+  if (!query) return;
+
+  const regex = buildSmartCaseRegex(query);
+  if (regex instanceof Error) return;
+
+  for (let remaining = Math.max(1, count ?? 1); remaining > 0; remaining -= 1) {
+    const state = await editor.runtime.surfaces.readState({ surfaceId });
+    const nextSelection = searchRegexSelection(state.text, state.selection, regex, direction, extend);
+    if (!nextSelection) return;
+    await editor.runtime.surfaces.applyEdit({
+      surfaceId,
+      edit: { selection: nextSelection },
+    });
+  }
+}
+
 function buildSmartCaseRegex(query: string): RegExp | Error {
   try {
     const flags = containsUppercase(query) ? "gmu" : "gimu";
@@ -281,6 +432,83 @@ function selectRegexMatches(
   return ranges;
 }
 
+function searchRegexSelection(
+  text: string,
+  selection: readonly SurfaceSelectionRange[],
+  regex: RegExp,
+  direction: SearchDirection,
+  extend: boolean,
+): SurfaceSelectionRange[] | undefined {
+  if (!selection.length) return undefined;
+
+  const matches = collectRegexMatches(text, regex);
+  if (!matches.length) return undefined;
+
+  const pickedIndex = extend
+    ? (direction === "forward" ? selection.length - 1 : 0)
+    : 0;
+  const picked = selection[pickedIndex];
+  if (!picked) return undefined;
+
+  const from = Math.min(picked.anchor, picked.head);
+  const to = Math.max(picked.anchor, picked.head);
+  const match = direction === "forward"
+    ? findNextMatch(matches, to) ?? matches[0]
+    : findPrevMatch(matches, from) ?? matches.at(-1);
+  if (!match) return undefined;
+
+  if (extend) {
+    return [...selection.map(cloneRange), { cursorId: nextCursorId(selection), anchor: match.start, head: match.end }];
+  }
+
+  return selection.map((range, index) => index === pickedIndex
+    ? { cursorId: range.cursorId, anchor: match.start, head: match.end }
+    : cloneRange(range));
+}
+
+function collectRegexMatches(text: string, regex: RegExp): Array<{ start: number; end: number }> {
+  const matches: Array<{ start: number; end: number }> = [];
+  let previousCodeUnitIndex = 0;
+  let previousCharIndex = 0;
+  const globalRegex = new RegExp(regex.source, regex.flags.includes("g") ? regex.flags : `${regex.flags}g`);
+
+  for (const match of text.matchAll(globalRegex)) {
+    const matchText = match[0] ?? "";
+    if (!matchText) continue;
+
+    const codeUnitIndex = match.index ?? 0;
+    const start = previousCharIndex + charCount(text.slice(previousCodeUnitIndex, codeUnitIndex));
+    const end = start + charCount(matchText);
+    matches.push({ start, end });
+    previousCodeUnitIndex = codeUnitIndex + matchText.length;
+    previousCharIndex = end;
+  }
+
+  return matches;
+}
+
+function findNextMatch(
+  matches: Array<{ start: number; end: number }>,
+  start: number,
+): { start: number; end: number } | undefined {
+  return matches.find((match) => match.start >= start);
+}
+
+function findPrevMatch(
+  matches: Array<{ start: number; end: number }>,
+  start: number,
+): { start: number; end: number } | undefined {
+  for (let index = matches.length - 1; index >= 0; index -= 1) {
+    const match = matches[index];
+    if (match && match.end <= start) return match;
+  }
+  return undefined;
+}
+
+function nextCursorId(selection: readonly SurfaceSelectionRange[]): number {
+  return selection.reduce((max, range) => Math.max(max, range.cursorId), 0) + 1;
+}
+
 function orientRange(cursor: SurfaceSelectionRange, start: number, end: number): Pick<SurfaceSelectionRange, "anchor" | "head"> {
   return cursor.anchor <= cursor.head
     ? { anchor: start, head: end }
@@ -309,6 +537,10 @@ function promptTitle(kind: InputPromptKind): string {
   switch (kind) {
     case "selectRegex":
       return "SELECT";
+    case "searchForward":
+      return "/";
+    case "searchBackward":
+      return "?";
   }
 }
 
@@ -316,9 +548,27 @@ function promptPlaceholder(kind: InputPromptKind): string {
   switch (kind) {
     case "selectRegex":
       return "Regular expression";
+    case "searchForward":
+    case "searchBackward":
+      return "Search";
   }
 }
 
 function isInputPromptKind(value: unknown): value is InputPromptKind {
-  return value === "selectRegex";
+  return value === "selectRegex" || value === "searchForward" || value === "searchBackward";
+}
+
+function isSearchPromptKind(kind: InputPromptKind): kind is "searchForward" | "searchBackward" {
+  return kind === "searchForward" || kind === "searchBackward";
+}
+
+function searchDirectionForKind(kind: InputPromptKind): SearchDirection | undefined {
+  switch (kind) {
+    case "searchForward":
+      return "forward";
+    case "searchBackward":
+      return "backward";
+    case "selectRegex":
+      return undefined;
+  }
 }

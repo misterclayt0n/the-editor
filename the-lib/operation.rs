@@ -258,6 +258,11 @@ pub fn execute_operation(
         movement::goto_first_non_whitespace(text, selection, MotionMode::Move),
       )))
     },
+    "extend_to_first_nonwhitespace" => {
+      Ok(OperationOutput::atom(OperationAtom::Selection(
+        movement::goto_first_non_whitespace(text, selection, MotionMode::Extend),
+      )))
+    },
     "goto_document_start" | "goto_file_start" => {
       Ok(OperationOutput::atom(OperationAtom::Selection(
         movement::goto_document_start(text, selection, MotionMode::Move),

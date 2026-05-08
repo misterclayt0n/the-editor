@@ -2,20 +2,26 @@ import { describe, expect, it } from "vitest";
 import { commandId, createEditorHost, createRuntimeClient } from "../../editor/src/index.js";
 import { handleWorkbenchKeyInput } from "../../editor/src/workbench.js";
 import { defaultEditing } from "../src/editing.js";
+import { defaultKeymaps } from "../src/keymaps.js";
 import { defaultScratch } from "../src/scratch.js";
 import { getDefaultState } from "../src/state.js";
 import { defaultWorkbench } from "../src/workbench.js";
 
-async function createTestEditor(text: string) {
+async function createTestEditor(text: string, options?: { keymaps?: boolean }) {
   const editor = createEditorHost({ runtime: createRuntimeClient() });
   await defaultScratch()(editor);
   await defaultEditing()(editor);
+  if (options?.keymaps) await defaultKeymaps()(editor);
   await defaultWorkbench()(editor);
   await editor.commands.dispatch({
     id: commandId("scratch.create"),
     args: { text },
   });
   return editor;
+}
+
+function normalizeRange({ anchor, head }: { anchor: number; head: number }) {
+  return { from: Math.min(anchor, head), to: Math.max(anchor, head) };
 }
 
 describe("default editing commands", () => {
@@ -279,5 +285,40 @@ describe("default editing commands", () => {
       surfaceId: getDefaultState(editorTill).activeSurfaceId!,
     });
     expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 15, head: 1 }]);
+  });
+
+  it("extends goto-line subcommands in select mode", async () => {
+    const glEditor = await createTestEditor("  alpha beta\n  gamma", { keymaps: true });
+    await glEditor.commands.dispatch({ id: commandId("move_char_right"), args: { count: 4 } });
+    await glEditor.commands.dispatch({ id: commandId("select_mode") });
+    await handleWorkbenchKeyInput(glEditor, { key: "g", text: "g" });
+    await handleWorkbenchKeyInput(glEditor, { key: "l", text: "l" });
+
+    let state = await glEditor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(glEditor).activeSurfaceId!,
+    });
+    expect(state.selection.map(normalizeRange)).toEqual([{ from: 4, to: 13 }]);
+
+    const ghEditor = await createTestEditor("  alpha beta\n  gamma", { keymaps: true });
+    await ghEditor.commands.dispatch({ id: commandId("move_char_right"), args: { count: 4 } });
+    await ghEditor.commands.dispatch({ id: commandId("select_mode") });
+    await handleWorkbenchKeyInput(ghEditor, { key: "g", text: "g" });
+    await handleWorkbenchKeyInput(ghEditor, { key: "h", text: "h" });
+
+    state = await ghEditor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(ghEditor).activeSurfaceId!,
+    });
+    expect(state.selection.map(normalizeRange)).toEqual([{ from: 0, to: 5 }]);
+
+    const gsEditor = await createTestEditor("  alpha beta\n  gamma", { keymaps: true });
+    await gsEditor.commands.dispatch({ id: commandId("move_char_right"), args: { count: 4 } });
+    await gsEditor.commands.dispatch({ id: commandId("select_mode") });
+    await handleWorkbenchKeyInput(gsEditor, { key: "g", text: "g" });
+    await handleWorkbenchKeyInput(gsEditor, { key: "s", text: "s" });
+
+    state = await gsEditor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(gsEditor).activeSurfaceId!,
+    });
+    expect(state.selection.map(normalizeRange)).toEqual([{ from: 2, to: 5 }]);
   });
 });

@@ -1,6 +1,7 @@
 import type { KeyInput } from "@the-editor/editor";
 import { defaultCommandPalette } from "./commandPalette.js";
 import { defaultEditing } from "./editing.js";
+import { defaultInputPrompt } from "./inputPrompt.js";
 import { defaultKeymaps } from "./keymaps.js";
 import interactionModule from "./interaction.js";
 import { defaultReload } from "./reload.js";
@@ -11,6 +12,7 @@ import { getDefaultState, handleKeyInput, refreshActiveSurface, setEditorMode, t
 export {
   defaultCommandPalette,
   defaultEditing,
+  defaultInputPrompt,
   defaultKeymaps,
   defaultReload,
   defaultScratch,

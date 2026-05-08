@@ -122,6 +122,7 @@ function App() {
       <div className="workbenchOverlayRoot">
         {overlayModal}
         {overlayFloating}
+        {uiRuntime.renderRole("inputPrompt")}
         {uiRuntime.renderRole("commandPalette")}
       </div>
     </main>

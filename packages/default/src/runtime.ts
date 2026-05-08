@@ -1,6 +1,7 @@
 import type { EditorModule } from "@the-editor/editor";
 import { defaultCommandPalette } from "./commandPalette.js";
 import { defaultEditing } from "./editing.js";
+import { defaultInputPrompt } from "./inputPrompt.js";
 import { defaultReload } from "./reload.js";
 import { defaultScratch } from "./scratch.js";
 import { defaultWorkbench } from "./workbench.js";
@@ -11,6 +12,7 @@ const runtimeModule: EditorModule = async (editor) => {
   await defaultEditing()(editor);
   await defaultReload()(editor);
   await defaultCommandPalette()(editor);
+  await defaultInputPrompt()(editor);
   await defaultWorkbench()(editor);
   await defaultWorkbenchControls()(editor);
 };

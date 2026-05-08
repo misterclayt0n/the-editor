@@ -426,6 +426,20 @@ export function defaultEditing(): EditorModule {
         await copySelectionOnLine(editor, "backward");
       },
     });
+    editor.commands.register({
+      id: commandId("select_regex"),
+      title: "Select Regex",
+      async run() {
+        await editor.commands.dispatch({ id: commandId("input_prompt.open"), args: { kind: "selectRegex" } });
+      },
+    });
+    editor.commands.register({
+      id: commandId("split_selection_on_newline"),
+      title: "Split Selection On Newline",
+      async run() {
+        await splitSelectionOnNewline(editor);
+      },
+    });
 
     editor.commands.register({
       id: commandId("delete_selection"),
@@ -791,6 +805,54 @@ async function copySelectionOnLine(
   await applyEdit(editor, { selection });
 }
 
+async function splitSelectionOnNewline(editor: EditorHost): Promise<void> {
+  const state = await readActiveSurfaceState(editor);
+  const chars = Array.from(state.text);
+  const selection: SurfaceSelectionRange[] = [];
+  let nextCursorId = state.selection.reduce((max, range) => Math.max(max, range.cursorId), 0) + 1;
+
+  for (const range of state.selection) {
+    if (range.anchor === range.head) {
+      selection.push({ ...range });
+      continue;
+    }
+
+    const from = Math.min(range.anchor, range.head);
+    const to = Math.max(range.anchor, range.head);
+    const startIndex = selection.length;
+    let assigned = false;
+    let start = from;
+
+    for (let index = from; index < to; index += 1) {
+      const lineEndingLength = lineEndingLengthAt(chars, index);
+      if (!lineEndingLength) continue;
+
+      const piece = orientSelectionRange(range, start, index);
+      const cursorId = !assigned && rangeContainsInclusive(piece, range.head)
+        ? (assigned = true, range.cursorId)
+        : nextCursorId++;
+      selection.push({ cursorId, ...piece });
+
+      start = index + lineEndingLength;
+      if (lineEndingLength === 2) index += 1;
+    }
+
+    if (start < to) {
+      const piece = orientSelectionRange(range, start, to);
+      const cursorId = !assigned && rangeContainsInclusive(piece, range.head)
+        ? (assigned = true, range.cursorId)
+        : nextCursorId++;
+      selection.push({ cursorId, ...piece });
+    }
+
+    if (selection.length > startIndex && !assigned) {
+      selection[startIndex] = { ...selection[startIndex]!, cursorId: range.cursorId };
+    }
+  }
+
+  await applyEdit(editor, { selection });
+}
+
 async function replaceSelectionWithStr(editor: EditorHost, replacement: string): Promise<void> {
   const state = await readActiveSurfaceState(editor);
   const boundaries = graphemeBoundaries(state.text);
@@ -931,6 +993,32 @@ function selectionIsLinewise(state: SurfaceState): boolean {
       && lineStarts.has(to)
       && chars.slice(from, to).includes("\n");
   });
+}
+
+function orientSelectionRange(
+  range: SurfaceSelectionRange,
+  start: number,
+  end: number,
+): Pick<SurfaceSelectionRange, "anchor" | "head"> {
+  return range.anchor <= range.head
+    ? { anchor: start, head: end }
+    : { anchor: end, head: start };
+}
+
+function rangeContainsInclusive(
+  range: Pick<SurfaceSelectionRange, "anchor" | "head">,
+  pos: number,
+): boolean {
+  const from = Math.min(range.anchor, range.head);
+  const to = Math.max(range.anchor, range.head);
+  return from <= pos && pos <= to;
+}
+
+function lineEndingLengthAt(chars: readonly string[], index: number): number {
+  const ch = chars[index];
+  if (ch === "\r" && chars[index + 1] === "\n") return 2;
+  if (ch === "\n" || ch === "\r") return 1;
+  return 0;
 }
 
 type LineInfo = {

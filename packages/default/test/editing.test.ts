@@ -65,6 +65,22 @@ describe("default editing commands", () => {
     ]);
   });
 
+  it("splits selections on newline", async () => {
+    const editor = await createTestEditor("alpha\nbeta\ngamma");
+    await editor.commands.dispatch({ id: commandId("select_all") });
+
+    await editor.commands.dispatch({ id: commandId("split_selection_on_newline") });
+
+    const state = await editor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(editor).activeSurfaceId!,
+    });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([
+      { anchor: 0, head: 5 },
+      { anchor: 6, head: 10 },
+      { anchor: 11, head: 16 },
+    ]);
+  });
+
   it("matches brackets in normal and select mode", async () => {
     const editor = await createTestEditor("(ab)");
 

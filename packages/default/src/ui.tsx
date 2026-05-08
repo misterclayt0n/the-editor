@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef } from "react";
 import type { DiagnosticEntry } from "@the-editor/editor";
 import type { EditorUiModule, WorkbenchSnapshot } from "@the-editor/editor/ui";
 import "./commandPalette.css";
+import "./inputPrompt.css";
 import "./workbenchUi.css";
 
 interface CommandPaletteItemView {
@@ -16,6 +17,14 @@ interface CommandPaletteViewState {
   selectedIndex: number;
   placeholder?: string;
   items: CommandPaletteItemView[];
+}
+
+interface InputPromptViewState {
+  visible: boolean;
+  title?: string;
+  query: string;
+  placeholder?: string;
+  error?: string;
 }
 
 interface StatuslineViewState {
@@ -35,6 +44,15 @@ const uiModule: EditorUiModule = (host) => {
     render({ state, commands }) {
       if (!state?.visible) return null;
       return <CommandPaletteOverlay state={state} dispatch={commands.dispatch} />;
+    },
+  });
+
+  host.roles.register<InputPromptViewState>({
+    role: "inputPrompt",
+    implementationId: "default.inputPrompt",
+    render({ state, commands }) {
+      if (!state?.visible) return null;
+      return <InputPromptOverlay state={state} dispatch={commands.dispatch} />;
     },
   });
 
@@ -171,19 +189,78 @@ function scrollActivePaletteItemIntoView(container: HTMLDivElement | null): void
   const active = container.querySelector<HTMLElement>('.commandPaletteItem[data-active="true"]');
   if (!active) return;
 
-  const margin = 8;
-  const itemTop = active.offsetTop - margin;
-  const itemBottom = active.offsetTop + active.offsetHeight + margin;
-  const viewportTop = container.scrollTop;
-  const viewportBottom = viewportTop + container.clientHeight;
+  const activeRect = active.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
 
-  if (itemTop < viewportTop) {
-    container.scrollTop = itemTop;
+  if (activeRect.top < containerRect.top) {
+    container.scrollTop += activeRect.top - containerRect.top;
     return;
   }
-  if (itemBottom > viewportBottom) {
-    container.scrollTop = itemBottom - container.clientHeight;
+  if (activeRect.bottom > containerRect.bottom) {
+    container.scrollTop += activeRect.bottom - containerRect.bottom;
   }
+}
+
+function InputPromptOverlay({
+  state,
+  dispatch,
+}: {
+  state: InputPromptViewState;
+  dispatch: (dispatch: { id: string; args?: unknown }) => Promise<unknown>;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.focus();
+    const end = input.value.length;
+    input.setSelectionRange(end, end);
+  }, [state.visible]);
+
+  return (
+    <section className="inputPromptOverlay">
+      <div className="inputPromptShell">
+        <div className="inputPromptBar" data-error={state.error ? "true" : undefined}>
+          <CommandPaletteSearchIcon />
+          <input
+            ref={inputRef}
+            className="inputPromptInput"
+            placeholder={state.placeholder || "Type input"}
+            spellCheck={false}
+            value={state.query}
+            onChange={(event) => {
+              void dispatch({ id: "input_prompt.setQuery", args: { query: event.target.value } });
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void dispatch({ id: "input_prompt.accept" });
+                return;
+              }
+              if (event.key !== "Escape") return;
+              event.preventDefault();
+              void dispatch({ id: "input_prompt.close" });
+            }}
+          />
+          <div className="inputPromptActions">
+            <span className="inputPromptTitle">{state.title ?? "INPUT"}</span>
+            <button
+              type="button"
+              className="inputPromptClose"
+              aria-label="Close input prompt"
+              onClick={() => {
+                void dispatch({ id: "input_prompt.close" });
+              }}
+            >
+              ×
+            </button>
+          </div>
+        </div>
+        {state.error ? <div className="inputPromptError">{state.error}</div> : null}
+      </div>
+    </section>
+  );
 }
 
 function Statusline({ state }: { state: StatuslineViewState | undefined }) {

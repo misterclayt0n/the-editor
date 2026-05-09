@@ -123,6 +123,7 @@ async function postSessionState() {
     interaction: editor.interaction.snapshot(),
     theme: state.theme ?? editor.themes.snapshot(),
     syntaxLegend: state.syntaxLegend ?? {},
+    selectionPickerActive: state.selectionPickerActive ?? false,
   };
   parentPort?.postMessage(payload);
   return payload;

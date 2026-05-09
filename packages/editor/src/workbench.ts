@@ -41,6 +41,7 @@ export interface WorkbenchSessionState {
   focus?: FocusTarget;
   theme?: ThemeSnapshot;
   syntaxLegend?: Record<number, string>;
+  selectionPickerActive?: boolean;
 }
 
 export class WorkbenchController {

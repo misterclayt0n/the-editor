@@ -14,6 +14,7 @@ function App() {
   const [decorations, setDecorations] = useState<BufferDecoration[]>([]);
   const [theme, setTheme] = useState<ThemeSnapshot | undefined>();
   const [syntaxLegend, setSyntaxLegend] = useState<Record<number, string>>({});
+  const [selectionPickerActive, setSelectionPickerActive] = useState(false);
   const [, setUiRevision] = useState(0);
 
   useEffect(() => uiRuntime.subscribe(() => {
@@ -40,6 +41,7 @@ function App() {
         };
         setTheme(snapshot.theme);
         setSyntaxLegend(snapshot.syntaxLegend ?? {});
+        setSelectionPickerActive(Boolean(event.selectionPickerActive));
         void uiRuntime.update(snapshot).then(() => {
           setUiRevision((revision) => revision + 1);
         }).catch((error) => {
@@ -94,8 +96,8 @@ function App() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !frame) return;
-    paintTextSurface(canvas, frame, decorations, theme, syntaxLegend);
-  }, [frame, decorations, theme, syntaxLegend]);
+    paintTextSurface(canvas, frame, decorations, theme, syntaxLegend, selectionPickerActive);
+  }, [frame, decorations, theme, syntaxLegend, selectionPickerActive]);
 
   const leftSidebar = uiRuntime.renderToolRoot("leftSidebar");
   const rightSidebar = uiRuntime.renderToolRoot("rightSidebar");

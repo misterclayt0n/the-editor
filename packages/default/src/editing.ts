@@ -1032,7 +1032,7 @@ async function openSelectionPicker(editor: EditorHost, mode: SelectionPickerMode
   if (mode === "remove" && state.selection.length <= 1) return;
 
   const candidates = state.selection.map((range) => range.cursorId);
-  const index = Math.max(0, candidates.indexOf(state.activeCursorId ?? candidates[0]!));
+  const index = 0;
   editor.setStateSlot(selectionPickerSlot, {
     mode,
     candidates,

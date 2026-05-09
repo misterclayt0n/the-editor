@@ -13,7 +13,7 @@ export declare class NativeRuntimeSession {
   readSurfaceLineEnding(surfaceId: number): string
   readSurfaceSelection(surfaceId: number): Array<JsSurfaceSelectionRange>
   readSurfaceActiveCursor(surfaceId: number): number | null
-  setSurfaceActiveCursor(surfaceId: number, cursorId?: number | null): void
+  setSurfaceActiveCursor(surfaceId: number, cursorId?: number | undefined | null): void
   applySurfaceEdit(surfaceId: number, edit: JsSurfaceEdit): void
   commitSurfaceUndoCheckpoint(surfaceId: number): void
   undoSurface(surfaceId: number, count: number): void

@@ -133,7 +133,9 @@ export function defaultPicker(): EditorModule {
         const active = activePicker(editor);
         if (!active?.items.length) return;
         active.selectedIndex = clampIndex(active.selectedIndex + args.delta, active.items.length);
-        await refreshPickerPreview(active);
+        active.preview = null;
+        editor.workbench.invalidate("roles");
+        void refreshPickerPreview(editor, active);
       },
     });
 
@@ -145,7 +147,9 @@ export function defaultPicker(): EditorModule {
         const active = activePicker(editor);
         if (!active?.items.length) return;
         active.selectedIndex = clampIndex(args.index, active.items.length);
-        await refreshPickerPreview(active);
+        active.preview = null;
+        editor.workbench.invalidate("roles");
+        void refreshPickerPreview(editor, active);
       },
     });
 
@@ -320,23 +324,32 @@ async function refreshPicker(editor: Parameters<EditorModule>[0], active: Active
   active.status = page.status;
   active.emptyText = page.emptyText;
   active.selectedIndex = clampIndex(active.selectedIndex, active.items.length);
+  active.preview = null;
   if (active.refreshTimer) clearTimeout(active.refreshTimer);
   active.refreshTimer = page.refreshAfterMs && page.refreshAfterMs > 0
     ? setTimeout(() => {
         void refreshPicker(editor, active);
       }, page.refreshAfterMs)
     : undefined;
-  await refreshPickerPreview(active, requestVersion);
+  editor.workbench.invalidate("roles");
+  void refreshPickerPreview(editor, active, requestVersion);
 }
 
-async function refreshPickerPreview(active: ActivePickerState, requestVersion = active.requestVersion): Promise<void> {
+async function refreshPickerPreview(
+  editor: Parameters<EditorModule>[0],
+  active: ActivePickerState,
+  requestVersion = active.requestVersion,
+): Promise<void> {
   const item = active.items[active.selectedIndex];
   if (!item || !active.session.preview) {
     active.preview = null;
+    editor.workbench.invalidate("roles");
     return;
   }
-  active.preview = await active.session.preview(item);
-  if (requestVersion !== active.requestVersion) return;
+  const preview = await active.session.preview(item);
+  if (!isCurrentPicker(editor, active, requestVersion)) return;
+  active.preview = preview;
+  editor.workbench.invalidate("roles");
 }
 
 function isCurrentPicker(
@@ -381,7 +394,11 @@ function filePickerPath(item: PickerItem): string | undefined {
 
 function resolveFilePickerRoot(editor: Parameters<EditorModule>[0]): string {
   const activePath = getDefaultState(editor).activePath;
-  if (!activePath) return process.cwd();
+  if (!activePath) {
+    const cwd = resolve(process.cwd());
+    const start = existingDirectory(cwd) ?? cwd;
+    return findProjectRoot(start) ?? start;
+  }
   const absolute = resolve(activePath);
   const start = existingDirectory(absolute) ?? dirname(absolute);
   return findProjectRoot(start) ?? start;

@@ -43,6 +43,30 @@ describe("default picker", () => {
     expect(surfaceState.viewport.wrapWidth).toBe(137);
   });
 
+  it("reopens the file picker after closing while indexing", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "the-editor-picker-reopen-"));
+    const first = join(dir, "alpha.txt");
+    const second = join(dir, "beta-file.txt");
+    await writeFile(first, "alpha\n", "utf8");
+    await writeFile(second, "beta\npreview\n", "utf8");
+
+    const editor = await createPickerEditor();
+    await editor.commands.dispatch({ id: commandId("file.open"), args: { path: first } });
+    await editor.commands.dispatch({ id: commandId("file_picker") });
+    await editor.commands.dispatch({ id: commandId("picker.close") });
+    await editor.commands.dispatch({ id: commandId("file_picker") });
+
+    await waitFor(async () => {
+      await editor.commands.dispatch({ id: commandId("picker.setQuery"), args: { query: "beta" } });
+      const snapshot = pickerSnapshot(editor);
+      return Boolean(snapshot?.visible && snapshot.items.some((item) => item.detail?.includes("beta-file.txt")));
+    });
+
+    const snapshot = pickerSnapshot(editor)!;
+    expect(snapshot.visible).toBe(true);
+    expect(snapshot.items.some((item) => item.detail?.includes("beta-file.txt"))).toBe(true);
+  }, 15_000);
+
   it("opens the file picker and opens a selected file", async () => {
     const dir = await mkdtemp(join(tmpdir(), "the-editor-picker-"));
     const first = join(dir, "alpha.txt");

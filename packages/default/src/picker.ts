@@ -40,6 +40,7 @@ interface ActivePickerState {
   preview?: PickerPreview | null;
   requestVersion: number;
   refreshTimer?: ReturnType<typeof setTimeout>;
+  previewTimer?: ReturnType<typeof setTimeout>;
   session: PickerSession;
 }
 
@@ -135,7 +136,7 @@ export function defaultPicker(): EditorModule {
         active.selectedIndex = clampIndex(active.selectedIndex + args.delta, active.items.length);
         active.preview = null;
         editor.workbench.invalidate("roles");
-        void refreshPickerPreview(editor, active);
+        schedulePickerPreview(editor, active);
       },
     });
 
@@ -149,7 +150,7 @@ export function defaultPicker(): EditorModule {
         active.selectedIndex = clampIndex(args.index, active.items.length);
         active.preview = null;
         editor.workbench.invalidate("roles");
-        void refreshPickerPreview(editor, active);
+        schedulePickerPreview(editor, active);
       },
     });
 
@@ -164,6 +165,7 @@ export function defaultPicker(): EditorModule {
         pickerState(editor).active = undefined;
         await active.session.accept(item);
         if (active.refreshTimer) clearTimeout(active.refreshTimer);
+        if (active.previewTimer) clearTimeout(active.previewTimer);
         active.session.dispose?.();
       },
     });
@@ -312,6 +314,7 @@ function disposePicker(editor: Parameters<EditorModule>[0], restoreFocus: boolea
   const active = pickerState(editor).active;
   pickerState(editor).active = undefined;
   if (active?.refreshTimer) clearTimeout(active.refreshTimer);
+  if (active?.previewTimer) clearTimeout(active.previewTimer);
   active?.session.dispose?.();
   if (restoreFocus) editor.focus.restore();
 }
@@ -326,13 +329,26 @@ async function refreshPicker(editor: Parameters<EditorModule>[0], active: Active
   active.selectedIndex = clampIndex(active.selectedIndex, active.items.length);
   active.preview = null;
   if (active.refreshTimer) clearTimeout(active.refreshTimer);
+  if (active.previewTimer) clearTimeout(active.previewTimer);
   active.refreshTimer = page.refreshAfterMs && page.refreshAfterMs > 0
     ? setTimeout(() => {
         void refreshPicker(editor, active);
       }, page.refreshAfterMs)
     : undefined;
   editor.workbench.invalidate("roles");
-  void refreshPickerPreview(editor, active, requestVersion);
+  schedulePickerPreview(editor, active, requestVersion);
+}
+
+function schedulePickerPreview(
+  editor: Parameters<EditorModule>[0],
+  active: ActivePickerState,
+  requestVersion = active.requestVersion,
+): void {
+  if (active.previewTimer) clearTimeout(active.previewTimer);
+  active.previewTimer = setTimeout(() => {
+    active.previewTimer = undefined;
+    void refreshPickerPreview(editor, active, requestVersion);
+  }, 75);
 }
 
 async function refreshPickerPreview(

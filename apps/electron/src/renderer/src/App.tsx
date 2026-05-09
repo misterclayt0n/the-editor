@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Component, useEffect, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import type { RenderFrame } from "@the-editor/contracts/runtime";
 import type { BufferDecoration, ThemeSnapshot } from "@the-editor/editor";
@@ -122,14 +122,37 @@ function App() {
       </section>
 
       <div className="workbenchOverlayRoot">
-        {overlayModal}
-        {overlayFloating}
-        {uiRuntime.renderRole("picker")}
-        {uiRuntime.renderRole("inputPrompt")}
-        {uiRuntime.renderRole("commandPalette")}
+        <UiErrorBoundary name="overlayModal">{overlayModal}</UiErrorBoundary>
+        <UiErrorBoundary name="overlayFloating">{overlayFloating}</UiErrorBoundary>
+        <UiErrorBoundary name="picker">{uiRuntime.renderRole("picker")}</UiErrorBoundary>
+        <UiErrorBoundary name="inputPrompt">{uiRuntime.renderRole("inputPrompt")}</UiErrorBoundary>
+        <UiErrorBoundary name="commandPalette">{uiRuntime.renderRole("commandPalette")}</UiErrorBoundary>
       </div>
     </main>
   );
+}
+
+class UiErrorBoundary extends Component<{ name: string; children: ReactNode }, { error?: Error }> {
+  state: { error?: Error } = {};
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error) {
+    console.error(`ui render failed for ${this.props.name}`, error);
+  }
+
+  componentDidUpdate(prevProps: Readonly<{ name: string; children: ReactNode }>) {
+    if (this.state.error && prevProps.children !== this.props.children) {
+      this.setState({ error: undefined });
+    }
+  }
+
+  render() {
+    if (this.state.error) return null;
+    return this.props.children;
+  }
 }
 
 function toKeyInput(event: KeyboardEvent): { key: string; text?: string } | undefined {

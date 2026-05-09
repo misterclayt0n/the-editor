@@ -347,10 +347,6 @@ function PickerOverlay({
                       type="button"
                       className="pickerItem"
                       data-active={isActive ? "true" : undefined}
-                      onMouseMove={() => {
-                        if (isActive) return;
-                        void dispatch({ id: "picker.selectIndex", args: { index } });
-                      }}
                       onMouseDown={(event) => {
                         event.preventDefault();
                       }}

@@ -10,6 +10,7 @@ pub struct SelectionSpan {
   pub surface_row: usize,
   pub start_col:   usize,
   pub end_col:     usize,
+  pub active:      bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -25,6 +26,7 @@ pub struct CursorPlacement {
   pub surface_row: usize,
   pub col:         usize,
   pub semantics:   CursorSemantics,
+  pub active:      bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

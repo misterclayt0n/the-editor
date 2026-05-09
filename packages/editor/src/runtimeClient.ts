@@ -72,7 +72,12 @@ export class RuntimeNativeClient implements RuntimeApi {
       text: this.session.readSurfaceText(params.surfaceId),
       lineEnding: this.session.readSurfaceLineEnding(params.surfaceId),
       selection: this.session.readSurfaceSelection(params.surfaceId),
+      activeCursorId: this.session.readSurfaceActiveCursor(params.surfaceId),
     }),
+    setActiveCursor: async (params: { surfaceId: SurfaceId; cursorId: number | null }): Promise<OkResult> => {
+      this.session.setSurfaceActiveCursor(params.surfaceId, params.cursorId);
+      return { ok: true };
+    },
     applyEdit: async (params: { surfaceId: SurfaceId; edit: SurfaceEdit }): Promise<OkResult> => {
       this.session.applySurfaceEdit(params.surfaceId, params.edit);
       return { ok: true };
@@ -161,6 +166,8 @@ export class RuntimeNativeClient implements RuntimeApi {
         return this.surfaces.applyOperation(params as Parameters<RuntimeApi["surfaces"]["applyOperation"]>[0]);
       case "surfaces.readState":
         return this.surfaces.readState(params as Parameters<RuntimeApi["surfaces"]["readState"]>[0]);
+      case "surfaces.setActiveCursor":
+        return this.surfaces.setActiveCursor(params as Parameters<RuntimeApi["surfaces"]["setActiveCursor"]>[0]);
       case "surfaces.applyEdit":
         return this.surfaces.applyEdit(params as Parameters<RuntimeApi["surfaces"]["applyEdit"]>[0]);
       case "surfaces.commitUndoCheckpoint":

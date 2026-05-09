@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { commandId, createEditorHost, createRuntimeClient } from "../../editor/src/index.js";
 import { handleWorkbenchKeyInput } from "../../editor/src/workbench.js";
-import { defaultCommandPalette } from "../src/commandPalette.js";
 import { defaultEditing } from "../src/editing.js";
 import { defaultInputPrompt } from "../src/inputPrompt.js";
 import { defaultKeymaps } from "../src/keymaps.js";
@@ -9,12 +8,11 @@ import { defaultScratch } from "../src/scratch.js";
 import { getDefaultState } from "../src/state.js";
 import { defaultWorkbench } from "../src/workbench.js";
 
-async function createTestEditor(text: string, options?: { keymaps?: boolean; palette?: boolean; prompt?: boolean }) {
+async function createTestEditor(text: string, options?: { keymaps?: boolean; prompt?: boolean }) {
   const editor = createEditorHost({ runtime: createRuntimeClient() });
   await defaultScratch()(editor);
   await defaultEditing()(editor);
   if (options?.prompt) await defaultInputPrompt()(editor);
-  if (options?.palette) await defaultCommandPalette()(editor);
   if (options?.keymaps) await defaultKeymaps()(editor);
   await defaultWorkbench()(editor);
   await editor.commands.dispatch({
@@ -161,24 +159,24 @@ describe("default editing commands", () => {
   });
 
   it("picks a selection to keep or remove", async () => {
-    const keepEditor = await createTestEditor("alpha\nbeta\ngamma", { palette: true });
+    const keepEditor = await createTestEditor("alpha\nbeta\ngamma");
     await keepEditor.commands.dispatch({ id: commandId("select_all") });
     await keepEditor.commands.dispatch({ id: commandId("split_selection_on_newline") });
     await keepEditor.commands.dispatch({ id: commandId("keep_active_selection") });
-    await keepEditor.commands.dispatch({ id: commandId("command_palette.selectIndex"), args: { index: 1 } });
-    await keepEditor.commands.dispatch({ id: commandId("command_palette.accept") });
+    await handleWorkbenchKeyInput(keepEditor, { key: "down" });
+    await handleWorkbenchKeyInput(keepEditor, { key: "ret" });
 
     let state = await keepEditor.runtime.surfaces.readState({
       surfaceId: getDefaultState(keepEditor).activeSurfaceId!,
     });
     expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 6, head: 10 }]);
 
-    const removeEditor = await createTestEditor("alpha\nbeta\ngamma", { palette: true });
+    const removeEditor = await createTestEditor("alpha\nbeta\ngamma");
     await removeEditor.commands.dispatch({ id: commandId("select_all") });
     await removeEditor.commands.dispatch({ id: commandId("split_selection_on_newline") });
     await removeEditor.commands.dispatch({ id: commandId("remove_active_selection") });
-    await removeEditor.commands.dispatch({ id: commandId("command_palette.selectIndex"), args: { index: 1 } });
-    await removeEditor.commands.dispatch({ id: commandId("command_palette.accept") });
+    await handleWorkbenchKeyInput(removeEditor, { key: "down" });
+    await handleWorkbenchKeyInput(removeEditor, { key: "ret" });
 
     state = await removeEditor.runtime.surfaces.readState({
       surfaceId: getDefaultState(removeEditor).activeSurfaceId!,

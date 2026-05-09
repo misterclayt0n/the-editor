@@ -125,6 +125,7 @@ impl CellGridRenderSurface {
     &mut self,
     text: RopeSlice<'_>,
     text_revision: u64,
+    active_cursor: Option<crate::selection::CursorId>,
     viewport: Viewport,
     layout_index: &mut LayoutIndex,
   ) -> RenderFrame {
@@ -134,11 +135,12 @@ impl CellGridRenderSurface {
     RenderFrame {
       surface_id: self.id,
       rows:       layout.build_rows(viewport),
-      selections: LayerProjector::project_selections(&layout, self.selection.as_ref(), viewport),
+      selections: LayerProjector::project_selections(&layout, self.selection.as_ref(), active_cursor, viewport),
       cursors:    LayerProjector::project_cursors(
         text,
         &layout,
         self.selection.as_ref(),
+        active_cursor,
         viewport,
         self.cursor_semantics,
       ),

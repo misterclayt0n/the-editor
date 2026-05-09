@@ -567,6 +567,7 @@ impl Surface {
     self.render.render_frame_with_index(
       document.text().slice(..),
       document.revision(),
+      self.active_cursor,
       self.viewport,
       &mut self.layout_index,
     )

@@ -12,7 +12,10 @@ interface TextSurfaceTheme {
   foreground: string;
   cursorBackground: string;
   cursorForeground: string;
+  cursorPrimaryBackground: string;
+  cursorPrimaryForeground: string;
   selectionBackground: string;
+  selectionPrimaryBackground: string;
   syntaxColor(kind: number): string;
 }
 
@@ -132,8 +135,8 @@ function measureCellWidth(ctx: CanvasRenderingContext2D): number {
 
 function paintSelections(ctx: CanvasRenderingContext2D, frame: RenderFrame, metrics: RendererMetrics, theme: TextSurfaceTheme): void {
   const spans = frame.selections;
-  ctx.fillStyle = theme.selectionBackground;
   for (const span of spans) {
+    ctx.fillStyle = span.active ? theme.selectionPrimaryBackground : theme.selectionBackground;
     const x = xForCol(span.startCol, metrics);
     const y = yForRow(span.surfaceRow, metrics);
     const width = Math.max(metrics.cellWidth, (span.endCol - span.startCol) * metrics.cellWidth);
@@ -235,7 +238,7 @@ function paintCursors(
 
 function paintBarCursor(ctx: CanvasRenderingContext2D, cursor: CursorPlacement, metrics: RendererMetrics, theme: TextSurfaceTheme): void {
   const width = 2;
-  ctx.fillStyle = theme.cursorBackground;
+  ctx.fillStyle = cursor.active ? theme.cursorPrimaryBackground : theme.cursorBackground;
   ctx.fillRect(Math.round(xForCol(cursor.col, metrics)), yForRow(cursor.surfaceRow, metrics), width, metrics.rowHeight);
 }
 
@@ -251,10 +254,10 @@ function paintBlockCursor(
   const x = xForCol(cursor.col, metrics);
   const y = yForRow(cursor.surfaceRow, metrics);
 
-  ctx.fillStyle = theme.cursorBackground;
+  ctx.fillStyle = cursor.active ? theme.cursorPrimaryBackground : theme.cursorBackground;
   ctx.fillRect(x, y, metrics.cellWidth, metrics.rowHeight);
   if (cell !== "\t") {
-    ctx.fillStyle = theme.cursorForeground;
+    ctx.fillStyle = cursor.active ? theme.cursorPrimaryForeground : theme.cursorForeground;
     ctx.fillText(cell, x, y + metrics.baselineOffset);
   }
 }
@@ -331,16 +334,31 @@ function resolveTextSurfaceTheme(
   const background = resolveThemeStyle(activeTheme ?? { styles: {} }, "ui.background")?.bg ?? "#101010";
   const foreground = resolveThemeStyle(activeTheme ?? { styles: {} }, "ui.text")?.fg ?? "#d8d8d8";
   const selectionBackground = resolveThemeStyle(activeTheme ?? { styles: {} }, "ui.selection")?.bg ?? "#264f78";
-  const cursorStyle = resolveThemeStyle(activeTheme ?? { styles: {} }, "ui.cursor.insert", ["ui.cursor.active.insert", "ui.cursor"]);
+  const selectionPrimaryBackground = resolveThemeStyle(
+    activeTheme ?? { styles: {} },
+    "ui.selection.primary",
+    ["ui.selection.active", "ui.selection.prime", "ui.selection"],
+  )?.bg ?? selectionBackground;
+  const cursorStyle = resolveThemeStyle(activeTheme ?? { styles: {} }, "ui.cursor", ["ui.cursor.insert", "ui.cursor.normal"]);
+  const cursorPrimaryStyle = resolveThemeStyle(
+    activeTheme ?? { styles: {} },
+    "ui.cursor.primary",
+    ["ui.cursor.active.insert", "ui.cursor.primary.insert", "ui.cursor.insert", "ui.cursor"],
+  );
   const cursorBackground = cursorStyle?.bg ?? cursorStyle?.fg ?? "#e6e6e6";
   const cursorForeground = cursorStyle?.fg ?? background;
+  const cursorPrimaryBackground = cursorPrimaryStyle?.bg ?? cursorPrimaryStyle?.fg ?? cursorBackground;
+  const cursorPrimaryForeground = cursorPrimaryStyle?.fg ?? cursorForeground;
 
   return {
     background,
     foreground,
     selectionBackground,
+    selectionPrimaryBackground,
     cursorBackground,
     cursorForeground,
+    cursorPrimaryBackground,
+    cursorPrimaryForeground,
     syntaxColor(kind) {
       const scope = syntaxLegend[kind] ?? fallbackSyntaxScopes[kind];
       if (!scope) return foreground;

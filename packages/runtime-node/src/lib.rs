@@ -221,6 +221,26 @@ impl NativeRuntimeSession {
   }
 
   #[napi]
+  pub fn read_surface_active_cursor(&self, surface_id: u32) -> Result<Option<u32>> {
+    let runtime = self.lock()?;
+    Ok(
+      runtime
+        .surface(surface_handle(surface_id)?)
+        .ok_or_else(|| Error::from_reason(format!("unknown surface {surface_id}")))?
+        .active_cursor()
+        .map(|cursor| cursor.get() as u32),
+    )
+  }
+
+  #[napi]
+  pub fn set_surface_active_cursor(&self, surface_id: u32, cursor_id: Option<u32>) -> Result<()> {
+    let mut runtime = self.lock()?;
+    runtime
+      .set_surface_active_cursor(surface_handle(surface_id)?, cursor_id.map(|id| id as u64))
+      .map_err(runtime_error)
+  }
+
+  #[napi]
   pub fn apply_surface_edit(&self, surface_id: u32, edit: JsSurfaceEdit) -> Result<()> {
     let mut runtime = self.lock()?;
     let surface = surface_handle(surface_id)?;

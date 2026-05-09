@@ -642,6 +642,20 @@ impl RuntimeSession {
     Ok(())
   }
 
+  pub fn set_surface_active_cursor(
+    &mut self,
+    surface: SurfaceHandle,
+    cursor_id: Option<u64>,
+  ) -> RuntimeResult<()> {
+    let entry = self
+      .surfaces
+      .get_mut(&surface)
+      .ok_or(RuntimeError::UnknownSurface(surface))?;
+    let cursor_id = cursor_id.and_then(NonZeroU64::new).map(the_lib::selection::CursorId::new);
+    entry.surface.set_active_cursor(cursor_id)?;
+    Ok(())
+  }
+
   pub fn apply_surface_edit(
     &mut self,
     surface: SurfaceHandle,

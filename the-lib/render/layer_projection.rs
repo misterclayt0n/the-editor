@@ -11,7 +11,10 @@ use super::{
   visible_layout::VisibleLayout,
 };
 use crate::{
-  selection::Selection,
+  selection::{
+    CursorId,
+    Selection,
+  },
   syntax::SyntaxHighlightRun,
 };
 
@@ -78,6 +81,7 @@ impl LayerProjector {
   pub(super) fn project_selections(
     visible_layout: &VisibleLayout,
     selection: Option<&Selection>,
+    active_cursor: Option<CursorId>,
     viewport: Viewport,
   ) -> Vec<SelectionSpan> {
     let Some(selection) = selection else {
@@ -110,6 +114,7 @@ impl LayerProjector {
         surface_row: unit.surface_row_abs - viewport.first_row,
         start_col,
         end_col,
+        active: active_cursor == Some(cursor.id),
       };
 
       if let Some(last) = spans.last_mut()
@@ -130,6 +135,7 @@ impl LayerProjector {
     text: RopeSlice<'_>,
     visible_layout: &VisibleLayout,
     selection: Option<&Selection>,
+    active_cursor: Option<CursorId>,
     viewport: Viewport,
     semantics: CursorSemantics,
   ) -> Vec<CursorPlacement> {
@@ -169,6 +175,7 @@ impl LayerProjector {
         surface_row,
         col,
         semantics,
+        active: active_cursor == Some(cursor.id),
       });
     }
 

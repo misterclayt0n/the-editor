@@ -88,6 +88,7 @@ export interface SurfaceState {
   text: string;
   lineEnding: string;
   selection: SurfaceSelectionRange[];
+  activeCursorId: number | null;
 }
 
 export interface SurfaceEdit {
@@ -110,6 +111,7 @@ export interface SelectionSpan {
   surfaceRow: number;
   startCol: number;
   endCol: number;
+  active: boolean;
 }
 
 export type CursorSemantics = "InsertionPoint" | "Cell";
@@ -119,6 +121,7 @@ export interface CursorPlacement {
   surfaceRow: number;
   col: number;
   semantics: CursorSemantics;
+  active: boolean;
 }
 
 export interface SyntaxSpan {
@@ -154,6 +157,7 @@ export interface RuntimeApi {
     setSoftWrap(params: { surfaceId: SurfaceId; softWrap: boolean }): Promise<OkResult>;
     applyOperation(params: { surfaceId: SurfaceId; operation: SurfaceOperation }): Promise<OkResult>;
     readState(params: { surfaceId: SurfaceId }): Promise<SurfaceState>;
+    setActiveCursor(params: { surfaceId: SurfaceId; cursorId: number | null }): Promise<OkResult>;
     applyEdit(params: { surfaceId: SurfaceId; edit: SurfaceEdit }): Promise<OkResult>;
     commitUndoCheckpoint(params: { surfaceId: SurfaceId }): Promise<OkResult>;
     undo(params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult>;

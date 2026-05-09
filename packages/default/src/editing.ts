@@ -8,9 +8,7 @@ import type {
 } from "@the-editor/contracts/runtime";
 import {
   commandId,
-  matchesCommandPaletteItem,
   type CommandDispatch,
-  type CommandPaletteItem,
   type EditorHost,
   type EditorModule,
   type KeyInput,
@@ -124,12 +122,14 @@ type SelectionPickerMode = "keep" | "remove";
 
 type SelectionPickerState = {
   mode: SelectionPickerMode;
+  candidates: number[];
+  index: number;
+  originalActiveCursorId: number | null;
 };
 
 const pendingInputSlot = "default.editing.pendingInput";
 const lastMotionSlot = "default.editing.lastMotion";
 const selectionPickerSlot = "default.editing.selectionPicker";
-const selectionPickerPrefix = ":cursor";
 const TAB_WIDTH = 4;
 
 const MOTION_COMMANDS = new Set<string>([
@@ -224,28 +224,13 @@ export function defaultEditing(): EditorModule {
       },
     });
 
-    editor.palette.registerProvider({
-      id: "default.selectionPicker",
-      title: "Selections",
+    editor.hooks.tap("workbench.keyInput", {
+      id: "default.editing.selectionPicker",
       priority: 110,
-      async provide(_ctx, query) {
-        const state = selectionPickerState(editor);
-        const picker = state?.mode;
-        const pickerQuery = parseSelectionPickerQuery(query);
-        if (!picker || pickerQuery === undefined) return [];
-        return selectionPickerItems(editor, picker, pickerQuery);
-      },
-    });
-
-    editor.commands.register<{ cursorId: number }, void>({
-      id: commandId("selection_picker.choose"),
-      title: "Choose Selection",
-      hidden: true,
-      async run(_ctx, args) {
-        const picker = selectionPickerState(editor)?.mode;
-        clearSelectionPicker(editor);
-        if (!picker) return;
-        await chooseSelection(editor, args.cursorId, picker);
+      async handler(input: KeyInput) {
+        const picker = selectionPickerState(editor);
+        if (!picker) return undefined;
+        return handleSelectionPickerInput(editor, picker, input);
       },
     });
 
@@ -1045,8 +1030,19 @@ async function openSelectionPicker(editor: EditorHost, mode: SelectionPickerMode
   const state = await readActiveSurfaceState(editor);
   if (!state.selection.length) return;
   if (mode === "remove" && state.selection.length <= 1) return;
-  editor.setStateSlot(selectionPickerSlot, { mode } satisfies SelectionPickerState);
-  await editor.commands.dispatch({ id: commandId("command_palette.open"), args: { initialQuery: `${selectionPickerPrefix} ` } });
+
+  const candidates = state.selection.map((range) => range.cursorId);
+  const index = Math.max(0, candidates.indexOf(state.activeCursorId ?? candidates[0]!));
+  editor.setStateSlot(selectionPickerSlot, {
+    mode,
+    candidates,
+    index,
+    originalActiveCursorId: state.activeCursorId,
+  } satisfies SelectionPickerState);
+  await editor.runtime.surfaces.setActiveCursor({
+    surfaceId: activeSurfaceId(editor),
+    cursorId: candidates[index] ?? null,
+  });
 }
 
 function selectionPickerState(editor: EditorHost): SelectionPickerState | undefined {
@@ -1057,39 +1053,56 @@ function clearSelectionPicker(editor: EditorHost): void {
   editor.deleteStateSlot(selectionPickerSlot);
 }
 
-async function selectionPickerItems(
+async function handleSelectionPickerInput(
   editor: EditorHost,
-  mode: SelectionPickerMode,
-  query: string,
-): Promise<CommandPaletteItem[]> {
-  const state = await readActiveSurfaceState(editor);
-  const chars = Array.from(state.text);
-  const lines = lineInfos(chars);
-
-  return state.selection
-    .map((range, index) => {
-      const cursor = rangeCursor(range, graphemeBoundaries(state.text), chars.length);
-      const line = lineAtChar(lines, cursor) ?? 0;
-      const lineStart = lines[line]?.start ?? 0;
-      const col = visualColumn(chars, lineStart, cursor);
-      const snippet = selectionSnippet(chars, range).trim() || selectionLineSnippet(chars, lines[line]);
-      return {
-        id: `selection:${mode}:${range.cursorId}`,
-        title: mode === "keep" ? `Keep selection ${index + 1}` : `Remove selection ${index + 1}`,
-        detail: `${line + 1}:${col + 1} · ${snippet}`,
-        group: "Selections",
-        keywords: [selectionPickerPrefix, `${selectionPickerPrefix} ${index + 1}`, String(index + 1), String(line + 1), String(col + 1), snippet],
-        command: { id: commandId("selection_picker.choose"), args: { cursorId: range.cursorId } },
-      } satisfies CommandPaletteItem;
-    })
-    .filter((item) => matchesCommandPaletteItem(query, item));
+  picker: SelectionPickerState,
+  input: KeyInput,
+): Promise<boolean> {
+  switch (input.key) {
+    case "up":
+      await moveSelectionPicker(editor, -1);
+      return true;
+    case "down":
+      await moveSelectionPicker(editor, 1);
+      return true;
+    case "ret":
+      await confirmSelectionPicker(editor);
+      return true;
+    case "esc":
+      await cancelSelectionPicker(editor);
+      return true;
+    default:
+      return false;
+  }
 }
 
-function parseSelectionPickerQuery(query: string): string | undefined {
-  const trimmed = query.trim();
-  if (trimmed === selectionPickerPrefix) return "";
-  if (trimmed.startsWith(`${selectionPickerPrefix} `)) return trimmed.slice(selectionPickerPrefix.length).trim();
-  return undefined;
+async function moveSelectionPicker(editor: EditorHost, delta: number): Promise<void> {
+  const picker = selectionPickerState(editor);
+  if (!picker?.candidates.length) return;
+  picker.index = (picker.index + delta + picker.candidates.length) % picker.candidates.length;
+  await editor.runtime.surfaces.setActiveCursor({
+    surfaceId: activeSurfaceId(editor),
+    cursorId: picker.candidates[picker.index] ?? null,
+  });
+}
+
+async function confirmSelectionPicker(editor: EditorHost): Promise<void> {
+  const picker = selectionPickerState(editor);
+  if (!picker) return;
+  clearSelectionPicker(editor);
+  const cursorId = picker.candidates[picker.index];
+  if (cursorId === undefined) return;
+  await chooseSelection(editor, cursorId, picker.mode);
+}
+
+async function cancelSelectionPicker(editor: EditorHost): Promise<void> {
+  const picker = selectionPickerState(editor);
+  if (!picker) return;
+  clearSelectionPicker(editor);
+  await editor.runtime.surfaces.setActiveCursor({
+    surfaceId: activeSurfaceId(editor),
+    cursorId: picker.originalActiveCursorId,
+  });
 }
 
 async function chooseSelection(editor: EditorHost, cursorId: number, mode: SelectionPickerMode): Promise<void> {
@@ -1099,12 +1112,16 @@ async function chooseSelection(editor: EditorHost, cursorId: number, mode: Selec
 
   if (mode === "keep") {
     await applyEdit(editor, { selection: [cloneSelectionRange(state.selection[index]!)] });
+    await editor.runtime.surfaces.setActiveCursor({ surfaceId: activeSurfaceId(editor), cursorId });
     return;
   }
 
   if (state.selection.length <= 1) return;
-  await applyEdit(editor, {
-    selection: state.selection.filter((range) => range.cursorId !== cursorId).map(cloneSelectionRange),
+  const nextSelection = state.selection.filter((range) => range.cursorId !== cursorId).map(cloneSelectionRange);
+  await applyEdit(editor, { selection: nextSelection });
+  await editor.runtime.surfaces.setActiveCursor({
+    surfaceId: activeSurfaceId(editor),
+    cursorId: nextSelection[Math.min(index, nextSelection.length - 1)]?.cursorId ?? null,
   });
 }
 
@@ -1384,17 +1401,6 @@ function visualColumn(chars: readonly string[], lineStart: number, charIdx: numb
     col += chars[index] === "\t" ? TAB_WIDTH : 1;
   }
   return col;
-}
-
-function selectionSnippet(chars: readonly string[], range: SurfaceSelectionRange): string {
-  const from = Math.min(range.anchor, range.head);
-  const to = Math.max(range.anchor, range.head);
-  return chars.slice(from, Math.min(to, from + 40)).join("").replace(/\s+/g, " ");
-}
-
-function selectionLineSnippet(chars: readonly string[], line: LineInfo | undefined): string {
-  if (!line) return "";
-  return chars.slice(line.start, Math.min(line.end, line.start + 60)).join("").trim();
 }
 
 function lineContentEndCharIndex(lines: readonly LineInfo[], chars: readonly string[], line: number): number {

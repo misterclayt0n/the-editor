@@ -1,7 +1,6 @@
 import * as React from "react";
 import * as ReactJsxRuntime from "react/jsx-runtime";
 import ts from "typescript";
-import * as editorModule from "@the-editor/editor";
 import type { PackageSnapshot, ThemeSnapshot, ToolRootTarget } from "@the-editor/editor";
 import type { DiagnosticEntry } from "@the-editor/editor";
 import * as editorThemesModule from "@the-editor/editor/themes";
@@ -258,7 +257,6 @@ class RendererSourceModuleLoader {
   private requireFrom(specifier: string, importerPath: string): unknown {
     if (specifier === "react") return React;
     if (specifier === "react/jsx-runtime") return ReactJsxRuntime;
-    if (specifier === "@the-editor/editor") return editorModule;
     if (specifier === "@the-editor/editor/ui") return editorUiModule;
     if (specifier === "@the-editor/editor/themes") return editorThemesModule;
     if (!specifier.startsWith(".") && !specifier.startsWith("/")) {

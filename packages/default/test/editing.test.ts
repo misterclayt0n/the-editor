@@ -233,18 +233,16 @@ describe("default editing commands", () => {
 
     const jumpEditor = await createTestEditor("a\nb\nc\nd");
     const jumpSurfaceId = getDefaultState(jumpEditor).activeSurfaceId!;
-    await jumpEditor.commands.dispatch({ id: commandId("save_selection") });
-    await jumpEditor.commands.dispatch({ id: commandId("move_visual_line_down") });
-    await jumpEditor.commands.dispatch({ id: commandId("save_selection") });
-    await jumpEditor.commands.dispatch({ id: commandId("move_visual_line_down") });
+    await jumpEditor.commands.dispatch({ id: commandId("move_visual_line_down"), args: { count: 2 } });
+    await jumpEditor.commands.dispatch({ id: commandId("goto_file_start") });
     await jumpEditor.commands.dispatch({ id: commandId("jump_backward") });
 
     state = await jumpEditor.runtime.surfaces.readState({ surfaceId: jumpSurfaceId });
-    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 2, head: 2 }]);
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 4, head: 4 }]);
 
     await jumpEditor.commands.dispatch({ id: commandId("jump_forward") });
     state = await jumpEditor.runtime.surfaces.readState({ surfaceId: jumpSurfaceId });
-    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 4, head: 4 }]);
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 0, head: 0 }]);
   });
 
   it("matches brackets in normal and select mode", async () => {

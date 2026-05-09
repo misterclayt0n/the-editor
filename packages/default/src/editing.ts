@@ -222,6 +222,16 @@ const CHECKPOINT_AFTER_OPERATION = new Set<string>([
   "toggle_comments",
 ]);
 
+const JUMP_SAVING_OPERATIONS = new Set<string>([
+  "goto_document_start",
+  "goto_file_start",
+  "goto_document_end",
+  "goto_last_line",
+  "extend_to_file_start",
+  "extend_to_file_end",
+  "extend_to_last_line",
+]);
+
 export function defaultEditing(): EditorModule {
   return (editor) => {
     editor.commands.register({ id: commandId("normal_mode"), title: "Normal Mode", run: () => applyMode(editor, "normal") });
@@ -1806,6 +1816,9 @@ async function applyOperation(
   operation: SurfaceOperation,
   checkpoint = true,
 ): Promise<void> {
+  if (JUMP_SAVING_OPERATIONS.has(operation.name)) {
+    await saveSelection(editor);
+  }
   await editor.runtime.surfaces.applyOperation({
     surfaceId: activeSurfaceId(editor),
     operation,

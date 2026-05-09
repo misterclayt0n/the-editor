@@ -1,8 +1,20 @@
-import type { SurfaceId, SurfaceSelectionRange } from "@the-editor/contracts/runtime";
+import { spawnSync } from "node:child_process";
+import type { SurfaceChange, SurfaceEdit, SurfaceId, SurfaceSelectionRange } from "@the-editor/contracts/runtime";
 import { commandId, roleId, roleImplementationId, type EditorModule } from "@the-editor/editor";
 import { getDefaultState } from "./state.js";
 
-type InputPromptKind = "selectRegex" | "splitSelection" | "keepSelections" | "removeSelections" | "searchForward" | "searchBackward";
+type InputPromptKind =
+  | "selectRegex"
+  | "splitSelection"
+  | "keepSelections"
+  | "removeSelections"
+  | "searchForward"
+  | "searchBackward"
+  | "shellPipe"
+  | "shellPipeTo"
+  | "shellInsertOutput"
+  | "shellAppendOutput"
+  | "shellKeepPipe";
 type SearchDirection = "forward" | "backward";
 
 export interface InputPromptRoleState {
@@ -33,7 +45,7 @@ interface StoredInputPromptState {
 const inputPromptRoleId = roleId("inputPrompt");
 const inputPromptImplementationId = roleImplementationId("default.inputPrompt");
 const inputPromptStateSlot = "default.inputPrompt.state";
-const SEARCH_REGISTER = "/";
+type ShellBehavior = "replace" | "ignore" | "insert" | "append" | "keep";
 
 export function defaultInputPrompt(): EditorModule {
   return (editor) => {
@@ -115,6 +127,12 @@ export function defaultInputPrompt(): EditorModule {
         await repeatStoredSearch(editor, "backward", true, args?.count);
       },
     });
+
+    editor.commands.register({ id: commandId("shell_pipe"), title: "Shell Pipe", async run() { await openInputPrompt(editor, "shellPipe"); } });
+    editor.commands.register({ id: commandId("shell_pipe_to"), title: "Shell Pipe To", async run() { await openInputPrompt(editor, "shellPipeTo"); } });
+    editor.commands.register({ id: commandId("shell_insert_output"), title: "Shell Insert Output", async run() { await openInputPrompt(editor, "shellInsertOutput"); } });
+    editor.commands.register({ id: commandId("shell_append_output"), title: "Shell Append Output", async run() { await openInputPrompt(editor, "shellAppendOutput"); } });
+    editor.commands.register({ id: commandId("shell_keep_pipe"), title: "Shell Keep Pipe", async run() { await openInputPrompt(editor, "shellKeepPipe"); } });
 
     editor.commands.register<{ kind: InputPromptKind }, void>({
       id: commandId("input_prompt.open"),
@@ -223,6 +241,13 @@ async function updateInputPromptPreview(
     case "searchBackward":
       await updateSearchPreview(editor, active, "backward");
       return;
+    case "shellPipe":
+    case "shellPipeTo":
+    case "shellInsertOutput":
+    case "shellAppendOutput":
+    case "shellKeepPipe":
+      active.error = undefined;
+      return;
   }
 }
 
@@ -242,6 +267,16 @@ async function finalizeInputPrompt(
     case "searchForward":
     case "searchBackward":
       return finalizeSearch(editor, active);
+    case "shellPipe":
+      return finalizeShellPrompt(editor, active, "replace");
+    case "shellPipeTo":
+      return finalizeShellPrompt(editor, active, "ignore");
+    case "shellInsertOutput":
+      return finalizeShellPrompt(editor, active, "insert");
+    case "shellAppendOutput":
+      return finalizeShellPrompt(editor, active, "append");
+    case "shellKeepPipe":
+      return finalizeShellPrompt(editor, active, "keep");
   }
 }
 
@@ -463,7 +498,7 @@ async function finalizeSearch(
   }
 
   active.error = undefined;
-  await editor.runtime.registers.write({ name: SEARCH_REGISTER, values: [active.query] });
+  await editor.runtime.registers.write({ name: activeSearchRegister(editor), values: [active.query] });
 
   const state = await editor.runtime.surfaces.readState({ surfaceId: active.surfaceId });
   const nextSelection = searchRegexSelection(
@@ -491,7 +526,7 @@ async function repeatStoredSearch(
   const surfaceId = getDefaultState(editor).activeSurfaceId;
   if (!surfaceId) return;
 
-  const { values } = await editor.runtime.registers.read({ name: SEARCH_REGISTER });
+  const { values } = await editor.runtime.registers.read({ name: activeSearchRegister(editor) });
   const query = values?.[0];
   if (!query) return;
 
@@ -507,6 +542,135 @@ async function repeatStoredSearch(
       edit: { selection: nextSelection },
     });
   }
+}
+
+async function finalizeShellPrompt(
+  editor: Parameters<EditorModule>[0],
+  active: ActiveInputPromptState,
+  behavior: ShellBehavior,
+): Promise<boolean> {
+  const command = active.query.trim();
+  if (!command) {
+    active.error = "shell command cannot be empty";
+    return false;
+  }
+
+  try {
+    await applyShellBehavior(editor, active.surfaceId, command, behavior);
+    active.error = undefined;
+    return true;
+  } catch (error) {
+    active.error = error instanceof Error ? error.message : String(error);
+    return false;
+  }
+}
+
+async function applyShellBehavior(
+  editor: Parameters<EditorModule>[0],
+  surfaceId: SurfaceId,
+  command: string,
+  behavior: ShellBehavior,
+): Promise<void> {
+  const state = await editor.runtime.surfaces.readState({ surfaceId });
+
+  if (behavior === "keep") {
+    const selection = await keepPipeSelections(state, command);
+    await editor.runtime.surfaces.applyEdit({ surfaceId, edit: { selection } });
+    return;
+  }
+
+  const chars = Array.from(state.text);
+  const pipe = behavior === "replace" || behavior === "ignore";
+  const changes: SurfaceChange[] = [];
+  const selection: SurfaceSelectionRange[] = [];
+  let sharedOutput: string | undefined;
+  let offset = 0;
+
+  for (const range of state.selection) {
+    const from = Math.min(range.anchor, range.head);
+    const to = Math.max(range.anchor, range.head);
+    const inputText = chars.slice(from, to).join("");
+    const output = pipe
+      ? trimPipeTrailingNewline(inputText, runShellCommand(command, inputText))
+      : (sharedOutput ??= runShellCommand(command));
+
+    if (behavior === "ignore") continue;
+
+    const outputLength = charCount(output);
+    const changeStart = behavior === "insert" ? from : behavior === "append" ? to : from;
+    const changeEnd = behavior === "replace" ? to : changeStart;
+    const deletedLength = changeEnd - changeStart;
+    const anchor = changeEnd + offset - deletedLength;
+
+    changes.push({ start: changeStart, end: changeEnd, text: output });
+    selection.push({ cursorId: range.cursorId, ...orientRange(range, anchor, anchor + outputLength) });
+    offset += outputLength - deletedLength;
+  }
+
+  if (behavior === "ignore") return;
+  if (!changes.length) return;
+
+  const edit: SurfaceEdit = { changes, selection };
+  await editor.runtime.surfaces.applyEdit({ surfaceId, edit });
+  await editor.runtime.surfaces.commitUndoCheckpoint({ surfaceId });
+}
+
+async function keepPipeSelections(
+  state: { text: string; selection: SurfaceSelectionRange[] },
+  command: string,
+): Promise<SurfaceSelectionRange[]> {
+  const chars = Array.from(state.text);
+  const selection = state.selection.filter((range) => {
+    const from = Math.min(range.anchor, range.head);
+    const to = Math.max(range.anchor, range.head);
+    try {
+      runShellCommand(command, chars.slice(from, to).join(""));
+      return true;
+    } catch {
+      return false;
+    }
+  }).map(cloneRange);
+
+  if (!selection.length) throw new Error("No selections remaining");
+  return selection;
+}
+
+function trimPipeTrailingNewline(inputText: string, output: string): string {
+  if (inputText.endsWith("\n") || !output.endsWith("\n")) return output;
+  const trimmed = output.slice(0, -1);
+  return trimmed.endsWith("\r") ? trimmed.slice(0, -1) : trimmed;
+}
+
+function runShellCommand(command: string, input?: string): string {
+  const [shell, ...args] = shellProgram();
+  const output = spawnSync(shell, [...args, command], {
+    input,
+    encoding: "utf8",
+    maxBuffer: 10 * 1024 * 1024,
+  });
+
+  if (output.error) throw new Error(`Failed to start shell: ${output.error.message}`);
+  if ((output.status ?? 0) !== 0) {
+    const stderr = (output.stderr ?? "").trimEnd();
+    if (stderr) throw new Error(stderr);
+    throw new Error(output.status === null ? "Shell command failed" : `Shell command failed: status ${output.status}`);
+  }
+
+  const stderr = output.stderr ?? "";
+  return stderr.length ? stderr : (output.stdout ?? "");
+}
+
+function shellProgram(): string[] {
+  if (process.platform === "win32") {
+    const shell = process.env.COMSPEC?.trim() || "cmd.exe";
+    return [shell, "/C"];
+  }
+  const shell = process.env.SHELL?.trim() || "/bin/sh";
+  return [shell, "-c"];
+}
+
+function activeSearchRegister(editor: Parameters<EditorModule>[0]): string {
+  return getDefaultState(editor).currentRegister || "/";
 }
 
 function buildSmartCaseRegex(query: string): RegExp | Error {
@@ -741,6 +905,16 @@ function promptTitle(kind: InputPromptKind): string {
       return "/";
     case "searchBackward":
       return "?";
+    case "shellPipe":
+      return "PIPE";
+    case "shellPipeTo":
+      return "PIPE TO";
+    case "shellInsertOutput":
+      return "INSERT";
+    case "shellAppendOutput":
+      return "APPEND";
+    case "shellKeepPipe":
+      return "KEEP PIPE";
   }
 }
 
@@ -754,6 +928,12 @@ function promptPlaceholder(kind: InputPromptKind): string {
     case "searchForward":
     case "searchBackward":
       return "Search";
+    case "shellPipe":
+    case "shellPipeTo":
+    case "shellInsertOutput":
+    case "shellAppendOutput":
+    case "shellKeepPipe":
+      return "Shell command";
   }
 }
 
@@ -763,7 +943,12 @@ function isInputPromptKind(value: unknown): value is InputPromptKind {
     || value === "keepSelections"
     || value === "removeSelections"
     || value === "searchForward"
-    || value === "searchBackward";
+    || value === "searchBackward"
+    || value === "shellPipe"
+    || value === "shellPipeTo"
+    || value === "shellInsertOutput"
+    || value === "shellAppendOutput"
+    || value === "shellKeepPipe";
 }
 
 function isSearchPromptKind(kind: InputPromptKind): kind is "searchForward" | "searchBackward" {
@@ -780,6 +965,11 @@ function searchDirectionForKind(kind: InputPromptKind): SearchDirection | undefi
     case "splitSelection":
     case "keepSelections":
     case "removeSelections":
+    case "shellPipe":
+    case "shellPipeTo":
+    case "shellInsertOutput":
+    case "shellAppendOutput":
+    case "shellKeepPipe":
       return undefined;
   }
 }

@@ -14,6 +14,7 @@ export interface DefaultEditorState {
   decorations: BufferDecoration[];
   roleStates: Record<string, RoleSnapshot>;
   syntaxLegend: Record<number, string>;
+  currentRegister?: string;
 }
 
 const defaultEditorStateSlot = "default.editor.state";
@@ -30,6 +31,7 @@ export function getDefaultState(editor: EditorHost): DefaultEditorState {
     decorations: [],
     roleStates: {},
     syntaxLegend: {},
+    currentRegister: undefined,
   }));
 }
 

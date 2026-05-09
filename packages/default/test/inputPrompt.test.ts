@@ -193,4 +193,42 @@ describe("input prompt", () => {
       { anchor: 11, head: 16 },
     ]);
   });
+
+  it("runs shell prompt workflows", async () => {
+    const pipeEditor = await createTestEditor("alpha");
+    await pipeEditor.commands.dispatch({ id: commandId("select_all") });
+    await pipeEditor.commands.dispatch({ id: commandId("shell_pipe") });
+    await pipeEditor.commands.dispatch({ id: commandId("input_prompt.setQuery"), args: { query: "tr a-z A-Z" } });
+    await pipeEditor.commands.dispatch({ id: commandId("input_prompt.accept") });
+
+    let state = await pipeEditor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(pipeEditor).activeSurfaceId!,
+    });
+    expect(state.text).toBe("ALPHA");
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 0, head: 5 }]);
+
+    const insertEditor = await createTestEditor("alpha");
+    await insertEditor.commands.dispatch({ id: commandId("select_all") });
+    await insertEditor.commands.dispatch({ id: commandId("shell_insert_output") });
+    await insertEditor.commands.dispatch({ id: commandId("input_prompt.setQuery"), args: { query: "printf X" } });
+    await insertEditor.commands.dispatch({ id: commandId("input_prompt.accept") });
+
+    state = await insertEditor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(insertEditor).activeSurfaceId!,
+    });
+    expect(state.text).toBe("Xalpha");
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 0, head: 1 }]);
+
+    const keepPipeEditor = await createTestEditor("alpha\nbeta\ngamma");
+    await keepPipeEditor.commands.dispatch({ id: commandId("select_all") });
+    await keepPipeEditor.commands.dispatch({ id: commandId("split_selection_on_newline") });
+    await keepPipeEditor.commands.dispatch({ id: commandId("shell_keep_pipe") });
+    await keepPipeEditor.commands.dispatch({ id: commandId("input_prompt.setQuery"), args: { query: "grep -q '^a'" } });
+    await keepPipeEditor.commands.dispatch({ id: commandId("input_prompt.accept") });
+
+    state = await keepPipeEditor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(keepPipeEditor).activeSurfaceId!,
+    });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 0, head: 5 }]);
+  });
 });

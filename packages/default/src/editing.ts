@@ -116,6 +116,9 @@ type PendingInputState =
     kind: "selectTextObject";
     textObjectKind: "around" | "inside";
     count: number;
+  }
+  | {
+    kind: "selectRegister";
   };
 
 type LastMotionState = CommandDispatch | FindCharMotionState;
@@ -428,6 +431,13 @@ export function defaultEditing(): EditorModule {
         await editor.commands.dispatch(motion);
       },
     });
+    editor.commands.register<void, void>({
+      id: commandId("select_register"),
+      title: "Select Register",
+      run() {
+        setPendingInput(editor, { kind: "selectRegister" });
+      },
+    });
 
     for (const name of RUST_OPERATIONS) registerOperation(editor, name);
 
@@ -620,6 +630,20 @@ export function defaultEditing(): EditorModule {
       title: "Save Selection",
       async run() {
         await saveSelection(editor);
+      },
+    });
+    editor.commands.register({
+      id: commandId("increment"),
+      title: "Increment",
+      async run(_ctx, args?: { count?: number }) {
+        await incrementSelections(editor, "increase", args?.count ?? 1);
+      },
+    });
+    editor.commands.register({
+      id: commandId("decrement"),
+      title: "Decrement",
+      async run(_ctx, args?: { count?: number }) {
+        await incrementSelections(editor, "decrease", args?.count ?? 1);
       },
     });
 
@@ -881,6 +905,12 @@ async function handlePendingInput(
       const operation = textObjectOperationForInput(pending.textObjectKind, ch, pending.count);
       if (!operation) return;
       await applyOperation(editor, operation);
+      return;
+    }
+    case "selectRegister": {
+      const ch = firstCodePoint(input.text);
+      if (!ch) return;
+      currentRegisterState(editor, ch);
       return;
     }
   }
@@ -1397,6 +1427,52 @@ async function applyJumpEntry(editor: EditorHost, entry: JumpListEntry): Promise
   });
 }
 
+function currentRegisterState(editor: EditorHost, next?: string): string | undefined {
+  const state = getDefaultState(editor);
+  if (next !== undefined) state.currentRegister = next;
+  return state.currentRegister;
+}
+
+async function incrementSelections(
+  editor: EditorHost,
+  direction: "increase" | "decrease",
+  count: number,
+): Promise<void> {
+  const state = await readActiveSurfaceState(editor);
+  const sign = direction === "increase" ? 1 : -1;
+  let amount = sign * Math.max(1, count);
+  const increaseBy = currentRegisterState(editor) === "#" ? sign : 0;
+  const chars = Array.from(state.text);
+  const changes: SurfaceChange[] = [];
+  const selection: SurfaceSelectionRange[] = [];
+  let cumulativeLengthDiff = 0;
+
+  for (const range of state.selection) {
+    const from = Math.min(range.anchor, range.head);
+    const to = Math.max(range.anchor, range.head);
+    const selectedText = chars.slice(from, to).join("");
+    const nextText = incrementInteger(selectedText, amount) ?? incrementDateTime(selectedText, amount);
+    const newFrom = from + cumulativeLengthDiff;
+
+    amount += increaseBy;
+
+    if (nextText === undefined) {
+      selection.push(cloneSelectionRange(range));
+      continue;
+    }
+
+    const newLength = Array.from(nextText).length;
+    const newTo = newFrom + newLength;
+    selection.push({ cursorId: range.cursorId, ...orientSelectionRange(range, newFrom, newTo) });
+    cumulativeLengthDiff += newLength - (to - from);
+    changes.push({ start: from, end: to, text: nextText });
+  }
+
+  if (!changes.length) return;
+  await applyEdit(editor, { changes, selection }, true);
+  if (getDefaultState(editor).mode === "select") await applyMode(editor, "normal");
+}
+
 async function pageCursor(
   editor: EditorHost,
   direction: "up" | "down",
@@ -1781,6 +1857,218 @@ function isAtWordEnd(chars: readonly string[], index: number): boolean {
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function incrementInteger(selectedText: string, amount: number): string | undefined {
+  const separator = "_";
+  if (!selectedText || selectedText.startsWith(separator) || selectedText.endsWith(separator)) return undefined;
+
+  const radix = selectedText.startsWith("0x")
+    ? 16
+    : selectedText.startsWith("0o")
+      ? 8
+      : selectedText.startsWith("0b")
+        ? 2
+        : 10;
+
+  const separatorRtlIndexes = Array.from(selectedText).reverse().flatMap((ch, index) => ch === separator ? [index] : []);
+  const word = selectedText.replaceAll(separator, "");
+  let nextText: string;
+
+  if (radix === 10) {
+    let value: bigint;
+    try {
+      value = BigInt(word);
+    } catch {
+      return undefined;
+    }
+    const nextValue = value + BigInt(amount);
+    const formatLength = (
+      value < 0n && nextValue >= 0n
+        ? word.length - 1
+        : value >= 0n && nextValue < 0n
+          ? word.length + 1
+          : word.length
+    ) - separatorRtlIndexes.length;
+
+    nextText = word.startsWith("0") || word.startsWith("-0")
+      ? padSignedDecimal(nextValue, formatLength)
+      : nextValue.toString();
+  } else {
+    const digits = word.slice(2);
+    let value: bigint;
+    try {
+      value = BigInt(word);
+    } catch {
+      return undefined;
+    }
+    const nextValue = value + BigInt(amount) < 0n ? 0n : value + BigInt(amount);
+    const formatLength = selectedText.length - 2 - separatorRtlIndexes.length;
+
+    if (radix === 2) nextText = `0b${nextValue.toString(2).padStart(formatLength, "0")}`;
+    else if (radix === 8) nextText = `0o${nextValue.toString(8).padStart(formatLength, "0")}`;
+    else {
+      const lowerCount = Array.from(digits).filter((ch) => ch >= "a" && ch <= "f").length;
+      const upperCount = Array.from(digits).filter((ch) => ch >= "A" && ch <= "F").length;
+      const rendered = nextValue.toString(16).padStart(formatLength, "0");
+      nextText = `0x${upperCount > lowerCount ? rendered.toUpperCase() : rendered}`;
+    }
+  }
+
+  for (const rtlIndex of separatorRtlIndexes) {
+    if (rtlIndex >= nextText.length) continue;
+    const insertAt = nextText.length - rtlIndex;
+    if (insertAt <= 0) continue;
+    nextText = `${nextText.slice(0, insertAt)}_${nextText.slice(insertAt)}`;
+  }
+
+  if (nextText.length > selectedText.length && separatorRtlIndexes.length) {
+    const spacing = separatorRtlIndexes.length > 1
+      ? separatorRtlIndexes[separatorRtlIndexes.length - 1]! - separatorRtlIndexes[separatorRtlIndexes.length - 2]! - 1
+      : separatorRtlIndexes[0]!;
+    const prefixLength = radix === 10 ? 0 : 2;
+    let index = nextText.indexOf("_");
+    while (index >= 0 && index - prefixLength > spacing) {
+      index -= spacing;
+      nextText = `${nextText.slice(0, index)}_${nextText.slice(index)}`;
+    }
+  }
+
+  return nextText;
+}
+
+function padSignedDecimal(value: bigint, width: number): string {
+  const rendered = value.toString();
+  if (rendered.startsWith("-")) return `-${rendered.slice(1).padStart(Math.max(0, width - 1), "0")}`;
+  return rendered.padStart(width, "0");
+}
+
+const SHORT_MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const SHORT_WEEKDAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function incrementDateTime(selectedText: string, amount: number): string | undefined {
+  return incrementDateTimeYmd(selectedText, amount)
+    ?? incrementDateTimeTextualDate(selectedText, amount)
+    ?? incrementClockTime(selectedText, amount);
+}
+
+function incrementDateTimeYmd(selectedText: string, amount: number): string | undefined {
+  const match = selectedText.match(/^(\d{4})([-\/])(\d{2})\2(\d{2})(?: (\d{2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (!match) return undefined;
+  const [, yearText, separator, monthText, dayText, hourText, minuteText, secondText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = Number(hourText ?? "0");
+  const minute = Number(minuteText ?? "0");
+  const second = Number(secondText ?? "0");
+  const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  if (!sameUtcDateTimeParts(date, year, month, day, hour, minute, second)) return undefined;
+
+  const next = new Date(date.getTime() + amount * (hourText ? 60_000 : 86_400_000));
+  const y = next.getUTCFullYear().toString().padStart(4, "0");
+  const m = `${next.getUTCMonth() + 1}`.padStart(2, "0");
+  const d = `${next.getUTCDate()}`.padStart(2, "0");
+  if (!hourText) return `${y}${separator}${m}${separator}${d}`;
+
+  const hh = `${next.getUTCHours()}`.padStart(2, "0");
+  const mm = `${next.getUTCMinutes()}`.padStart(2, "0");
+  if (!secondText) return `${y}${separator}${m}${separator}${d} ${hh}:${mm}`;
+  const ss = `${next.getUTCSeconds()}`.padStart(2, "0");
+  return `${y}${separator}${m}${separator}${d} ${hh}:${mm}:${ss}`;
+}
+
+function incrementDateTimeTextualDate(selectedText: string, amount: number): string | undefined {
+  const weekdayMonthDayYear = selectedText.match(/^(Sun|Mon|Tue|Wed|Thu|Fri|Sat) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{2}) (\d{4})$/);
+  if (weekdayMonthDayYear) {
+    const [, , monthName, dayText, yearText] = weekdayMonthDayYear;
+    const next = addUtcDays(Number(yearText), monthIndex(monthName) + 1, Number(dayText), amount);
+    if (!next) return undefined;
+    return `${SHORT_WEEKDAY_NAMES[next.getUTCDay()]} ${SHORT_MONTH_NAMES[next.getUTCMonth()]} ${`${next.getUTCDate()}`.padStart(2, "0")} ${next.getUTCFullYear().toString().padStart(4, "0")}`;
+  }
+
+  const dayMonthYear = selectedText.match(/^(\d{2})-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-(\d{4})$/);
+  if (dayMonthYear) {
+    const [, dayText, monthName, yearText] = dayMonthYear;
+    const next = addUtcDays(Number(yearText), monthIndex(monthName) + 1, Number(dayText), amount);
+    if (!next) return undefined;
+    return `${`${next.getUTCDate()}`.padStart(2, "0")}-${SHORT_MONTH_NAMES[next.getUTCMonth()]}-${next.getUTCFullYear().toString().padStart(4, "0")}`;
+  }
+
+  const yearMonthDay = selectedText.match(/^(\d{4}) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{2})$/);
+  if (yearMonthDay) {
+    const [, yearText, monthName, dayText] = yearMonthDay;
+    const next = addUtcDays(Number(yearText), monthIndex(monthName) + 1, Number(dayText), amount);
+    if (!next) return undefined;
+    return `${next.getUTCFullYear().toString().padStart(4, "0")} ${SHORT_MONTH_NAMES[next.getUTCMonth()]} ${`${next.getUTCDate()}`.padStart(2, "0")}`;
+  }
+
+  const monthDayYear = selectedText.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{2}), (\d{4})$/);
+  if (monthDayYear) {
+    const [, monthName, dayText, yearText] = monthDayYear;
+    const next = addUtcDays(Number(yearText), monthIndex(monthName) + 1, Number(dayText), amount);
+    if (!next) return undefined;
+    return `${SHORT_MONTH_NAMES[next.getUTCMonth()]} ${`${next.getUTCDate()}`.padStart(2, "0")}, ${next.getUTCFullYear().toString().padStart(4, "0")}`;
+  }
+
+  return undefined;
+}
+
+function incrementClockTime(selectedText: string, amount: number): string | undefined {
+  const twelveHour = selectedText.match(/^([1-9]|1[0-2]):([0-5]\d)(?::([0-5]\d))? (am|pm|AM|PM)$/);
+  if (twelveHour) {
+    const [, hourText, minuteText, secondText, meridiem] = twelveHour;
+    let hour = Number(hourText) % 12;
+    if (meridiem.toLowerCase() === "pm") hour += 12;
+    const totalSeconds = ((hour * 60) + Number(minuteText)) * 60 + Number(secondText ?? "0");
+    const next = mod(totalSeconds + amount * 60, 24 * 60 * 60);
+    const nextHour24 = Math.floor(next / 3600);
+    const nextMinute = Math.floor((next % 3600) / 60);
+    const nextSecond = next % 60;
+    const nextMeridiem = nextHour24 >= 12 ? "pm" : "am";
+    const nextHour12 = nextHour24 % 12 || 12;
+    const renderedMeridiem = meridiem === meridiem.toUpperCase() ? nextMeridiem.toUpperCase() : nextMeridiem;
+    if (!secondText) return `${nextHour12}:${`${nextMinute}`.padStart(2, "0")} ${renderedMeridiem}`;
+    return `${nextHour12}:${`${nextMinute}`.padStart(2, "0")}:${`${nextSecond}`.padStart(2, "0")} ${renderedMeridiem}`;
+  }
+
+  const twentyFourHour = selectedText.match(/^(\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (!twentyFourHour) return undefined;
+  const [, hourText, minuteText, secondText] = twentyFourHour;
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const second = Number(secondText ?? "0");
+  if (hour > 23) return undefined;
+  const totalSeconds = ((hour * 60) + minute) * 60 + second;
+  const next = mod(totalSeconds + amount * 60, 24 * 60 * 60);
+  const nextHour = Math.floor(next / 3600);
+  const nextMinute = Math.floor((next % 3600) / 60);
+  const nextSecond = next % 60;
+  if (!secondText) return `${`${nextHour}`.padStart(2, "0")}:${`${nextMinute}`.padStart(2, "0")}`;
+  return `${`${nextHour}`.padStart(2, "0")}:${`${nextMinute}`.padStart(2, "0")}:${`${nextSecond}`.padStart(2, "0")}`;
+}
+
+function monthIndex(value: string): number {
+  return SHORT_MONTH_NAMES.indexOf(value);
+}
+
+function addUtcDays(year: number, month: number, day: number, amount: number): Date | undefined {
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (!sameUtcDateTimeParts(date, year, month, day, 0, 0, 0)) return undefined;
+  return new Date(date.getTime() + amount * 86_400_000);
+}
+
+function sameUtcDateTimeParts(date: Date, year: number, month: number, day: number, hour: number, minute: number, second: number): boolean {
+  return date.getUTCFullYear() === year
+    && date.getUTCMonth() + 1 === month
+    && date.getUTCDate() === day
+    && date.getUTCHours() === hour
+    && date.getUTCMinutes() === minute
+    && date.getUTCSeconds() === second;
+}
+
+function mod(value: number, base: number): number {
+  return ((value % base) + base) % base;
 }
 
 async function applyMode(editor: EditorHost, mode: "normal" | "insert" | "select"): Promise<void> {

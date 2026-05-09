@@ -245,6 +245,30 @@ describe("default editing commands", () => {
     expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 0, head: 0 }]);
   });
 
+  it("selects registers and increments numbers and dates", async () => {
+    const editor = await createTestEditor("1\n1\n1\n2024-01-01 12:00");
+    await editor.commands.dispatch({ id: commandId("select_all") });
+    await editor.commands.dispatch({ id: commandId("split_selection_on_newline") });
+    await editor.commands.dispatch({ id: commandId("select_register") });
+    await handleWorkbenchKeyInput(editor, { key: "#", text: "#" });
+    await editor.commands.dispatch({ id: commandId("increment") });
+
+    let state = await editor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(editor).activeSurfaceId!,
+    });
+    expect(state.text).toBe("2\n3\n4\n2024-01-01 12:04");
+
+    const decrementEditor = await createTestEditor("0x0f\n09:59");
+    await decrementEditor.commands.dispatch({ id: commandId("select_all") });
+    await decrementEditor.commands.dispatch({ id: commandId("split_selection_on_newline") });
+    await decrementEditor.commands.dispatch({ id: commandId("decrement") });
+
+    state = await decrementEditor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(decrementEditor).activeSurfaceId!,
+    });
+    expect(state.text).toBe("0x0e\n09:58");
+  });
+
   it("matches brackets in normal and select mode", async () => {
     const editor = await createTestEditor("(ab)");
 

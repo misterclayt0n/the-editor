@@ -193,17 +193,17 @@ export function defaultKeymaps(): EditorModule {
         // z: keymap("View", { z/c/t/b/m/k/up/j/down/pages/search bindings }),
         // Z: keymap("View", { z/c/t/b/m/k/up/j/down/pages/search bindings }, { sticky: true }),
 
-        // "\"": "select_register",
-        // "|": "shell_pipe",
-        // "A-|": "shell_pipe_to",
-        // "!": "shell_insert_output",
-        // "A-!": "shell_append_output",
-        // $: "shell_keep_pipe",
+        "\"": "select_register",
+        "|": "shell_pipe",
+        "A-|": "shell_pipe_to",
+        "!": "shell_insert_output",
+        "A-!": "shell_append_output",
+        $: "shell_keep_pipe",
         // "C-z": "suspend",
         "C-p": "command_palette.open",
 
-        // "C-a": "increment",
-        // "C-x": "decrement",
+        "C-a": "increment",
+        "C-x": "decrement",
       });
 
     editor.keymaps.register({

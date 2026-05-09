@@ -147,26 +147,21 @@ export function defaultKeymaps(): EditorModule {
         "&": "align_selections",
         _: "trim_selections",
 
-        // "(": "rotate_selections_backward",
-        // ")": "rotate_selections_forward",
-        // "A-(": "rotate_selection_contents_backward",
-        // "A-)": "rotate_selection_contents_forward",
-
         // "A-:": "ensure_selections_forward",
 
         esc: "normal_mode",
-        // "C-b | pageup": "page_up",
-        // "C-f | pagedown": "page_down",
-        // "C-u": "page_cursor_half_up",
-        // "C-d": "page_cursor_half_down",
+        "C-b | pageup": "page_up",
+        "C-f | pagedown": "page_down",
+        "C-u": "page_cursor_half_up",
+        "C-d": "page_cursor_half_down",
 
         // "C-w": keymap("Window", { C-w/w, C-s/s, C-v/v, C-t/t, f/F, C-q/q, C-o/o, C-h/h/left, C-j/j/down, C-k/k/up, C-l/l/right, L/K/H/J, n }),
 
-        // "C-c": "toggle_comments",
+        "C-c": "toggle_comments",
 
-        // "C-i | tab": "jump_forward",
-        // "C-o": "jump_backward",
-        // "C-s": "save_selection",
+        "C-i | tab": "jump_forward",
+        "C-o": "jump_backward",
+        "C-s": "save_selection",
 
         space: keymap("Space", {
           // f: "file_picker",

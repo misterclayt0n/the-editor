@@ -199,6 +199,14 @@ impl Surface {
     }
   }
 
+  pub fn set_viewport_reconcile_document(&mut self, document: &Document, mut viewport: Viewport) {
+    if self.render.text_format().soft_wrap {
+      viewport.first_col = 0;
+    }
+    viewport.first_row = viewport.first_row.min(self.max_scroll_row(document, viewport));
+    self.set_viewport(viewport);
+  }
+
   pub fn view_spec(&self) -> SurfaceViewSpec {
     SurfaceViewSpec {
       viewport:         self.viewport,
@@ -579,6 +587,22 @@ impl Surface {
     syntax_registry: Option<&LanguageRegistry>,
   ) -> RenderFrame {
     self.raw_frame_delta(document, syntax_registry)
+  }
+
+  fn max_scroll_row(&mut self, document: &Document, viewport: Viewport) -> usize {
+    let text = document.text().slice(..);
+    let inputs = LayoutInputs {
+      text,
+      text_revision: document.revision(),
+      format: self.render.text_format(),
+      wrap_width: viewport.wrap_width,
+    };
+    let last_row = self
+      .layout_index
+      .position_for_char(inputs, text.len_chars())
+      .map(|position| position.row)
+      .unwrap_or(0);
+    last_row.saturating_sub(viewport.row_count.saturating_sub(1))
   }
 
   fn finish_selection_update(

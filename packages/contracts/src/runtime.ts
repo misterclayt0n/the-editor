@@ -89,6 +89,7 @@ export interface SurfaceState {
   lineEnding: string;
   selection: SurfaceSelectionRange[];
   activeCursorId: number | null;
+  viewport: Viewport;
 }
 
 export interface SurfaceEdit {

@@ -73,6 +73,7 @@ const RUST_OPERATIONS = [
   "switch_to_lowercase",
   "indent",
   "unindent",
+  "toggle_comments",
 ] as const;
 
 type FindCharMotionState = {
@@ -127,9 +128,21 @@ type SelectionPickerState = {
   originalActiveCursorId: number | null;
 };
 
+type JumpListEntry = {
+  surfaceId: SurfaceId;
+  selection: SurfaceSelectionRange[];
+  activeCursorId: number | null;
+};
+
+type JumpListState = {
+  backward: JumpListEntry[];
+  forward: JumpListEntry[];
+};
+
 const pendingInputSlot = "default.editing.pendingInput";
 const lastMotionSlot = "default.editing.lastMotion";
 const selectionPickerSlot = "default.editing.selectionPicker";
+const jumpListSlot = "default.editing.jumpList";
 const TAB_WIDTH = 4;
 
 const MOTION_COMMANDS = new Set<string>([
@@ -172,6 +185,10 @@ const MOTION_COMMANDS = new Set<string>([
   "extend_line_below",
   "extend_line_above",
   "extend_line_up",
+  "page_up",
+  "page_down",
+  "page_cursor_half_up",
+  "page_cursor_half_down",
 ]);
 
 const SEGMENTER = typeof Intl !== "undefined" && "Segmenter" in Intl
@@ -202,6 +219,7 @@ const CHECKPOINT_AFTER_OPERATION = new Set<string>([
   "switch_to_lowercase",
   "indent",
   "unindent",
+  "toggle_comments",
 ]);
 
 export function defaultEditing(): EditorModule {
@@ -543,6 +561,55 @@ export function defaultEditing(): EditorModule {
       title: "Trim Selections",
       async run() {
         await trimSelections(editor);
+      },
+    });
+    editor.commands.register({
+      id: commandId("page_up"),
+      title: "Page Up",
+      async run() {
+        await pageCursor(editor, "up", "full");
+      },
+    });
+    editor.commands.register({
+      id: commandId("page_down"),
+      title: "Page Down",
+      async run() {
+        await pageCursor(editor, "down", "full");
+      },
+    });
+    editor.commands.register({
+      id: commandId("page_cursor_half_up"),
+      title: "Page Cursor Half Up",
+      async run() {
+        await pageCursor(editor, "up", "half");
+      },
+    });
+    editor.commands.register({
+      id: commandId("page_cursor_half_down"),
+      title: "Page Cursor Half Down",
+      async run() {
+        await pageCursor(editor, "down", "half");
+      },
+    });
+    editor.commands.register({
+      id: commandId("jump_backward"),
+      title: "Jump Backward",
+      async run(_ctx, args?: { count?: number }) {
+        await jumpInSelectionHistory(editor, "backward", args?.count ?? 1);
+      },
+    });
+    editor.commands.register({
+      id: commandId("jump_forward"),
+      title: "Jump Forward",
+      async run(_ctx, args?: { count?: number }) {
+        await jumpInSelectionHistory(editor, "forward", args?.count ?? 1);
+      },
+    });
+    editor.commands.register({
+      id: commandId("save_selection"),
+      title: "Save Selection",
+      async run() {
+        await saveSelection(editor);
       },
     });
 
@@ -1245,6 +1312,104 @@ async function replaceWithRegister(editor: EditorHost, name: string): Promise<vo
 
   await applyEdit(editor, { changes }, true);
   await applyMode(editor, "normal");
+}
+
+function jumpListState(editor: EditorHost): JumpListState {
+  return editor.stateSlot(jumpListSlot, () => ({ backward: [], forward: [] }));
+}
+
+function cloneJumpEntry(entry: JumpListEntry): JumpListEntry {
+  return {
+    surfaceId: entry.surfaceId,
+    selection: entry.selection.map(cloneSelectionRange),
+    activeCursorId: entry.activeCursorId,
+  };
+}
+
+function sameJumpEntry(left: JumpListEntry, right: JumpListEntry): boolean {
+  return left.surfaceId === right.surfaceId
+    && left.activeCursorId === right.activeCursorId
+    && left.selection.length === right.selection.length
+    && left.selection.every((range, index) => {
+      const other = right.selection[index];
+      return other
+        && range.cursorId === other.cursorId
+        && range.anchor === other.anchor
+        && range.head === other.head;
+    });
+}
+
+async function currentJumpEntry(editor: EditorHost): Promise<JumpListEntry> {
+  const state = await readActiveSurfaceState(editor);
+  return {
+    surfaceId: activeSurfaceId(editor),
+    selection: state.selection.map(cloneSelectionRange),
+    activeCursorId: state.activeCursorId,
+  };
+}
+
+async function saveSelection(editor: EditorHost): Promise<void> {
+  const jumpList = jumpListState(editor);
+  const current = await currentJumpEntry(editor);
+  if (jumpList.backward.at(-1) && sameJumpEntry(jumpList.backward.at(-1)!, current)) return;
+  jumpList.backward.push(current);
+  jumpList.forward = [];
+}
+
+async function jumpInSelectionHistory(
+  editor: EditorHost,
+  direction: "backward" | "forward",
+  count: number,
+): Promise<void> {
+  const jumpList = jumpListState(editor);
+  let current = await currentJumpEntry(editor);
+  let remaining = Math.max(1, count);
+
+  while (remaining > 0) {
+    const source = direction === "backward" ? jumpList.backward : jumpList.forward;
+    const target = source.pop();
+    if (!target) break;
+    if (sameJumpEntry(target, current)) continue;
+
+    (direction === "backward" ? jumpList.forward : jumpList.backward).push(cloneJumpEntry(current));
+    await applyJumpEntry(editor, target);
+    current = cloneJumpEntry(target);
+    remaining -= 1;
+  }
+}
+
+async function applyJumpEntry(editor: EditorHost, entry: JumpListEntry): Promise<void> {
+  if (entry.surfaceId !== activeSurfaceId(editor)) return;
+  await applyEdit(editor, { selection: entry.selection.map(cloneSelectionRange) });
+  await editor.runtime.surfaces.setActiveCursor({
+    surfaceId: entry.surfaceId,
+    cursorId: entry.activeCursorId,
+  });
+}
+
+async function pageCursor(
+  editor: EditorHost,
+  direction: "up" | "down",
+  size: "full" | "half",
+): Promise<void> {
+  const current = await readActiveSurfaceState(editor);
+  if (!current.viewport.rowCount) return;
+  const count = size === "half"
+    ? Math.max(1, Math.floor(current.viewport.rowCount / 2))
+    : Math.max(1, current.viewport.rowCount - 2);
+  const mode = getDefaultState(editor).mode;
+  const movement = direction === "up"
+    ? (mode === "select" ? "extend_visual_line_up" : "move_visual_line_up")
+    : (mode === "select" ? "extend_visual_line_down" : "move_visual_line_down");
+  await applyOperation(editor, { name: movement, count }, false);
+  const next = await readActiveSurfaceState(editor);
+  const firstRow = direction === "up"
+    ? Math.max(0, current.viewport.firstRow - count)
+    : current.viewport.firstRow + count;
+  await editor.runtime.surfaces.setViewport({
+    surfaceId: activeSurfaceId(editor),
+    viewport: { ...next.viewport, firstRow },
+  });
 }
 
 async function readActiveSurfaceState(editor: EditorHost): Promise<SurfaceState> {

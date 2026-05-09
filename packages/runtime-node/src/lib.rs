@@ -233,6 +233,21 @@ impl NativeRuntimeSession {
   }
 
   #[napi]
+  pub fn read_surface_viewport(&self, surface_id: u32) -> Result<JsViewport> {
+    let runtime = self.lock()?;
+    let viewport = runtime
+      .surface(surface_handle(surface_id)?)
+      .ok_or_else(|| Error::from_reason(format!("unknown surface {surface_id}")))?
+      .viewport();
+    Ok(JsViewport {
+      first_row: viewport.first_row as u32,
+      row_count: viewport.row_count as u32,
+      first_col: viewport.first_col as u32,
+      wrap_width: viewport.wrap_width as u32,
+    })
+  }
+
+  #[napi]
   pub fn set_surface_active_cursor(&self, surface_id: u32, cursor_id: Option<u32>) -> Result<()> {
     let mut runtime = self.lock()?;
     runtime

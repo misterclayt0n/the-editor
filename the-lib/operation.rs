@@ -14,6 +14,10 @@ pub use crate::editing::{
 };
 use crate::{
   Tendril,
+  comment::{
+    self,
+    CommentError,
+  },
   editing::{
     self,
     EditingError,
@@ -65,6 +69,9 @@ pub enum OperationError {
 
   #[error(transparent)]
   Syntax(#[from] SyntaxError),
+
+  #[error(transparent)]
+  Comment(#[from] CommentError),
 
   #[error("unknown operation {0}")]
   UnknownOperation(String),
@@ -693,9 +700,37 @@ pub fn execute_operation(
         )?,
       )))
     },
+    "toggle_comments" => {
+      let (line_token, block_tokens) = comment_tokens_for_operation(syntax, registry);
+      let edit = if line_token.is_some() || block_tokens.is_empty() {
+        comment::toggle_line_comments(doc, selection, line_token.as_deref())?
+      } else {
+        comment::toggle_block_comments(doc, selection, &block_tokens)?
+      };
+      Ok(OperationOutput::atom(OperationAtom::Edit(edit)))
+    },
 
     other => Err(OperationError::UnknownOperation(other.to_string())),
   }
+}
+
+fn comment_tokens_for_operation(
+  syntax: Option<&Syntax>,
+  registry: Option<&LanguageRegistry>,
+) -> (Option<String>, Vec<crate::syntax::BlockCommentToken>) {
+  let Some(syntax) = syntax else {
+    return (None, Vec::new());
+  };
+  let Some(registry) = registry else {
+    return (None, Vec::new());
+  };
+  let Some(language) = registry.language(syntax.root_language()) else {
+    return (None, Vec::new());
+  };
+  (
+    language.config().comment_tokens.as_ref().and_then(|tokens| tokens.first().cloned()),
+    language.config().block_comment_tokens.clone().unwrap_or_default(),
+  )
 }
 
 fn delete_with_yank(edit: Edit, name: char, values: Vec<Tendril>) -> Result<OperationOutput> {

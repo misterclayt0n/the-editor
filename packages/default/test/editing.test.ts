@@ -187,6 +187,66 @@ describe("default editing commands", () => {
     ]);
   });
 
+  it("pages the cursor and extends page motions in select mode", async () => {
+    const editor = await createTestEditor("a\nb\nc\nd\ne\nf\ng");
+    const surfaceId = getDefaultState(editor).activeSurfaceId!;
+    await editor.runtime.surfaces.setViewport({
+      surfaceId,
+      viewport: { firstRow: 0, rowCount: 4, firstCol: 0, wrapWidth: 80 },
+    });
+
+    await editor.commands.dispatch({ id: commandId("page_down") });
+
+    let state = await editor.runtime.surfaces.readState({ surfaceId });
+    expect(state.viewport.firstRow).toBe(2);
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 4, head: 4 }]);
+
+    await editor.commands.dispatch({ id: commandId("page_up") });
+
+    state = await editor.runtime.surfaces.readState({ surfaceId });
+    expect(state.viewport.firstRow).toBe(0);
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 0, head: 0 }]);
+
+    await editor.commands.dispatch({ id: commandId("select_mode") });
+    await editor.commands.dispatch({ id: commandId("page_cursor_half_down") });
+
+    state = await editor.runtime.surfaces.readState({ surfaceId });
+    expect(state.viewport.firstRow).toBe(2);
+    expect(state.selection).toHaveLength(1);
+    expect(state.selection[0]?.anchor).toBe(0);
+    expect(state.selection[0]?.head).toBeGreaterThan(0);
+  });
+
+  it("toggles comments and jumps through saved selections", async () => {
+    const commentEditor = await createTestEditor("a\n  b\n");
+    const commentSurfaceId = getDefaultState(commentEditor).activeSurfaceId!;
+
+    await commentEditor.commands.dispatch({ id: commandId("select_all") });
+    await commentEditor.commands.dispatch({ id: commandId("toggle_comments") });
+
+    let state = await commentEditor.runtime.surfaces.readState({ surfaceId: commentSurfaceId });
+    expect(state.text).toBe("# a\n#   b\n");
+
+    await commentEditor.commands.dispatch({ id: commandId("toggle_comments") });
+    state = await commentEditor.runtime.surfaces.readState({ surfaceId: commentSurfaceId });
+    expect(state.text).toBe("a\n  b\n");
+
+    const jumpEditor = await createTestEditor("a\nb\nc\nd");
+    const jumpSurfaceId = getDefaultState(jumpEditor).activeSurfaceId!;
+    await jumpEditor.commands.dispatch({ id: commandId("save_selection") });
+    await jumpEditor.commands.dispatch({ id: commandId("move_visual_line_down") });
+    await jumpEditor.commands.dispatch({ id: commandId("save_selection") });
+    await jumpEditor.commands.dispatch({ id: commandId("move_visual_line_down") });
+    await jumpEditor.commands.dispatch({ id: commandId("jump_backward") });
+
+    state = await jumpEditor.runtime.surfaces.readState({ surfaceId: jumpSurfaceId });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 2, head: 2 }]);
+
+    await jumpEditor.commands.dispatch({ id: commandId("jump_forward") });
+    state = await jumpEditor.runtime.surfaces.readState({ surfaceId: jumpSurfaceId });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 4, head: 4 }]);
+  });
+
   it("matches brackets in normal and select mode", async () => {
     const editor = await createTestEditor("(ab)");
 

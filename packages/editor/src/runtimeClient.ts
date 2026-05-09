@@ -73,6 +73,7 @@ export class RuntimeNativeClient implements RuntimeApi {
       lineEnding: this.session.readSurfaceLineEnding(params.surfaceId),
       selection: this.session.readSurfaceSelection(params.surfaceId),
       activeCursorId: this.session.readSurfaceActiveCursor(params.surfaceId),
+      viewport: this.session.readSurfaceViewport(params.surfaceId),
     }),
     setActiveCursor: async (params: { surfaceId: SurfaceId; cursorId: number | null }): Promise<OkResult> => {
       this.session.setSurfaceActiveCursor(params.surfaceId, params.cursorId);

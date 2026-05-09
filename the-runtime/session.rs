@@ -606,11 +606,9 @@ impl RuntimeSession {
     surface: SurfaceHandle,
     viewport: Viewport,
   ) -> RuntimeResult<()> {
-    let entry = self
-      .surfaces
-      .get_mut(&surface)
-      .ok_or(RuntimeError::UnknownSurface(surface))?;
-    entry.surface.set_viewport(viewport);
+    self.with_surface_document_mut(surface, move |surface, document| {
+      surface.set_viewport_reconcile_document(document, viewport);
+    })?;
     Ok(())
   }
 

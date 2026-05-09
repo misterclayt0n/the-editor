@@ -74,6 +74,14 @@ const RUST_OPERATIONS = [
   "indent",
   "unindent",
   "toggle_comments",
+  "select_all_children",
+  "select_all_siblings",
+  "select_prev_sibling",
+  "select_next_sibling",
+  "move_parent_node_end",
+  "move_parent_node_start",
+  "extend_parent_node_end",
+  "extend_parent_node_start",
 ] as const;
 
 type FindCharMotionState = {
@@ -146,6 +154,7 @@ const pendingInputSlot = "default.editing.pendingInput";
 const lastMotionSlot = "default.editing.lastMotion";
 const selectionPickerSlot = "default.editing.selectionPicker";
 const jumpListSlot = "default.editing.jumpList";
+const objectSelectionHistorySlot = "default.editing.objectSelectionHistory";
 const TAB_WIDTH = 4;
 
 const MOTION_COMMANDS = new Set<string>([
@@ -192,6 +201,10 @@ const MOTION_COMMANDS = new Set<string>([
   "page_down",
   "page_cursor_half_up",
   "page_cursor_half_down",
+  "move_parent_node_end",
+  "move_parent_node_start",
+  "extend_parent_node_end",
+  "extend_parent_node_start",
 ]);
 
 const SEGMENTER = typeof Intl !== "undefined" && "Segmenter" in Intl
@@ -436,6 +449,27 @@ export function defaultEditing(): EditorModule {
       title: "Select Register",
       run() {
         setPendingInput(editor, { kind: "selectRegister" });
+      },
+    });
+    editor.commands.register<void, void>({
+      id: commandId("expand_selection"),
+      title: "Expand Selection",
+      async run() {
+        await expandSelection(editor);
+      },
+    });
+    editor.commands.register<void, void>({
+      id: commandId("shrink_selection"),
+      title: "Shrink Selection",
+      async run() {
+        await shrinkSelection(editor);
+      },
+    });
+    editor.commands.register<void, void>({
+      id: commandId("ensure_selections_forward"),
+      title: "Ensure Selections Forward",
+      async run() {
+        await ensureSelectionsForward(editor);
       },
     });
 
@@ -1431,6 +1465,73 @@ function currentRegisterState(editor: EditorHost, next?: string): string | undef
   const state = getDefaultState(editor);
   if (next !== undefined) state.currentRegister = next;
   return state.currentRegister;
+}
+
+function objectSelectionHistory(editor: EditorHost): SurfaceSelectionRange[][] {
+  return editor.stateSlot(objectSelectionHistorySlot, () => []);
+}
+
+function cloneSelection(selection: readonly SurfaceSelectionRange[]): SurfaceSelectionRange[] {
+  return selection.map(cloneSelectionRange);
+}
+
+function selectionContainsSelection(
+  current: readonly SurfaceSelectionRange[],
+  previous: readonly SurfaceSelectionRange[],
+): boolean {
+  return previous.every((needle) => current.some((haystack) => {
+    const currentFrom = Math.min(haystack.anchor, haystack.head);
+    const currentTo = Math.max(haystack.anchor, haystack.head);
+    const previousFrom = Math.min(needle.anchor, needle.head);
+    const previousTo = Math.max(needle.anchor, needle.head);
+    return currentFrom <= previousFrom && currentTo >= previousTo;
+  }));
+}
+
+async function expandSelection(editor: EditorHost): Promise<void> {
+  const before = await readActiveSurfaceState(editor);
+  await applyOperation(editor, { name: "expand_selection" });
+  const after = await readActiveSurfaceState(editor);
+  if (sameSelection(before.selection, after.selection)) return;
+  objectSelectionHistory(editor).push(cloneSelection(before.selection));
+}
+
+async function shrinkSelection(editor: EditorHost): Promise<void> {
+  const before = await readActiveSurfaceState(editor);
+  const history = objectSelectionHistory(editor);
+  const previous = history.at(-1);
+  if (previous && selectionContainsSelection(before.selection, previous)) {
+    history.pop();
+    await applyEdit(editor, { selection: cloneSelection(previous) });
+    return;
+  }
+  history.length = 0;
+  await applyOperation(editor, { name: "shrink_selection" });
+}
+
+async function ensureSelectionsForward(editor: EditorHost): Promise<void> {
+  const state = await readActiveSurfaceState(editor);
+  const selection = state.selection.map((range) => ({
+    cursorId: range.cursorId,
+    anchor: Math.min(range.anchor, range.head),
+    head: Math.max(range.anchor, range.head),
+  } satisfies SurfaceSelectionRange));
+  if (sameSelection(state.selection, selection)) return;
+  await applyEdit(editor, { selection });
+}
+
+function sameSelection(
+  left: readonly SurfaceSelectionRange[],
+  right: readonly SurfaceSelectionRange[],
+): boolean {
+  return left.length === right.length
+    && left.every((range, index) => {
+      const other = right[index];
+      return other
+        && range.cursorId === other.cursorId
+        && range.anchor === other.anchor
+        && range.head === other.head;
+    });
 }
 
 async function incrementSelections(

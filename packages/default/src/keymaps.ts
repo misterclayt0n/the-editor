@@ -89,14 +89,14 @@ export function defaultKeymaps(): EditorModule {
         S: "split_selection",
         ";": "collapse_selection",
         "A-;": "flip_selections",
-        // "A-o | A-up": "expand_selection",
-        // "A-i | A-down": "shrink_selection",
-        // "A-I | A-S-down": "select_all_children",
-        // "A-p | A-left": "select_prev_sibling",
-        // "A-n | A-right": "select_next_sibling",
-        // "A-e": "move_parent_node_end",
-        // "A-b": "move_parent_node_start",
-        // "A-a": "select_all_siblings",
+        "A-o | A-up": "expand_selection",
+        "A-i | A-down": "shrink_selection",
+        "A-I | A-S-down": "select_all_children",
+        "A-p | A-left": "select_prev_sibling",
+        "A-n | A-right": "select_next_sibling",
+        "A-e": "move_parent_node_end",
+        "A-b": "move_parent_node_start",
+        "A-a": "select_all_siblings",
 
         "%": "select_all",
         x: "extend_line_below",
@@ -147,7 +147,7 @@ export function defaultKeymaps(): EditorModule {
         "&": "align_selections",
         _: "trim_selections",
 
-        // "A-:": "ensure_selections_forward",
+        "A-:": "ensure_selections_forward",
 
         esc: "normal_mode",
         "C-b | pageup": "page_up",
@@ -229,8 +229,8 @@ export function defaultKeymaps(): EditorModule {
         B: "extend_prev_long_word_start",
         E: "extend_next_long_word_end",
 
-        // "A-e": "extend_parent_node_end",
-        // "A-b": "extend_parent_node_start",
+        "A-e": "extend_parent_node_end",
+        "A-b": "extend_parent_node_start",
 
         n: "extend_search_next",
         N: "extend_search_prev",

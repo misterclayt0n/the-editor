@@ -24,6 +24,7 @@ use crate::{
   },
   indent::IndentStyle,
   match_brackets,
+  object,
   movement::{
     self,
     MotionMode,
@@ -488,6 +489,86 @@ pub fn execute_operation(
           TextObjectKind::Inside,
           object_name,
         )?,
+      )))
+    },
+    "expand_selection" => {
+      let Some(syntax) = syntax else {
+        return Ok(OperationOutput::atom(OperationAtom::Selection(selection.clone())));
+      };
+      Ok(OperationOutput::atom(OperationAtom::Selection(
+        object::expand_selection(syntax, text, selection.clone()),
+      )))
+    },
+    "shrink_selection" => {
+      let Some(syntax) = syntax else {
+        return Ok(OperationOutput::atom(OperationAtom::Selection(selection.clone())));
+      };
+      Ok(OperationOutput::atom(OperationAtom::Selection(
+        object::shrink_selection(syntax, text, selection.clone()),
+      )))
+    },
+    "select_all_children" => {
+      let Some(syntax) = syntax else {
+        return Ok(OperationOutput::atom(OperationAtom::Selection(selection.clone())));
+      };
+      Ok(OperationOutput::atom(OperationAtom::Selection(
+        object::select_all_children(syntax, text, selection.clone()),
+      )))
+    },
+    "select_all_siblings" => {
+      let Some(syntax) = syntax else {
+        return Ok(OperationOutput::atom(OperationAtom::Selection(selection.clone())));
+      };
+      Ok(OperationOutput::atom(OperationAtom::Selection(
+        object::select_all_siblings(syntax, text, selection.clone()),
+      )))
+    },
+    "select_prev_sibling" => {
+      let Some(syntax) = syntax else {
+        return Ok(OperationOutput::atom(OperationAtom::Selection(selection.clone())));
+      };
+      Ok(OperationOutput::atom(OperationAtom::Selection(
+        object::select_prev_sibling(syntax, text, selection.clone()),
+      )))
+    },
+    "select_next_sibling" => {
+      let Some(syntax) = syntax else {
+        return Ok(OperationOutput::atom(OperationAtom::Selection(selection.clone())));
+      };
+      Ok(OperationOutput::atom(OperationAtom::Selection(
+        object::select_next_sibling(syntax, text, selection.clone()),
+      )))
+    },
+    "move_parent_node_end" => {
+      let Some(syntax) = syntax else {
+        return Ok(OperationOutput::atom(OperationAtom::Selection(selection.clone())));
+      };
+      Ok(OperationOutput::atom(OperationAtom::Selection(
+        object::move_parent_edge(syntax, text, selection.clone(), movement::Direction::Forward, MotionMode::Move),
+      )))
+    },
+    "move_parent_node_start" => {
+      let Some(syntax) = syntax else {
+        return Ok(OperationOutput::atom(OperationAtom::Selection(selection.clone())));
+      };
+      Ok(OperationOutput::atom(OperationAtom::Selection(
+        object::move_parent_edge(syntax, text, selection.clone(), movement::Direction::Backward, MotionMode::Move),
+      )))
+    },
+    "extend_parent_node_end" => {
+      let Some(syntax) = syntax else {
+        return Ok(OperationOutput::atom(OperationAtom::Selection(selection.clone())));
+      };
+      Ok(OperationOutput::atom(OperationAtom::Selection(
+        object::move_parent_edge(syntax, text, selection.clone(), movement::Direction::Forward, MotionMode::Extend),
+      )))
+    },
+    "extend_parent_node_start" => {
+      let Some(syntax) = syntax else {
+        return Ok(OperationOutput::atom(OperationAtom::Selection(selection.clone())));
+      };
+      Ok(OperationOutput::atom(OperationAtom::Selection(
+        object::move_parent_edge(syntax, text, selection.clone(), movement::Direction::Backward, MotionMode::Extend),
       )))
     },
 

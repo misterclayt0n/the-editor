@@ -1,3 +1,6 @@
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { commandId, createEditorHost, createRuntimeClient } from "../../editor/src/index.js";
 import { handleWorkbenchKeyInput } from "../../editor/src/workbench.js";
@@ -18,6 +21,21 @@ async function createTestEditor(text: string, options?: { keymaps?: boolean; pro
   await editor.commands.dispatch({
     id: commandId("scratch.create"),
     args: { text },
+  });
+  return editor;
+}
+
+async function createFileEditor(path: string, text: string, options?: { keymaps?: boolean; prompt?: boolean }) {
+  await writeFile(path, text, "utf8");
+  const editor = createEditorHost({ runtime: createRuntimeClient() });
+  await defaultScratch()(editor);
+  await defaultEditing()(editor);
+  if (options?.prompt) await defaultInputPrompt()(editor);
+  if (options?.keymaps) await defaultKeymaps()(editor);
+  await defaultWorkbench()(editor);
+  await editor.commands.dispatch({
+    id: commandId("file.open"),
+    args: { path },
   });
   return editor;
 }
@@ -467,6 +485,94 @@ describe("default editing commands", () => {
       surfaceId: getDefaultState(editorTill).activeSurfaceId!,
     });
     expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 15, head: 1 }]);
+  });
+
+  it("expands object selections and navigates syntax relatives", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "the-editor-objects-"));
+    const path = join(dir, "test.json");
+    const editor = await createFileEditor(path, "[1,22,333]", { keymaps: true });
+
+    await editor.commands.dispatch({ id: commandId("move_char_right"), args: { count: 6 } });
+    await editor.commands.dispatch({ id: commandId("expand_selection") });
+
+    let state = await editor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(editor).activeSurfaceId!,
+    });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 6, head: 9 }]);
+
+    await editor.commands.dispatch({ id: commandId("expand_selection") });
+    state = await editor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(editor).activeSurfaceId!,
+    });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 0, head: 10 }]);
+
+    await editor.commands.dispatch({ id: commandId("shrink_selection") });
+    state = await editor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(editor).activeSurfaceId!,
+    });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 6, head: 9 }]);
+
+    const siblingEditor = await createFileEditor(join(dir, "siblings.json"), "[1,22,333]", { keymaps: true });
+    await siblingEditor.commands.dispatch({ id: commandId("move_char_right") });
+    await siblingEditor.commands.dispatch({ id: commandId("select_next_sibling") });
+    state = await siblingEditor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(siblingEditor).activeSurfaceId!,
+    });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 3, head: 5 }]);
+
+    await siblingEditor.commands.dispatch({ id: commandId("move_parent_node_end") });
+    state = await siblingEditor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(siblingEditor).activeSurfaceId!,
+    });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 5, head: 6 }]);
+
+    const childEditor = await createFileEditor(join(dir, "children.json"), "[[1],[2]]", { keymaps: true });
+    await childEditor.commands.dispatch({ id: commandId("select_all") });
+    await childEditor.commands.dispatch({ id: commandId("select_all_children") });
+    state = await childEditor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(childEditor).activeSurfaceId!,
+    });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([
+      { anchor: 1, head: 4 },
+      { anchor: 5, head: 8 },
+    ]);
+
+    await childEditor.commands.dispatch({ id: commandId("select_all_siblings") });
+    state = await childEditor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(childEditor).activeSurfaceId!,
+    });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([
+      { anchor: 1, head: 4 },
+      { anchor: 5, head: 8 },
+    ]);
+  });
+
+  it("ensures selections are forward and extends parent-node motions", async () => {
+    const ensureEditor = await createTestEditor("alpha beta", { keymaps: true });
+    const ensureSurfaceId = getDefaultState(ensureEditor).activeSurfaceId!;
+    await ensureEditor.runtime.surfaces.applyEdit({
+      surfaceId: ensureSurfaceId,
+      edit: { selection: [{ cursorId: 1, anchor: 5, head: 0 }] },
+    });
+    await ensureEditor.commands.dispatch({ id: commandId("ensure_selections_forward") });
+
+    let state = await ensureEditor.runtime.surfaces.readState({
+      surfaceId: ensureSurfaceId,
+    });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 0, head: 5 }]);
+
+    const dir = await mkdtemp(join(tmpdir(), "the-editor-parent-"));
+    const parentEditor = await createFileEditor(join(dir, "parent.json"), "[1,22,333]", { keymaps: true });
+    await parentEditor.commands.dispatch({ id: commandId("move_char_right"), args: { count: 1 } });
+    await parentEditor.commands.dispatch({ id: commandId("select_mode") });
+    await handleWorkbenchKeyInput(parentEditor, { key: "A-e" });
+
+    state = await parentEditor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(parentEditor).activeSurfaceId!,
+    });
+    expect(state.selection).toHaveLength(1);
+    expect(normalizeRange(state.selection[0]!)).toEqual({ from: 1, to: 3 });
+    expect(state.selection[0]!.anchor).not.toBe(state.selection[0]!.head);
   });
 
   it("extends goto-line subcommands in select mode", async () => {

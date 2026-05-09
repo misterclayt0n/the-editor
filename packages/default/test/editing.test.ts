@@ -87,6 +87,34 @@ describe("default editing commands", () => {
     ]);
   });
 
+  it("joins selections with and without selecting inserted spaces", async () => {
+    const editor = await createTestEditor("alpha\n  beta\ngamma");
+    await editor.commands.dispatch({ id: commandId("select_all") });
+    await editor.commands.dispatch({ id: commandId("split_selection_on_newline") });
+
+    await editor.commands.dispatch({ id: commandId("join_selections") });
+
+    let state = await editor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(editor).activeSurfaceId!,
+    });
+    expect(state.text).toBe("alpha beta gamma");
+
+    const spaceEditor = await createTestEditor("alpha\nbeta\ngamma");
+    await spaceEditor.commands.dispatch({ id: commandId("select_all") });
+    await spaceEditor.commands.dispatch({ id: commandId("split_selection_on_newline") });
+
+    await spaceEditor.commands.dispatch({ id: commandId("join_selections_space") });
+
+    state = await spaceEditor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(spaceEditor).activeSurfaceId!,
+    });
+    expect(state.text).toBe("alpha beta gamma");
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([
+      { anchor: 5, head: 5 },
+      { anchor: 10, head: 10 },
+    ]);
+  });
+
   it("matches brackets in normal and select mode", async () => {
     const editor = await createTestEditor("(ab)");
 

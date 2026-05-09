@@ -2,7 +2,7 @@ import type { SurfaceId, SurfaceSelectionRange } from "@the-editor/contracts/run
 import { commandId, roleId, roleImplementationId, type EditorModule } from "@the-editor/editor";
 import { getDefaultState } from "./state.js";
 
-type InputPromptKind = "selectRegex" | "searchForward" | "searchBackward";
+type InputPromptKind = "selectRegex" | "splitSelection" | "keepSelections" | "removeSelections" | "searchForward" | "searchBackward";
 type SearchDirection = "forward" | "backward";
 
 export interface InputPromptRoleState {
@@ -208,6 +208,15 @@ async function updateInputPromptPreview(
     case "selectRegex":
       await updateSelectRegexPreview(editor, active);
       return;
+    case "splitSelection":
+      await updateSplitSelectionPreview(editor, active);
+      return;
+    case "keepSelections":
+      await updateKeepOrRemoveSelectionsPreview(editor, active, false);
+      return;
+    case "removeSelections":
+      await updateKeepOrRemoveSelectionsPreview(editor, active, true);
+      return;
     case "searchForward":
       await updateSearchPreview(editor, active, "forward");
       return;
@@ -224,6 +233,12 @@ async function finalizeInputPrompt(
   switch (active.kind) {
     case "selectRegex":
       return finalizeSelectRegex(editor, active);
+    case "splitSelection":
+      return finalizeSplitSelection(editor, active);
+    case "keepSelections":
+      return finalizeKeepOrRemoveSelections(editor, active, false);
+    case "removeSelections":
+      return finalizeKeepOrRemoveSelections(editor, active, true);
     case "searchForward":
     case "searchBackward":
       return finalizeSearch(editor, active);
@@ -284,6 +299,115 @@ async function finalizeSelectRegex(
   }
   if (!nextSelection?.length) {
     active.error = "nothing selected";
+    return false;
+  }
+
+  active.error = undefined;
+  await editor.runtime.surfaces.applyEdit({
+    surfaceId: active.surfaceId,
+    edit: { selection: nextSelection },
+  });
+  return true;
+}
+
+async function updateSplitSelectionPreview(
+  editor: Parameters<EditorModule>[0],
+  active: ActiveInputPromptState,
+): Promise<void> {
+  if (!active.query) {
+    await editor.runtime.surfaces.applyEdit({
+      surfaceId: active.surfaceId,
+      edit: { selection: active.originalSelection.map(cloneRange) },
+    });
+    active.error = undefined;
+    return;
+  }
+
+  const regex = buildSmartCaseRegex(active.query);
+  if (regex instanceof Error) {
+    active.error = regex.message;
+    return;
+  }
+
+  active.error = undefined;
+  const state = await editor.runtime.surfaces.readState({ surfaceId: active.surfaceId });
+  const nextSelection = splitSelectionMatches(state.text, active.originalSelection, regex);
+  await editor.runtime.surfaces.applyEdit({
+    surfaceId: active.surfaceId,
+    edit: { selection: nextSelection },
+  });
+}
+
+async function finalizeSplitSelection(
+  editor: Parameters<EditorModule>[0],
+  active: ActiveInputPromptState,
+): Promise<boolean> {
+  if (!active.query) return true;
+
+  const regex = buildSmartCaseRegex(active.query);
+  if (regex instanceof Error) {
+    active.error = regex.message;
+    return false;
+  }
+
+  const state = await editor.runtime.surfaces.readState({ surfaceId: active.surfaceId });
+  const nextSelection = splitSelectionMatches(state.text, active.originalSelection, regex);
+  active.error = undefined;
+  await editor.runtime.surfaces.applyEdit({
+    surfaceId: active.surfaceId,
+    edit: { selection: nextSelection },
+  });
+  return true;
+}
+
+async function updateKeepOrRemoveSelectionsPreview(
+  editor: Parameters<EditorModule>[0],
+  active: ActiveInputPromptState,
+  remove: boolean,
+): Promise<void> {
+  if (!active.query) {
+    await editor.runtime.surfaces.applyEdit({
+      surfaceId: active.surfaceId,
+      edit: { selection: active.originalSelection.map(cloneRange) },
+    });
+    active.error = undefined;
+    return;
+  }
+
+  const regex = buildSmartCaseRegex(active.query);
+  if (regex instanceof Error) {
+    active.error = regex.message;
+    return;
+  }
+
+  active.error = undefined;
+  const state = await editor.runtime.surfaces.readState({ surfaceId: active.surfaceId });
+  const nextSelection = keepOrRemoveSelections(state.text, active.originalSelection, regex, remove);
+  if (!nextSelection?.length) return;
+
+  await editor.runtime.surfaces.applyEdit({
+    surfaceId: active.surfaceId,
+    edit: { selection: nextSelection },
+  });
+}
+
+async function finalizeKeepOrRemoveSelections(
+  editor: Parameters<EditorModule>[0],
+  active: ActiveInputPromptState,
+  remove: boolean,
+): Promise<boolean> {
+  if (!active.query) return true;
+
+  const regex = buildSmartCaseRegex(active.query);
+  if (regex instanceof Error) {
+    active.error = regex.message;
+    return false;
+  }
+
+  const state = await editor.runtime.surfaces.readState({ surfaceId: active.surfaceId });
+  const nextSelection = keepOrRemoveSelections(state.text, active.originalSelection, regex, remove);
+  if (!nextSelection?.length) {
+    active.error = "no selections remaining";
     return false;
   }
 
@@ -432,6 +556,76 @@ function selectRegexMatches(
   return ranges;
 }
 
+function splitSelectionMatches(
+  text: string,
+  selection: readonly SurfaceSelectionRange[],
+  regex: RegExp,
+): SurfaceSelectionRange[] {
+  const chars = Array.from(text);
+  const ranges: SurfaceSelectionRange[] = [];
+  let nextId = nextCursorId(selection);
+
+  for (const cursor of selection) {
+    if (cursor.anchor === cursor.head) {
+      ranges.push(cloneRange(cursor));
+      continue;
+    }
+
+    const from = Math.min(cursor.anchor, cursor.head);
+    const to = Math.max(cursor.anchor, cursor.head);
+    const segment = chars.slice(from, to).join("");
+    const startIndex = ranges.length;
+    let assigned = false;
+    let start = from;
+
+    for (const match of segment.matchAll(new RegExp(regex.source, regex.flags))) {
+      const matchText = match[0] ?? "";
+      const split = from + charCount(segment.slice(0, match.index ?? 0));
+      if (start !== split) {
+        const piece = orientRange(cursor, start, split);
+        const cursorId = !assigned && rangeContainsInclusive(piece, cursor.head)
+          ? (assigned = true, cursor.cursorId)
+          : nextId++;
+        ranges.push({ cursorId, ...piece });
+      }
+      start = split + charCount(matchText);
+    }
+
+    if (start < to) {
+      const piece = orientRange(cursor, start, to);
+      const cursorId = !assigned && rangeContainsInclusive(piece, cursor.head)
+        ? (assigned = true, cursor.cursorId)
+        : nextId++;
+      ranges.push({ cursorId, ...piece });
+    }
+
+    if (ranges.length === startIndex) {
+      ranges.push({ cursorId: cursor.cursorId, anchor: cursor.head, head: cursor.head });
+    } else if (!assigned) {
+      ranges[startIndex] = { ...ranges[startIndex]!, cursorId: cursor.cursorId };
+    }
+  }
+
+  return ranges;
+}
+
+function keepOrRemoveSelections(
+  text: string,
+  selection: readonly SurfaceSelectionRange[],
+  regex: RegExp,
+  remove: boolean,
+): SurfaceSelectionRange[] | undefined {
+  const chars = Array.from(text);
+  const filtered = selection.filter((range) => {
+    const from = Math.min(range.anchor, range.head);
+    const to = Math.max(range.anchor, range.head);
+    const segment = chars.slice(from, to).join("");
+    return new RegExp(regex.source, regex.flags).test(segment) !== remove;
+  });
+
+  return filtered.length ? filtered.map(cloneRange) : undefined;
+}
+
 function searchRegexSelection(
   text: string,
   selection: readonly SurfaceSelectionRange[],
@@ -537,6 +731,12 @@ function promptTitle(kind: InputPromptKind): string {
   switch (kind) {
     case "selectRegex":
       return "SELECT";
+    case "splitSelection":
+      return "SPLIT";
+    case "keepSelections":
+      return "KEEP";
+    case "removeSelections":
+      return "REMOVE";
     case "searchForward":
       return "/";
     case "searchBackward":
@@ -547,6 +747,9 @@ function promptTitle(kind: InputPromptKind): string {
 function promptPlaceholder(kind: InputPromptKind): string {
   switch (kind) {
     case "selectRegex":
+    case "splitSelection":
+    case "keepSelections":
+    case "removeSelections":
       return "Regular expression";
     case "searchForward":
     case "searchBackward":
@@ -555,7 +758,12 @@ function promptPlaceholder(kind: InputPromptKind): string {
 }
 
 function isInputPromptKind(value: unknown): value is InputPromptKind {
-  return value === "selectRegex" || value === "searchForward" || value === "searchBackward";
+  return value === "selectRegex"
+    || value === "splitSelection"
+    || value === "keepSelections"
+    || value === "removeSelections"
+    || value === "searchForward"
+    || value === "searchBackward";
 }
 
 function isSearchPromptKind(kind: InputPromptKind): kind is "searchForward" | "searchBackward" {
@@ -569,6 +777,9 @@ function searchDirectionForKind(kind: InputPromptKind): SearchDirection | undefi
     case "searchBackward":
       return "backward";
     case "selectRegex":
+    case "splitSelection":
+    case "keepSelections":
+    case "removeSelections":
       return undefined;
   }
 }

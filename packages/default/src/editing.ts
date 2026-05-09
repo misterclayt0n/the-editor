@@ -436,10 +436,45 @@ export function defaultEditing(): EditorModule {
       },
     });
     editor.commands.register({
+      id: commandId("split_selection"),
+      title: "Split Selection",
+      async run() {
+        await editor.commands.dispatch({ id: commandId("input_prompt.open"), args: { kind: "splitSelection" } });
+      },
+    });
+    editor.commands.register({
+      id: commandId("keep_selections"),
+      title: "Keep Selections",
+      async run() {
+        await editor.commands.dispatch({ id: commandId("input_prompt.open"), args: { kind: "keepSelections" } });
+      },
+    });
+    editor.commands.register({
+      id: commandId("remove_selections"),
+      title: "Remove Selections",
+      async run() {
+        await editor.commands.dispatch({ id: commandId("input_prompt.open"), args: { kind: "removeSelections" } });
+      },
+    });
+    editor.commands.register({
       id: commandId("split_selection_on_newline"),
       title: "Split Selection On Newline",
       async run() {
         await splitSelectionOnNewline(editor);
+      },
+    });
+    editor.commands.register({
+      id: commandId("join_selections"),
+      title: "Join Selections",
+      async run() {
+        await joinSelections(editor, false);
+      },
+    });
+    editor.commands.register({
+      id: commandId("join_selections_space"),
+      title: "Join Selections Space",
+      async run() {
+        await joinSelections(editor, true);
       },
     });
 
@@ -855,6 +890,59 @@ async function splitSelectionOnNewline(editor: EditorHost): Promise<void> {
   await applyEdit(editor, { selection });
 }
 
+async function joinSelections(editor: EditorHost, selectSpace: boolean): Promise<void> {
+  const state = await readActiveSurfaceState(editor);
+  const chars = Array.from(state.text);
+  const lines = lineInfos(chars);
+  const changes: SurfaceChange[] = [];
+
+  for (const selection of state.selection) {
+    const lineRange = selectionLineJoinRange(selection, chars.length, lines);
+    if (!lineRange) continue;
+
+    for (let line = lineRange.start; line < lineRange.end; line += 1) {
+      const nextLine = lines[line + 1];
+      if (!nextLine) break;
+
+      const from = lineContentEndCharIndex(lines, chars, line);
+      let to = nextLine.start;
+      while (to < nextLine.end && (chars[to] === " " || chars[to] === "\t")) to += 1;
+
+      const separator = to === lineContentEndCharIndex(lines, chars, line + 1) ? undefined : " ";
+      changes.push({ start: from, end: to, text: separator });
+    }
+  }
+
+  if (!changes.length) return;
+
+  changes.sort((a, b) => a.start - b.start || a.end - b.end);
+  const deduped = changes.filter((change, index) => {
+    const previous = changes[index - 1];
+    return !previous
+      || previous.start !== change.start
+      || previous.end !== change.end
+      || previous.text !== change.text;
+  });
+
+  const edit: SurfaceEdit = { changes: deduped };
+  if (selectSpace) {
+    let offset = 0;
+    let nextCursorId = state.selection.reduce((max, range) => Math.max(max, range.cursorId), 0) + 1;
+    edit.selection = deduped.flatMap((change) => {
+      const removed = change.end - change.start;
+      if (change.text) {
+        const point = change.start - offset;
+        offset += removed - change.text.length;
+        return [{ cursorId: nextCursorId++, anchor: point, head: point } satisfies SurfaceSelectionRange];
+      }
+      offset += removed;
+      return [];
+    });
+  }
+
+  await applyEdit(editor, edit, true);
+}
+
 async function replaceSelectionWithStr(editor: EditorHost, replacement: string): Promise<void> {
   const state = await readActiveSurfaceState(editor);
   const boundaries = graphemeBoundaries(state.text);
@@ -1046,6 +1134,38 @@ function lineAtChar(lines: readonly LineInfo[], charIdx: number): number | undef
     if (charIdx < line.end || (charIdx === line.start && line.start === line.end)) return index;
   }
   return undefined;
+}
+
+function lineContentEndCharIndex(lines: readonly LineInfo[], chars: readonly string[], line: number): number {
+  const info = lines[line];
+  if (!info) return chars.length;
+  let end = info.end;
+  if (end > info.start && chars[end - 1] === "\n") end -= 1;
+  if (end > info.start && chars[end - 1] === "\r") end -= 1;
+  return end;
+}
+
+function selectionLineJoinRange(
+  range: SurfaceSelectionRange,
+  len: number,
+  lines: readonly LineInfo[],
+): { start: number; end: number } | undefined {
+  const from = Math.min(range.anchor, range.head);
+  const to = Math.max(range.anchor, range.head);
+  const startLine = lineAtChar(lines, from);
+  if (startLine === undefined) return undefined;
+
+  const endChar = from === to
+    ? from
+    : Math.max(from, Math.min(len, to) - 1);
+  const endLine = to >= len
+    ? lines.length - 1
+    : lineAtChar(lines, Math.max(0, endChar));
+  if (endLine === undefined) return undefined;
+
+  return startLine === endLine
+    ? { start: startLine, end: Math.min(startLine + 1, lines.length - 1) }
+    : { start: startLine, end: endLine };
 }
 
 function charAtLineCol(lines: readonly LineInfo[], line: number, col: number): number | undefined {

@@ -131,4 +131,66 @@ describe("input prompt", () => {
     });
     expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 8, head: 11 }]);
   });
+
+  it("splits selections on regex matches through the input prompt", async () => {
+    const editor = await createTestEditor("alpha,beta,gamma");
+    await editor.commands.dispatch({ id: commandId("select_all") });
+    await editor.commands.dispatch({ id: commandId("split_selection") });
+    await editor.commands.dispatch({ id: commandId("input_prompt.setQuery"), args: { query: "," } });
+
+    let snapshot = editor.roles.snapshot("inputPrompt");
+    expect(snapshot?.state).toMatchObject({ visible: true, title: "SPLIT", query: "," });
+
+    let state = await editor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(editor).activeSurfaceId!,
+    });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([
+      { anchor: 0, head: 5 },
+      { anchor: 6, head: 10 },
+      { anchor: 11, head: 16 },
+    ]);
+
+    await editor.commands.dispatch({ id: commandId("input_prompt.accept") });
+
+    snapshot = editor.roles.snapshot("inputPrompt");
+    expect(snapshot?.state).toMatchObject({ visible: false, query: "" });
+
+    state = await editor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(editor).activeSurfaceId!,
+    });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([
+      { anchor: 0, head: 5 },
+      { anchor: 6, head: 10 },
+      { anchor: 11, head: 16 },
+    ]);
+  });
+
+  it("keeps and removes selections through regex prompts", async () => {
+    const keepEditor = await createTestEditor("alpha\nbeta\ngamma");
+    await keepEditor.commands.dispatch({ id: commandId("select_all") });
+    await keepEditor.commands.dispatch({ id: commandId("split_selection_on_newline") });
+    await keepEditor.commands.dispatch({ id: commandId("keep_selections") });
+    await keepEditor.commands.dispatch({ id: commandId("input_prompt.setQuery"), args: { query: "^a" } });
+    await keepEditor.commands.dispatch({ id: commandId("input_prompt.accept") });
+
+    let state = await keepEditor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(keepEditor).activeSurfaceId!,
+    });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([{ anchor: 0, head: 5 }]);
+
+    const removeEditor = await createTestEditor("alpha\nbeta\ngamma");
+    await removeEditor.commands.dispatch({ id: commandId("select_all") });
+    await removeEditor.commands.dispatch({ id: commandId("split_selection_on_newline") });
+    await removeEditor.commands.dispatch({ id: commandId("remove_selections") });
+    await removeEditor.commands.dispatch({ id: commandId("input_prompt.setQuery"), args: { query: "^a" } });
+    await removeEditor.commands.dispatch({ id: commandId("input_prompt.accept") });
+
+    state = await removeEditor.runtime.surfaces.readState({
+      surfaceId: getDefaultState(removeEditor).activeSurfaceId!,
+    });
+    expect(state.selection.map(({ anchor, head }) => ({ anchor, head }))).toEqual([
+      { anchor: 6, head: 10 },
+      { anchor: 11, head: 16 },
+    ]);
+  });
 });

@@ -32,11 +32,13 @@ export function defaultWorkbench(): EditorModule {
         const state = getDefaultState(editor);
         if (!state.activeSurfaceId) throw new Error("no active surface");
         if (request.metrics) {
+          state.surfaceMetrics = request.metrics;
           await editor.runtime.surfaces.setMetrics({
             surfaceId: state.activeSurfaceId,
             metrics: request.metrics,
           });
         }
+        if (request.viewport) state.surfaceViewport = request.viewport;
         await refreshActiveSurface(editor, request.viewport);
         return true;
       },

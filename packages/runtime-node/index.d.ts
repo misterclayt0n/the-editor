@@ -28,6 +28,15 @@ export declare class NativeRuntimeSession {
   readSyntaxHighlightLegendJson(): string
   renderFrameJson(surfaceId: number, viewport?: JsViewport | undefined | null): string
   saveSurfaceDocument(surfaceId: number): void
+  ensureSearchIndexJson(rootPath: string): string
+  readSearchIndexStatusJson(indexId: number): string
+  refreshSearchIndex(indexId: number): void
+  querySearchFilesJson(indexId: number, query: string, offset?: number | undefined | null, limit?: number | undefined | null, currentPath?: string | undefined | null): string
+  querySearchDirsJson(indexId: number, query: string, offset?: number | undefined | null, limit?: number | undefined | null, currentPath?: string | undefined | null): string
+  querySearchMixedJson(indexId: number, query: string, offset?: number | undefined | null, limit?: number | undefined | null, currentPath?: string | undefined | null): string
+  querySearchGrepJson(indexId: number, query: string, offset?: number | undefined | null, limit?: number | undefined | null, currentPath?: string | undefined | null, beforeContext?: number | undefined | null, afterContext?: number | undefined | null): string
+  recordSearchSelection(indexId: number, query: string, path: string): void
+  readTextPreviewJson(path: string, maxBytes?: number | undefined | null, maxLines?: number | undefined | null, aroundLine?: number | undefined | null, contextLines?: number | undefined | null): string
 }
 
 export interface JsCellGridMetrics {

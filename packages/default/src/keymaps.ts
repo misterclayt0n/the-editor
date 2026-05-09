@@ -164,7 +164,7 @@ export function defaultKeymaps(): EditorModule {
         "C-s": "save_selection",
 
         space: keymap("Space", {
-          // f: "file_picker",
+          f: "file_picker",
           // F: "file_picker_in_current_directory",
           // e: "file_explorer",
           // E: "edit_current_file_path",

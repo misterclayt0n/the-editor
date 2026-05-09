@@ -22,7 +22,8 @@ export function defaultScratch(): EditorModule {
       id: commandId("scratch.create"),
       title: "Create Scratch Buffer",
       async run(_ctx, args) {
-        const viewport = args?.viewport ?? defaultViewport();
+        const state = getDefaultState(editor);
+        const viewport = args?.viewport ?? state.surfaceViewport ?? defaultViewport();
         const document = await editor.runtime.documents.createScratch({
           text: args?.text ?? "",
         });
@@ -30,8 +31,16 @@ export function defaultScratch(): EditorModule {
           documentId: document.documentId,
           viewport,
         });
+        if (state.surfaceMetrics) {
+          await editor.runtime.surfaces.setMetrics({
+            surfaceId: surface.surfaceId,
+            metrics: state.surfaceMetrics,
+          });
+        }
+        if (state.softWrap) {
+          await editor.runtime.surfaces.setSoftWrap({ surfaceId: surface.surfaceId, softWrap: true });
+        }
 
-        const state = getDefaultState(editor);
         state.activeDocumentId = document.documentId;
         state.activeSurfaceId = surface.surfaceId;
         state.activePath = undefined;
@@ -46,14 +55,23 @@ export function defaultScratch(): EditorModule {
       id: commandId("file.open"),
       title: "Open File",
       async run(_ctx, args) {
-        const viewport = args.viewport ?? defaultViewport();
+        const state = getDefaultState(editor);
+        const viewport = args.viewport ?? state.surfaceViewport ?? defaultViewport();
         const document = await editor.runtime.documents.openFile({ path: args.path });
         const surface = await editor.runtime.surfaces.create({
           documentId: document.documentId,
           viewport,
         });
+        if (state.surfaceMetrics) {
+          await editor.runtime.surfaces.setMetrics({
+            surfaceId: surface.surfaceId,
+            metrics: state.surfaceMetrics,
+          });
+        }
+        if (state.softWrap) {
+          await editor.runtime.surfaces.setSoftWrap({ surfaceId: surface.surfaceId, softWrap: true });
+        }
 
-        const state = getDefaultState(editor);
         state.activeDocumentId = document.documentId;
         state.activeSurfaceId = surface.surfaceId;
         state.activePath = args.path;

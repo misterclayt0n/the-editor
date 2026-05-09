@@ -1,0 +1,315 @@
+.pickerOverlay {
+  inset: 0;
+  pointer-events: auto;
+  position: absolute;
+}
+
+.pickerBackdrop {
+  appearance: none;
+  background: var(--theme-ui-command-palette-backdrop-bg, var(--theme-palette-overlay, rgba(0, 0, 0, 0.24)));
+  backdrop-filter: blur(6px);
+  border: 0;
+  cursor: default;
+  inset: 0;
+  padding: 0;
+  position: absolute;
+}
+
+.pickerViewport {
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: max(18px, 4vh) 20px 20px;
+  position: absolute;
+}
+
+.pickerShell {
+  --pickerAccent: var(--theme-palette-accent, #009fff);
+  --pickerBg: var(--theme-ui-command-palette-bg, var(--theme-ui-popup-bg, var(--theme-background, #141415)));
+  --pickerFg: var(--theme-ui-command-palette-fg, var(--theme-ui-text-fg, var(--theme-foreground, #dadada)));
+  --pickerMuted: var(--theme-ui-command-palette-detail-fg, var(--theme-ui-text-inactive-fg, #84848a));
+  --pickerBorder: var(--theme-ui-command-palette-border-fg, var(--theme-ui-popup-border-fg, rgba(255, 255, 255, 0.08)));
+  --pickerHover: color-mix(in lab, var(--pickerAccent) 8%, var(--pickerBg));
+  --pickerSelected: color-mix(in lab, var(--pickerAccent) 13%, var(--pickerBg));
+  align-self: flex-start;
+  max-width: min(1080px, calc(100vw - 40px));
+  width: 100%;
+}
+
+.pickerSurface {
+  background: var(--pickerBg);
+  border: 1px solid var(--pickerBorder);
+  border-radius: 16px;
+  box-shadow: 0 22px 56px rgba(0, 0, 0, 0.28);
+  color: var(--pickerFg);
+  overflow: hidden;
+  position: relative;
+}
+
+.pickerSurface::before {
+  border: 1px solid color-mix(in lab, var(--pickerBorder) 40%, transparent);
+  border-radius: 15px;
+  content: "";
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+}
+
+.pickerHeader {
+  padding: 12px;
+}
+
+.pickerInputRow {
+  align-items: center;
+  background: color-mix(in lab, var(--pickerFg) 2%, var(--pickerBg));
+  border: 1px solid var(--pickerBorder);
+  border-radius: 11px;
+  display: flex;
+  gap: 10px;
+  min-height: 36px;
+  padding: 0 12px;
+}
+
+.pickerInputRow .commandPaletteSearchIcon {
+  color: var(--pickerMuted);
+}
+
+.pickerInput {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--pickerFg);
+  flex: 1 1 auto;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 34px;
+  min-width: 0;
+  outline: none;
+  padding: 0;
+}
+
+.pickerInput::placeholder {
+  color: color-mix(in lab, var(--pickerFg) 60%, var(--pickerBg));
+}
+
+.pickerTitleBadge {
+  border-inline-start: 1px solid color-mix(in lab, var(--pickerBorder) 88%, transparent);
+  color: var(--pickerMuted);
+  flex: 0 0 auto;
+  font-family: Iosevka, ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  padding-inline-start: 10px;
+  text-transform: uppercase;
+}
+
+.pickerBody {
+  display: grid;
+  gap: 0;
+  grid-template-columns: minmax(300px, 0.95fr) minmax(360px, 1.05fr);
+  min-height: min(560px, calc(78vh - 92px));
+}
+
+.pickerResults {
+  border-inline-end: 1px solid color-mix(in lab, var(--pickerBorder) 92%, transparent);
+  max-height: min(560px, calc(78vh - 92px));
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+  scrollbar-color: color-mix(in lab, var(--pickerFg) 28%, var(--pickerBg)) transparent;
+  scrollbar-width: thin;
+}
+
+.pickerResults::-webkit-scrollbar,
+.pickerPreviewPane::-webkit-scrollbar {
+  height: 10px;
+  width: 10px;
+}
+
+.pickerResults::-webkit-scrollbar-thumb,
+.pickerPreviewPane::-webkit-scrollbar-thumb {
+  background: color-mix(in lab, var(--pickerFg) 28%, var(--pickerBg));
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+.pickerItem {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 42px;
+  padding: 8px 10px;
+  position: relative;
+  text-align: left;
+  transition: background-color 120ms ease;
+  width: 100%;
+}
+
+.pickerItem:hover {
+  background: var(--pickerHover);
+}
+
+.pickerItem[data-active="true"] {
+  background: var(--pickerSelected);
+}
+
+.pickerItem[data-active="true"]::after {
+  border: 1px solid color-mix(in lab, var(--pickerAccent) 62%, var(--pickerBorder));
+  border-radius: 10px;
+  content: "";
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+}
+
+.pickerItemMain {
+  min-width: 0;
+}
+
+.pickerItemTitle {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pickerItemSubtitle {
+  color: var(--pickerMuted);
+  font-size: 12px;
+  line-height: 1.35;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pickerItemDetail {
+  color: color-mix(in lab, var(--pickerMuted) 88%, transparent);
+  font-family: Iosevka, ui-monospace, monospace;
+  font-size: 11px;
+  max-width: 260px;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pickerEmpty,
+.pickerPreviewEmpty {
+  color: var(--pickerMuted);
+  font-size: 13px;
+  padding: 14px;
+}
+
+.pickerPreviewPane {
+  display: flex;
+  flex-direction: column;
+  max-height: min(560px, calc(78vh - 92px));
+  min-width: 0;
+  overflow: auto;
+}
+
+.pickerPreviewHeader {
+  border-bottom: 1px solid color-mix(in lab, var(--pickerBorder) 92%, transparent);
+  padding: 14px 16px 12px;
+}
+
+.pickerPreviewTitle {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.pickerPreviewDetail {
+  color: var(--pickerMuted);
+  font-family: Iosevka, ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pickerPreviewCode {
+  color: color-mix(in lab, var(--pickerFg) 92%, transparent);
+  display: grid;
+  font-family: Iosevka, ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 12px 0;
+}
+
+.pickerPreviewCodeRow {
+  align-items: baseline;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-width: 0;
+  padding: 0 16px;
+}
+
+.pickerPreviewLineNumber {
+  color: color-mix(in lab, var(--pickerMuted) 90%, transparent);
+  min-width: 3.5em;
+  text-align: right;
+  user-select: none;
+}
+
+.pickerPreviewLineText {
+  min-width: 0;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.pickerPreviewText {
+  color: color-mix(in lab, var(--pickerFg) 92%, transparent);
+  flex: 1 1 auto;
+  font-family: Iosevka, ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0;
+  min-width: 0;
+  padding: 16px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.pickerFooter {
+  align-items: center;
+  border-top: 1px solid var(--pickerBorder);
+  color: var(--pickerMuted);
+  display: flex;
+  font-size: 12px;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 10px 14px;
+}
+
+@media (max-width: 900px) {
+  .pickerBody {
+    grid-template-columns: 1fr;
+  }
+
+  .pickerResults {
+    border-inline-end: 0;
+    border-bottom: 1px solid color-mix(in lab, var(--pickerBorder) 92%, transparent);
+    max-height: 260px;
+  }
+
+  .pickerPreviewPane {
+    max-height: 260px;
+  }
+}

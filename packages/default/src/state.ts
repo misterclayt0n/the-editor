@@ -1,4 +1,4 @@
-import type { DocumentId, RenderFrame, SurfaceId, Viewport } from "@the-editor/contracts/runtime";
+import type { CellGridMetrics, DocumentId, RenderFrame, SurfaceId, Viewport } from "@the-editor/contracts/runtime";
 import { commandId, type BufferDecoration, type EditorHost, type KeyInput, type RoleSnapshot } from "@the-editor/editor";
 
 export type EditorMode = "normal" | "insert" | "select";
@@ -14,6 +14,8 @@ export interface DefaultEditorState {
   decorations: BufferDecoration[];
   roleStates: Record<string, RoleSnapshot>;
   syntaxLegend: Record<number, string>;
+  surfaceViewport?: Viewport;
+  surfaceMetrics?: CellGridMetrics;
   currentRegister?: string;
 }
 
@@ -31,6 +33,8 @@ export function getDefaultState(editor: EditorHost): DefaultEditorState {
     decorations: [],
     roleStates: {},
     syntaxLegend: {},
+    surfaceViewport: undefined,
+    surfaceMetrics: undefined,
     currentRegister: undefined,
   }));
 }

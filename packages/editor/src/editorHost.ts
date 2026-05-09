@@ -11,6 +11,7 @@ import { KeymapRegistry } from "./keymaps.js";
 import { ModuleRegistry, type EditorModule, type EditorModuleRegistration } from "./modules.js";
 import { PackageRegistry, type PackageTargetAdapterMap } from "./packages.js";
 import { CommandPaletteRegistry } from "./palette.js";
+import { PickerRegistry } from "./pickers.js";
 import { RoleRegistry } from "./roles.js";
 import { ThemeRegistry } from "./themes.js";
 import { ToolRegistry } from "./tools.js";
@@ -34,6 +35,7 @@ export class EditorHost {
   readonly packages: PackageRegistry;
   readonly roles = new RoleRegistry(this);
   readonly palette = new CommandPaletteRegistry(this);
+  readonly pickers = new PickerRegistry(this);
   readonly tools = new ToolRegistry(this);
   readonly interaction = new InteractionRegistry(this);
   readonly decorations = new DecorationRegistry(this);

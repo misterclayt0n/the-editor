@@ -49,6 +49,20 @@ use crate::{
     ResourceId,
     normalize_file_path,
   },
+  search::{
+    DirSearchResult,
+    FileSearchResult,
+    GrepSearchResult,
+    MixedSearchResult,
+    SearchIndexHandle,
+    SearchIndexReady,
+    SearchIndexStatus,
+    SearchManager,
+    SearchError,
+    TextPreviewResult,
+    TextPreviewRow,
+    TextPreviewSyntaxSpan,
+  },
   syntax::{
     RuntimeSyntax,
     RuntimeSyntaxError,
@@ -174,6 +188,9 @@ pub enum RuntimeError {
   #[error(transparent)]
   Syntax(#[from] RuntimeSyntaxError),
 
+  #[error(transparent)]
+  Search(#[from] SearchError),
+
   #[error("unknown document handle {0:?}")]
   UnknownDocument(DocumentHandle),
 
@@ -200,6 +217,7 @@ pub struct RuntimeSession {
   clipboard:          Arc<dyn ClipboardProvider>,
   registers:          Registers,
   syntax_scheduler:   SyntaxScheduler,
+  search:             SearchManager,
   next_resource_id:   u64,
   next_document_id:   u64,
   next_surface_id:    u64,
@@ -240,6 +258,7 @@ impl RuntimeSession {
       clipboard,
       registers: Registers::new(),
       syntax_scheduler: SyntaxScheduler::default(),
+      search: SearchManager::default(),
       next_resource_id: 0,
       next_document_id: 0,
       next_surface_id: 0,
@@ -298,6 +317,187 @@ impl RuntimeSession {
       name,
       values.into_iter().map(the_lib::Tendril::from).collect(),
     );
+  }
+
+  pub fn ensure_search_index(&mut self, root_path: &Path) -> RuntimeResult<SearchIndexReady> {
+    Ok(self.search.ensure_index(root_path)?)
+  }
+
+  pub fn search_index_status(
+    &self,
+    index: SearchIndexHandle,
+  ) -> RuntimeResult<SearchIndexStatus> {
+    Ok(self.search.status(index)?)
+  }
+
+  pub fn refresh_search_index(&self, index: SearchIndexHandle) -> RuntimeResult<()> {
+    self.search.refresh(index)?;
+    Ok(())
+  }
+
+  pub fn query_search_files(
+    &self,
+    index: SearchIndexHandle,
+    query: &str,
+    offset: usize,
+    limit: usize,
+    current_path: Option<&str>,
+  ) -> RuntimeResult<FileSearchResult> {
+    Ok(self.search.query_files(index, query, offset, limit, current_path)?)
+  }
+
+  pub fn query_search_dirs(
+    &self,
+    index: SearchIndexHandle,
+    query: &str,
+    offset: usize,
+    limit: usize,
+    current_path: Option<&str>,
+  ) -> RuntimeResult<DirSearchResult> {
+    Ok(self.search.query_dirs(index, query, offset, limit, current_path)?)
+  }
+
+  pub fn query_search_mixed(
+    &self,
+    index: SearchIndexHandle,
+    query: &str,
+    offset: usize,
+    limit: usize,
+    current_path: Option<&str>,
+  ) -> RuntimeResult<MixedSearchResult> {
+    Ok(self.search.query_mixed(index, query, offset, limit, current_path)?)
+  }
+
+  pub fn query_search_grep(
+    &self,
+    index: SearchIndexHandle,
+    query: &str,
+    offset: usize,
+    limit: usize,
+    current_path: Option<&str>,
+    before_context: usize,
+    after_context: usize,
+  ) -> RuntimeResult<GrepSearchResult> {
+    Ok(self.search.query_grep(
+      index,
+      query,
+      offset,
+      limit,
+      current_path,
+      before_context,
+      after_context,
+    )?)
+  }
+
+  pub fn record_search_selection(
+    &self,
+    index: SearchIndexHandle,
+    query: &str,
+    path: &Path,
+  ) -> RuntimeResult<()> {
+    self.search.record_selection(index, query, path)?;
+    Ok(())
+  }
+
+  pub fn read_text_preview(
+    &self,
+    path: &Path,
+    max_bytes: usize,
+    max_lines: usize,
+    around_line: Option<usize>,
+    context_lines: usize,
+  ) -> RuntimeResult<TextPreviewResult> {
+    let normalized = normalize_file_path(path)?;
+    let mut document = Document::new(read_text_file(&normalized)?);
+    self.syntax.activate_document(&mut document, Some(&normalized));
+    let _ = self.syntax.reparse_document(&mut document);
+
+    let total_lines = document.text().len_lines();
+    let row_count = max_lines.max(1);
+    let start_line = around_line
+      .filter(|line| *line > 0)
+      .map(|line| line.saturating_sub(1).saturating_sub(context_lines))
+      .unwrap_or(0)
+      .min(total_lines.saturating_sub(1));
+
+    let mut render = CellGridRenderSurface::new(
+      SurfaceId::new(1).expect("preview surface id must be non-zero"),
+      TextFormat::default(),
+    );
+    render.set_measurements(CellGridMetrics::default());
+    let mut surface = Surface::new(
+      &document,
+      render,
+      Viewport::new(start_line, row_count, 0, 4096),
+    )?;
+    let frame = surface.render(&document, Some(self.syntax.registry()));
+
+    let mut row_index_by_surface_row = BTreeMap::new();
+    let mut rows = Vec::new();
+    let mut text = String::new();
+    let mut remaining_bytes = max_bytes.max(1);
+    let mut truncated = start_line > 0;
+
+    for row in &frame.rows {
+      let available = remaining_bytes.saturating_sub(usize::from(!rows.is_empty()));
+      if available == 0 {
+        truncated = true;
+        break;
+      }
+      let mut row_text = row.text.to_string();
+      if row_text.len() > available {
+        truncate_string_at_char_boundary(&mut row_text, available);
+        truncated = true;
+      }
+      if !rows.is_empty() {
+        text.push('\n');
+        remaining_bytes = remaining_bytes.saturating_sub(1);
+      }
+      text.push_str(&row_text);
+      remaining_bytes = remaining_bytes.saturating_sub(row_text.len());
+      row_index_by_surface_row.insert(row.surface_row, rows.len());
+      rows.push(TextPreviewRow {
+        text: row_text,
+        line_number: row.doc_line.map(|line| line + 1),
+      });
+      if truncated {
+        break;
+      }
+    }
+
+    let mut syntax = Vec::new();
+    for span in &frame.syntax {
+      let Some(&row_index) = row_index_by_surface_row.get(&span.surface_row) else {
+        continue;
+      };
+      let row_len = rows[row_index].text.chars().count();
+      if span.start_col >= row_len {
+        continue;
+      }
+      syntax.push(TextPreviewSyntaxSpan {
+        row: row_index,
+        start_col: span.start_col.min(row_len),
+        end_col: span.end_col.min(row_len),
+        kind: span.kind.get() as usize,
+      });
+    }
+
+    let start_line_number = rows.first().and_then(|row| row.line_number).unwrap_or(0);
+    let end_line_number = rows.last().and_then(|row| row.line_number).unwrap_or(0);
+    if end_line_number < total_lines {
+      truncated = true;
+    }
+
+    Ok(TextPreviewResult {
+      path: normalized.to_string_lossy().into_owned(),
+      text,
+      start_line: start_line_number,
+      end_line: end_line_number,
+      truncated,
+      binary: false,
+      rows: Some(rows),
+      syntax: Some(syntax),
+    })
   }
 
   pub fn resource(&self, resource: ResourceId) -> Option<&Resource> {
@@ -902,6 +1102,17 @@ impl RuntimeSession {
     self.resources.insert(resource, record);
     Ok(resource)
   }
+}
+
+fn truncate_string_at_char_boundary(text: &mut String, max_bytes: usize) {
+  if text.len() <= max_bytes {
+    return;
+  }
+  let mut boundary = max_bytes.min(text.len());
+  while boundary > 0 && !text.is_char_boundary(boundary) {
+    boundary -= 1;
+  }
+  text.truncate(boundary);
 }
 
 fn merge_range(ranges: &mut Vec<Range<usize>>, mut range: Range<usize>) {

@@ -1,8 +1,10 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import type { DiagnosticEntry } from "@the-editor/editor";
+import { resolveThemeStyleLoose, type ResolvedThemeDefinition } from "@the-editor/editor/themes";
 import type { EditorUiModule, WorkbenchSnapshot } from "@the-editor/editor/ui";
 import "./commandPalette.css";
 import "./inputPrompt.css";
+import "./picker.css";
 import "./workbenchUi.css";
 
 interface CommandPaletteItemView {
@@ -25,6 +27,51 @@ interface InputPromptViewState {
   query: string;
   placeholder?: string;
   error?: string;
+}
+
+interface PickerItemView {
+  id: string;
+  title: string;
+  subtitle?: string;
+  detail?: string;
+}
+
+interface PickerPreviewViewRowState {
+  text: string;
+  lineNumber?: number | null;
+}
+
+interface PickerPreviewViewSyntaxSpan {
+  row: number;
+  startCol: number;
+  endCol: number;
+  kind: number;
+}
+
+interface PickerPreviewViewState {
+  kind: "text" | "empty";
+  title?: string;
+  detail?: string;
+  text?: string;
+  startLine?: number;
+  endLine?: number;
+  truncated?: boolean;
+  binary?: boolean;
+  rows?: PickerPreviewViewRowState[];
+  syntax?: PickerPreviewViewSyntaxSpan[];
+}
+
+interface PickerViewState {
+  visible: boolean;
+  providerId?: string;
+  title?: string;
+  query: string;
+  placeholder?: string;
+  selectedIndex: number;
+  items: PickerItemView[];
+  status?: { primary?: string; secondary?: string };
+  emptyText?: string;
+  preview?: PickerPreviewViewState | null;
 }
 
 interface StatuslineViewState {
@@ -53,6 +100,15 @@ const uiModule: EditorUiModule = (host) => {
     render({ state, commands }) {
       if (!state?.visible) return null;
       return <InputPromptOverlay state={state} dispatch={commands.dispatch} />;
+    },
+  });
+
+  host.roles.register<PickerViewState>({
+    role: "picker",
+    implementationId: "default.picker",
+    render({ state, commands, workbench }) {
+      if (!state?.visible) return null;
+      return <PickerOverlay state={state} dispatch={commands.dispatch} workbench={workbench} />;
     },
   });
 
@@ -93,7 +149,7 @@ function CommandPaletteOverlay({
   }, [state.visible]);
 
   useLayoutEffect(() => {
-    scrollActivePaletteItemIntoView(itemsRef.current);
+    scrollActiveItemIntoView(itemsRef.current, '.commandPaletteItem[data-active="true"]');
   }, [state.items, state.selectedIndex]);
 
   return (
@@ -184,9 +240,9 @@ function CommandPaletteOverlay({
   );
 }
 
-function scrollActivePaletteItemIntoView(container: HTMLDivElement | null): void {
+function scrollActiveItemIntoView(container: HTMLDivElement | null, selector: string): void {
   if (!container) return;
-  const active = container.querySelector<HTMLElement>('.commandPaletteItem[data-active="true"]');
+  const active = container.querySelector<HTMLElement>(selector);
   if (!active) return;
 
   const activeRect = active.getBoundingClientRect();
@@ -200,6 +256,223 @@ function scrollActivePaletteItemIntoView(container: HTMLDivElement | null): void
     container.scrollTop += activeRect.bottom - containerRect.bottom;
   }
 }
+
+function PickerOverlay({
+  state,
+  dispatch,
+  workbench,
+}: {
+  state: PickerViewState;
+  dispatch: (dispatch: { id: string; args?: unknown }) => Promise<unknown>;
+  workbench: WorkbenchSnapshot;
+}) {
+  const previewSyntax = useMemo(
+    () => previewSyntaxByRow(state.preview?.syntax ?? []),
+    [state.preview?.syntax],
+  );
+  const previewTheme = workbench.theme?.active;
+  const syntaxLegend = workbench.syntaxLegend ?? {};
+  const inputRef = useRef<HTMLInputElement>(null);
+  const itemsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.focus();
+    const end = input.value.length;
+    input.setSelectionRange(end, end);
+  }, [state.visible]);
+
+  useLayoutEffect(() => {
+    scrollActiveItemIntoView(itemsRef.current, '.pickerItem[data-active="true"]');
+  }, [state.items, state.selectedIndex]);
+
+  return (
+    <section className="pickerOverlay">
+      <button
+        type="button"
+        className="pickerBackdrop"
+        aria-label="Close picker"
+        onClick={() => {
+          void dispatch({ id: "picker.close" });
+        }}
+      />
+      <div className="pickerViewport">
+        <div className="pickerShell">
+          <div className="pickerSurface">
+            <div className="pickerHeader">
+              <div className="pickerInputRow">
+                <CommandPaletteSearchIcon />
+                <input
+                  ref={inputRef}
+                  className="pickerInput"
+                  placeholder={state.placeholder || "Find files"}
+                  spellCheck={false}
+                  value={state.query}
+                  onChange={(event) => {
+                    void dispatch({ id: "picker.setQuery", args: { query: event.target.value } });
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "ArrowUp") {
+                      event.preventDefault();
+                      void dispatch({ id: "picker.moveSelection", args: { delta: -1 } });
+                      return;
+                    }
+                    if (event.key === "ArrowDown") {
+                      event.preventDefault();
+                      void dispatch({ id: "picker.moveSelection", args: { delta: 1 } });
+                      return;
+                    }
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      void dispatch({ id: "picker.accept" });
+                      return;
+                    }
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      void dispatch({ id: "picker.close" });
+                    }
+                  }}
+                />
+                {state.title ? <span className="pickerTitleBadge">{state.title}</span> : null}
+              </div>
+            </div>
+            <div className="pickerBody">
+              <div ref={itemsRef} className="pickerResults">
+                {state.items.length ? state.items.map((item, index) => {
+                  const isActive = index === state.selectedIndex;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className="pickerItem"
+                      data-active={isActive ? "true" : undefined}
+                      onMouseMove={() => {
+                        if (isActive) return;
+                        void dispatch({ id: "picker.selectIndex", args: { index } });
+                      }}
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                      }}
+                      onClick={() => {
+                        void dispatch({ id: "picker.selectIndex", args: { index } }).then(() => dispatch({ id: "picker.accept" }));
+                      }}
+                    >
+                      <div className="pickerItemMain">
+                        <div className="pickerItemTitle">{item.title}</div>
+                        {item.subtitle ? <div className="pickerItemSubtitle">{item.subtitle}</div> : null}
+                      </div>
+                      {item.detail ? <div className="pickerItemDetail">{item.detail}</div> : null}
+                    </button>
+                  );
+                }) : <div className="pickerEmpty">{state.emptyText || "No results"}</div>}
+              </div>
+              <aside className="pickerPreviewPane">
+                {state.preview?.kind === "text" ? (
+                  <>
+                    <div className="pickerPreviewHeader">
+                      <div className="pickerPreviewTitle">{state.preview.title || "Preview"}</div>
+                      {state.preview.detail ? <div className="pickerPreviewDetail">{state.preview.detail}</div> : null}
+                    </div>
+                    {state.preview.binary ? (
+                      <div className="pickerPreviewEmpty">Binary file</div>
+                    ) : state.preview.rows?.length ? (
+                      <div className="pickerPreviewCode">
+                        {state.preview.rows.map((row, rowIndex) => (
+                          <div key={`${row.lineNumber ?? rowIndex}:${rowIndex}`} className="pickerPreviewCodeRow">
+                            <div className="pickerPreviewLineNumber">{row.lineNumber ?? ""}</div>
+                            <div className="pickerPreviewLineText">
+                              {renderPreviewLine(row.text, previewSyntax.get(rowIndex) ?? [], previewTheme, syntaxLegend)}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <pre className="pickerPreviewText">{state.preview.text || ""}</pre>
+                    )}
+                  </>
+                ) : state.preview?.kind === "empty" ? (
+                  <div className="pickerPreviewEmpty">{state.preview.detail || state.preview.title || "No preview"}</div>
+                ) : (
+                  <div className="pickerPreviewEmpty">No preview</div>
+                )}
+              </aside>
+            </div>
+            <div className="pickerFooter">
+              <span>{state.status?.primary ?? ""}</span>
+              <span>{state.status?.secondary ?? ""}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function previewSyntaxByRow(spans: readonly PickerPreviewViewSyntaxSpan[]): Map<number, PickerPreviewViewSyntaxSpan[]> {
+  const rows = new Map<number, PickerPreviewViewSyntaxSpan[]>();
+  for (const span of spans) {
+    const list = rows.get(span.row) ?? [];
+    list.push(span);
+    rows.set(span.row, list);
+  }
+  for (const list of rows.values()) {
+    list.sort((a, b) => a.startCol - b.startCol || a.endCol - b.endCol || a.kind - b.kind);
+  }
+  return rows;
+}
+
+function renderPreviewLine(
+  text: string,
+  spans: readonly PickerPreviewViewSyntaxSpan[],
+  theme: ResolvedThemeDefinition | undefined,
+  syntaxLegend: Record<number, string>,
+) {
+  if (!spans.length) return <>{text || " "}</>;
+  const cells = Array.from(text);
+  const parts: ReactNode[] = [];
+  let col = 0;
+
+  for (const span of spans) {
+    const start = Math.max(0, Math.min(cells.length, span.startCol));
+    const end = Math.max(start, Math.min(cells.length, span.endCol));
+    if (start > col) {
+      parts.push(<Fragment key={`plain:${col}-${start}`}>{cells.slice(col, start).join("") || " "}</Fragment>);
+    }
+    const chunk = cells.slice(start, end).join("");
+    if (chunk) {
+      parts.push(
+        <span
+          key={`syntax:${start}-${end}-${span.kind}`}
+          style={{ color: previewSyntaxColor(theme, syntaxLegend[span.kind]) }}
+        >
+          {chunk}
+        </span>,
+      );
+    }
+    col = end;
+  }
+
+  if (col < cells.length) {
+    parts.push(<Fragment key={`plain:${col}-${cells.length}`}>{cells.slice(col).join("") || " "}</Fragment>);
+  }
+
+  return parts.length ? parts : <>{text || " "}</>;
+}
+
+function previewSyntaxColor(theme: ResolvedThemeDefinition | undefined, scope: string | undefined): string | undefined {
+  if (!theme || !scope) return undefined;
+  return resolveThemeStyleLoose(theme, scope, fallbackSyntaxScopes[scope as keyof typeof fallbackSyntaxScopes] ?? "ui.text")?.fg
+    ?? resolveThemeStyleLoose(theme, "ui.text")?.fg;
+}
+
+const fallbackSyntaxScopes: Record<string, string> = {
+  keyword: "keyword",
+  type: "type",
+  variable: "variable",
+  string: "string",
+  comment: "comment",
+};
 
 function InputPromptOverlay({
   state,

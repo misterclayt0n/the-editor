@@ -112,6 +112,38 @@ export class RuntimeNativeClient implements RuntimeApi {
     },
   };
 
+  readonly search = {
+    ensureIndex: async (params: { rootPath: string }) => JSON.parse(this.session.ensureSearchIndexJson(params.rootPath)) as Awaited<ReturnType<RuntimeApi["search"]["ensureIndex"]>>,
+    status: async (params: { indexId: Parameters<RuntimeApi["search"]["status"]>[0]["indexId"] }) => JSON.parse(this.session.readSearchIndexStatusJson(params.indexId)) as Awaited<ReturnType<RuntimeApi["search"]["status"]>>,
+    refresh: async (params: { indexId: Parameters<RuntimeApi["search"]["refresh"]>[0]["indexId"] }) => {
+      this.session.refreshSearchIndex(params.indexId);
+      return { ok: true } as const;
+    },
+    queryFiles: async (params: Parameters<RuntimeApi["search"]["queryFiles"]>[0]) => JSON.parse(this.session.querySearchFilesJson(params.indexId, params.query, params.offset ?? null, params.limit ?? null, params.currentPath ?? null)) as Awaited<ReturnType<RuntimeApi["search"]["queryFiles"]>>,
+    queryDirs: async (params: Parameters<RuntimeApi["search"]["queryDirs"]>[0]) => JSON.parse(this.session.querySearchDirsJson(params.indexId, params.query, params.offset ?? null, params.limit ?? null, params.currentPath ?? null)) as Awaited<ReturnType<RuntimeApi["search"]["queryDirs"]>>,
+    queryMixed: async (params: Parameters<RuntimeApi["search"]["queryMixed"]>[0]) => JSON.parse(this.session.querySearchMixedJson(params.indexId, params.query, params.offset ?? null, params.limit ?? null, params.currentPath ?? null)) as Awaited<ReturnType<RuntimeApi["search"]["queryMixed"]>>,
+    queryGrep: async (params: Parameters<RuntimeApi["search"]["queryGrep"]>[0]) => JSON.parse(this.session.querySearchGrepJson(
+      params.indexId,
+      params.query,
+      params.offset ?? null,
+      params.limit ?? null,
+      params.currentPath ?? null,
+      params.beforeContext ?? null,
+      params.afterContext ?? null,
+    )) as Awaited<ReturnType<RuntimeApi["search"]["queryGrep"]>>,
+    recordSelection: async (params: Parameters<RuntimeApi["search"]["recordSelection"]>[0]) => {
+      this.session.recordSearchSelection(params.indexId, params.query, params.path);
+      return { ok: true } as const;
+    },
+    readTextPreview: async (params: Parameters<RuntimeApi["search"]["readTextPreview"]>[0]) => JSON.parse(this.session.readTextPreviewJson(
+      params.path,
+      params.maxBytes ?? null,
+      params.maxLines ?? null,
+      params.aroundLine ?? null,
+      params.contextLines ?? null,
+    )) as Awaited<ReturnType<RuntimeApi["search"]["readTextPreview"]>>,
+  };
+
   readonly registers = {
     read: async (params: { name: string }): Promise<{ values: string[] | null }> => ({
       values: this.session.readRegister(params.name) ?? null,
@@ -183,6 +215,24 @@ export class RuntimeNativeClient implements RuntimeApi {
         return this.surfaces.later(params as Parameters<RuntimeApi["surfaces"]["later"]>[0]);
       case "surfaces.renderFrame":
         return this.surfaces.renderFrame(params as Parameters<RuntimeApi["surfaces"]["renderFrame"]>[0]);
+      case "search.ensureIndex":
+        return this.search.ensureIndex(params as Parameters<RuntimeApi["search"]["ensureIndex"]>[0]);
+      case "search.status":
+        return this.search.status(params as Parameters<RuntimeApi["search"]["status"]>[0]);
+      case "search.refresh":
+        return this.search.refresh(params as Parameters<RuntimeApi["search"]["refresh"]>[0]);
+      case "search.queryFiles":
+        return this.search.queryFiles(params as Parameters<RuntimeApi["search"]["queryFiles"]>[0]);
+      case "search.queryDirs":
+        return this.search.queryDirs(params as Parameters<RuntimeApi["search"]["queryDirs"]>[0]);
+      case "search.queryMixed":
+        return this.search.queryMixed(params as Parameters<RuntimeApi["search"]["queryMixed"]>[0]);
+      case "search.queryGrep":
+        return this.search.queryGrep(params as Parameters<RuntimeApi["search"]["queryGrep"]>[0]);
+      case "search.recordSelection":
+        return this.search.recordSelection(params as Parameters<RuntimeApi["search"]["recordSelection"]>[0]);
+      case "search.readTextPreview":
+        return this.search.readTextPreview(params as Parameters<RuntimeApi["search"]["readTextPreview"]>[0]);
       case "registers.read":
         return this.registers.read(params as Parameters<RuntimeApi["registers"]["read"]>[0]);
       case "registers.write":

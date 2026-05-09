@@ -3,6 +3,7 @@ import { defaultCommandPalette } from "./commandPalette.js";
 import { defaultEditing } from "./editing.js";
 import { defaultInputPrompt } from "./inputPrompt.js";
 import { defaultKeymaps } from "./keymaps.js";
+import { defaultPicker } from "./picker.js";
 import interactionModule from "./interaction.js";
 import { defaultReload } from "./reload.js";
 import runtimeModule from "./runtime.js";
@@ -14,6 +15,7 @@ export {
   defaultEditing,
   defaultInputPrompt,
   defaultKeymaps,
+  defaultPicker,
   defaultReload,
   defaultScratch,
   defaultViewport,

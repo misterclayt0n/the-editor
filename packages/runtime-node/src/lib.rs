@@ -30,6 +30,7 @@ use the_runtime::{
   DocumentHandle,
   OperationSpec,
   RuntimeSession,
+  SearchIndexHandle,
   SurfaceHandle,
 };
 
@@ -383,6 +384,152 @@ impl NativeRuntimeSession {
     runtime.save(document).map_err(runtime_error)
   }
 
+  #[napi]
+  pub fn ensure_search_index_json(&self, root_path: String) -> Result<String> {
+    let mut runtime = self.lock()?;
+    let ready = runtime.ensure_search_index(root_path.as_ref()).map_err(runtime_error)?;
+    serde_json::to_string(&ready).map_err(|err| Error::from_reason(err.to_string()))
+  }
+
+  #[napi]
+  pub fn read_search_index_status_json(&self, index_id: u32) -> Result<String> {
+    let runtime = self.lock()?;
+    let status = runtime
+      .search_index_status(search_handle(index_id)?)
+      .map_err(runtime_error)?;
+    serde_json::to_string(&status).map_err(|err| Error::from_reason(err.to_string()))
+  }
+
+  #[napi]
+  pub fn refresh_search_index(&self, index_id: u32) -> Result<()> {
+    let runtime = self.lock()?;
+    runtime
+      .refresh_search_index(search_handle(index_id)?)
+      .map_err(runtime_error)
+  }
+
+  #[napi]
+  pub fn query_search_files_json(
+    &self,
+    index_id: u32,
+    query: String,
+    offset: Option<u32>,
+    limit: Option<u32>,
+    current_path: Option<String>,
+  ) -> Result<String> {
+    let runtime = self.lock()?;
+    let result = runtime
+      .query_search_files(
+        search_handle(index_id)?,
+        &query,
+        offset.unwrap_or(0) as usize,
+        limit.unwrap_or(100) as usize,
+        current_path.as_deref(),
+      )
+      .map_err(runtime_error)?;
+    serde_json::to_string(&result).map_err(|err| Error::from_reason(err.to_string()))
+  }
+
+  #[napi]
+  pub fn query_search_dirs_json(
+    &self,
+    index_id: u32,
+    query: String,
+    offset: Option<u32>,
+    limit: Option<u32>,
+    current_path: Option<String>,
+  ) -> Result<String> {
+    let runtime = self.lock()?;
+    let result = runtime
+      .query_search_dirs(
+        search_handle(index_id)?,
+        &query,
+        offset.unwrap_or(0) as usize,
+        limit.unwrap_or(100) as usize,
+        current_path.as_deref(),
+      )
+      .map_err(runtime_error)?;
+    serde_json::to_string(&result).map_err(|err| Error::from_reason(err.to_string()))
+  }
+
+  #[napi]
+  pub fn query_search_mixed_json(
+    &self,
+    index_id: u32,
+    query: String,
+    offset: Option<u32>,
+    limit: Option<u32>,
+    current_path: Option<String>,
+  ) -> Result<String> {
+    let runtime = self.lock()?;
+    let result = runtime
+      .query_search_mixed(
+        search_handle(index_id)?,
+        &query,
+        offset.unwrap_or(0) as usize,
+        limit.unwrap_or(100) as usize,
+        current_path.as_deref(),
+      )
+      .map_err(runtime_error)?;
+    serde_json::to_string(&result).map_err(|err| Error::from_reason(err.to_string()))
+  }
+
+  #[napi]
+  pub fn query_search_grep_json(
+    &self,
+    index_id: u32,
+    query: String,
+    offset: Option<u32>,
+    limit: Option<u32>,
+    current_path: Option<String>,
+    before_context: Option<u32>,
+    after_context: Option<u32>,
+  ) -> Result<String> {
+    let runtime = self.lock()?;
+    let result = runtime
+      .query_search_grep(
+        search_handle(index_id)?,
+        &query,
+        offset.unwrap_or(0) as usize,
+        limit.unwrap_or(100) as usize,
+        current_path.as_deref(),
+        before_context.unwrap_or(0) as usize,
+        after_context.unwrap_or(0) as usize,
+      )
+      .map_err(runtime_error)?;
+    serde_json::to_string(&result).map_err(|err| Error::from_reason(err.to_string()))
+  }
+
+  #[napi]
+  pub fn record_search_selection(&self, index_id: u32, query: String, path: String) -> Result<()> {
+    let runtime = self.lock()?;
+    runtime
+      .record_search_selection(search_handle(index_id)?, &query, path.as_ref())
+      .map_err(runtime_error)
+  }
+
+  #[napi]
+  pub fn read_text_preview_json(
+    &self,
+    path: String,
+    max_bytes: Option<u32>,
+    max_lines: Option<u32>,
+    around_line: Option<u32>,
+    context_lines: Option<u32>,
+  ) -> Result<String> {
+    let runtime = self.lock()?;
+    let preview = runtime
+      .read_text_preview(
+        path.as_ref(),
+        max_bytes.unwrap_or(8192) as usize,
+        max_lines.unwrap_or(80) as usize,
+        around_line.map(|line| line as usize),
+        context_lines.unwrap_or(6) as usize,
+      )
+      .map_err(runtime_error)?;
+    serde_json::to_string(&preview).map_err(|err| Error::from_reason(err.to_string()))
+  }
+
   fn lock(&self) -> Result<std::sync::MutexGuard<'_, RuntimeSession>> {
     self
       .inner
@@ -399,6 +546,11 @@ fn document_handle(id: u32) -> Result<DocumentHandle> {
 fn surface_handle(id: u32) -> Result<SurfaceHandle> {
   SurfaceHandle::new(u64::from(id))
     .ok_or_else(|| Error::from_reason(format!("invalid surface id {id}")))
+}
+
+fn search_handle(id: u32) -> Result<SearchIndexHandle> {
+  SearchIndexHandle::new(u64::from(id))
+    .ok_or_else(|| Error::from_reason(format!("invalid search index id {id}")))
 }
 
 fn operation_spec(operation: JsSurfaceOperation) -> OperationSpec {

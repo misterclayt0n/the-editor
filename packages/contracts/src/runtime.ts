@@ -33,6 +33,7 @@ export interface RuntimeRpcError {
 export type DocumentId = number & { readonly __brand: "DocumentId" };
 export type SurfaceId = number & { readonly __brand: "SurfaceId" };
 export type ResourceId = number & { readonly __brand: "ResourceId" };
+export type SearchIndexId = number & { readonly __brand: "SearchIndexId" };
 
 export interface Viewport {
   firstRow: number;
@@ -140,6 +141,136 @@ export interface RenderFrame {
   syntax: SyntaxSpan[];
 }
 
+export interface SearchIndexReady {
+  indexId: SearchIndexId;
+  rootPath: string;
+}
+
+export interface SearchIndexStatus {
+  indexId: SearchIndexId;
+  rootPath: string;
+  scanning: boolean;
+  watcherReady: boolean;
+  warmupComplete: boolean;
+  indexedFiles: number;
+}
+
+export interface FileSearchItem {
+  kind: "file";
+  path: string;
+  relativePath: string;
+  fileName: string;
+  parentPath: string;
+  score: number;
+  matchType: string;
+  exactMatch: boolean;
+}
+
+export interface DirSearchItem {
+  kind: "dir";
+  path: string;
+  relativePath: string;
+  name: string;
+  score: number;
+  matchType: string;
+  exactMatch: boolean;
+}
+
+export type MixedSearchItem = FileSearchItem | DirSearchItem;
+
+export interface GrepSearchSpan {
+  start: number;
+  end: number;
+}
+
+export interface GrepSearchItem {
+  kind: "grep";
+  path: string;
+  relativePath: string;
+  fileName: string;
+  parentPath: string;
+  line: number;
+  column: number;
+  text: string;
+  score: number;
+  spans: GrepSearchSpan[];
+}
+
+export interface FileSearchResult {
+  indexId: SearchIndexId;
+  rootPath: string;
+  query: string;
+  totalMatched: number;
+  totalFiles: number;
+  scanning: boolean;
+  watcherReady: boolean;
+  warmupComplete: boolean;
+  items: FileSearchItem[];
+}
+
+export interface DirSearchResult {
+  indexId: SearchIndexId;
+  rootPath: string;
+  query: string;
+  totalMatched: number;
+  totalDirs: number;
+  scanning: boolean;
+  watcherReady: boolean;
+  warmupComplete: boolean;
+  items: DirSearchItem[];
+}
+
+export interface MixedSearchResult {
+  indexId: SearchIndexId;
+  rootPath: string;
+  query: string;
+  totalMatched: number;
+  totalFiles: number;
+  totalDirs: number;
+  scanning: boolean;
+  watcherReady: boolean;
+  warmupComplete: boolean;
+  items: MixedSearchItem[];
+}
+
+export interface GrepSearchResult {
+  indexId: SearchIndexId;
+  rootPath: string;
+  query: string;
+  totalFiles: number;
+  totalFilesSearched: number;
+  filesWithMatches: number;
+  nextOffset: number;
+  regexFallbackError?: string;
+  scanning: boolean;
+  watcherReady: boolean;
+  warmupComplete: boolean;
+  items: GrepSearchItem[];
+}
+
+export interface TextPreviewRow {
+  text: string;
+  lineNumber: number | null;
+}
+
+export interface TextPreviewSyntaxSpan {
+  row: number;
+  startCol: number;
+  endCol: number;
+  kind: number;
+}
+
+export interface TextPreviewResult {
+  path: string;
+  text: string;
+  startLine: number;
+  endLine: number;
+  truncated: boolean;
+  binary: boolean;
+  rows?: TextPreviewRow[];
+  syntax?: TextPreviewSyntaxSpan[];
+}
+
 export interface RuntimeApi {
   server: {
     ping(): Promise<OkResult>;
@@ -177,6 +308,31 @@ export interface RuntimeApi {
   clipboard: {
     read(params: { kind: ClipboardKind }): Promise<{ value: string | null }>;
     write(params: { kind: ClipboardKind; value: string }): Promise<OkResult>;
+  };
+  search: {
+    ensureIndex(params: { rootPath: string }): Promise<SearchIndexReady>;
+    status(params: { indexId: SearchIndexId }): Promise<SearchIndexStatus>;
+    refresh(params: { indexId: SearchIndexId }): Promise<OkResult>;
+    queryFiles(params: { indexId: SearchIndexId; query: string; offset?: number; limit?: number; currentPath?: string }): Promise<FileSearchResult>;
+    queryDirs(params: { indexId: SearchIndexId; query: string; offset?: number; limit?: number; currentPath?: string }): Promise<DirSearchResult>;
+    queryMixed(params: { indexId: SearchIndexId; query: string; offset?: number; limit?: number; currentPath?: string }): Promise<MixedSearchResult>;
+    queryGrep(params: {
+      indexId: SearchIndexId;
+      query: string;
+      offset?: number;
+      limit?: number;
+      currentPath?: string;
+      beforeContext?: number;
+      afterContext?: number;
+    }): Promise<GrepSearchResult>;
+    recordSelection(params: { indexId: SearchIndexId; query: string; path: string }): Promise<OkResult>;
+    readTextPreview(params: {
+      path: string;
+      maxBytes?: number;
+      maxLines?: number;
+      aroundLine?: number;
+      contextLines?: number;
+    }): Promise<TextPreviewResult>;
   };
   resources: {
     save(params: { surfaceId: SurfaceId }): Promise<OkResult>;

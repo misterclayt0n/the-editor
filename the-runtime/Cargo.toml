@@ -9,9 +9,11 @@ path = "lib.rs"
 
 [dependencies]
 dunce.workspace = true
+fff-search.workspace = true
 ropey.workspace = true
 rust-embed = "8.5"
 serde.workspace = true
+tempfile.workspace = true
 thiserror.workspace = true
 toml.workspace = true
 tracing.workspace = true
@@ -27,6 +29,5 @@ libc = "0.2"
 clipboard-win = "5.4"
 
 [dev-dependencies]
-tempfile.workspace = true
 tree-sitter-bindings.workspace = true
 tree-sitter-json = "0.24"

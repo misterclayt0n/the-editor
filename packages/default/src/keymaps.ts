@@ -118,8 +118,8 @@ export function defaultKeymaps(): EditorModule {
         "?": "rsearch",
         n: "search_next",
         N: "search_prev",
-        // "*": "search_selection_detect_word_boundaries",
-        // "A-*": "search_selection",
+        "*": "search_selection_detect_word_boundaries",
+        "A-*": "search_selection",
 
         u: "undo",
         U: "redo",
@@ -141,11 +141,11 @@ export function defaultKeymaps(): EditorModule {
         K: "keep_selections",
         "A-K": "remove_selections",
 
-        // ",": "keep_primary_selection",
-        // "A-,": "remove_primary_selection",
+        ",": "keep_active_selection",
+        "A-,": "remove_active_selection",
 
-        // "&": "align_selections",
-        // _: "trim_selections",
+        "&": "align_selections",
+        _: "trim_selections",
 
         // "(": "rotate_selections_backward",
         // ")": "rotate_selections_forward",

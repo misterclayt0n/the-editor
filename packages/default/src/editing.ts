@@ -6,7 +6,15 @@ import type {
   SurfaceSelectionRange,
   SurfaceState,
 } from "@the-editor/contracts/runtime";
-import { commandId, type CommandDispatch, type EditorHost, type EditorModule, type KeyInput } from "@the-editor/editor";
+import {
+  commandId,
+  matchesCommandPaletteItem,
+  type CommandDispatch,
+  type CommandPaletteItem,
+  type EditorHost,
+  type EditorModule,
+  type KeyInput,
+} from "@the-editor/editor";
 import { getDefaultState, setEditorMode } from "./state.js";
 
 const RUST_OPERATIONS = [
@@ -112,9 +120,17 @@ type PendingInputState =
   };
 
 type LastMotionState = CommandDispatch | FindCharMotionState;
+type SelectionPickerMode = "keep" | "remove";
+
+type SelectionPickerState = {
+  mode: SelectionPickerMode;
+};
 
 const pendingInputSlot = "default.editing.pendingInput";
 const lastMotionSlot = "default.editing.lastMotion";
+const selectionPickerSlot = "default.editing.selectionPicker";
+const selectionPickerPrefix = ":cursor";
+const TAB_WIDTH = 4;
 
 const MOTION_COMMANDS = new Set<string>([
   "move_char_left",
@@ -205,6 +221,31 @@ export function defaultEditing(): EditorModule {
         if (!pending) return undefined;
         await handlePendingInput(editor, pending, input);
         return true;
+      },
+    });
+
+    editor.palette.registerProvider({
+      id: "default.selectionPicker",
+      title: "Selections",
+      priority: 110,
+      async provide(_ctx, query) {
+        const state = selectionPickerState(editor);
+        const picker = state?.mode;
+        const pickerQuery = parseSelectionPickerQuery(query);
+        if (!picker || pickerQuery === undefined) return [];
+        return selectionPickerItems(editor, picker, pickerQuery);
+      },
+    });
+
+    editor.commands.register<{ cursorId: number }, void>({
+      id: commandId("selection_picker.choose"),
+      title: "Choose Selection",
+      hidden: true,
+      async run(_ctx, args) {
+        const picker = selectionPickerState(editor)?.mode;
+        clearSelectionPicker(editor);
+        if (!picker) return;
+        await chooseSelection(editor, args.cursorId, picker);
       },
     });
 
@@ -457,6 +498,34 @@ export function defaultEditing(): EditorModule {
       },
     });
     editor.commands.register({
+      id: commandId("search_selection_detect_word_boundaries"),
+      title: "Search Selection Detect Word Boundaries",
+      async run() {
+        await searchSelection(editor, true);
+      },
+    });
+    editor.commands.register({
+      id: commandId("search_selection"),
+      title: "Search Selection",
+      async run() {
+        await searchSelection(editor, false);
+      },
+    });
+    editor.commands.register({
+      id: commandId("keep_active_selection"),
+      title: "Keep Active Selection",
+      async run() {
+        await openSelectionPicker(editor, "keep");
+      },
+    });
+    editor.commands.register({
+      id: commandId("remove_active_selection"),
+      title: "Remove Active Selection",
+      async run() {
+        await openSelectionPicker(editor, "remove");
+      },
+    });
+    editor.commands.register({
       id: commandId("split_selection_on_newline"),
       title: "Split Selection On Newline",
       async run() {
@@ -475,6 +544,20 @@ export function defaultEditing(): EditorModule {
       title: "Join Selections Space",
       async run() {
         await joinSelections(editor, true);
+      },
+    });
+    editor.commands.register({
+      id: commandId("align_selections"),
+      title: "Align Selections",
+      async run() {
+        await alignSelections(editor);
+      },
+    });
+    editor.commands.register({
+      id: commandId("trim_selections"),
+      title: "Trim Selections",
+      async run() {
+        await trimSelections(editor);
       },
     });
 
@@ -943,6 +1026,161 @@ async function joinSelections(editor: EditorHost, selectSpace: boolean): Promise
   await applyEdit(editor, edit, true);
 }
 
+async function searchSelection(editor: EditorHost, detectWordBoundaries: boolean): Promise<void> {
+  const state = await readActiveSurfaceState(editor);
+  const chars = Array.from(state.text);
+  const patterns = [...new Set(state.selection.map((selection) => {
+    const from = Math.min(selection.anchor, selection.head);
+    const to = Math.max(selection.anchor, selection.head);
+    const fragment = chars.slice(from, to).join("");
+    const prefix = detectWordBoundaries && isAtWordStart(chars, from) ? "\\b" : "";
+    const suffix = detectWordBoundaries && isAtWordEnd(chars, to) ? "\\b" : "";
+    return `${prefix}${escapeRegex(fragment)}${suffix}`;
+  }))].filter(Boolean);
+  if (!patterns.length) return;
+  await editor.runtime.registers.write({ name: "/", values: [patterns.join("|")] });
+}
+
+async function openSelectionPicker(editor: EditorHost, mode: SelectionPickerMode): Promise<void> {
+  const state = await readActiveSurfaceState(editor);
+  if (!state.selection.length) return;
+  if (mode === "remove" && state.selection.length <= 1) return;
+  editor.setStateSlot(selectionPickerSlot, { mode } satisfies SelectionPickerState);
+  await editor.commands.dispatch({ id: commandId("command_palette.open"), args: { initialQuery: `${selectionPickerPrefix} ` } });
+}
+
+function selectionPickerState(editor: EditorHost): SelectionPickerState | undefined {
+  return editor.getStateSlot<SelectionPickerState | undefined>(selectionPickerSlot);
+}
+
+function clearSelectionPicker(editor: EditorHost): void {
+  editor.deleteStateSlot(selectionPickerSlot);
+}
+
+async function selectionPickerItems(
+  editor: EditorHost,
+  mode: SelectionPickerMode,
+  query: string,
+): Promise<CommandPaletteItem[]> {
+  const state = await readActiveSurfaceState(editor);
+  const chars = Array.from(state.text);
+  const lines = lineInfos(chars);
+
+  return state.selection
+    .map((range, index) => {
+      const cursor = rangeCursor(range, graphemeBoundaries(state.text), chars.length);
+      const line = lineAtChar(lines, cursor) ?? 0;
+      const lineStart = lines[line]?.start ?? 0;
+      const col = visualColumn(chars, lineStart, cursor);
+      const snippet = selectionSnippet(chars, range).trim() || selectionLineSnippet(chars, lines[line]);
+      return {
+        id: `selection:${mode}:${range.cursorId}`,
+        title: mode === "keep" ? `Keep selection ${index + 1}` : `Remove selection ${index + 1}`,
+        detail: `${line + 1}:${col + 1} · ${snippet}`,
+        group: "Selections",
+        keywords: [selectionPickerPrefix, `${selectionPickerPrefix} ${index + 1}`, String(index + 1), String(line + 1), String(col + 1), snippet],
+        command: { id: commandId("selection_picker.choose"), args: { cursorId: range.cursorId } },
+      } satisfies CommandPaletteItem;
+    })
+    .filter((item) => matchesCommandPaletteItem(query, item));
+}
+
+function parseSelectionPickerQuery(query: string): string | undefined {
+  const trimmed = query.trim();
+  if (trimmed === selectionPickerPrefix) return "";
+  if (trimmed.startsWith(`${selectionPickerPrefix} `)) return trimmed.slice(selectionPickerPrefix.length).trim();
+  return undefined;
+}
+
+async function chooseSelection(editor: EditorHost, cursorId: number, mode: SelectionPickerMode): Promise<void> {
+  const state = await readActiveSurfaceState(editor);
+  const index = state.selection.findIndex((range) => range.cursorId === cursorId);
+  if (index < 0) return;
+
+  if (mode === "keep") {
+    await applyEdit(editor, { selection: [cloneSelectionRange(state.selection[index]!)] });
+    return;
+  }
+
+  if (state.selection.length <= 1) return;
+  await applyEdit(editor, {
+    selection: state.selection.filter((range) => range.cursorId !== cursorId).map(cloneSelectionRange),
+  });
+}
+
+async function alignSelections(editor: EditorHost): Promise<void> {
+  const state = await readActiveSurfaceState(editor);
+  const chars = Array.from(state.text);
+  const lines = lineInfos(chars);
+  const columns: Array<Array<{ insertPos: number; cursorCol: number }>> = [];
+  let lastLine = Number.MAX_SAFE_INTEGER;
+  let colIdx = 0;
+
+  for (const range of state.selection) {
+    const headLine = lineAtChar(lines, range.head);
+    const anchorLine = lineAtChar(lines, range.anchor);
+    if (headLine === undefined || anchorLine === undefined || headLine !== anchorLine) return;
+
+    colIdx = headLine === lastLine ? colIdx + 1 : 0;
+    columns[colIdx] ??= [];
+    columns[colIdx]!.push({
+      insertPos: Math.min(range.anchor, range.head),
+      cursorCol: visualColumn(chars, lines[headLine]!.start, range.head),
+    });
+    lastLine = headLine;
+  }
+
+  const changes: SurfaceChange[] = [];
+  const offsets: number[] = new Array(columns[0]?.length ?? 0).fill(0);
+
+  for (const column of columns) {
+    const maxCol = Math.max(0, ...column.map(({ cursorCol }, row) => cursorCol + (offsets[row] ?? 0)));
+    for (const [row, entry] of column.entries()) {
+      offsets[row] ??= 0;
+      const insertCount = Math.max(0, maxCol - (entry.cursorCol + offsets[row]!));
+      if (!insertCount) continue;
+      offsets[row]! += insertCount;
+      changes.push({ start: entry.insertPos, end: entry.insertPos, text: " ".repeat(insertCount) });
+    }
+  }
+
+  if (!changes.length) return;
+  changes.sort((a, b) => a.start - b.start);
+  await applyEdit(editor, { changes }, true);
+  if (getDefaultState(editor).mode === "select") await applyMode(editor, "normal");
+}
+
+async function trimSelections(editor: EditorHost): Promise<void> {
+  const state = await readActiveSurfaceState(editor);
+  const chars = Array.from(state.text);
+  const trimmed = state.selection.flatMap((range) => {
+    const from = Math.min(range.anchor, range.head);
+    const to = Math.max(range.anchor, range.head);
+    if (from === to) return [];
+    if (chars.slice(from, to).every((ch) => /\s/.test(ch))) return [];
+
+    let start = from;
+    let end = to;
+    while (start < end && /\s/.test(chars[start] ?? "")) start += 1;
+    while (end > start && /\s/.test(chars[end - 1] ?? "")) end -= 1;
+    return [{ cursorId: range.cursorId, ...orientSelectionRange(range, start, end) } satisfies SurfaceSelectionRange];
+  });
+
+  if (trimmed.length) {
+    await applyEdit(editor, { selection: trimmed });
+    return;
+  }
+
+  const boundaries = graphemeBoundaries(state.text);
+  const collapsed = state.selection.map((range) => {
+    const cursor = rangeCursor(range, boundaries, chars.length);
+    return { cursorId: range.cursorId, anchor: cursor, head: cursor } satisfies SurfaceSelectionRange;
+  });
+  const fallback = collapsed[0];
+  if (!fallback) return;
+  await applyEdit(editor, { selection: [fallback] });
+}
+
 async function replaceSelectionWithStr(editor: EditorHost, replacement: string): Promise<void> {
   const state = await readActiveSurfaceState(editor);
   const boundaries = graphemeBoundaries(state.text);
@@ -1085,6 +1323,10 @@ function selectionIsLinewise(state: SurfaceState): boolean {
   });
 }
 
+function cloneSelectionRange(range: SurfaceSelectionRange): SurfaceSelectionRange {
+  return { ...range };
+}
+
 function orientSelectionRange(
   range: SurfaceSelectionRange,
   start: number,
@@ -1134,6 +1376,25 @@ function lineAtChar(lines: readonly LineInfo[], charIdx: number): number | undef
     if (charIdx < line.end || (charIdx === line.start && line.start === line.end)) return index;
   }
   return undefined;
+}
+
+function visualColumn(chars: readonly string[], lineStart: number, charIdx: number): number {
+  let col = 0;
+  for (let index = lineStart; index < charIdx; index += 1) {
+    col += chars[index] === "\t" ? TAB_WIDTH : 1;
+  }
+  return col;
+}
+
+function selectionSnippet(chars: readonly string[], range: SurfaceSelectionRange): string {
+  const from = Math.min(range.anchor, range.head);
+  const to = Math.max(range.anchor, range.head);
+  return chars.slice(from, Math.min(to, from + 40)).join("").replace(/\s+/g, " ");
+}
+
+function selectionLineSnippet(chars: readonly string[], line: LineInfo | undefined): string {
+  if (!line) return "";
+  return chars.slice(line.start, Math.min(line.end, line.start + 60)).join("").trim();
 }
 
 function lineContentEndCharIndex(lines: readonly LineInfo[], chars: readonly string[], line: number): number {
@@ -1319,6 +1580,26 @@ function findNthPrev(chars: readonly string[], ch: string, start: number, count:
 
 function firstCodePoint(text: string | undefined): string | undefined {
   return text ? Array.from(text)[0] : undefined;
+}
+
+function isWordChar(ch: string | undefined): boolean {
+  return Boolean(ch?.match(/^[\p{L}\p{N}_]$/u));
+}
+
+function isAtWordStart(chars: readonly string[], index: number): boolean {
+  if (index >= chars.length) return false;
+  const ch = chars[index];
+  if (index === 0) return isWordChar(ch);
+  return !isWordChar(chars[index - 1]) && isWordChar(ch);
+}
+
+function isAtWordEnd(chars: readonly string[], index: number): boolean {
+  if (index === 0 || index >= chars.length) return false;
+  return isWordChar(chars[index - 1]) && !isWordChar(chars[index]);
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function applyMode(editor: EditorHost, mode: "normal" | "insert" | "select"): Promise<void> {

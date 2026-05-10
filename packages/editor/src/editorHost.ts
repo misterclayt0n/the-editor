@@ -9,17 +9,20 @@ import { Hooks } from "./hooks.js";
 import { InteractionRegistry } from "./interaction.js";
 import { KeymapRegistry } from "./keymaps.js";
 import { ModuleRegistry, type EditorModule, type EditorModuleRegistration } from "./modules.js";
+import { NotificationRegistry } from "./notifications.js";
 import { PackageRegistry, type PackageTargetAdapterMap } from "./packages.js";
 import { CommandPaletteRegistry } from "./palette.js";
 import { PickerRegistry } from "./pickers.js";
 import { RoleRegistry } from "./roles.js";
+import { InteractiveSessionRegistry } from "./sessions.js";
 import { ThemeRegistry } from "./themes.js";
 import { ToolRegistry } from "./tools.js";
-import { InteractiveSessionRegistry } from "./sessions.js";
+import { WorkingDirectoryRegistry } from "./workingDirectory.js";
 import { WorkbenchController } from "./workbench.js";
 
 export interface EditorHostOptions {
   runtime: RuntimeApi;
+  cwd?: string;
   packageTargetAdapters?: PackageTargetAdapterMap;
 }
 
@@ -30,6 +33,7 @@ export class EditorHost {
   readonly hooks = new Hooks();
   readonly contributions = new ContributionRegistry();
   readonly diagnostics = new DiagnosticRegistry();
+  readonly notifications = new NotificationRegistry(this);
   readonly commands = new CommandRegistry(this);
   readonly keymaps = new KeymapRegistry(this);
   readonly modules = new ModuleRegistry(this);
@@ -43,6 +47,7 @@ export class EditorHost {
   readonly focus = new FocusRegistry(this);
   readonly themes = new ThemeRegistry(this);
   readonly sessions = new InteractiveSessionRegistry(this);
+  readonly cwd: WorkingDirectoryRegistry;
   readonly workbench = new WorkbenchController(this);
 
   private readonly disposables = new DisposableStore();
@@ -52,6 +57,7 @@ export class EditorHost {
   constructor(options: EditorHostOptions) {
     this.runtime = options.runtime;
     this.packages = new PackageRegistry(this, options.packageTargetAdapters);
+    this.cwd = new WorkingDirectoryRegistry(this, options.cwd);
   }
 
   async use(module: EditorModule | EditorModuleRegistration, id?: string): Promise<void> {
@@ -104,6 +110,7 @@ export class EditorHost {
     for (const id of this.modules.all().reverse()) {
       this.modules.unload(id);
     }
+    this.notifications.dispose();
     this.stateSlots.clear();
     this.disposables.dispose();
   }

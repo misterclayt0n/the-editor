@@ -47,6 +47,10 @@ function App() {
           theme: isObject(event.theme) ? event.theme as unknown as ThemeSnapshot : undefined,
           syntaxLegend: isObject(event.syntaxLegend) ? event.syntaxLegend as Record<number, string> : {},
           sessions: Array.isArray(event.sessions) ? event.sessions as InteractiveSessionSnapshot[] : [],
+          notifications: Array.isArray(event.notifications) ? event.notifications as WorkbenchSnapshot["notifications"] : [],
+          workingDirectory: isObject(event.workingDirectory)
+            ? event.workingDirectory as unknown as WorkbenchSnapshot["workingDirectory"]
+            : undefined,
         };
         setTheme(snapshot.theme);
         setSyntaxLegend(snapshot.syntaxLegend ?? {});
@@ -133,6 +137,7 @@ function App() {
       <div className="workbenchOverlayRoot">
         <UiErrorBoundary name="overlayModal">{overlayModal}</UiErrorBoundary>
         <UiErrorBoundary name="overlayFloating">{overlayFloating}</UiErrorBoundary>
+        <UiErrorBoundary name="notifications">{uiRuntime.renderRole("notifications")}</UiErrorBoundary>
         <UiErrorBoundary name="picker">{uiRuntime.renderRole("picker")}</UiErrorBoundary>
         <UiErrorBoundary name="inputPrompt">{uiRuntime.renderRole("inputPrompt")}</UiErrorBoundary>
         <UiErrorBoundary name="commandPalette">{uiRuntime.renderRole("commandPalette")}</UiErrorBoundary>

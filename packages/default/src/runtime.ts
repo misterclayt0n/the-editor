@@ -7,11 +7,13 @@ import { defaultReload } from "./reload.js";
 import { defaultScratch } from "./scratch.js";
 import { defaultWorkbench } from "./workbench.js";
 import { defaultWorkbenchControls } from "./workbenchControls.js";
+import { defaultWorkingDirectory } from "./workingDirectory.js";
 
 const runtimeModule: EditorModule = async (editor) => {
   await defaultScratch()(editor);
   await defaultEditing()(editor);
   await defaultReload()(editor);
+  await defaultWorkingDirectory()(editor);
   await defaultCommandPalette()(editor);
   await defaultInputPrompt()(editor);
   await defaultPicker()(editor);

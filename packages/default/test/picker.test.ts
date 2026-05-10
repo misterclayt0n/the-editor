@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -15,6 +15,7 @@ interface PickerSnapshot {
   query: string;
   selectedIndex: number;
   items: Array<{ id: string; title: string; detail?: string }>;
+  status?: { primary?: string; secondary?: string };
 }
 
 async function createPickerEditor() {
@@ -26,6 +27,20 @@ async function createPickerEditor() {
 }
 
 describe("default picker", () => {
+  it("uses the editor working directory when no file is active", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "the-editor-picker-cwd-"));
+    const root = await realpath(dir);
+    const editor = createEditorHost({ runtime: createRuntimeClient(), cwd: root });
+    await defaultScratch()(editor);
+    await defaultPicker()(editor);
+    await defaultKeymaps()(editor);
+
+    await editor.commands.dispatch({ id: commandId("file_picker") });
+
+    await waitFor(() => pickerSnapshot(editor)?.status?.primary === root);
+    expect(pickerSnapshot(editor)?.status?.primary).toBe(root);
+  }, 15_000);
+
   it("preserves the current surface viewport when opening a file", async () => {
     const dir = await mkdtemp(join(tmpdir(), "the-editor-viewport-"));
     const path = join(dir, "viewport.txt");
@@ -110,6 +125,7 @@ function pickerSnapshot(editor: ReturnType<typeof createEditorHost>) {
     query: sessionState?.query ?? "",
     selectedIndex: sessionState?.selectedIndex ?? 0,
     items: sessionState?.items ?? [],
+    status: sessionState?.status,
   };
 }
 

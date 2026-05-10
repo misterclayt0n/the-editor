@@ -56,7 +56,7 @@ export function defaultWorkbench(): EditorModule {
           activePath: state.activePath,
           softWrap: state.softWrap,
           frame: state.lastFrame,
-          roles: state.roleStates,
+          roles: editor.roles.snapshotAll(),
           tools: editor.tools.snapshotAll(),
           decorations: state.decorations,
           diagnostics: editor.diagnostics.all(),
@@ -64,6 +64,8 @@ export function defaultWorkbench(): EditorModule {
           theme: editor.themes.snapshot(),
           syntaxLegend: state.syntaxLegend,
           sessions: editor.sessions.snapshotAll(),
+          notifications: editor.notifications.snapshot(),
+          workingDirectory: editor.cwd.snapshot(),
           selectionPickerActive: Boolean(editor.getStateSlot("default.editing.selectionPicker")),
         };
       },

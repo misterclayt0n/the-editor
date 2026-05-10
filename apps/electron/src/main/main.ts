@@ -39,7 +39,10 @@ async function createWindow(): Promise<void> {
 
 function startPolicyWorker(): void {
   policyWorker = new Worker(path.join(__dirname, "../policy/worker.cjs"), {
-    workerData: { root: path.resolve(__dirname, "../../../../") },
+    workerData: {
+      root: path.resolve(__dirname, "../../../../"),
+      cwd: process.cwd(),
+    },
   });
 
   policyWorker.on("message", (message: unknown) => {

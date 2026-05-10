@@ -469,7 +469,7 @@ function filePickerPath(item: PickerItem): string | undefined {
 function resolveFilePickerRoot(editor: Parameters<EditorModule>[0]): string {
   const activePath = getDefaultState(editor).activePath;
   if (!activePath) {
-    const cwd = resolve(process.cwd());
+    const cwd = resolve(editor.cwd.current());
     const start = existingDirectory(cwd) ?? cwd;
     return findProjectRoot(start) ?? start;
   }

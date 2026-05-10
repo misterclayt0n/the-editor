@@ -5,11 +5,13 @@ import { toDisposable, type Disposable } from "./disposable.js";
 import type { FocusTarget } from "./focus.js";
 import type { CommandDispatch } from "./commands.js";
 import type { InteractionSnapshot } from "./interaction.js";
+import type { NotificationEntry } from "./notifications.js";
 import type { PackageSnapshot } from "./packages.js";
 import { roleId, roleImplementationId, type RoleId, type RoleImplementationId, type RoleSnapshot } from "./roles.js";
 import type { InteractiveSessionSnapshot } from "./sessions.js";
 import type { ThemeSnapshot } from "./themes.js";
 import type { ToolRootTarget, ToolSnapshot, ToolTypeId } from "./tools.js";
+import type { WorkingDirectorySnapshot } from "./workingDirectory.js";
 
 export interface UiCommandDispatcher {
   dispatch(dispatch: CommandDispatch): Promise<unknown>;
@@ -26,6 +28,8 @@ export interface WorkbenchSnapshot {
   theme?: ThemeSnapshot;
   syntaxLegend?: Record<number, string>;
   sessions?: InteractiveSessionSnapshot[];
+  notifications?: NotificationEntry[];
+  workingDirectory?: WorkingDirectorySnapshot;
 }
 
 export interface UiSessionClient {
@@ -204,6 +208,8 @@ export class UiHost {
     theme: { available: [] },
     syntaxLegend: {},
     sessions: [],
+    notifications: [],
+    workingDirectory: undefined,
   };
 
   constructor(readonly commands: UiCommandDispatcher, readonly sessions: UiSessionClient = emptyUiSessionClient) {}

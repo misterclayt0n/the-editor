@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
-import type { DiagnosticEntry } from "@the-editor/editor";
+import type { DiagnosticEntry, NotificationEntry } from "@the-editor/editor";
 import { resolveThemeStyleLoose, type ResolvedThemeDefinition } from "@the-editor/editor/themes";
 import type { EditorUiModule, UiSessionClient, WorkbenchSnapshot } from "@the-editor/editor/ui";
 import "./commandPalette.css";
@@ -94,6 +94,10 @@ interface StatuslineViewState {
   selectedCommandPalette?: string;
 }
 
+interface NotificationsViewState {
+  items: NotificationEntry[];
+}
+
 const inspectorToolTypeId = "default.inspector";
 
 const uiModule: EditorUiModule = (host) => {
@@ -121,6 +125,15 @@ const uiModule: EditorUiModule = (host) => {
     render({ state, sessions, workbench }) {
       if (!state?.visible || !state.sessionId) return null;
       return <PickerOverlay sessionId={state.sessionId} sessions={sessions} workbench={workbench} />;
+    },
+  });
+
+  host.roles.register<NotificationsViewState>({
+    role: "notifications",
+    implementationId: "default.notifications",
+    render({ state }) {
+      if (!state?.items?.length) return null;
+      return <NotificationsOverlay items={state.items} />;
     },
   });
 
@@ -559,6 +572,20 @@ function InputPromptOverlay({
         </div>
         {state.error ? <div className="inputPromptError">{state.error}</div> : null}
       </div>
+    </section>
+  );
+}
+
+function NotificationsOverlay({ items }: { items: NotificationEntry[] }) {
+  return (
+    <section className="notificationStack">
+      {items.map((item) => (
+        <div key={item.id} className={`notificationToast ${item.severity}`}>
+          <div className="notificationSource">{item.source ?? item.severity}</div>
+          <div className="notificationMessage">{item.message}</div>
+          {item.details ? <div className="notificationDetails">{item.details}</div> : null}
+        </div>
+      ))}
     </section>
   );
 }

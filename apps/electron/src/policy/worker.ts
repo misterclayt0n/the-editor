@@ -8,10 +8,11 @@ import { createPolicyPackageTargetAdapters } from "./packageTargetAdapters.js";
 if (!parentPort) throw new Error("policy worker requires parentPort");
 
 const runtime = createRuntimeClient();
-const editor = createEditorHost({ runtime, packageTargetAdapters: createPolicyPackageTargetAdapters() });
+const initialCwd = typeof workerData?.cwd === "string" ? workerData.cwd : process.cwd();
+const editor = createEditorHost({ runtime, cwd: initialCwd, packageTargetAdapters: createPolicyPackageTargetAdapters() });
 const packageDiscovery = new ElectronPackageDiscovery(
   typeof workerData?.root === "string" ? workerData.root : process.cwd(),
-  process.cwd(),
+  () => editor.cwd.current(),
 );
 
 editor.hooks.tap("packages.discover", {
@@ -136,6 +137,8 @@ async function postSessionState() {
     theme: state.theme ?? editor.themes.snapshot(),
     syntaxLegend: state.syntaxLegend ?? {},
     sessions: state.sessions ?? editor.sessions.snapshotAll(),
+    notifications: state.notifications ?? editor.notifications.snapshot(),
+    workingDirectory: state.workingDirectory ?? editor.cwd.snapshot(),
     selectionPickerActive: state.selectionPickerActive ?? false,
   };
   parentPort?.postMessage(payload);

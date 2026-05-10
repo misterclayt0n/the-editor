@@ -634,7 +634,7 @@ async function applyShellBehavior(
   const state = await editor.runtime.surfaces.readState({ surfaceId });
 
   if (behavior === "keep") {
-    const selection = await keepPipeSelections(state, command);
+    const selection = await keepPipeSelections(editor, state, command);
     await editor.runtime.surfaces.applyEdit({ surfaceId, edit: { selection } });
     return;
   }
@@ -651,8 +651,8 @@ async function applyShellBehavior(
     const to = Math.max(range.anchor, range.head);
     const inputText = chars.slice(from, to).join("");
     const output = pipe
-      ? trimPipeTrailingNewline(inputText, runShellCommand(command, inputText))
-      : (sharedOutput ??= runShellCommand(command));
+      ? trimPipeTrailingNewline(inputText, runShellCommand(editor, command, inputText))
+      : (sharedOutput ??= runShellCommand(editor, command));
 
     if (behavior === "ignore") continue;
 
@@ -676,6 +676,7 @@ async function applyShellBehavior(
 }
 
 async function keepPipeSelections(
+  editor: Parameters<EditorModule>[0],
   state: { text: string; selection: SurfaceSelectionRange[] },
   command: string,
 ): Promise<SurfaceSelectionRange[]> {
@@ -684,7 +685,7 @@ async function keepPipeSelections(
     const from = Math.min(range.anchor, range.head);
     const to = Math.max(range.anchor, range.head);
     try {
-      runShellCommand(command, chars.slice(from, to).join(""));
+      runShellCommand(editor, command, chars.slice(from, to).join(""));
       return true;
     } catch {
       return false;
@@ -701,9 +702,10 @@ function trimPipeTrailingNewline(inputText: string, output: string): string {
   return trimmed.endsWith("\r") ? trimmed.slice(0, -1) : trimmed;
 }
 
-function runShellCommand(command: string, input?: string): string {
+function runShellCommand(editor: Parameters<EditorModule>[0], command: string, input?: string): string {
   const [shell, ...args] = shellProgram();
   const output = spawnSync(shell, [...args, command], {
+    cwd: editor.cwd.current(),
     input,
     encoding: "utf8",
     maxBuffer: 10 * 1024 * 1024,

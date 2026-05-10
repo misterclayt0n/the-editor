@@ -187,3 +187,55 @@
   margin-top: 4px;
   white-space: pre-wrap;
 }
+
+.notificationStack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  inset: 12px 12px auto auto;
+  max-width: min(420px, calc(100vw - 24px));
+  position: absolute;
+}
+
+.notificationToast {
+  backdrop-filter: blur(12px);
+  background: rgba(17, 19, 25, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.35);
+  color: var(--theme-ui-text-focus-fg, #e5e7eb);
+  padding: 10px 12px;
+}
+
+.notificationToast.info {
+  border-color: rgba(96, 165, 250, 0.28);
+}
+
+.notificationToast.warn {
+  border-color: rgba(244, 191, 117, 0.32);
+}
+
+.notificationToast.error {
+  border-color: rgba(248, 113, 113, 0.34);
+}
+
+.notificationSource {
+  color: var(--theme-ui-text-inactive-fg, #8a91a1);
+  font-family: Iosevka, ui-monospace, monospace;
+  font-size: 11px;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+}
+
+.notificationMessage {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.notificationDetails {
+  color: var(--theme-ui-text-inactive-fg, #8a91a1);
+  font-family: Iosevka, ui-monospace, monospace;
+  font-size: 11px;
+  margin-top: 6px;
+  white-space: pre-wrap;
+}

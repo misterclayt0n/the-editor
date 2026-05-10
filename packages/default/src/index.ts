@@ -9,6 +9,7 @@ import { defaultReload } from "./reload.js";
 import runtimeModule from "./runtime.js";
 import { defaultScratch, defaultViewport, type CreateScratchArgs, type RenderActiveSurfaceArgs } from "./scratch.js";
 import { getDefaultState, handleKeyInput, refreshActiveSurface, setEditorMode, type DefaultEditorState, type EditorMode } from "./state.js";
+import { defaultWorkingDirectory, resolveFilePathFromWorkingDirectory } from "./workingDirectory.js";
 
 export {
   defaultCommandPalette,
@@ -19,11 +20,13 @@ export {
   defaultReload,
   defaultScratch,
   defaultViewport,
+  defaultWorkingDirectory,
   getDefaultState,
   handleKeyInput,
   interactionModule,
   refreshActiveSurface,
   runtimeModule,
+  resolveFilePathFromWorkingDirectory,
   setEditorMode,
   type CreateScratchArgs,
   type DefaultEditorState,

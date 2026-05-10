@@ -26,13 +26,13 @@ export class ElectronPackageDiscovery {
 
   constructor(
     private readonly rootDir: string,
-    private readonly cwd: string,
+    private readonly cwd: string | (() => string),
   ) {}
 
   async sync(editor: EditorHost): Promise<void> {
     editor.diagnostics.clearPrefix("packages:discover:");
 
-    const result = discoverEditorPackages(this.rootDir, this.cwd);
+    const result = discoverEditorPackages(this.rootDir, typeof this.cwd === "function" ? this.cwd() : this.cwd);
     const nextIds = new Set<string>();
     for (const diagnostic of result.diagnostics) {
       editor.diagnostics.report(diagnostic);

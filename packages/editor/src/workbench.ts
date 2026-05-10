@@ -3,10 +3,12 @@ import type { BufferDecoration } from "./decorations.js";
 import type { DiagnosticEntry } from "./diagnostics.js";
 import type { EditorHost } from "./editorHost.js";
 import type { FocusTarget } from "./focus.js";
+import type { NotificationEntry } from "./notifications.js";
 import type { RoleSnapshot } from "./roles.js";
 import type { InteractiveSessionSnapshot } from "./sessions.js";
 import type { ThemeSnapshot } from "./themes.js";
 import type { ToolSnapshot } from "./tools.js";
+import type { WorkingDirectorySnapshot } from "./workingDirectory.js";
 
 export interface WorkbenchKeyInput {
   key: string;
@@ -26,7 +28,9 @@ export type WorkbenchInvalidationKind =
   | "decorations"
   | "focus"
   | "interaction"
-  | "theme";
+  | "theme"
+  | "notifications"
+  | "cwd";
 
 export interface WorkbenchSessionState {
   mode?: string;
@@ -43,6 +47,8 @@ export interface WorkbenchSessionState {
   theme?: ThemeSnapshot;
   syntaxLegend?: Record<number, string>;
   sessions?: InteractiveSessionSnapshot[];
+  notifications?: NotificationEntry[];
+  workingDirectory?: WorkingDirectorySnapshot;
   selectionPickerActive?: boolean;
 }
 

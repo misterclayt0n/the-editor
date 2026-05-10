@@ -1,6 +1,7 @@
 import type { RenderFrame, Viewport } from "@the-editor/contracts/runtime";
 import { commandId, type EditorHost, type EditorModule } from "@the-editor/editor";
 import { getDefaultState, refreshActiveSurface, setEditorMode, type DefaultEditorState } from "./state.js";
+import { resolveFilePathFromWorkingDirectory } from "./workingDirectory.js";
 
 export interface CreateScratchArgs {
   text?: string;
@@ -57,7 +58,8 @@ export function defaultScratch(): EditorModule {
       async run(_ctx, args) {
         const state = getDefaultState(editor);
         const viewport = args.viewport ?? state.surfaceViewport ?? defaultViewport();
-        const document = await editor.runtime.documents.openFile({ path: args.path });
+        const path = resolveFilePathFromWorkingDirectory(editor, args.path);
+        const document = await editor.runtime.documents.openFile({ path });
         const surface = await editor.runtime.surfaces.create({
           documentId: document.documentId,
           viewport,
@@ -74,7 +76,7 @@ export function defaultScratch(): EditorModule {
 
         state.activeDocumentId = document.documentId;
         state.activeSurfaceId = surface.surfaceId;
-        state.activePath = args.path;
+        state.activePath = path;
         setEditorMode(editor, "normal");
         editor.focus.setEditor();
         await refreshActiveSurface(editor, viewport);

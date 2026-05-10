@@ -15,6 +15,7 @@ import { PickerRegistry } from "./pickers.js";
 import { RoleRegistry } from "./roles.js";
 import { ThemeRegistry } from "./themes.js";
 import { ToolRegistry } from "./tools.js";
+import { InteractiveSessionRegistry } from "./sessions.js";
 import { WorkbenchController } from "./workbench.js";
 
 export interface EditorHostOptions {
@@ -41,6 +42,7 @@ export class EditorHost {
   readonly decorations = new DecorationRegistry(this);
   readonly focus = new FocusRegistry(this);
   readonly themes = new ThemeRegistry(this);
+  readonly sessions = new InteractiveSessionRegistry(this);
   readonly workbench = new WorkbenchController(this);
 
   private readonly disposables = new DisposableStore();

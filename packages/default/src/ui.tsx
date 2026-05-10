@@ -1,7 +1,7 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
 import type { DiagnosticEntry } from "@the-editor/editor";
 import { resolveThemeStyleLoose, type ResolvedThemeDefinition } from "@the-editor/editor/themes";
-import type { EditorUiModule, WorkbenchSnapshot } from "@the-editor/editor/ui";
+import type { EditorUiModule, UiSessionClient, WorkbenchSnapshot } from "@the-editor/editor/ui";
 import "./commandPalette.css";
 import "./inputPrompt.css";
 import "./picker.css";
@@ -15,6 +15,10 @@ interface CommandPaletteItemView {
 
 interface CommandPaletteViewState {
   visible: boolean;
+  sessionId?: string;
+}
+
+interface CommandPaletteSessionViewState {
   query: string;
   selectedIndex: number;
   placeholder?: string;
@@ -23,6 +27,10 @@ interface CommandPaletteViewState {
 
 interface InputPromptViewState {
   visible: boolean;
+  sessionId?: string;
+}
+
+interface InputPromptSessionViewState {
   title?: string;
   query: string;
   placeholder?: string;
@@ -63,6 +71,10 @@ interface PickerPreviewViewState {
 
 interface PickerViewState {
   visible: boolean;
+  sessionId?: string;
+}
+
+interface PickerSessionViewState {
   providerId?: string;
   title?: string;
   query: string;
@@ -88,27 +100,27 @@ const uiModule: EditorUiModule = (host) => {
   host.roles.register<CommandPaletteViewState>({
     role: "commandPalette",
     implementationId: "default.commandPalette",
-    render({ state, commands }) {
-      if (!state?.visible) return null;
-      return <CommandPaletteOverlay state={state} dispatch={commands.dispatch} />;
+    render({ state, sessions }) {
+      if (!state?.visible || !state.sessionId) return null;
+      return <CommandPaletteOverlay sessionId={state.sessionId} sessions={sessions} />;
     },
   });
 
   host.roles.register<InputPromptViewState>({
     role: "inputPrompt",
     implementationId: "default.inputPrompt",
-    render({ state, commands }) {
-      if (!state?.visible) return null;
-      return <InputPromptOverlay state={state} dispatch={commands.dispatch} />;
+    render({ state, sessions }) {
+      if (!state?.visible || !state.sessionId) return null;
+      return <InputPromptOverlay sessionId={state.sessionId} sessions={sessions} />;
     },
   });
 
   host.roles.register<PickerViewState>({
     role: "picker",
     implementationId: "default.picker",
-    render({ state, commands, workbench }) {
-      if (!state?.visible) return null;
-      return <PickerOverlay state={state} dispatch={commands.dispatch} workbench={workbench} />;
+    render({ state, sessions, workbench }) {
+      if (!state?.visible || !state.sessionId) return null;
+      return <PickerOverlay sessionId={state.sessionId} sessions={sessions} workbench={workbench} />;
     },
   });
 
@@ -130,27 +142,39 @@ const uiModule: EditorUiModule = (host) => {
 
 export default uiModule;
 
+function useUiSession<TState>(sessions: UiSessionClient, sessionId: string): TState | undefined {
+  return useSyncExternalStore(
+    (listener) => sessions.subscribe(sessionId, listener),
+    () => sessions.get<TState>(sessionId)?.state,
+    () => sessions.get<TState>(sessionId)?.state,
+  );
+}
+
 function CommandPaletteOverlay({
-  state,
-  dispatch,
+  sessionId,
+  sessions,
 }: {
-  state: CommandPaletteViewState;
-  dispatch: (dispatch: { id: string; args?: unknown }) => Promise<unknown>;
+  sessionId: string;
+  sessions: UiSessionClient;
 }) {
+  const state = useUiSession<CommandPaletteSessionViewState>(sessions, sessionId);
   const inputRef = useRef<HTMLInputElement>(null);
   const itemsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const input = inputRef.current;
-    if (!input) return;
+    if (!input || !state) return;
     input.focus();
     const end = input.value.length;
     input.setSelectionRange(end, end);
-  }, [state.visible]);
+  }, [sessionId]);
 
   useLayoutEffect(() => {
+    if (!state) return;
     scrollActiveItemIntoView(itemsRef.current, '.commandPaletteItem[data-active="true"]');
-  }, [state.items, state.selectedIndex]);
+  }, [state?.items, state?.selectedIndex]);
+
+  if (!state) return null;
 
   return (
     <section className="commandPaletteOverlay">
@@ -159,7 +183,7 @@ function CommandPaletteOverlay({
         className="commandPaletteBackdrop"
         aria-label="Close command palette"
         onClick={() => {
-          void dispatch({ id: "command_palette.close" });
+          void sessions.dispatch(sessionId, "close");
         }}
       />
       <div className="commandPaletteViewport">
@@ -175,27 +199,27 @@ function CommandPaletteOverlay({
                   spellCheck={false}
                   value={state.query}
                   onChange={(event) => {
-                    void dispatch({ id: "command_palette.setQuery", args: { query: event.target.value } });
+                    void sessions.dispatch(sessionId, "setQuery", { query: event.target.value });
                   }}
                   onKeyDown={(event) => {
                     if (event.key === "ArrowUp") {
                       event.preventDefault();
-                      void dispatch({ id: "command_palette.moveSelection", args: { delta: -1 } });
+                      void sessions.dispatch(sessionId, "moveSelection", { delta: -1 });
                       return;
                     }
                     if (event.key === "ArrowDown") {
                       event.preventDefault();
-                      void dispatch({ id: "command_palette.moveSelection", args: { delta: 1 } });
+                      void sessions.dispatch(sessionId, "moveSelection", { delta: 1 });
                       return;
                     }
                     if (event.key === "Enter") {
                       event.preventDefault();
-                      void dispatch({ id: "command_palette.accept" });
+                      void sessions.dispatch(sessionId, "accept");
                       return;
                     }
                     if (event.key === "Escape") {
                       event.preventDefault();
-                      void dispatch({ id: "command_palette.close" });
+                      void sessions.dispatch(sessionId, "close");
                     }
                   }}
                 />
@@ -211,13 +235,13 @@ function CommandPaletteOverlay({
                       data-active={isActive ? "true" : undefined}
                       onMouseMove={() => {
                         if (isActive) return;
-                        void dispatch({ id: "command_palette.selectIndex", args: { index } });
+                        void sessions.dispatch(sessionId, "selectIndex", { index });
                       }}
                       onMouseDown={(event) => {
                         event.preventDefault();
                       }}
                       onClick={() => {
-                        void dispatch({ id: "command_palette.selectIndex", args: { index } }).then(() => dispatch({ id: "command_palette.accept" }));
+                        void sessions.dispatch(sessionId, "selectIndex", { index }).then(() => sessions.dispatch(sessionId, "accept"));
                       }}
                     >
                       <div className="commandPaletteItemMain">
@@ -258,17 +282,18 @@ function scrollActiveItemIntoView(container: HTMLDivElement | null, selector: st
 }
 
 function PickerOverlay({
-  state,
-  dispatch,
+  sessionId,
+  sessions,
   workbench,
 }: {
-  state: PickerViewState;
-  dispatch: (dispatch: { id: string; args?: unknown }) => Promise<unknown>;
+  sessionId: string;
+  sessions: UiSessionClient;
   workbench: WorkbenchSnapshot;
 }) {
+  const state = useUiSession<PickerSessionViewState>(sessions, sessionId);
   const previewSyntax = useMemo(
-    () => previewSyntaxByRow(state.preview?.syntax ?? []),
-    [state.preview?.syntax],
+    () => previewSyntaxByRow(state?.preview?.syntax ?? []),
+    [state?.preview?.syntax],
   );
   const previewTheme = workbench.theme?.active;
   const syntaxLegend = workbench.syntaxLegend ?? {};
@@ -277,15 +302,18 @@ function PickerOverlay({
 
   useEffect(() => {
     const input = inputRef.current;
-    if (!input) return;
+    if (!input || !state) return;
     input.focus();
     const end = input.value.length;
     input.setSelectionRange(end, end);
-  }, [state.visible]);
+  }, [sessionId]);
 
   useLayoutEffect(() => {
+    if (!state) return;
     scrollActiveItemIntoView(itemsRef.current, '.pickerItem[data-active="true"]');
-  }, [state.items, state.selectedIndex]);
+  }, [state?.items, state?.selectedIndex]);
+
+  if (!state) return null;
 
   return (
     <section className="pickerOverlay">
@@ -294,7 +322,7 @@ function PickerOverlay({
         className="pickerBackdrop"
         aria-label="Close picker"
         onClick={() => {
-          void dispatch({ id: "picker.close" });
+          void sessions.dispatch(sessionId, "close");
         }}
       />
       <div className="pickerViewport">
@@ -310,27 +338,27 @@ function PickerOverlay({
                   spellCheck={false}
                   value={state.query}
                   onChange={(event) => {
-                    void dispatch({ id: "picker.setQuery", args: { query: event.target.value } });
+                    void sessions.dispatch(sessionId, "setQuery", { query: event.target.value });
                   }}
                   onKeyDown={(event) => {
                     if (event.key === "ArrowUp") {
                       event.preventDefault();
-                      void dispatch({ id: "picker.moveSelection", args: { delta: -1 } });
+                      void sessions.dispatch(sessionId, "moveSelection", { delta: -1 });
                       return;
                     }
                     if (event.key === "ArrowDown") {
                       event.preventDefault();
-                      void dispatch({ id: "picker.moveSelection", args: { delta: 1 } });
+                      void sessions.dispatch(sessionId, "moveSelection", { delta: 1 });
                       return;
                     }
                     if (event.key === "Enter") {
                       event.preventDefault();
-                      void dispatch({ id: "picker.accept" });
+                      void sessions.dispatch(sessionId, "accept");
                       return;
                     }
                     if (event.key === "Escape") {
                       event.preventDefault();
-                      void dispatch({ id: "picker.close" });
+                      void sessions.dispatch(sessionId, "close");
                     }
                   }}
                 />
@@ -351,7 +379,7 @@ function PickerOverlay({
                         event.preventDefault();
                       }}
                       onClick={() => {
-                        void dispatch({ id: "picker.selectIndex", args: { index } }).then(() => dispatch({ id: "picker.accept" }));
+                        void sessions.dispatch(sessionId, "selectIndex", { index }).then(() => sessions.dispatch(sessionId, "accept"));
                       }}
                     >
                       <div className="pickerItemMain">
@@ -471,21 +499,24 @@ const fallbackSyntaxScopes: Record<string, string> = {
 };
 
 function InputPromptOverlay({
-  state,
-  dispatch,
+  sessionId,
+  sessions,
 }: {
-  state: InputPromptViewState;
-  dispatch: (dispatch: { id: string; args?: unknown }) => Promise<unknown>;
+  sessionId: string;
+  sessions: UiSessionClient;
 }) {
+  const state = useUiSession<InputPromptSessionViewState>(sessions, sessionId);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const input = inputRef.current;
-    if (!input) return;
+    if (!input || !state) return;
     input.focus();
     const end = input.value.length;
     input.setSelectionRange(end, end);
-  }, [state.visible]);
+  }, [sessionId]);
+
+  if (!state) return null;
 
   return (
     <section className="inputPromptOverlay">
@@ -499,17 +530,17 @@ function InputPromptOverlay({
             spellCheck={false}
             value={state.query}
             onChange={(event) => {
-              void dispatch({ id: "input_prompt.setQuery", args: { query: event.target.value } });
+              void sessions.dispatch(sessionId, "setQuery", { query: event.target.value });
             }}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
                 event.preventDefault();
-                void dispatch({ id: "input_prompt.accept" });
+                void sessions.dispatch(sessionId, "accept");
                 return;
               }
               if (event.key !== "Escape") return;
               event.preventDefault();
-              void dispatch({ id: "input_prompt.close" });
+              void sessions.dispatch(sessionId, "close");
             }}
           />
           <div className="inputPromptActions">
@@ -519,7 +550,7 @@ function InputPromptOverlay({
               className="inputPromptClose"
               aria-label="Close input prompt"
               onClick={() => {
-                void dispatch({ id: "input_prompt.close" });
+                void sessions.dispatch(sessionId, "close");
               }}
             >
               ×

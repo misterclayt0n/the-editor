@@ -4,6 +4,7 @@ import type { DiagnosticEntry } from "./diagnostics.js";
 import type { EditorHost } from "./editorHost.js";
 import type { FocusTarget } from "./focus.js";
 import type { RoleSnapshot } from "./roles.js";
+import type { InteractiveSessionSnapshot } from "./sessions.js";
 import type { ThemeSnapshot } from "./themes.js";
 import type { ToolSnapshot } from "./tools.js";
 
@@ -41,6 +42,7 @@ export interface WorkbenchSessionState {
   focus?: FocusTarget;
   theme?: ThemeSnapshot;
   syntaxLegend?: Record<number, string>;
+  sessions?: InteractiveSessionSnapshot[];
   selectionPickerActive?: boolean;
 }
 

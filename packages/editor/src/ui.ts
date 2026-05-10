@@ -7,6 +7,7 @@ import type { CommandDispatch } from "./commands.js";
 import type { InteractionSnapshot } from "./interaction.js";
 import type { PackageSnapshot } from "./packages.js";
 import { roleId, roleImplementationId, type RoleId, type RoleImplementationId, type RoleSnapshot } from "./roles.js";
+import type { InteractiveSessionSnapshot } from "./sessions.js";
 import type { ThemeSnapshot } from "./themes.js";
 import type { ToolRootTarget, ToolSnapshot, ToolTypeId } from "./tools.js";
 
@@ -24,10 +25,19 @@ export interface WorkbenchSnapshot {
   focus?: FocusTarget;
   theme?: ThemeSnapshot;
   syntaxLegend?: Record<number, string>;
+  sessions?: InteractiveSessionSnapshot[];
+}
+
+export interface UiSessionClient {
+  all(): InteractiveSessionSnapshot[];
+  get<TState = unknown>(id: string | undefined): InteractiveSessionSnapshot<TState> | undefined;
+  subscribe(id: string, listener: () => void): () => void;
+  dispatch(id: string, method: string, args?: unknown): Promise<unknown>;
 }
 
 export interface RoleViewContext<TState = unknown> {
   commands: UiCommandDispatcher;
+  sessions: UiSessionClient;
   role: RoleId;
   snapshot: RoleSnapshot | undefined;
   state: TState | undefined;
@@ -42,6 +52,7 @@ export interface RoleViewRegistration<TState = unknown> {
 
 export interface ToolViewContext<TState = unknown> {
   commands: UiCommandDispatcher;
+  sessions: UiSessionClient;
   tool: ToolSnapshot;
   state: TState | undefined;
   workbench: WorkbenchSnapshot;
@@ -111,6 +122,7 @@ export class RoleViewRegistry {
 
     return implementation.render({
       commands: this.host.commands,
+      sessions: this.host.sessions,
       role: normalizedRole,
       snapshot,
       state: snapshot?.state,
@@ -151,6 +163,7 @@ export class ToolViewRegistry {
     if (!view) return null;
     return view.render({
       commands: this.host.commands,
+      sessions: this.host.sessions,
       tool,
       state: tool.state,
       workbench,
@@ -168,6 +181,13 @@ export class ToolViewRegistry {
   }
 }
 
+const emptyUiSessionClient: UiSessionClient = {
+  all: () => [],
+  get: () => undefined,
+  subscribe: () => () => {},
+  dispatch: async () => undefined,
+};
+
 export class UiHost {
   readonly roles = new RoleViewRegistry(this);
   readonly tools = new ToolViewRegistry(this);
@@ -183,9 +203,10 @@ export class UiHost {
     focus: { kind: "editor" },
     theme: { available: [] },
     syntaxLegend: {},
+    sessions: [],
   };
 
-  constructor(readonly commands: UiCommandDispatcher) {}
+  constructor(readonly commands: UiCommandDispatcher, readonly sessions: UiSessionClient = emptyUiSessionClient) {}
 
   update(snapshot: WorkbenchSnapshot): void {
     this.workbench = snapshot;
@@ -238,6 +259,6 @@ export class UiHost {
   }
 }
 
-export function createUiHost(commands: UiCommandDispatcher): UiHost {
-  return new UiHost(commands);
+export function createUiHost(commands: UiCommandDispatcher, sessions?: UiSessionClient): UiHost {
+  return new UiHost(commands, sessions);
 }

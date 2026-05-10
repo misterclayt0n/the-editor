@@ -63,6 +63,7 @@ export function defaultWorkbench(): EditorModule {
           focus: editor.focus.current(),
           theme: editor.themes.snapshot(),
           syntaxLegend: state.syntaxLegend,
+          sessions: editor.sessions.snapshotAll(),
           selectionPickerActive: Boolean(editor.getStateSlot("default.editing.selectionPicker")),
         };
       },

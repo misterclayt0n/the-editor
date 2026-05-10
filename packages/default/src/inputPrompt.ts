@@ -1,6 +1,13 @@
 import { spawnSync } from "node:child_process";
 import type { SurfaceChange, SurfaceEdit, SurfaceId, SurfaceSelectionRange } from "@the-editor/contracts/runtime";
-import { commandId, roleId, roleImplementationId, type EditorModule } from "@the-editor/editor";
+import {
+  commandId,
+  roleId,
+  roleImplementationId,
+  type EditorModule,
+  type InteractiveSessionController,
+  type InteractiveSessionId,
+} from "@the-editor/editor";
 import { getDefaultState } from "./state.js";
 
 type InputPromptKind =
@@ -27,7 +34,6 @@ export interface InputPromptRoleState {
 }
 
 interface ActiveInputPromptState {
-  visible: true;
   kind: InputPromptKind;
   title: string;
   placeholder: string;
@@ -39,7 +45,7 @@ interface ActiveInputPromptState {
 }
 
 interface StoredInputPromptState {
-  active?: ActiveInputPromptState;
+  activeSessionId?: InteractiveSessionId;
 }
 
 const inputPromptRoleId = roleId("inputPrompt");
@@ -51,7 +57,7 @@ export function defaultInputPrompt(): EditorModule {
   return (editor) => {
     editor.roles.setFallback(inputPromptRoleId, inputPromptImplementationId);
 
-    editor.roles.register<InputPromptRoleState>({
+    editor.roles.register<InputPromptRoleState & { sessionId?: string }>({
       role: inputPromptRoleId,
       implementationId: inputPromptImplementationId,
       title: "Default Input Prompt",
@@ -68,15 +74,17 @@ export function defaultInputPrompt(): EditorModule {
         editor.focus.setRole(inputPromptRoleId);
       },
       snapshot() {
-        const active = inputPromptState(editor).active;
+        const sessionId = activeInputPromptSessionId(editor);
+        const active = sessionId ? editor.sessions.snapshot<ActiveInputPromptState>(sessionId)?.state : undefined;
         return {
-          visible: Boolean(active),
+          visible: Boolean(sessionId),
+          sessionId,
           kind: active?.kind,
           title: active?.title,
           placeholder: active?.placeholder,
           query: active?.query ?? "",
           error: active?.error,
-        } satisfies InputPromptRoleState;
+        } satisfies InputPromptRoleState & { sessionId?: string };
       },
     });
 
@@ -158,10 +166,9 @@ export function defaultInputPrompt(): EditorModule {
       title: "Set Input Prompt Query",
       hidden: true,
       async run(_ctx, args) {
-        const active = inputPromptState(editor).active;
-        if (!active) return;
-        active.query = args.query;
-        await updateInputPromptPreview(editor, active);
+        const sessionId = activeInputPromptSessionId(editor);
+        if (!sessionId) return;
+        await editor.sessions.dispatch(sessionId, "setQuery", args);
       },
     });
 
@@ -170,11 +177,9 @@ export function defaultInputPrompt(): EditorModule {
       title: "Accept Input Prompt",
       hidden: true,
       async run() {
-        const active = inputPromptState(editor).active;
-        if (!active) return;
-        const accepted = await finalizeInputPrompt(editor, active);
-        if (!accepted) return;
-        await closeInputPrompt(editor, false);
+        const sessionId = activeInputPromptSessionId(editor);
+        if (!sessionId) return;
+        await editor.sessions.dispatch(sessionId, "accept");
       },
     });
   };
@@ -184,100 +189,155 @@ function inputPromptState(editor: Parameters<EditorModule>[0]): StoredInputPromp
   return editor.stateSlot(inputPromptStateSlot, () => ({} satisfies StoredInputPromptState));
 }
 
+function activeInputPromptSessionId(editor: Parameters<EditorModule>[0]): InteractiveSessionId | undefined {
+  const sessionId = inputPromptState(editor).activeSessionId;
+  if (!sessionId) return undefined;
+  if (editor.sessions.snapshot(sessionId)) return sessionId;
+  inputPromptState(editor).activeSessionId = undefined;
+  return undefined;
+}
+
 async function openInputPrompt(editor: Parameters<EditorModule>[0], kind: InputPromptKind): Promise<void> {
+  const moduleId = editor.currentModuleId();
   const surfaceId = getDefaultState(editor).activeSurfaceId;
   if (!surfaceId) return;
 
+  await closeInputPrompt(editor, false);
   const state = await editor.runtime.surfaces.readState({ surfaceId });
-  const active: ActiveInputPromptState = {
-    visible: true,
-    kind,
+  const session = editor.sessions.create<ActiveInputPromptState>({
+    kind: "inputPrompt",
+    role: inputPromptRoleId,
     title: promptTitle(kind),
-    placeholder: promptPlaceholder(kind),
-    query: "",
-    error: undefined,
-    surfaceId,
-    originalSelection: state.selection.map(cloneRange),
-    extend: isSearchPromptKind(kind) && getDefaultState(editor).mode === "select",
-  };
+    moduleId,
+    state: {
+      kind,
+      title: promptTitle(kind),
+      placeholder: promptPlaceholder(kind),
+      query: "",
+      error: undefined,
+      surfaceId,
+      originalSelection: state.selection.map(cloneRange),
+      extend: isSearchPromptKind(kind) && getDefaultState(editor).mode === "select",
+    },
+    methods: {
+      setQuery: async ({ session }, args) => {
+        session.updateState((state) => {
+          state.query = typeof (args as { query?: unknown } | undefined)?.query === "string"
+            ? (args as { query: string }).query
+            : "";
+        });
+        await updateInputPromptPreview(editor, session);
+      },
+      accept: async ({ session }) => {
+        const accepted = await finalizeInputPrompt(editor, session);
+        if (!accepted) return;
+        await closeInputPrompt(editor, false);
+      },
+      close: async () => {
+        await closeInputPrompt(editor, true);
+      },
+    },
+  });
 
-  inputPromptState(editor).active = active;
+  inputPromptState(editor).activeSessionId = session.id;
   editor.focus.setRole(inputPromptRoleId);
+  editor.workbench.invalidate("roles", "focus");
 }
 
 async function closeInputPrompt(editor: Parameters<EditorModule>[0], restoreSelection: boolean): Promise<void> {
-  const active = inputPromptState(editor).active;
-  if (!active) return;
+  const sessionId = activeInputPromptSessionId(editor);
+  const active = sessionId ? editor.sessions.snapshot<ActiveInputPromptState>(sessionId)?.state : undefined;
+  if (!sessionId || !active) return;
   if (restoreSelection) {
     await editor.runtime.surfaces.applyEdit({
       surfaceId: active.surfaceId,
       edit: { selection: active.originalSelection.map(cloneRange) },
     });
   }
-  inputPromptState(editor).active = undefined;
+  inputPromptState(editor).activeSessionId = undefined;
+  editor.sessions.dispose(sessionId);
   editor.focus.restore();
+  editor.workbench.invalidate("roles", "focus");
 }
 
 async function updateInputPromptPreview(
   editor: Parameters<EditorModule>[0],
-  active: ActiveInputPromptState,
+  session: InteractiveSessionController<ActiveInputPromptState>,
 ): Promise<void> {
+  const active = session.snapshot().state;
   switch (active.kind) {
     case "selectRegex":
       await updateSelectRegexPreview(editor, active);
-      return;
+      break;
     case "splitSelection":
       await updateSplitSelectionPreview(editor, active);
-      return;
+      break;
     case "keepSelections":
       await updateKeepOrRemoveSelectionsPreview(editor, active, false);
-      return;
+      break;
     case "removeSelections":
       await updateKeepOrRemoveSelectionsPreview(editor, active, true);
-      return;
+      break;
     case "searchForward":
       await updateSearchPreview(editor, active, "forward");
-      return;
+      break;
     case "searchBackward":
       await updateSearchPreview(editor, active, "backward");
-      return;
+      break;
     case "shellPipe":
     case "shellPipeTo":
     case "shellInsertOutput":
     case "shellAppendOutput":
     case "shellKeepPipe":
       active.error = undefined;
-      return;
+      break;
   }
+  session.invalidate();
 }
 
 async function finalizeInputPrompt(
   editor: Parameters<EditorModule>[0],
-  active: ActiveInputPromptState,
+  session: InteractiveSessionController<ActiveInputPromptState>,
 ): Promise<boolean> {
+  const active = session.snapshot().state;
+  let accepted: boolean;
   switch (active.kind) {
     case "selectRegex":
-      return finalizeSelectRegex(editor, active);
+      accepted = await finalizeSelectRegex(editor, active);
+      break;
     case "splitSelection":
-      return finalizeSplitSelection(editor, active);
+      accepted = await finalizeSplitSelection(editor, active);
+      break;
     case "keepSelections":
-      return finalizeKeepOrRemoveSelections(editor, active, false);
+      accepted = await finalizeKeepOrRemoveSelections(editor, active, false);
+      break;
     case "removeSelections":
-      return finalizeKeepOrRemoveSelections(editor, active, true);
+      accepted = await finalizeKeepOrRemoveSelections(editor, active, true);
+      break;
     case "searchForward":
     case "searchBackward":
-      return finalizeSearch(editor, active);
+      accepted = await finalizeSearch(editor, active);
+      break;
     case "shellPipe":
-      return finalizeShellPrompt(editor, active, "replace");
+      accepted = await finalizeShellPrompt(editor, active, "replace");
+      break;
     case "shellPipeTo":
-      return finalizeShellPrompt(editor, active, "ignore");
+      accepted = await finalizeShellPrompt(editor, active, "ignore");
+      break;
     case "shellInsertOutput":
-      return finalizeShellPrompt(editor, active, "insert");
+      accepted = await finalizeShellPrompt(editor, active, "insert");
+      break;
     case "shellAppendOutput":
-      return finalizeShellPrompt(editor, active, "append");
+      accepted = await finalizeShellPrompt(editor, active, "append");
+      break;
     case "shellKeepPipe":
-      return finalizeShellPrompt(editor, active, "keep");
+      accepted = await finalizeShellPrompt(editor, active, "keep");
+      break;
+    default:
+      accepted = false;
   }
+  session.invalidate();
+  return accepted;
 }
 
 async function updateSelectRegexPreview(

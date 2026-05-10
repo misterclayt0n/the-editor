@@ -1,7 +1,7 @@
 import { Component, useEffect, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import type { RenderFrame } from "@the-editor/contracts/runtime";
-import type { BufferDecoration, ThemeSnapshot } from "@the-editor/editor";
+import type { BufferDecoration, InteractiveSessionSnapshot, ThemeSnapshot } from "@the-editor/editor";
 import { configureTextSurface, loadEditorFont, paintTextSurface } from "./textSurface.js";
 import { RendererPackageRuntime, type WorkbenchSnapshot } from "./uiRuntime.js";
 import "./style.css";
@@ -25,6 +25,14 @@ function App() {
     return window.theEditor.onPolicyEvent((event) => {
       if (!isObject(event)) return;
       if (event.type === "policy.error") console.error(String(event.message ?? "policy error"));
+      if (event.type === "default.sessionUpdated") {
+        if (isObject(event.session)) uiRuntime.updateSession(event.session as unknown as InteractiveSessionSnapshot);
+        return;
+      }
+      if (event.type === "default.sessionDisposed") {
+        if (typeof event.sessionId === "string") uiRuntime.removeSession(event.sessionId);
+        return;
+      }
       if (event.type === "default.sessionChanged") {
         if (isObject(event.frame)) setFrame(event.frame as unknown as RenderFrame);
         setDecorations(Array.isArray(event.decorations) ? event.decorations as BufferDecoration[] : []);
@@ -38,6 +46,7 @@ function App() {
           focus: isObject(event.focus) ? event.focus as WorkbenchSnapshot["focus"] : undefined,
           theme: isObject(event.theme) ? event.theme as unknown as ThemeSnapshot : undefined,
           syntaxLegend: isObject(event.syntaxLegend) ? event.syntaxLegend as Record<number, string> : {},
+          sessions: Array.isArray(event.sessions) ? event.sessions as InteractiveSessionSnapshot[] : [],
         };
         setTheme(snapshot.theme);
         setSyntaxLegend(snapshot.syntaxLegend ?? {});

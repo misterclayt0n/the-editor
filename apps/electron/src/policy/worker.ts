@@ -25,6 +25,13 @@ let sessionPostScheduled = false;
 editor.workbench.subscribe(() => {
   scheduleSessionStatePost();
 });
+editor.sessions.subscribe((event) => {
+  if (event.type === "updated") {
+    parentPort?.postMessage({ type: "default.sessionUpdated", session: event.session });
+    return;
+  }
+  parentPort?.postMessage({ type: "default.sessionDisposed", sessionId: event.sessionId });
+});
 
 parentPort.on("message", (message: unknown) => {
   if (!isObject(message)) return;
@@ -84,6 +91,11 @@ async function handlePolicyRequest(request: PolicyRequest): Promise<void> {
         result = await postSessionState();
         break;
       }
+      case "session.dispatch": {
+        const params = request.params as { sessionId: string; method: string; args?: unknown };
+        result = await editor.sessions.dispatch(params.sessionId, params.method, params.args);
+        break;
+      }
       default:
         throw new Error(`unknown policy method ${request.method}`);
     }
@@ -123,6 +135,7 @@ async function postSessionState() {
     interaction: editor.interaction.snapshot(),
     theme: state.theme ?? editor.themes.snapshot(),
     syntaxLegend: state.syntaxLegend ?? {},
+    sessions: state.sessions ?? editor.sessions.snapshotAll(),
     selectionPickerActive: state.selectionPickerActive ?? false,
   };
   parentPort?.postMessage(payload);

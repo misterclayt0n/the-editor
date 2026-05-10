@@ -15,7 +15,12 @@ describe("default themes", () => {
     const editor = await createThemeEditor();
 
     await editor.commands.dispatch({ id: commandId("theme.select") });
-    expect(editor.roles.snapshot("commandPalette")?.state).toMatchObject({
+    const paletteRoleState = editor.roles.snapshot("commandPalette")?.state as { visible?: boolean; sessionId?: string } | undefined;
+    const paletteSession = paletteRoleState?.sessionId ? editor.sessions.snapshot<{ query: string }>(paletteRoleState.sessionId)?.state : undefined;
+    expect({
+      visible: Boolean(paletteRoleState?.visible),
+      query: paletteSession?.query,
+    }).toMatchObject({
       visible: true,
       query: ":theme ",
     });

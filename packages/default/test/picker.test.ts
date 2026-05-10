@@ -11,6 +11,7 @@ import { getDefaultState } from "../src/state.js";
 
 interface PickerSnapshot {
   visible: boolean;
+  sessionId?: string;
   query: string;
   selectedIndex: number;
   items: Array<{ id: string; title: string; detail?: string }>;
@@ -100,7 +101,16 @@ describe("default picker", () => {
 });
 
 function pickerSnapshot(editor: ReturnType<typeof createEditorHost>) {
-  return editor.roles.snapshot("picker")?.state as PickerSnapshot | undefined;
+  const roleState = editor.roles.snapshot("picker")?.state as { visible?: boolean; sessionId?: string } | undefined;
+  if (!roleState) return undefined;
+  const sessionState = roleState.sessionId ? editor.sessions.snapshot<PickerSnapshot>(roleState.sessionId)?.state : undefined;
+  return {
+    visible: Boolean(roleState.visible),
+    sessionId: roleState.sessionId,
+    query: sessionState?.query ?? "",
+    selectedIndex: sessionState?.selectedIndex ?? 0,
+    items: sessionState?.items ?? [],
+  };
 }
 
 async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 5_000): Promise<void> {

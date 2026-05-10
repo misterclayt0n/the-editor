@@ -8,77 +8,54 @@ import {
   type CommandPaletteItem,
   type CommandPaletteRoleState,
   type EditorModule,
+  type InteractiveSessionController,
+  type InteractiveSessionId,
 } from "@the-editor/editor";
 
-interface CommandPaletteState {
-  visible: boolean;
+interface CommandPaletteSessionState {
   query: string;
   selectedIndex: number;
+  placeholder?: string;
   items: CommandPaletteItem[];
 }
 
+interface CommandPaletteStoredState {
+  activeSessionId?: InteractiveSessionId;
+}
+
 const commandPaletteImplementationId = roleImplementationId("default.commandPalette");
+const commandPaletteStateSlot = "default.commandPalette.state";
 
 export function defaultCommandPalette(): EditorModule {
   return (editor) => {
-    const state: CommandPaletteState = {
-      visible: false,
-      query: "",
-      selectedIndex: 0,
-      items: [],
-    };
-
-    async function refresh(): Promise<void> {
-      const query = state.query;
-      const items = await editor.palette.items(query);
-      const scored = items
-        .map((item) => ({ item, score: scoreCommandPaletteItem(query, item) }))
-        .filter(({ score }) => !query.trim() || score > 0)
-        .sort((a, b) => b.score - a.score || a.item.title.localeCompare(b.item.title))
-        .map(({ item }) => item);
-      state.items = scored;
-      state.selectedIndex = clampIndex(state.selectedIndex, state.items.length);
-    }
-
-    async function open(initialQuery = ""): Promise<void> {
-      state.visible = true;
-      state.query = initialQuery;
-      state.selectedIndex = 0;
-      await refresh();
-    }
-
-    function close(): void {
-      state.visible = false;
-      state.query = "";
-      state.selectedIndex = 0;
-      state.items = [];
-    }
+    const moduleId = editor.currentModuleId();
 
     editor.roles.setFallback(commandPaletteRoleId, commandPaletteImplementationId);
 
-    editor.roles.register({
+    editor.roles.register<{ visible: boolean; sessionId?: string }>({
       role: commandPaletteRoleId,
       implementationId: commandPaletteImplementationId,
       title: "Default Command Palette",
       async open() {
-        editor.focus.setRole(commandPaletteRoleId);
-        await open();
+        await openPalette();
       },
       close() {
-        close();
-        editor.focus.restore();
+        closePalette(editor, true);
       },
       async focus() {
         editor.focus.setRole(commandPaletteRoleId);
-        if (!state.visible) await open();
+        if (!activeSessionId(editor)) await openPalette();
       },
-      snapshot(): CommandPaletteRoleState {
+      snapshot(): CommandPaletteRoleState & { sessionId?: string } {
+        const sessionId = activeSessionId(editor);
+        const session = sessionId ? editor.sessions.snapshot<CommandPaletteSessionState>(sessionId) : undefined;
         return {
-          visible: state.visible,
-          query: state.query,
-          selectedIndex: state.selectedIndex,
-          placeholder: "Type a command",
-          items: state.items,
+          visible: Boolean(sessionId),
+          sessionId,
+          query: session?.state.query ?? "",
+          selectedIndex: session?.state.selectedIndex ?? 0,
+          placeholder: session?.state.placeholder,
+          items: session?.state.items ?? [],
         };
       },
     });
@@ -89,8 +66,12 @@ export function defaultCommandPalette(): EditorModule {
       category: "Workbench",
       keywords: ["palette", "commands", "reload"],
       async run(_ctx, args) {
-        editor.focus.setRole(commandPaletteRoleId);
-        await open(args?.initialQuery ?? "");
+        const initialQuery = typeof args === "string"
+          ? args
+          : typeof (args as { initialQuery?: unknown } | undefined)?.initialQuery === "string"
+            ? (args as { initialQuery: string }).initialQuery
+            : "";
+        await openPalette(initialQuery);
       },
     });
 
@@ -99,8 +80,7 @@ export function defaultCommandPalette(): EditorModule {
       title: "Close Command Palette",
       hidden: true,
       run() {
-        close();
-        editor.focus.restore();
+        closePalette(editor, true);
       },
     });
 
@@ -109,9 +89,11 @@ export function defaultCommandPalette(): EditorModule {
       title: "Append Command Palette Text",
       hidden: true,
       async run(_ctx, args) {
-        state.query += args.text;
-        state.selectedIndex = 0;
-        await refresh();
+        const session = activeSessionId(editor);
+        if (!session) return;
+        const snapshot = editor.sessions.snapshot<CommandPaletteSessionState>(session);
+        if (!snapshot) return;
+        await editor.sessions.dispatch(session, "setQuery", { query: `${snapshot.state.query}${args.text}` });
       },
     });
 
@@ -120,9 +102,7 @@ export function defaultCommandPalette(): EditorModule {
       title: "Set Command Palette Query",
       hidden: true,
       async run(_ctx, args) {
-        state.query = args.query;
-        state.selectedIndex = 0;
-        await refresh();
+        await dispatchPaletteSession(editor, "setQuery", args);
       },
     });
 
@@ -131,10 +111,11 @@ export function defaultCommandPalette(): EditorModule {
       title: "Delete Command Palette Character",
       hidden: true,
       async run() {
-        if (!state.query) return;
-        state.query = state.query.slice(0, -1);
-        state.selectedIndex = 0;
-        await refresh();
+        const sessionId = activeSessionId(editor);
+        if (!sessionId) return;
+        const snapshot = editor.sessions.snapshot<CommandPaletteSessionState>(sessionId);
+        if (!snapshot?.state.query) return;
+        await editor.sessions.dispatch(sessionId, "setQuery", { query: snapshot.state.query.slice(0, -1) });
       },
     });
 
@@ -142,9 +123,8 @@ export function defaultCommandPalette(): EditorModule {
       id: commandId("command_palette.moveSelection"),
       title: "Move Command Palette Selection",
       hidden: true,
-      run(_ctx, args) {
-        if (!state.items.length) return;
-        state.selectedIndex = clampIndex(state.selectedIndex + args.delta, state.items.length);
+      async run(_ctx, args) {
+        await dispatchPaletteSession(editor, "moveSelection", args);
       },
     });
 
@@ -153,11 +133,7 @@ export function defaultCommandPalette(): EditorModule {
       title: "Accept Command Palette Selection",
       hidden: true,
       async run() {
-        const item = state.items[state.selectedIndex];
-        if (!item?.command) return;
-        close();
-        editor.focus.restore();
-        await editor.commands.dispatch(item.command);
+        await dispatchPaletteSession(editor, "accept");
       },
     });
 
@@ -165,9 +141,8 @@ export function defaultCommandPalette(): EditorModule {
       id: commandId("command_palette.selectIndex"),
       title: "Select Command Palette Item",
       hidden: true,
-      run(_ctx, args) {
-        if (!state.items.length) return;
-        state.selectedIndex = clampIndex(args.index, state.items.length);
+      async run(_ctx, args) {
+        await dispatchPaletteSession(editor, "selectIndex", args);
       },
     });
 
@@ -253,7 +228,117 @@ export function defaultCommandPalette(): EditorModule {
         return items;
       },
     });
+
+    async function openPalette(initialQuery = ""): Promise<void> {
+      closePalette(editor, false);
+      const query = typeof initialQuery === "string" ? initialQuery : "";
+      const requestState = { version: 0 };
+      const session = editor.sessions.create<CommandPaletteSessionState>({
+        kind: "commandPalette",
+        role: commandPaletteRoleId,
+        title: "Command Palette",
+        moduleId,
+        state: {
+          query,
+          selectedIndex: 0,
+          placeholder: "Type a command",
+          items: [],
+        },
+        methods: {
+          setQuery: async ({ session }, args) => {
+            const query = typeof (args as { query?: unknown } | undefined)?.query === "string"
+              ? (args as { query: string }).query
+              : "";
+            session.updateState((state) => {
+              state.query = query;
+              state.selectedIndex = 0;
+              state.items = [];
+            });
+            await refresh(session, requestState, ++requestState.version);
+          },
+          moveSelection: ({ session }, args) => {
+            const delta = typeof (args as { delta?: unknown } | undefined)?.delta === "number"
+              ? (args as { delta: number }).delta
+              : 0;
+            session.updateState((state) => {
+              if (!state.items.length) return;
+              state.selectedIndex = clampIndex(state.selectedIndex + delta, state.items.length);
+            });
+          },
+          selectIndex: ({ session }, args) => {
+            const index = typeof (args as { index?: unknown } | undefined)?.index === "number"
+              ? (args as { index: number }).index
+              : 0;
+            session.updateState((state) => {
+              if (!state.items.length) return;
+              state.selectedIndex = clampIndex(index, state.items.length);
+            });
+          },
+          accept: async ({ session }) => {
+            const snapshot = session.snapshot().state;
+            const item = snapshot.items[snapshot.selectedIndex];
+            if (!item?.command) return;
+            closePalette(editor, true);
+            await editor.commands.dispatch(item.command);
+          },
+          close: () => {
+            closePalette(editor, true);
+          },
+        },
+      });
+
+      paletteState(editor).activeSessionId = session.id;
+      editor.focus.setRole(commandPaletteRoleId);
+      editor.workbench.invalidate("roles", "focus");
+      await refresh(session, requestState, ++requestState.version);
+    }
+
+    async function refresh(
+      session: InteractiveSessionController<CommandPaletteSessionState>,
+      requestState: { version: number },
+      version: number,
+    ): Promise<void> {
+      const query = session.snapshot().state.query;
+      const items = await editor.palette.items(query);
+      if (activeSessionId(editor) !== session.id || version !== requestState.version) return;
+      const scored = items
+        .map((item) => ({ item, score: scoreCommandPaletteItem(query, item) }))
+        .filter(({ score }) => !query.trim() || score > 0)
+        .sort((a, b) => b.score - a.score || a.item.title.localeCompare(b.item.title))
+        .map(({ item }) => item);
+      session.updateState((state) => {
+        state.items = scored;
+        state.selectedIndex = clampIndex(state.selectedIndex, state.items.length);
+      });
+    }
+
   };
+}
+
+function paletteState(editor: Parameters<EditorModule>[0]): CommandPaletteStoredState {
+  return editor.stateSlot(commandPaletteStateSlot, () => ({} satisfies CommandPaletteStoredState));
+}
+
+function activeSessionId(editor: Parameters<EditorModule>[0]): InteractiveSessionId | undefined {
+  const sessionId = paletteState(editor).activeSessionId;
+  if (!sessionId) return undefined;
+  if (editor.sessions.snapshot(sessionId)) return sessionId;
+  paletteState(editor).activeSessionId = undefined;
+  return undefined;
+}
+
+async function dispatchPaletteSession(editor: Parameters<EditorModule>[0], method: string, args?: unknown): Promise<void> {
+  const sessionId = activeSessionId(editor);
+  if (!sessionId) return;
+  await editor.sessions.dispatch(sessionId, method, args);
+}
+
+function closePalette(editor: Parameters<EditorModule>[0], restoreFocus: boolean): void {
+  const sessionId = activeSessionId(editor);
+  paletteState(editor).activeSessionId = undefined;
+  if (sessionId) editor.sessions.dispose(sessionId);
+  if (restoreFocus) editor.focus.restore();
+  editor.workbench.invalidate("roles", "focus");
 }
 
 function clampIndex(index: number, length: number): number {

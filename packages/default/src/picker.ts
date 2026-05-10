@@ -6,6 +6,8 @@ import {
   pickerRoleId,
   roleImplementationId,
   type EditorModule,
+  type InteractiveSessionController,
+  type InteractiveSessionId,
   type PickerItem,
   type PickerPreview,
   type PickerSession,
@@ -15,6 +17,10 @@ import { getDefaultState } from "./state.js";
 
 interface PickerRoleState {
   visible: boolean;
+  sessionId?: string;
+}
+
+interface PickerSessionState {
   providerId?: string;
   title?: string;
   placeholder?: string;
@@ -26,26 +32,18 @@ interface PickerRoleState {
   preview?: PickerPreview | null;
 }
 
-interface ActivePickerState {
-  visible: true;
+interface ActivePickerHandle {
+  sessionId: InteractiveSessionId;
   providerId: string;
   providerModuleId: string;
-  title: string;
-  placeholder: string;
-  query: string;
-  selectedIndex: number;
-  items: PickerItem[];
-  status?: PickerStatusLine;
-  emptyText?: string;
-  preview?: PickerPreview | null;
   requestVersion: number;
   refreshTimer?: ReturnType<typeof setTimeout>;
   previewTimer?: ReturnType<typeof setTimeout>;
-  session: PickerSession;
+  providerSession: PickerSession;
 }
 
 interface StoredPickerState {
-  active?: ActivePickerState;
+  active?: ActivePickerHandle;
 }
 
 const pickerImplementationId = roleImplementationId("default.picker");
@@ -69,18 +67,20 @@ export function defaultPicker(): EditorModule {
       },
       snapshot() {
         const active = activePicker(editor);
+        const session = active ? editor.sessions.snapshot<PickerSessionState>(active.sessionId) : undefined;
         return {
           visible: Boolean(active),
-          providerId: active?.providerId,
-          title: active?.title,
-          placeholder: active?.placeholder,
-          query: active?.query ?? "",
-          selectedIndex: active?.selectedIndex ?? 0,
-          items: active?.items ?? [],
-          status: active?.status,
-          emptyText: active?.emptyText,
-          preview: active?.preview,
-        } satisfies PickerRoleState;
+          sessionId: active?.sessionId,
+          providerId: session?.state.providerId,
+          title: session?.state.title,
+          placeholder: session?.state.placeholder,
+          query: session?.state.query ?? "",
+          selectedIndex: session?.state.selectedIndex ?? 0,
+          items: session?.state.items ?? [],
+          status: session?.state.status,
+          emptyText: session?.state.emptyText,
+          preview: session?.state.preview,
+        } as PickerRoleState & PickerSessionState;
       },
     });
 
@@ -118,11 +118,7 @@ export function defaultPicker(): EditorModule {
       title: "Set Picker Query",
       hidden: true,
       async run(_ctx, args) {
-        const active = activePicker(editor);
-        if (!active) return;
-        active.query = args.query;
-        active.selectedIndex = 0;
-        await refreshPicker(editor, active);
+        await dispatchPickerSession(editor, "setQuery", args);
       },
     });
 
@@ -131,12 +127,7 @@ export function defaultPicker(): EditorModule {
       title: "Move Picker Selection",
       hidden: true,
       async run(_ctx, args) {
-        const active = activePicker(editor);
-        if (!active?.items.length) return;
-        active.selectedIndex = clampIndex(active.selectedIndex + args.delta, active.items.length);
-        active.preview = null;
-        editor.workbench.invalidate("roles");
-        schedulePickerPreview(editor, active);
+        await dispatchPickerSession(editor, "moveSelection", args);
       },
     });
 
@@ -145,12 +136,7 @@ export function defaultPicker(): EditorModule {
       title: "Select Picker Item",
       hidden: true,
       async run(_ctx, args) {
-        const active = activePicker(editor);
-        if (!active?.items.length) return;
-        active.selectedIndex = clampIndex(args.index, active.items.length);
-        active.preview = null;
-        editor.workbench.invalidate("roles");
-        schedulePickerPreview(editor, active);
+        await dispatchPickerSession(editor, "selectIndex", args);
       },
     });
 
@@ -159,14 +145,7 @@ export function defaultPicker(): EditorModule {
       title: "Accept Picker Selection",
       hidden: true,
       async run() {
-        const active = activePicker(editor);
-        const item = active?.items[active.selectedIndex];
-        if (!active || !item) return;
-        pickerState(editor).active = undefined;
-        await active.session.accept(item);
-        if (active.refreshTimer) clearTimeout(active.refreshTimer);
-        if (active.previewTimer) clearTimeout(active.previewTimer);
-        active.session.dispose?.();
+        await dispatchPickerSession(editor, "accept");
       },
     });
 
@@ -263,13 +242,19 @@ function pickerState(editor: Parameters<EditorModule>[0]): StoredPickerState {
   return editor.stateSlot(pickerStateSlot, () => ({} satisfies StoredPickerState));
 }
 
-function activePicker(editor: Parameters<EditorModule>[0]): ActivePickerState | undefined {
+function activePicker(editor: Parameters<EditorModule>[0]): ActivePickerHandle | undefined {
   const active = pickerState(editor).active;
   if (!active) return undefined;
   const provider = editor.pickers.entry(active.providerId);
-  if (provider && provider.moduleId === active.providerModuleId) return active;
+  if (provider && provider.moduleId === active.providerModuleId && editor.sessions.snapshot(active.sessionId)) return active;
   disposePicker(editor, false);
   return undefined;
+}
+
+async function dispatchPickerSession(editor: Parameters<EditorModule>[0], method: string, args?: unknown): Promise<void> {
+  const active = activePicker(editor);
+  if (!active) return;
+  await editor.sessions.dispatch(active.sessionId, method, args);
 }
 
 async function openPicker(
@@ -285,25 +270,86 @@ async function openPicker(
   disposePicker(editor, false);
   const provider = editor.pickers.entry(providerId);
   if (!provider) throw new Error(`unknown picker provider ${providerId}`);
-  const session = await provider.createSession({ editor }, options.sessionArgs);
-  const active: ActivePickerState = {
-    visible: true,
+  const providerSession = await provider.createSession({ editor }, options.sessionArgs);
+  const handle: ActivePickerHandle = {
+    sessionId: "" as InteractiveSessionId,
     providerId,
     providerModuleId: provider.moduleId,
-    title: options.title ?? provider.title ?? providerId,
-    placeholder: options.placeholder ?? provider.placeholder ?? "Type to search",
-    query: options.query ?? "",
-    selectedIndex: 0,
-    items: [],
-    status: undefined,
-    emptyText: undefined,
-    preview: null,
     requestVersion: 0,
-    session,
+    providerSession,
   };
-  pickerState(editor).active = active;
+
+  const session = editor.sessions.create<PickerSessionState>({
+    kind: "picker",
+    role: pickerRoleId,
+    title: options.title ?? provider.title ?? providerId,
+    moduleId: provider.moduleId,
+    state: {
+      providerId,
+      title: options.title ?? provider.title ?? providerId,
+      placeholder: options.placeholder ?? provider.placeholder ?? "Type to search",
+      query: options.query ?? "",
+      selectedIndex: 0,
+      items: [],
+      status: undefined,
+      emptyText: undefined,
+      preview: null,
+    },
+    methods: {
+      setQuery: async ({ session }, args) => {
+        const query = typeof (args as { query?: unknown } | undefined)?.query === "string"
+          ? (args as { query: string }).query
+          : "";
+        session.updateState((state) => {
+          state.query = query;
+          state.selectedIndex = 0;
+        });
+        await refreshPicker(editor, session, handle);
+      },
+      moveSelection: ({ session }, args) => {
+        const delta = typeof (args as { delta?: unknown } | undefined)?.delta === "number"
+          ? (args as { delta: number }).delta
+          : 0;
+        session.updateState((state) => {
+          if (!state.items.length) return;
+          state.selectedIndex = clampIndex(state.selectedIndex + delta, state.items.length);
+          state.preview = null;
+        });
+        schedulePickerPreview(editor, session, handle);
+      },
+      selectIndex: ({ session }, args) => {
+        const index = typeof (args as { index?: unknown } | undefined)?.index === "number"
+          ? (args as { index: number }).index
+          : 0;
+        session.updateState((state) => {
+          if (!state.items.length) return;
+          state.selectedIndex = clampIndex(index, state.items.length);
+          state.preview = null;
+        });
+        schedulePickerPreview(editor, session, handle);
+      },
+      accept: async ({ session }) => {
+        const item = session.snapshot().state.items[session.snapshot().state.selectedIndex];
+        if (!item) return;
+        closePicker(editor, true);
+        await providerSession.accept(item);
+      },
+      close: () => {
+        closePicker(editor, true);
+      },
+    },
+    dispose: () => {
+      if (handle.refreshTimer) clearTimeout(handle.refreshTimer);
+      if (handle.previewTimer) clearTimeout(handle.previewTimer);
+      providerSession.dispose?.();
+    },
+  });
+
+  handle.sessionId = session.id;
+  pickerState(editor).active = handle;
   editor.focus.setRole(pickerRoleId);
-  await refreshPicker(editor, active);
+  editor.workbench.invalidate("roles", "focus");
+  await refreshPicker(editor, session, handle);
 }
 
 function closePicker(editor: Parameters<EditorModule>[0], restoreFocus: boolean): void {
@@ -315,65 +361,77 @@ function disposePicker(editor: Parameters<EditorModule>[0], restoreFocus: boolea
   pickerState(editor).active = undefined;
   if (active?.refreshTimer) clearTimeout(active.refreshTimer);
   if (active?.previewTimer) clearTimeout(active.previewTimer);
-  active?.session.dispose?.();
+  if (active) editor.sessions.dispose(active.sessionId);
   if (restoreFocus) editor.focus.restore();
+  editor.workbench.invalidate("roles", "focus");
 }
 
-async function refreshPicker(editor: Parameters<EditorModule>[0], active: ActivePickerState): Promise<void> {
-  const requestVersion = ++active.requestVersion;
-  const page = await active.session.search(active.query, { offset: 0, limit: FILE_PICKER_LIMIT });
-  if (!isCurrentPicker(editor, active, requestVersion)) return;
-  active.items = page.items;
-  active.status = page.status;
-  active.emptyText = page.emptyText;
-  active.selectedIndex = clampIndex(active.selectedIndex, active.items.length);
-  active.preview = null;
-  if (active.refreshTimer) clearTimeout(active.refreshTimer);
-  if (active.previewTimer) clearTimeout(active.previewTimer);
-  active.refreshTimer = page.refreshAfterMs && page.refreshAfterMs > 0
+async function refreshPicker(
+  editor: Parameters<EditorModule>[0],
+  session: InteractiveSessionController<PickerSessionState>,
+  handle: ActivePickerHandle,
+): Promise<void> {
+  const requestVersion = ++handle.requestVersion;
+  const page = await handle.providerSession.search(session.snapshot().state.query, { offset: 0, limit: FILE_PICKER_LIMIT });
+  if (!isCurrentPicker(editor, handle, requestVersion)) return;
+  session.updateState((state) => {
+    state.items = page.items;
+    state.status = page.status;
+    state.emptyText = page.emptyText;
+    state.selectedIndex = clampIndex(state.selectedIndex, state.items.length);
+    state.preview = null;
+  });
+  if (handle.refreshTimer) clearTimeout(handle.refreshTimer);
+  if (handle.previewTimer) clearTimeout(handle.previewTimer);
+  handle.refreshTimer = page.refreshAfterMs && page.refreshAfterMs > 0
     ? setTimeout(() => {
-        void refreshPicker(editor, active);
+        void refreshPicker(editor, session, handle);
       }, page.refreshAfterMs)
     : undefined;
-  editor.workbench.invalidate("roles");
-  schedulePickerPreview(editor, active, requestVersion);
+  schedulePickerPreview(editor, session, handle, requestVersion);
 }
 
 function schedulePickerPreview(
   editor: Parameters<EditorModule>[0],
-  active: ActivePickerState,
-  requestVersion = active.requestVersion,
+  session: InteractiveSessionController<PickerSessionState>,
+  handle: ActivePickerHandle,
+  requestVersion = handle.requestVersion,
 ): void {
-  if (active.previewTimer) clearTimeout(active.previewTimer);
-  active.previewTimer = setTimeout(() => {
-    active.previewTimer = undefined;
-    void refreshPickerPreview(editor, active, requestVersion);
+  if (handle.previewTimer) clearTimeout(handle.previewTimer);
+  handle.previewTimer = setTimeout(() => {
+    handle.previewTimer = undefined;
+    void refreshPickerPreview(editor, session, handle, requestVersion);
   }, 75);
 }
 
 async function refreshPickerPreview(
   editor: Parameters<EditorModule>[0],
-  active: ActivePickerState,
-  requestVersion = active.requestVersion,
+  session: InteractiveSessionController<PickerSessionState>,
+  handle: ActivePickerHandle,
+  requestVersion = handle.requestVersion,
 ): Promise<void> {
-  const item = active.items[active.selectedIndex];
-  if (!item || !active.session.preview) {
-    active.preview = null;
-    editor.workbench.invalidate("roles");
+  const state = session.snapshot().state;
+  const item = state.items[state.selectedIndex];
+  if (!item || !handle.providerSession.preview) {
+    session.updateState((next) => {
+      next.preview = null;
+    });
     return;
   }
-  const preview = await active.session.preview(item);
-  if (!isCurrentPicker(editor, active, requestVersion)) return;
-  active.preview = preview;
-  editor.workbench.invalidate("roles");
+  const preview = await handle.providerSession.preview(item);
+  if (!isCurrentPicker(editor, handle, requestVersion)) return;
+  session.updateState((next) => {
+    next.preview = preview;
+  });
 }
 
 function isCurrentPicker(
   editor: Parameters<EditorModule>[0],
-  active: ActivePickerState,
+  handle: ActivePickerHandle,
   requestVersion: number,
 ): boolean {
-  return pickerState(editor).active === active && active.requestVersion === requestVersion;
+  const active = pickerState(editor).active;
+  return active === handle && handle.requestVersion === requestVersion;
 }
 
 function clampIndex(index: number, length: number): number {

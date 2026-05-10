@@ -1,12 +1,12 @@
 import * as React from "react";
 import * as ReactJsxRuntime from "react/jsx-runtime";
 import ts from "typescript";
-import type { PackageSnapshot, ThemeSnapshot, ToolRootTarget } from "@the-editor/editor";
+import type { InteractiveSessionSnapshot, PackageSnapshot, ThemeSnapshot, ToolRootTarget } from "@the-editor/editor";
 import type { DiagnosticEntry } from "@the-editor/editor";
 import * as editorThemesModule from "@the-editor/editor/themes";
 import { themeCssVariables } from "@the-editor/editor/themes";
 import * as editorUiModule from "@the-editor/editor/ui";
-import { createUiHost, type EditorUiModule, type WorkbenchSnapshot } from "@the-editor/editor/ui";
+import { createUiHost, type EditorUiModule, type UiSessionClient, type WorkbenchSnapshot } from "@the-editor/editor/ui";
 
 type LoadedTarget = {
   moduleKey: string;
@@ -18,11 +18,13 @@ type LoadedTarget = {
 };
 
 export class RendererPackageRuntime {
+  private readonly sessions = new RendererUiSessionClient();
+
   readonly host = createUiHost({
     dispatch(dispatch) {
       return window.theEditor.policyRequest("command.dispatch", dispatch);
     },
-  });
+  }, this.sessions);
 
   private readonly listeners = new Set<() => void>();
   private readonly loaded = new Map<string, LoadedTarget>();
@@ -77,13 +79,23 @@ export class RendererPackageRuntime {
       }
     }
 
+    this.sessions.reset(snapshot.sessions ?? []);
     this.host.update({
       ...snapshot,
       diagnostics: [...(snapshot.diagnostics ?? []), ...this.localDiagnostics.values()],
+      sessions: this.sessions.all(),
     });
     this.applyTheme(snapshot);
 
     if (changed) this.emitChange();
+  }
+
+  updateSession(session: InteractiveSessionSnapshot): void {
+    this.sessions.update(session);
+  }
+
+  removeSession(sessionId: string): void {
+    this.sessions.remove(sessionId);
   }
 
   renderRole(role: string): React.ReactNode {
@@ -187,6 +199,63 @@ export class RendererPackageRuntime {
 
   private emitChange(): void {
     for (const listener of this.listeners) listener();
+  }
+}
+
+class RendererUiSessionClient implements UiSessionClient {
+  private readonly sessions = new Map<string, InteractiveSessionSnapshot>();
+  private readonly listeners = new Map<string, Set<() => void>>();
+
+  all(): InteractiveSessionSnapshot[] {
+    return [...this.sessions.values()];
+  }
+
+  get<TState = unknown>(id: string | undefined): InteractiveSessionSnapshot<TState> | undefined {
+    if (!id) return undefined;
+    return this.sessions.get(id) as InteractiveSessionSnapshot<TState> | undefined;
+  }
+
+  subscribe(id: string, listener: () => void): () => void {
+    const list = this.listeners.get(id) ?? new Set<() => void>();
+    list.add(listener);
+    this.listeners.set(id, list);
+    return () => {
+      const current = this.listeners.get(id);
+      if (!current) return;
+      current.delete(listener);
+      if (!current.size) this.listeners.delete(id);
+    };
+  }
+
+  dispatch(id: string, method: string, args?: unknown): Promise<unknown> {
+    return window.theEditor.policyRequest("session.dispatch", { sessionId: id, method, args });
+  }
+
+  reset(snapshots: readonly InteractiveSessionSnapshot[]): void {
+    const nextIds = new Set(snapshots.map((snapshot) => snapshot.id));
+    for (const snapshot of snapshots) this.update(snapshot);
+    for (const id of [...this.sessions.keys()]) {
+      if (nextIds.has(id)) continue;
+      this.remove(id);
+    }
+  }
+
+  update(snapshot: InteractiveSessionSnapshot): void {
+    const previous = this.sessions.get(snapshot.id);
+    if (previous && previous.revision === snapshot.revision) return;
+    this.sessions.set(snapshot.id, snapshot);
+    this.emit(snapshot.id);
+  }
+
+  remove(sessionId: string): void {
+    if (!this.sessions.delete(sessionId)) return;
+    this.emit(sessionId);
+  }
+
+  private emit(sessionId: string): void {
+    const listeners = this.listeners.get(sessionId);
+    if (!listeners) return;
+    for (const listener of listeners) listener();
   }
 }
 

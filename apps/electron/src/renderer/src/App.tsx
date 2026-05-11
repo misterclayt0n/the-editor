@@ -1,19 +1,51 @@
-import { Component, useEffect, useRef, useState, type ReactNode } from "react";
+import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import type { RenderFrame } from "@the-editor/contracts/runtime";
-import type { BufferDecoration, InteractiveSessionSnapshot, ThemeSnapshot } from "@the-editor/editor";
-import { configureCanvasTextSurface, loadEditorFont, paintCanvasTextSurface } from "@the-editor/editor/textSurfaceCanvas";
+import type { CellGridMetrics, RenderFrame, Viewport } from "@the-editor/contracts/runtime";
+import type { BufferDecoration, InteractiveSessionSnapshot, ThemeSnapshot, ToolSnapshot } from "@the-editor/editor";
+import type {
+  WorkbenchEditorLayoutNodeSnapshot,
+  WorkbenchEditorLayoutSnapshot,
+  WorkbenchGroupSnapshot,
+  WorkbenchItemDescriptor,
+  WorkbenchPaneDescriptor,
+  WorkbenchSplitNodeSnapshot,
+} from "@the-editor/editor/workbench";
+import { clearCanvasTextSurface, configureCanvasTextSurface, loadEditorFont, paintCanvasTextSurface, type CanvasTextSurfaceStyleOptions } from "@the-editor/editor/textSurfaceCanvas";
 import { RendererPackageRuntime, type WorkbenchSnapshot } from "./uiRuntime.js";
 import "./style.css";
 
 const uiRuntime = new RendererPackageRuntime();
+const EDITOR_SURFACE_STYLE: CanvasTextSurfaceStyleOptions = {
+  paddingPx: 8,
+};
+
+interface SurfacePaneSnapshotState {
+  frame?: RenderFrame;
+  viewport?: Viewport;
+  metrics?: CellGridMetrics;
+  path?: string;
+  title?: string;
+}
+
+interface ToolPaneSnapshotState {
+  tool?: ToolSnapshot;
+}
 
 function App() {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [frame, setFrame] = useState<RenderFrame | undefined>();
-  const [decorations, setDecorations] = useState<BufferDecoration[]>([]);
-  const [theme, setTheme] = useState<ThemeSnapshot | undefined>();
-  const [syntaxLegend, setSyntaxLegend] = useState<Record<number, string>>({});
+  const [workbench, setWorkbench] = useState<WorkbenchSnapshot>({
+    roles: {},
+    packages: [],
+    diagnostics: [],
+    tools: [],
+    decorations: [],
+    focus: { kind: "editor" },
+    theme: { available: [] },
+    syntaxLegend: {},
+    sessions: [],
+    notifications: [],
+    workingDirectory: undefined,
+    editorLayout: undefined,
+  });
   const [selectionPickerActive, setSelectionPickerActive] = useState(false);
   const [, setUiRevision] = useState(0);
 
@@ -39,8 +71,6 @@ function App() {
         return;
       }
       if (event.type === "default.sessionChanged") {
-        if (isObject(event.frame)) setFrame(event.frame as unknown as RenderFrame);
-        setDecorations(Array.isArray(event.decorations) ? event.decorations as BufferDecoration[] : []);
         const snapshot: WorkbenchSnapshot = {
           roles: (isObject(event.roles) ? event.roles : {}) as WorkbenchSnapshot["roles"],
           packages: (Array.isArray(event.packages) ? event.packages : []) as WorkbenchSnapshot["packages"],
@@ -56,10 +86,12 @@ function App() {
           workingDirectory: isObject(event.workingDirectory)
             ? event.workingDirectory as unknown as WorkbenchSnapshot["workingDirectory"]
             : undefined,
+          editorLayout: isObject(event.editorLayout)
+            ? event.editorLayout as unknown as WorkbenchEditorLayoutSnapshot
+            : undefined,
         };
-        setTheme(snapshot.theme);
-        setSyntaxLegend(snapshot.syntaxLegend ?? {});
         setSelectionPickerActive(Boolean(event.selectionPickerActive));
+        setWorkbench(snapshot);
         void uiRuntime.update(snapshot).then(() => {
           setUiRevision((revision) => revision + 1);
         }).catch((error) => {
@@ -85,58 +117,38 @@ function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    let disposed = false;
-    let observer: ResizeObserver | undefined;
-
-    const configure = () => {
-      const config = configureCanvasTextSurface(canvas);
-      void window.theEditor.policyRequest("surface.configure", config).catch((error) => {
-        console.error(error);
-      });
-    };
-
-    void loadEditorFont().finally(() => {
-      if (disposed) return;
-      configure();
-      observer = new ResizeObserver(configure);
-      observer.observe(canvas.parentElement ?? canvas);
-    });
-
-    return () => {
-      disposed = true;
-      observer?.disconnect();
-    };
-  }, []);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !frame) return;
-    paintCanvasTextSurface(canvas, frame, decorations, theme, syntaxLegend, { selectionPickerActive });
-  }, [frame, decorations, theme, syntaxLegend, selectionPickerActive]);
-
   const leftSidebar = uiRuntime.renderToolRoot("leftSidebar");
   const rightSidebar = uiRuntime.renderToolRoot("rightSidebar");
   const bottomPanel = uiRuntime.renderToolRoot("bottomPanel");
-  const editorAdjacent = uiRuntime.renderToolRoot("editorAdjacent");
   const overlayModal = uiRuntime.renderToolRoot("overlayModal");
   const overlayFloating = uiRuntime.renderToolRoot("overlayFloating");
 
   return (
     <main className="workbench">
       <section className="workbenchMainRow">
-        {leftSidebar ? <aside className="workbenchSidebar left">{leftSidebar}</aside> : null}
+        {leftSidebar ? (
+          <aside className="workbenchSidebar left">
+            <WorkbenchSidebarChrome workbench={workbench} />
+            <div className="workbenchSidebarContent">{leftSidebar}</div>
+          </aside>
+        ) : null}
         <section className="workbenchCenterColumn">
           <div className="workbenchEditorArea">
-            <canvas ref={canvasRef} />
-            {editorAdjacent ? <div className="workbenchEditorAdjacent">{editorAdjacent}</div> : null}
+            <EditorLayoutRoot
+              layout={workbench.editorLayout}
+              workbench={workbench}
+              selectionPickerActive={selectionPickerActive}
+              showLeadingWindowChrome={!leftSidebar}
+            />
           </div>
           {bottomPanel ? <section className="workbenchBottomPanel">{bottomPanel}</section> : null}
           <footer className="workbenchStatuslineRoot">{uiRuntime.renderRole("statusline")}</footer>
         </section>
-        {rightSidebar ? <aside className="workbenchSidebar right">{rightSidebar}</aside> : null}
+        {rightSidebar ? (
+          <aside className="workbenchSidebar right">
+            <div className="workbenchSidebarContent">{rightSidebar}</div>
+          </aside>
+        ) : null}
       </section>
 
       <div className="workbenchOverlayRoot">
@@ -149,6 +161,540 @@ function App() {
       </div>
     </main>
   );
+}
+
+function WorkbenchSidebarChrome(_props: { workbench: WorkbenchSnapshot }) {
+  return (
+    <div className="workbenchSidebarChrome" data-leading="true">
+      <div className="workbenchSidebarChromePrimary" />
+      <div className="workbenchSidebarChromeGlyphs" aria-hidden="true">
+        <SidebarSearchGlyph />
+        <SidebarAddFileGlyph />
+        <SidebarAddFolderGlyph />
+      </div>
+    </div>
+  );
+}
+
+function WorkbenchPaneTabs({
+  showWindowControls,
+  panes,
+  activePaneId,
+}: {
+  showWindowControls?: boolean;
+  panes: WorkbenchPaneDescriptor[];
+  activePaneId?: string;
+}) {
+  return (
+    <div className="workbenchTopTabsBar" data-leading={showWindowControls ? "true" : undefined}>
+      <div className="workbenchTopTabs" role="tablist" aria-label="Open tabs">
+        {panes.map((pane) => {
+          const active = pane.id === activePaneId;
+          return (
+            <div key={pane.id} className="workbenchTopTabWrap" data-active={active ? "true" : undefined}>
+              <button
+                type="button"
+                className="workbenchTopTab"
+                data-active={active ? "true" : undefined}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  focusPane(pane.id);
+                }}
+              >
+                <span className="workbenchTopTabBadge" aria-hidden="true">{paneBadgeLabel(pane)}</span>
+                <span className="workbenchTopTabTitle">{pane.title}</span>
+              </button>
+              {pane.closeable ? (
+                <button
+                  type="button"
+                  className="workbenchTopTabClose"
+                  aria-label={`Close ${pane.title}`}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    closePane(pane.id);
+                  }}
+                >
+                  ×
+                </button>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+      <div className="workbenchTopTabsDragFill" />
+    </div>
+  );
+}
+
+function SidebarSearchGlyph() {
+  return (
+    <span className="workbenchSidebarGlyph" aria-hidden="true">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="7" cy="7" r="4.5" />
+        <path d="M10.5 10.5 14 14" />
+      </svg>
+    </span>
+  );
+}
+
+function SidebarAddFileGlyph() {
+  return (
+    <span className="workbenchSidebarGlyph" aria-hidden="true">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M4 2.5h4.8L12 5.7v6.8a1 1 0 0 1-1 1H4.9a.9.9 0 0 1-.9-.9V3.4a.9.9 0 0 1 .9-.9Z" />
+        <path d="M8 7v4" />
+        <path d="M6 9h4" />
+      </svg>
+    </span>
+  );
+}
+
+function SidebarAddFolderGlyph() {
+  return (
+    <span className="workbenchSidebarGlyph" aria-hidden="true">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M1.8 4.5h4.1l1.2 1.3h7.1a1 1 0 0 1 1 1v4.8a1 1 0 0 1-1 1H2.8a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1Z" />
+        <path d="M9.6 7.7v3.6" />
+        <path d="M7.8 9.5h3.6" />
+      </svg>
+    </span>
+  );
+}
+
+function EditorLayoutRoot({
+  layout,
+  workbench,
+  selectionPickerActive,
+  showLeadingWindowChrome,
+}: {
+  layout: WorkbenchEditorLayoutSnapshot | undefined;
+  workbench: WorkbenchSnapshot;
+  selectionPickerActive: boolean;
+  showLeadingWindowChrome?: boolean;
+}) {
+  const items = useMemo(
+    () => new Map((layout?.items ?? []).map((item) => [item.id, item] as const)),
+    [layout?.items],
+  );
+  const panes = useMemo(
+    () => new Map((layout?.panes ?? []).map((pane) => [pane.id, pane] as const)),
+    [layout?.panes],
+  );
+  const groups = useMemo(
+    () => new Map((layout?.groups ?? []).map((group) => [group.id, group] as const)),
+    [layout?.groups],
+  );
+
+  if (!layout?.root) {
+    return <div className="workbenchEmptyEditor">No editor group</div>;
+  }
+
+  return (
+    <EditorLayoutNodeView
+      node={layout.root}
+      layout={layout}
+      items={items}
+      panes={panes}
+      groups={groups}
+      workbench={workbench}
+      selectionPickerActive={selectionPickerActive}
+      leadingGroupId={showLeadingWindowChrome ? findLeadingGroupId(layout.root) : undefined}
+    />
+  );
+}
+
+function EditorLayoutNodeView({
+  node,
+  layout,
+  items,
+  panes,
+  groups,
+  workbench,
+  selectionPickerActive,
+  leadingGroupId,
+}: {
+  node: WorkbenchEditorLayoutNodeSnapshot;
+  layout: WorkbenchEditorLayoutSnapshot;
+  items: Map<string, WorkbenchItemDescriptor>;
+  panes: Map<string, WorkbenchPaneDescriptor>;
+  groups: Map<string, WorkbenchGroupSnapshot>;
+  workbench: WorkbenchSnapshot;
+  selectionPickerActive: boolean;
+  leadingGroupId?: string;
+}) {
+  if (node.kind === "group") {
+    const group = groups.get(node.groupId);
+    if (!group) return null;
+    return (
+      <EditorGroupView
+        group={group}
+        layout={layout}
+        items={items}
+        panes={panes}
+        workbench={workbench}
+        selectionPickerActive={selectionPickerActive}
+        showWindowChrome={group.id === leadingGroupId}
+      />
+    );
+  }
+
+  return (
+    <EditorSplitView
+      node={node}
+      layout={layout}
+      items={items}
+      panes={panes}
+      groups={groups}
+      workbench={workbench}
+      selectionPickerActive={selectionPickerActive}
+      leadingGroupId={leadingGroupId}
+    />
+  );
+}
+
+function EditorSplitView({
+  node,
+  layout,
+  items,
+  panes,
+  groups,
+  workbench,
+  selectionPickerActive,
+  leadingGroupId,
+}: {
+  node: WorkbenchSplitNodeSnapshot;
+  layout: WorkbenchEditorLayoutSnapshot;
+  items: Map<string, WorkbenchItemDescriptor>;
+  panes: Map<string, WorkbenchPaneDescriptor>;
+  groups: Map<string, WorkbenchGroupSnapshot>;
+  workbench: WorkbenchSnapshot;
+  selectionPickerActive: boolean;
+  leadingGroupId?: string;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const draggingRef = useRef(false);
+  const [sizes, setSizes] = useState(node.sizes);
+  const [activeDividerIndex, setActiveDividerIndex] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (draggingRef.current) return;
+    setSizes((current) => sameSizes(current, node.sizes) ? current : node.sizes);
+  }, [node.id, node.sizes]);
+
+  return (
+    <div ref={containerRef} className={`editorSplit editorSplit-${node.axis}`}>
+      {node.children.map((child, index) => (
+        <FragmentWithDivider
+          key={child.kind === "group" ? child.groupId : child.id}
+          divider={index < node.children.length - 1 ? (
+            <div
+              className={`editorSplitDivider editorSplitDivider-${node.axis}`}
+              data-active={activeDividerIndex === index ? "true" : undefined}
+              onMouseDown={(event) => {
+                startSplitResize(event, containerRef.current, node.axis, index, sizes, {
+                  onStart() {
+                    draggingRef.current = true;
+                    setActiveDividerIndex(index);
+                  },
+                  onChange(nextSizes) {
+                    setSizes(nextSizes);
+                  },
+                  onEnd(nextSizes) {
+                    draggingRef.current = false;
+                    setActiveDividerIndex(null);
+                    void window.theEditor.policyRequest("command.dispatch", {
+                      id: "workbench.resizeSplit",
+                      args: { splitId: node.id, sizes: nextSizes },
+                    }).catch((error) => {
+                      console.error(error);
+                    });
+                  },
+                  onCancel() {
+                    draggingRef.current = false;
+                    setActiveDividerIndex(null);
+                  },
+                });
+              }}
+            />
+          ) : null}
+        >
+          <div className="editorSplitChild" style={{ flex: `${sizes[index] ?? 1} 1 0` }}>
+            <EditorLayoutNodeView
+              node={child}
+              layout={layout}
+              items={items}
+              panes={panes}
+              groups={groups}
+              workbench={workbench}
+              selectionPickerActive={selectionPickerActive}
+              leadingGroupId={leadingGroupId}
+            />
+          </div>
+        </FragmentWithDivider>
+      ))}
+    </div>
+  );
+}
+
+function EditorGroupView({
+  group,
+  layout,
+  items,
+  panes,
+  workbench,
+  selectionPickerActive,
+  showWindowChrome,
+}: {
+  group: WorkbenchGroupSnapshot;
+  layout: WorkbenchEditorLayoutSnapshot;
+  items: Map<string, WorkbenchItemDescriptor>;
+  panes: Map<string, WorkbenchPaneDescriptor>;
+  workbench: WorkbenchSnapshot;
+  selectionPickerActive: boolean;
+  showWindowChrome?: boolean;
+}) {
+  const activePaneId = group.activePaneId;
+  const activePane = activePaneId ? panes.get(activePaneId) : undefined;
+  const active = layout.activeGroupId === group.id;
+  const tabs = group.paneIds.map((paneId) => panes.get(paneId)).filter((pane): pane is WorkbenchPaneDescriptor => Boolean(pane));
+  const tabItems = tabs.map((pane) => items.get(pane.itemId)).filter((item): item is WorkbenchItemDescriptor => Boolean(item));
+
+  return (
+    <section
+      className="editorGroup"
+      data-active={active ? "true" : undefined}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) focusGroup(group.id);
+      }}
+    >
+      <header className="editorGroupHeader">
+        {uiRuntime.renderWorkbenchTabstrip({
+          group,
+          items: tabItems,
+          panes: tabs,
+          activePaneId,
+          showWindowControls: showWindowChrome,
+        }) ?? (
+          <WorkbenchPaneTabs
+            panes={tabs}
+            activePaneId={activePaneId}
+            showWindowControls={showWindowChrome}
+          />
+        )}
+      </header>
+      <div className="editorGroupBody" onMouseDown={() => focusGroup(group.id)}>
+        {activePane ? renderPane(activePane, active, workbench, selectionPickerActive) : <EmptyEditorGroup />}
+      </div>
+    </section>
+  );
+}
+
+function renderPane(
+  pane: WorkbenchPaneDescriptor,
+  active: boolean,
+  workbench: WorkbenchSnapshot,
+  selectionPickerActive: boolean,
+) {
+  if (pane.kind === "surface") {
+    return (
+      <SurfaceEditorPane
+        pane={pane}
+        active={active}
+        decorations={active ? workbench.decorations ?? [] : []}
+        theme={workbench.theme}
+        syntaxLegend={workbench.syntaxLegend ?? {}}
+        selectionPickerActive={active && selectionPickerActive}
+      />
+    );
+  }
+  return <ToolEditorPane pane={pane} active={active} workbench={workbench} />;
+}
+
+function SurfaceEditorPane({
+  pane,
+  active,
+  decorations,
+  theme,
+  syntaxLegend,
+  selectionPickerActive,
+}: {
+  pane: Extract<WorkbenchPaneDescriptor, { kind: "surface" }>;
+  active: boolean;
+  decorations: BufferDecoration[];
+  theme: ThemeSnapshot | undefined;
+  syntaxLegend: Record<number, string>;
+  selectionPickerActive: boolean;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const lastConfigRef = useRef<string>("");
+  const latestFrameRef = useRef<RenderFrame | undefined>(undefined);
+  const latestDecorationsRef = useRef<BufferDecoration[]>([]);
+  const latestThemeRef = useRef<ThemeSnapshot | undefined>(undefined);
+  const latestSyntaxLegendRef = useRef<Record<number, string>>({});
+  const latestSelectionPickerActiveRef = useRef(false);
+  const paneState = pane.state as SurfacePaneSnapshotState | undefined;
+
+  latestFrameRef.current = paneState?.frame;
+  latestDecorationsRef.current = decorations;
+  latestThemeRef.current = theme;
+  latestSyntaxLegendRef.current = syntaxLegend;
+  latestSelectionPickerActiveRef.current = selectionPickerActive;
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    let disposed = false;
+    let observer: ResizeObserver | undefined;
+    let raf = 0;
+
+    const configure = () => {
+      raf = 0;
+      const config = configureCanvasTextSurface(canvas, EDITOR_SURFACE_STYLE);
+      const serialized = JSON.stringify(config);
+      if (latestFrameRef.current) {
+        paintCanvasTextSurface(
+          canvas,
+          latestFrameRef.current,
+          latestDecorationsRef.current,
+          latestThemeRef.current,
+          latestSyntaxLegendRef.current,
+          { selectionPickerActive: latestSelectionPickerActiveRef.current },
+          EDITOR_SURFACE_STYLE,
+        );
+      } else {
+        clearCanvasTextSurface(canvas, latestThemeRef.current, EDITOR_SURFACE_STYLE);
+      }
+      if (serialized === lastConfigRef.current) return;
+      lastConfigRef.current = serialized;
+      void window.theEditor.policyRequest("surface.configure", { paneId: pane.id, ...config }).catch((error) => {
+        console.error(error);
+      });
+    };
+
+    const scheduleConfigure = () => {
+      if (raf) return;
+      raf = window.requestAnimationFrame(configure);
+    };
+
+    void loadEditorFont(EDITOR_SURFACE_STYLE).finally(() => {
+      if (disposed) return;
+      scheduleConfigure();
+      observer = new ResizeObserver(scheduleConfigure);
+      observer.observe(canvas.parentElement ?? canvas);
+    });
+
+    return () => {
+      disposed = true;
+      if (raf) window.cancelAnimationFrame(raf);
+      observer?.disconnect();
+    };
+  }, [pane.id]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    if (!paneState?.frame) {
+      clearCanvasTextSurface(canvas, theme, EDITOR_SURFACE_STYLE);
+      return;
+    }
+    paintCanvasTextSurface(canvas, paneState.frame, decorations, theme, syntaxLegend, { selectionPickerActive }, EDITOR_SURFACE_STYLE);
+  }, [decorations, paneState?.frame, selectionPickerActive, syntaxLegend, theme]);
+
+  return (
+    <div className="editorSurfacePane" data-active={active ? "true" : undefined} onMouseDown={() => focusPane(pane.id)}>
+      <canvas ref={canvasRef} />
+    </div>
+  );
+}
+
+function ToolEditorPane({
+  pane,
+  active,
+  workbench,
+}: {
+  pane: Extract<WorkbenchPaneDescriptor, { kind: "tool" }>;
+  active: boolean;
+  workbench: WorkbenchSnapshot;
+}) {
+  const tool = (pane.state as ToolPaneSnapshotState | undefined)?.tool;
+  const content = tool ? uiRuntime.host.tools.renderTool(tool, workbench) as ReactNode : null;
+  return (
+    <div className="editorToolPane" data-active={active ? "true" : undefined} onMouseDown={() => focusPane(pane.id)}>
+      {content ?? <div className="editorToolPlaceholder">Tool view unavailable</div>}
+    </div>
+  );
+}
+
+function EmptyEditorGroup() {
+  return <div className="editorToolPlaceholder">Empty group</div>;
+}
+
+function FragmentWithDivider({ children, divider }: { children: ReactNode; divider: ReactNode }) {
+  return (
+    <>
+      {children}
+      {divider}
+    </>
+  );
+}
+
+function startSplitResize(
+  event: React.MouseEvent<HTMLDivElement>,
+  element: HTMLDivElement | null,
+  axis: "row" | "column",
+  index: number,
+  initialSizes: readonly number[],
+  handlers: {
+    onStart(): void;
+    onChange(sizes: number[]): void;
+    onEnd(sizes: number[]): void;
+    onCancel(): void;
+  },
+): void {
+  if (!element) return;
+  event.preventDefault();
+  event.stopPropagation();
+  handlers.onStart();
+  document.body.classList.add("isResizingSplits");
+  document.documentElement.style.cursor = axis === "row" ? "col-resize" : "row-resize";
+  const rect = element.getBoundingClientRect();
+  const total = Math.max(1, axis === "row" ? rect.width : rect.height);
+  const start = axis === "row" ? event.clientX : event.clientY;
+  const left = initialSizes[index] ?? 0.5;
+  const right = initialSizes[index + 1] ?? 0.5;
+  const pairTotal = left + right;
+  let latest = [...initialSizes];
+
+  const move = (moveEvent: MouseEvent) => {
+    const current = axis === "row" ? moveEvent.clientX : moveEvent.clientY;
+    const delta = (current - start) / total;
+    const min = Math.min(0.45, 96 / total);
+    const nextLeft = clamp(left + delta, min, pairTotal - min);
+    const nextRight = pairTotal - nextLeft;
+    latest = [...initialSizes];
+    latest[index] = nextLeft;
+    latest[index + 1] = nextRight;
+    latest = normalizeSizes(latest);
+    handlers.onChange(latest);
+  };
+
+  const finish = (commit: boolean) => {
+    window.removeEventListener("mousemove", move);
+    window.removeEventListener("mouseup", up);
+    window.removeEventListener("blur", cancel);
+    document.body.classList.remove("isResizingSplits");
+    document.documentElement.style.removeProperty("cursor");
+    if (commit) handlers.onEnd(latest);
+    else handlers.onCancel();
+  };
+
+  const up = () => finish(true);
+  const cancel = () => finish(false);
+
+  window.addEventListener("mousemove", move);
+  window.addEventListener("mouseup", up);
+  window.addEventListener("blur", cancel);
 }
 
 class UiErrorBoundary extends Component<{ name: string; children: ReactNode }, { error?: Error }> {
@@ -237,6 +783,66 @@ function namedKey(key: string): string | undefined {
     default:
       return undefined;
   }
+}
+
+function focusPane(paneId: string): void {
+  void window.theEditor.policyRequest("command.dispatch", { id: "workbench.focusPane", args: { paneId } }).catch((error) => {
+    console.error(error);
+  });
+}
+
+function focusGroup(groupId: string): void {
+  void window.theEditor.policyRequest("command.dispatch", { id: "workbench.focusGroup", args: { groupId } }).catch((error) => {
+    console.error(error);
+  });
+}
+
+function closePane(paneId: string): void {
+  void window.theEditor.policyRequest("command.dispatch", { id: "workbench.closePane", args: { paneId } }).catch((error) => {
+    console.error(error);
+  });
+}
+
+function sameSizes(left: readonly number[], right: readonly number[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (Math.abs((left[index] ?? 0) - (right[index] ?? 0)) > 0.0001) return false;
+  }
+  return true;
+}
+
+function normalizeSizes(sizes: readonly number[]): number[] {
+  const safe = sizes.map((size) => Math.max(0.01, size));
+  const total = safe.reduce((sum, size) => sum + size, 0) || safe.length || 1;
+  return safe.map((size) => size / total);
+}
+
+function findLeadingGroupId(node: WorkbenchEditorLayoutNodeSnapshot): string | undefined {
+  if (node.kind === "group") return node.groupId;
+  const first = node.children[0];
+  return first ? findLeadingGroupId(first) : undefined;
+}
+
+function basename(path: string): string {
+  const normalized = path.replace(/\\/g, "/").replace(/\/$/, "");
+  const slash = normalized.lastIndexOf("/");
+  return slash >= 0 ? normalized.slice(slash + 1) : normalized;
+}
+
+function paneBadgeLabel(pane: WorkbenchPaneDescriptor): string {
+  if (pane.kind === "tool") {
+    const type = pane.typeId.split(".").pop() ?? pane.typeId;
+    return type.slice(0, 2).toUpperCase();
+  }
+  const source = pane.path ?? pane.title;
+  const match = /\.([a-z0-9]+)$/i.exec(source);
+  if (!match) return "TXT";
+  const ext = match[1].toUpperCase();
+  return ext.slice(0, Math.min(3, ext.length));
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {

@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
 import type { RenderFrame, Viewport } from "@the-editor/contracts/runtime";
-import type { DiagnosticEntry, NotificationEntry } from "@the-editor/editor";
+import type { BufferDecoration, DiagnosticEntry, NotificationEntry } from "@the-editor/editor";
 import {
   SurfaceViewportController,
   type SurfaceViewportControllerState,
@@ -8,6 +8,7 @@ import {
 import type { CanvasTextSurfaceStyleOptions } from "@the-editor/editor/textSurfaceCanvas";
 import { resolveThemeStyleLoose, type ResolvedThemeDefinition } from "@the-editor/editor/themes";
 import type { EditorUiModule, UiSessionClient, WorkbenchSnapshot } from "@the-editor/editor/ui";
+import { tabstripImplementationId } from "./workbenchControls.js";
 import "./commandPalette.css";
 import "./inputPrompt.css";
 import "./picker.css";
@@ -159,6 +160,20 @@ const uiModule: EditorUiModule = (host) => {
     implementationId: "default.statusline",
     render({ state }) {
       return <Statusline state={state} />;
+    },
+  });
+
+  host.tabstrips.register({
+    implementationId: tabstripImplementationId,
+    render({ commands, panes, activePaneId, showWindowControls }) {
+      return (
+        <DefaultWorkbenchTabstrip
+          dispatch={commands.dispatch}
+          panes={panes}
+          activePaneId={activePaneId}
+          showWindowControls={showWindowControls}
+        />
+      );
     },
   });
 
@@ -447,7 +462,7 @@ function PickerOverlay({
                     )}
                   </>
                 ) : state.preview?.kind === "surface" ? (
-                  <PickerSurfacePreview preview={state.preview} sessions={sessions} sessionId={sessionId} theme={workbench.theme} />
+                  <PickerSurfacePreview preview={state.preview as PickerPreviewViewState & { kind: "surface" }} sessions={sessions} sessionId={sessionId} theme={workbench.theme} />
                 ) : state.preview?.kind === "empty" ? (
                   <div className="pickerPreviewEmpty">{state.preview.detail || state.preview.title || "No preview"}</div>
                 ) : (
@@ -479,6 +494,7 @@ function PickerSurfacePreview({
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const selectionRef = useRef<HTMLPreElement>(null);
   const controllerRef = useRef<SurfaceViewportController | null>(null);
   if (!controllerRef.current) {
     controllerRef.current = new SurfaceViewportController({
@@ -497,6 +513,17 @@ function PickerSurfacePreview({
     () => controllerState.frame?.rows.map((row) => row.text).join("\n") ?? "",
     [controllerState.frame],
   );
+  const rowOffsets = useMemo(() => {
+    const rows = controllerState.frame?.rows ?? [];
+    const offsets: number[] = [];
+    let offset = 0;
+    for (let index = 0; index < rows.length; index += 1) {
+      offsets.push(offset);
+      offset += rows[index]!.text.length;
+      if (index < rows.length - 1) offset += 1;
+    }
+    return offsets;
+  }, [controllerState.frame]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -531,6 +558,29 @@ function PickerSurfacePreview({
     });
   }, [controller, preview.path, sessionId, sessions]);
 
+  useEffect(() => {
+    const element = selectionRef.current;
+    const frame = controllerState.frame;
+    const selectionBackground = resolveThemeStyleLoose(theme.active ?? { styles: {} }, "ui.selection")?.bg ?? "#264f78";
+    if (!element || !frame) {
+      controller.setDecorations([]);
+      return;
+    }
+
+    const syncSelection = () => {
+      const selection = document.getSelection();
+      const offsets = readElementSelectionOffsets(element, selection);
+      controller.setDecorations(buildPreviewSelectionDecorations(frame.rows, rowOffsets, offsets, selectionBackground));
+    };
+
+    syncSelection();
+    document.addEventListener("selectionchange", syncSelection);
+    return () => {
+      document.removeEventListener("selectionchange", syncSelection);
+      controller.setDecorations([]);
+    };
+  }, [controller, controllerState.frame, rowOffsets, theme.active]);
+
   return (
     <>
       <div className="pickerPreviewHeader">
@@ -546,15 +596,85 @@ function PickerSurfacePreview({
           <canvas ref={canvasRef} className="pickerPreviewCanvas" />
           {selectablePreviewText ? (
             <pre
+              ref={selectionRef}
               className="pickerPreviewSelectableText"
               style={surfacePreviewSelectableStyle(controllerState)}
+              onWheel={(event) => {
+                const scrollElement = scrollRef.current;
+                if (!scrollElement) return;
+                event.preventDefault();
+                scrollElement.scrollTop += event.deltaY;
+                scrollElement.scrollLeft += event.deltaX;
+              }}
             >
               {selectablePreviewText}
             </pre>
           ) : null}
         </div>
+        <PreviewScrollbar state={controllerState} />
       </div>
     </>
+  );
+}
+
+function readElementSelectionOffsets(element: HTMLElement, selection: Selection | null): { start: number; end: number } | undefined {
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return undefined;
+  const range = selection.getRangeAt(0);
+  if (!element.contains(range.startContainer) || !element.contains(range.endContainer)) return undefined;
+  const startRange = range.cloneRange();
+  startRange.selectNodeContents(element);
+  startRange.setEnd(range.startContainer, range.startOffset);
+  const endRange = range.cloneRange();
+  endRange.selectNodeContents(element);
+  endRange.setEnd(range.endContainer, range.endOffset);
+  const start = startRange.toString().length;
+  const end = endRange.toString().length;
+  return end > start ? { start, end } : undefined;
+}
+
+function buildPreviewSelectionDecorations(
+  rows: readonly RenderFrame["rows"],
+  rowOffsets: readonly number[],
+  offsets: { start: number; end: number } | undefined,
+  background: string,
+): BufferDecoration[] {
+  if (!offsets) return [];
+  const decorations: BufferDecoration[] = [];
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index]!;
+    const rowStart = rowOffsets[index] ?? 0;
+    const rowEnd = rowStart + row.text.length;
+    const startCol = Math.max(0, offsets.start - rowStart);
+    const endCol = Math.min(row.text.length, offsets.end - rowStart);
+    if (offsets.start > rowEnd || offsets.end <= rowStart || endCol <= startCol) continue;
+    decorations.push({
+      kind: "range",
+      id: `preview-selection:${index}:${startCol}:${endCol}`,
+      surfaceRow: row.surfaceRow,
+      startCol,
+      endCol,
+      background,
+    });
+  }
+  return decorations;
+}
+
+function PreviewScrollbar({ state }: { state: SurfaceViewportControllerState }) {
+  const metrics = state.metrics;
+  const viewport = state.viewport;
+  if (!metrics || !viewport) return null;
+  const visibleHeight = viewport.rowCount * metrics.rowHeightPx + PICKER_PREVIEW_SURFACE_STYLE.paddingPx! * 2;
+  if (!(state.scrollHeight > visibleHeight + 1)) return null;
+  const maxScrollTop = Math.max(1, state.scrollHeight - visibleHeight);
+  const thumbHeight = Math.max(28, (visibleHeight / state.scrollHeight) * visibleHeight);
+  const thumbTop = (state.scrollTop / maxScrollTop) * Math.max(0, visibleHeight - thumbHeight);
+  return (
+    <div className="pickerPreviewScrollbar" aria-hidden="true">
+      <div
+        className="pickerPreviewScrollbarThumb"
+        style={{ height: `${thumbHeight}px`, transform: `translateY(${thumbTop}px)` }}
+      />
+    </div>
   );
 }
 
@@ -747,6 +867,63 @@ function NotificationsOverlay({ items }: { items: NotificationEntry[] }) {
       ))}
     </section>
   );
+}
+
+function DefaultWorkbenchTabstrip({
+  dispatch,
+  panes,
+  activePaneId,
+  showWindowControls,
+}: {
+  dispatch: (dispatch: { id: string; args?: unknown }) => Promise<unknown>;
+  panes: { id: string; title: string; closeable: boolean; kind: string; tab?: { preview?: boolean; pinned?: boolean } }[];
+  activePaneId?: string;
+  showWindowControls?: boolean;
+}) {
+  return (
+    <div className="workbenchTopTabsBar" data-leading={showWindowControls ? "true" : undefined}>
+      <div className="workbenchTopTabs" role="tablist" aria-label="Open tabs">
+        {panes.map((pane) => {
+          const active = pane.id === activePaneId;
+          return (
+            <div key={pane.id} className="workbenchTopTabWrap" data-active={active ? "true" : undefined}>
+              <button
+                type="button"
+                className="workbenchTopTab"
+                data-active={active ? "true" : undefined}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  void dispatch({ id: "workbench.focusPane", args: { paneId: pane.id } });
+                }}
+              >
+                <span className="workbenchTopTabBadge" aria-hidden="true">{defaultPaneBadgeLabel(pane.kind)}</span>
+                <span className="workbenchTopTabTitle">{pane.title}</span>
+              </button>
+              {pane.closeable ? (
+                <button
+                  type="button"
+                  className="workbenchTopTabClose"
+                  aria-label={`Close ${pane.title}`}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void dispatch({ id: "workbench.closePane", args: { paneId: pane.id } });
+                  }}
+                >
+                  ×
+                </button>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+      <div className="workbenchTopTabsDragFill" />
+    </div>
+  );
+}
+
+function defaultPaneBadgeLabel(kind: string): string {
+  return kind === "tool" ? "Tool" : "Buffer";
 }
 
 function Statusline({ state }: { state: StatuslineViewState | undefined }) {

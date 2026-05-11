@@ -3,10 +3,12 @@ import { getDefaultState } from "./state.js";
 
 const inspectorToolTypeId = toolTypeId("default.inspector");
 const statuslineImplementationId = roleImplementationId("default.statusline");
+const tabstripImplementationId = roleImplementationId("default.tabstrip");
 
 export function defaultWorkbenchControls(): EditorModule {
   return (editor) => {
     editor.roles.setFallback("statusline", statuslineImplementationId);
+    editor.roles.setFallback("tabstrip", tabstripImplementationId);
 
     editor.roles.register({
       role: "statusline",
@@ -23,6 +25,13 @@ export function defaultWorkbenchControls(): EditorModule {
           selectedCommandPalette: commandPalette?.selectedImplementationId,
         };
       },
+    });
+
+    editor.roles.register({
+      role: "tabstrip",
+      implementationId: tabstripImplementationId,
+      title: "Default Tabstrip",
+      snapshot: () => ({}),
     });
 
     editor.tools.registerType({
@@ -54,13 +63,17 @@ export function defaultWorkbenchControls(): EditorModule {
       },
     });
 
-    editor.commands.register<{ typeId: string; title?: string }, string>({
+    editor.commands.register<{ typeId: string; title?: string; input?: unknown; placement?: unknown }, string>({
       id: commandId("tool.open"),
       title: "Open Tool",
       category: "Workbench",
       hidden: true,
       run(_ctx, args) {
-        const instance = editor.tools.open(args.typeId, args.title);
+        const instance = editor.workbench.openTool(args.typeId, {
+          title: args.title,
+          input: args.input,
+          placement: args.placement as never,
+        });
         return instance.id;
       },
     });
@@ -86,7 +99,7 @@ export function defaultWorkbenchControls(): EditorModule {
           editor.tools.close(existing.id);
           return;
         }
-        editor.tools.open(inspectorToolTypeId);
+        editor.workbench.openTool(inspectorToolTypeId);
       },
     });
 
@@ -149,4 +162,4 @@ export function defaultWorkbenchControls(): EditorModule {
   };
 }
 
-export { inspectorToolTypeId, statuslineImplementationId };
+export { inspectorToolTypeId, statuslineImplementationId, tabstripImplementationId };

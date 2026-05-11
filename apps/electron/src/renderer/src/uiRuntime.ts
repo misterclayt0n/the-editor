@@ -8,7 +8,13 @@ import * as editorSurfaceViewportControllerModule from "@the-editor/editor/surfa
 import * as editorThemesModule from "@the-editor/editor/themes";
 import { themeCssVariables } from "@the-editor/editor/themes";
 import * as editorUiModule from "@the-editor/editor/ui";
-import { createUiHost, type EditorUiModule, type UiSessionClient, type WorkbenchSnapshot } from "@the-editor/editor/ui";
+import {
+  createUiHost,
+  type EditorUiModule,
+  type UiSessionClient,
+  type WorkbenchSnapshot,
+  type WorkbenchTabstripViewContext,
+} from "@the-editor/editor/ui";
 
 type LoadedTarget = {
   moduleKey: string;
@@ -108,6 +114,10 @@ export class RendererPackageRuntime {
     const nodes = this.host.tools.renderRoot(root) as React.ReactNode[];
     if (!nodes.length) return null;
     return nodes;
+  }
+
+  renderWorkbenchTabstrip(input: Omit<WorkbenchTabstripViewContext, "commands" | "sessions" | "workbench">): React.ReactNode {
+    return this.host.tabstrips.render(input) as React.ReactNode;
   }
 
   hasToolRoot(root: ToolRootTarget): boolean {

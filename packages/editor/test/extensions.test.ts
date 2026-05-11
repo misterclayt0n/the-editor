@@ -148,6 +148,58 @@ describe("extension registries", () => {
     ]);
   });
 
+  it("opens tool panes inside the editor split tree", async () => {
+    const editor = createEditorHost({ runtime: createRuntimeStub() });
+
+    await editor.use({
+      id: "tools.demo.editor",
+      activate: (host) => {
+        host.tools.registerType({
+          id: toolTypeId("demo.editor.tool"),
+          title: "Editor Tool",
+          root: "editor",
+          instancePolicy: "singleton",
+        });
+      },
+    });
+
+    editor.workbench.openSurface({
+      title: "Scratch",
+      surfaceId: 1 as never,
+      documentId: 1 as never,
+      closeable: true,
+    });
+    const tool = editor.workbench.openTool("demo.editor.tool", {
+      title: "Demo Tool",
+      input: { url: "https://example.com" },
+      placement: { kind: "split", direction: "right" },
+    });
+
+    expect(editor.focus.current()).toEqual({ kind: "tool", toolId: tool.id });
+    expect(editor.workbench.snapshotEditorLayout()).toMatchObject({
+      root: {
+        kind: "split",
+        axis: "row",
+        children: [
+          { kind: "group" },
+          { kind: "group" },
+        ],
+      },
+      groups: [
+        { paneIds: [expect.any(String)] },
+        { paneIds: [expect.any(String)] },
+      ],
+      items: [
+        { kind: "surface", title: "Scratch", typeId: "surface" },
+        { kind: "tool", title: "Demo Tool", toolId: tool.id, input: { url: "https://example.com" } },
+      ],
+      panes: [
+        { kind: "surface", title: "Scratch", itemId: expect.any(String) },
+        { kind: "tool", title: "Demo Tool", toolId: tool.id, input: { url: "https://example.com" }, itemId: expect.any(String) },
+      ],
+    });
+  });
+
   it("restores open tools across runtime reloads", async () => {
     const editor = createEditorHost({ runtime: createRuntimeStub() });
     let loads = 0;

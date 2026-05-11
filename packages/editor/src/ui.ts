@@ -12,6 +12,7 @@ import type { InteractiveSessionSnapshot } from "./sessions.js";
 import type { ThemeSnapshot } from "./themes.js";
 import type { ToolRootTarget, ToolSnapshot, ToolTypeId } from "./tools.js";
 import type { WorkingDirectorySnapshot } from "./workingDirectory.js";
+import type { WorkbenchEditorLayoutSnapshot, WorkbenchGroupSnapshot, WorkbenchItemDescriptor, WorkbenchPaneDescriptor } from "./workbench.js";
 
 export interface UiCommandDispatcher {
   dispatch(dispatch: CommandDispatch): Promise<unknown>;
@@ -30,6 +31,7 @@ export interface WorkbenchSnapshot {
   sessions?: InteractiveSessionSnapshot[];
   notifications?: NotificationEntry[];
   workingDirectory?: WorkingDirectorySnapshot;
+  editorLayout?: WorkbenchEditorLayoutSnapshot;
 }
 
 export interface UiSessionClient {
@@ -67,11 +69,32 @@ export interface ToolViewRegistration<TState = unknown> {
   render(ctx: ToolViewContext<TState>): unknown;
 }
 
+export interface WorkbenchTabstripViewContext {
+  commands: UiCommandDispatcher;
+  sessions: UiSessionClient;
+  workbench: WorkbenchSnapshot;
+  group: WorkbenchGroupSnapshot;
+  items: WorkbenchItemDescriptor[];
+  panes: WorkbenchPaneDescriptor[];
+  activePaneId?: string;
+  showWindowControls?: boolean;
+}
+
+export interface WorkbenchTabstripViewRegistration {
+  implementationId: RoleImplementationId | string;
+  render(ctx: WorkbenchTabstripViewContext): unknown;
+}
+
 interface RegisteredRoleView extends RoleViewRegistration {
   moduleId: ModuleId;
 }
 
 interface RegisteredToolView extends ToolViewRegistration {
+  moduleId: ModuleId;
+}
+
+interface RegisteredWorkbenchTabstripView extends WorkbenchTabstripViewRegistration {
+  implementationId: RoleImplementationId;
   moduleId: ModuleId;
 }
 
@@ -185,6 +208,48 @@ export class ToolViewRegistry {
   }
 }
 
+export class WorkbenchTabstripRegistry {
+  private readonly entries = new Map<RoleImplementationId, RegisteredWorkbenchTabstripView>();
+
+  constructor(private readonly host: UiHost) {}
+
+  register(view: WorkbenchTabstripViewRegistration, moduleId = this.host.currentModuleId()): Disposable {
+    const implementationId = roleImplementationId(view.implementationId);
+    const entry: RegisteredWorkbenchTabstripView = {
+      ...view,
+      implementationId,
+      moduleId,
+    };
+    this.entries.set(implementationId, entry);
+
+    const unregister = toDisposable(() => {
+      const current = this.entries.get(implementationId);
+      if (current === entry) this.entries.delete(implementationId);
+    });
+
+    return this.host.addContribution({
+      moduleId,
+      kind: contributionKind("tabstripView"),
+      localId: implementationId,
+      disposable: unregister,
+    });
+  }
+
+  render(input: Omit<WorkbenchTabstripViewContext, "commands" | "sessions" | "workbench">, workbench = this.host.snapshot()): unknown {
+    const snapshot = workbench.roles[roleId("tabstrip")];
+    const implementation = snapshot?.implementationId
+      ? this.entries.get(roleImplementationId(snapshot.implementationId))
+      : this.entries.values().next().value;
+    if (!implementation) return null;
+    return implementation.render({
+      commands: this.host.commands,
+      sessions: this.host.sessions,
+      workbench,
+      ...input,
+    });
+  }
+}
+
 const emptyUiSessionClient: UiSessionClient = {
   all: () => [],
   get: () => undefined,
@@ -195,6 +260,7 @@ const emptyUiSessionClient: UiSessionClient = {
 export class UiHost {
   readonly roles = new RoleViewRegistry(this);
   readonly tools = new ToolViewRegistry(this);
+  readonly tabstrips = new WorkbenchTabstripRegistry(this);
 
   private readonly moduleStack: ModuleId[] = [];
   private readonly contributions = new Map<string, Disposable>();

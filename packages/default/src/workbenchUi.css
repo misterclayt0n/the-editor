@@ -1,3 +1,199 @@
+.pierreWorkbenchTabbarRoot {
+  position: relative;
+}
+
+.pierreWorkbenchTabSprite {
+  height: 0;
+  overflow: hidden;
+  position: absolute;
+  width: 0;
+}
+
+.pierreWorkbenchTabbarGroup {
+  align-items: center;
+  display: flex;
+  flex: 1 1 auto;
+  gap: 4px;
+  height: 40px;
+  min-width: 0;
+  padding: 3px 8px 0;
+}
+
+.pierreWorkbenchTabScrollerShell {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  position: relative;
+}
+
+.pierreWorkbenchTabScroller {
+  -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+  align-items: center;
+  display: flex;
+  flex: 1 1 auto;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior: auto;
+  scrollbar-width: none;
+}
+
+.pierreWorkbenchTabScroller::-webkit-scrollbar {
+  display: none;
+}
+
+.pierreWorkbenchTabItem {
+  display: flex;
+  flex: 0 0 auto;
+}
+
+.pierreWorkbenchTab {
+  color: var(--theme-ui-text-inactive-fg);
+  display: flex;
+  font-size: 12px;
+  font-weight: 500;
+  height: 28px;
+  isolation: isolate;
+  max-width: 200px;
+  overflow: hidden;
+  position: relative;
+  transition: color 150ms ease, background-color 150ms ease;
+}
+
+.pierreWorkbenchTab.isActive {
+  background: var(--theme-ui-menu-selected-bg);
+  color: var(--theme-ui-menu-selected-fg);
+}
+
+.pierreWorkbenchTab.isInactive {
+  background: transparent;
+  color: var(--theme-ui-text-inactive-fg);
+}
+
+.pierreWorkbenchTabbarRoot:hover .pierreWorkbenchTab.isInactive {
+  background: color-mix(in srgb, var(--theme-ui-menu-selected-bg) 38%, transparent);
+}
+
+.pierreWorkbenchTabbarRoot:hover .pierreWorkbenchTab.isInactive:hover {
+  background: color-mix(in srgb, var(--theme-ui-menu-selected-bg) 56%, transparent);
+  color: var(--theme-ui-text-fg);
+}
+
+.pierreWorkbenchTabButton {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  flex: 1 1 auto;
+  gap: 6px;
+  height: 100%;
+  min-width: 0;
+  padding: 0 12px 0 8px;
+  position: relative;
+  text-align: left;
+  z-index: 0;
+}
+
+.pierreWorkbenchTabIcon {
+  flex: 0 0 auto;
+  height: 16px;
+  width: 16px;
+}
+
+.pierreWorkbenchTabLabel {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pierreWorkbenchTabCloseFade {
+  background: linear-gradient(to left, var(--theme-ui-menu-selected-bg), var(--theme-ui-menu-selected-bg), transparent);
+  bottom: 0;
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+  top: 0;
+  transition: opacity 150ms ease;
+  width: 48px;
+  z-index: 10;
+}
+
+.pierreWorkbenchTab.isInactive .pierreWorkbenchTabCloseFade {
+  background: linear-gradient(to left, color-mix(in srgb, var(--theme-ui-menu-bg) 88%, transparent), color-mix(in srgb, var(--theme-ui-menu-bg) 88%, transparent), transparent);
+}
+
+.pierreWorkbenchTabClose {
+  align-items: center;
+  appearance: none;
+  background: color-mix(in srgb, var(--theme-ui-background-bg) 48%, transparent);
+  border: 0;
+  border-radius: 4px;
+  color: var(--theme-ui-text-inactive-fg);
+  cursor: pointer;
+  display: flex;
+  height: 20px;
+  justify-content: center;
+  opacity: 0;
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  transition: opacity 150ms ease, color 150ms ease, background-color 150ms ease;
+  width: 20px;
+  z-index: 20;
+}
+
+.pierreWorkbenchTabCloseIcon {
+  height: 12px;
+  width: 12px;
+}
+
+.pierreWorkbenchTab:hover .pierreWorkbenchTabCloseFade,
+.pierreWorkbenchTab:hover .pierreWorkbenchTabClose,
+.pierreWorkbenchTab:focus-within .pierreWorkbenchTabCloseFade,
+.pierreWorkbenchTab:focus-within .pierreWorkbenchTabClose,
+.pierreWorkbenchTab.isActive .pierreWorkbenchTabCloseFade,
+.pierreWorkbenchTab.isActive .pierreWorkbenchTabClose {
+  opacity: 1;
+}
+
+.pierreWorkbenchTabClose:hover {
+  background: color-mix(in srgb, var(--theme-ui-menu-selected-fg) 12%, transparent);
+  color: var(--theme-ui-text-focus-fg);
+}
+
+.pierreWorkbenchTabFade {
+  bottom: 0;
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  transition: opacity 150ms ease;
+  width: 32px;
+}
+
+.pierreWorkbenchTabFade.left {
+  background: linear-gradient(to right, var(--theme-ui-menu-bg), transparent);
+  left: 0;
+}
+
+.pierreWorkbenchTabFade.right {
+  background: linear-gradient(to left, var(--theme-ui-menu-bg), transparent);
+  right: 0;
+}
+
+.pierreWorkbenchTabFade.isVisible {
+  opacity: 1;
+}
+
 .statusline {
   align-items: center;
   background: var(--theme-ui-statusline-bg, var(--theme-ui-menu-bg, #141414));
@@ -64,11 +260,13 @@
 }
 
 .inspectorBody {
+  -webkit-overflow-scrolling: touch;
   display: grid;
   gap: 12px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   min-height: 0;
   overflow: auto;
+  overscroll-behavior: auto;
   padding: 12px;
 }
 

@@ -115,8 +115,9 @@
 .pickerResults {
   border-inline-end: 1px solid color-mix(in lab, var(--pickerBorder) 92%, transparent);
   max-height: min(560px, calc(78vh - 92px));
+  -webkit-overflow-scrolling: touch;
   overflow: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior: auto;
   padding: 6px;
   scrollbar-color: color-mix(in lab, var(--pickerFg) 28%, var(--pickerBg)) transparent;
   scrollbar-width: thin;
@@ -124,8 +125,13 @@
 
 .pickerResults::-webkit-scrollbar,
 .pickerPreviewSurface::-webkit-scrollbar {
-  height: 10px;
-  width: 10px;
+  height: 12px;
+  width: 12px;
+}
+
+.pickerResults::-webkit-scrollbar-track,
+.pickerPreviewSurface::-webkit-scrollbar-track {
+  background: color-mix(in lab, var(--pickerBg) 92%, black 8%);
 }
 
 .pickerResults::-webkit-scrollbar-thumb,
@@ -258,20 +264,42 @@
 }
 
 .pickerPreviewSurface {
+  -webkit-overflow-scrolling: touch;
   height: 100%;
   overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  overflow-y: scroll;
+  overscroll-behavior: auto;
   position: relative;
-  scrollbar-color: color-mix(in lab, var(--pickerFg) 28%, var(--pickerBg)) transparent;
+  scrollbar-color: color-mix(in lab, var(--pickerFg) 28%, var(--pickerBg)) color-mix(in lab, var(--pickerBg) 92%, black 8%);
   scrollbar-gutter: stable both-edges;
-  scrollbar-width: thin;
+  scrollbar-width: auto;
 }
 
 .pickerPreviewCanvasViewport {
   inset: 0;
   position: absolute;
   z-index: 1;
+}
+
+.pickerPreviewScrollbar {
+  background: color-mix(in lab, var(--pickerBg) 88%, black 12%);
+  border-radius: 999px;
+  bottom: 12px;
+  pointer-events: none;
+  position: absolute;
+  right: 6px;
+  top: 12px;
+  width: 8px;
+  z-index: 3;
+}
+
+.pickerPreviewScrollbarThumb {
+  background: color-mix(in lab, var(--pickerFg) 34%, var(--pickerBg));
+  border-radius: 999px;
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 0;
 }
 
 .pickerPreviewCanvas {
@@ -284,16 +312,19 @@
 .pickerPreviewSelectableText {
   caret-color: transparent;
   color: transparent;
+  cursor: text;
   font-family: Iosevka, ui-monospace, monospace;
   font-size: 13px;
-  inset: 0;
+  left: 0;
   line-height: 19px;
   margin: 0;
   overflow: hidden;
   padding: 12px;
   pointer-events: auto;
   position: absolute;
+  right: 18px;
   tab-size: 4;
+  top: 0;
   user-select: text;
   white-space: pre;
   word-break: normal;
@@ -302,7 +333,9 @@
 }
 
 .pickerPreviewSelectableText::selection {
-  background: color-mix(in lab, var(--pickerAccent) 42%, white 18%);
+  background: transparent;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
 }
 
 .pickerPreviewScrollSize {

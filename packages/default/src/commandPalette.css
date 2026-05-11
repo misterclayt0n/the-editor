@@ -107,8 +107,9 @@
 .commandPaletteItems {
   margin-top: 8px;
   max-height: min(420px, calc(70vh - 68px));
+  -webkit-overflow-scrolling: touch;
   overflow: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior: auto;
   padding: 0 10px 0 0;
   scroll-padding-block: 4px;
   scroll-padding-inline-end: 10px;

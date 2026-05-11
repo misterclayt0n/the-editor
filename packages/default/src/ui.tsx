@@ -8,6 +8,7 @@ import {
 import type { CanvasTextSurfaceStyleOptions } from "@the-editor/editor/textSurfaceCanvas";
 import { resolveThemeStyleLoose, type ResolvedThemeDefinition } from "@the-editor/editor/themes";
 import type { EditorUiModule, UiSessionClient, WorkbenchSnapshot } from "@the-editor/editor/ui";
+import { PierreWorkbenchTabstrip } from "./pierreTabstrip.js";
 import "./commandPalette.css";
 import "./inputPrompt.css";
 import "./picker.css";
@@ -167,7 +168,7 @@ const uiModule: EditorUiModule = (host) => {
     implementationId: defaultTabstripImplementationId,
     render({ commands, panes, activePaneId, showWindowControls }) {
       return (
-        <DefaultWorkbenchTabstrip
+        <PierreWorkbenchTabstrip
           dispatch={commands.dispatch}
           panes={panes}
           activePaneId={activePaneId}
@@ -867,63 +868,6 @@ function NotificationsOverlay({ items }: { items: NotificationEntry[] }) {
       ))}
     </section>
   );
-}
-
-function DefaultWorkbenchTabstrip({
-  dispatch,
-  panes,
-  activePaneId,
-  showWindowControls,
-}: {
-  dispatch: (dispatch: { id: string; args?: unknown }) => Promise<unknown>;
-  panes: { id: string; title: string; closeable: boolean; kind: string; tab?: { preview?: boolean; pinned?: boolean } }[];
-  activePaneId?: string;
-  showWindowControls?: boolean;
-}) {
-  return (
-    <div className="workbenchTopTabsBar" data-leading={showWindowControls ? "true" : undefined}>
-      <div className="workbenchTopTabs" role="tablist" aria-label="Open tabs">
-        {panes.map((pane) => {
-          const active = pane.id === activePaneId;
-          return (
-            <div key={pane.id} className="workbenchTopTabWrap" data-active={active ? "true" : undefined}>
-              <button
-                type="button"
-                className="workbenchTopTab"
-                data-active={active ? "true" : undefined}
-                onMouseDown={(event) => {
-                  event.preventDefault();
-                  void dispatch({ id: "workbench.focusPane", args: { paneId: pane.id } });
-                }}
-              >
-                <span className="workbenchTopTabBadge" aria-hidden="true">{defaultPaneBadgeLabel(pane.kind)}</span>
-                <span className="workbenchTopTabTitle">{pane.title}</span>
-              </button>
-              {pane.closeable ? (
-                <button
-                  type="button"
-                  className="workbenchTopTabClose"
-                  aria-label={`Close ${pane.title}`}
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    void dispatch({ id: "workbench.closePane", args: { paneId: pane.id } });
-                  }}
-                >
-                  ×
-                </button>
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
-      <div className="workbenchTopTabsDragFill" />
-    </div>
-  );
-}
-
-function defaultPaneBadgeLabel(kind: string): string {
-  return kind === "tool" ? "Tool" : "Buffer";
 }
 
 function Statusline({ state }: { state: StatuslineViewState | undefined }) {

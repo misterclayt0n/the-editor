@@ -4,7 +4,7 @@ import { toDisposable, type Disposable } from "./disposable.js";
 
 export type ToolTypeId = string & { readonly __brand?: "ToolTypeId" };
 export type ToolInstanceId = string & { readonly __brand?: "ToolInstanceId" };
-export type ToolRootTarget = "leftSidebar" | "rightSidebar" | "bottomPanel" | "overlayModal" | "overlayFloating" | "editorAdjacent";
+export type ToolRootTarget = "editor" | "leftSidebar" | "rightSidebar" | "bottomPanel" | "overlayModal" | "overlayFloating";
 export type ToolInstancePolicy = "singleton" | "singletonPerWorkspace" | "multiInstance";
 
 export interface ToolTypeRegistration {
@@ -19,6 +19,13 @@ export interface ToolTypeRegistration {
   snapshot?(ctx: { editor: EditorHost; tool: ToolInstance }): unknown;
 }
 
+export interface ToolOpenOptions {
+  title?: string;
+  input?: unknown;
+  root?: ToolRootTarget;
+  focus?: boolean;
+}
+
 export interface ToolInstance {
   id: ToolInstanceId;
   typeId: ToolTypeId;
@@ -27,22 +34,31 @@ export interface ToolInstance {
   closeable: boolean;
   persistenceKey?: string;
   packageId?: string;
+  input?: unknown;
 }
 
 export interface ToolSnapshot extends ToolInstance {
   state?: unknown;
 }
 
+interface ToolTypeEntry extends ToolTypeRegistration {
+  id: ToolTypeId;
+}
+
 export class ToolRegistry {
   private nextInstance = 0;
-  private readonly types = new Map<ToolTypeId, ToolTypeRegistration>();
+  private readonly types = new Map<ToolTypeId, ToolTypeEntry>();
   private readonly instances = new Map<ToolInstanceId, ToolInstance>();
 
   constructor(private readonly editor: EditorHost) {}
 
   registerType(registration: ToolTypeRegistration, moduleId = this.editor.currentModuleId()): Disposable {
     const id = toolTypeId(registration.id);
-    this.types.set(id, { ...registration, id, packageId: registration.packageId ?? packageIdFromModuleId(moduleId) });
+    this.types.set(id, {
+      ...registration,
+      id,
+      packageId: registration.packageId ?? packageIdFromModuleId(moduleId),
+    });
 
     const unregister = toDisposable(() => {
       const current = this.types.get(id);
@@ -68,25 +84,48 @@ export class ToolRegistry {
     });
   }
 
-  open(typeId: ToolTypeId | string, title?: string): ToolInstance {
+  getType(typeId: ToolTypeId | string): ToolTypeRegistration | undefined {
+    return this.types.get(toolTypeId(typeId));
+  }
+
+  getInstance(id: ToolInstanceId | string): ToolInstance | undefined {
+    return this.instances.get(toolInstanceId(id));
+  }
+
+  findByType(typeId: ToolTypeId | string): ToolInstance | undefined {
+    return [...this.instances.values()].find((instance) => instance.typeId === toolTypeId(typeId));
+  }
+
+  open(typeId: ToolTypeId | string, titleOrOptions?: string | ToolOpenOptions): ToolInstance {
     const type = this.require(typeId);
+    const options = normalizeToolOpenOptions(titleOrOptions);
+
     if (type.instancePolicy !== "multiInstance") {
-      const existing = [...this.instances.values()].find((instance) => instance.typeId === type.id);
+      const existing = this.findByType(type.id);
       if (existing) {
-        this.editor.focus.setTool(existing.id);
+        if (options.focus !== false) this.focus(existing.id);
         return existing;
       }
     }
 
-    const instance = this.createInstance(type, title);
+    const instance = this.createInstance(type, options);
     this.instances.set(instance.id, instance);
-    this.editor.focus.setTool(instance.id);
+    if (options.focus !== false && instance.root !== "editor") {
+      this.editor.focus.setTool(instance.id);
+    }
     return instance;
   }
 
   close(id: ToolInstanceId | string): void {
     const normalized = toolInstanceId(id);
+    const instance = this.instances.get(normalized);
+    if (!instance) return;
     const currentFocus = this.editor.focus.current();
+    if (instance.root === "editor") {
+      this.editor.workbench.closePanesForTool(normalized);
+      this.instances.delete(normalized);
+      return;
+    }
     this.instances.delete(normalized);
     if (currentFocus.kind === "tool" && currentFocus.toolId === normalized) {
       this.editor.focus.restore();
@@ -96,6 +135,11 @@ export class ToolRegistry {
   focus(id: ToolInstanceId | string): void {
     const instance = this.instances.get(toolInstanceId(id));
     if (!instance) return;
+    const pane = instance.root === "editor" ? this.editor.workbench.findPaneForTool(instance.id) : undefined;
+    if (pane) {
+      this.editor.workbench.focusPane(pane.id);
+      return;
+    }
     this.editor.focus.setTool(instance.id);
   }
 
@@ -123,27 +167,37 @@ export class ToolRegistry {
       const type = this.types.get(snapshot.typeId);
       if (!type) continue;
       if (type.instancePolicy !== "multiInstance") {
-        const existing = [...this.instances.values()].find((instance) => instance.typeId === type.id);
+        const existing = this.findByType(type.id);
         if (existing) continue;
       }
-      const instance = this.createInstance(type, snapshot.title);
+      const instance = this.createInstance(type, {
+        title: snapshot.title,
+        input: snapshot.input,
+        root: snapshot.root,
+        focus: false,
+      }, snapshot.id);
       this.instances.set(instance.id, instance);
     }
   }
 
-  private createInstance(type: ToolTypeRegistration, title?: string): ToolInstance {
+  private createInstance(
+    type: ToolTypeEntry,
+    options: ToolOpenOptions,
+    id = toolInstanceId(`${type.id}:${this.nextInstance++}`),
+  ): ToolInstance {
     return {
-      id: toolInstanceId(`${type.id}:${this.nextInstance++}`),
-      typeId: type.id as ToolTypeId,
-      title: title ?? type.title,
-      root: type.root,
+      id,
+      typeId: type.id,
+      title: options.title ?? type.title,
+      root: options.root ?? type.root,
       closeable: type.closeable ?? true,
       persistenceKey: type.persistenceKey,
       packageId: type.packageId,
+      input: options.input,
     };
   }
 
-  private require(typeId: ToolTypeId | string): ToolTypeRegistration {
+  private require(typeId: ToolTypeId | string): ToolTypeEntry {
     const type = this.types.get(toolTypeId(typeId));
     if (!type) throw new Error(`unknown tool type: ${typeId}`);
     return type;
@@ -156,6 +210,11 @@ export function toolTypeId(id: ToolTypeId | string): ToolTypeId {
 
 export function toolInstanceId(id: ToolInstanceId | string): ToolInstanceId {
   return id as ToolInstanceId;
+}
+
+function normalizeToolOpenOptions(titleOrOptions: string | ToolOpenOptions | undefined): ToolOpenOptions {
+  if (typeof titleOrOptions === "string") return { title: titleOrOptions };
+  return titleOrOptions ?? {};
 }
 
 function packageIdFromModuleId(id: string): string | undefined {

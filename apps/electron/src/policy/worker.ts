@@ -141,6 +141,7 @@ async function postSessionState() {
     notifications: state.notifications ?? editor.notifications.snapshot(),
     workingDirectory: state.workingDirectory ?? editor.cwd.snapshot(),
     selectionPickerActive: state.selectionPickerActive ?? false,
+    editorLayout: state.editorLayout,
   };
   parentPort?.postMessage(payload);
   return payload;

@@ -13,7 +13,8 @@ async function createWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
-    backgroundColor: "#111111",
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
+    trafficLightPosition: process.platform === "darwin" ? { x: 16, y: 18 } : undefined,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,

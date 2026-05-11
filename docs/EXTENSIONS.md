@@ -143,7 +143,25 @@ Support both:
 ### 8. Host owns global layout
 
 Extensions do not imperatively rewrite the workbench tree.
-They render inside host-managed roots.
+The host owns:
+
+- dock roots like `leftSidebar`, `rightSidebar`, `bottomPanel`, and overlays
+- the main **editor split tree**
+- split sizing
+- group/tab truth
+- pane focus truth
+
+The editor area is a persistent tree of:
+
+```txt
+split nodes
+  -> group leaves
+    -> pane tabs
+      -> text surfaces or tool panes
+```
+
+Extensions request **placement intents** like “open in a right split” or “open as a tab in the active group”.
+They do not perform raw tree surgery.
 
 ### 9. Extensions own arbitrary subtrees inside those roots
 
@@ -151,7 +169,7 @@ Once mounted, an extension may render any internal React subtree it wants.
 That includes:
 
 - custom component trees
-- local split layouts
+- local split layouts inside a tool pane
 - canvases
 - games like Doom
 - internal mini-apps
@@ -234,8 +252,12 @@ commandPalette role
 ## Tools
 
 A **tool** is a mounted UI app or pane.
-The host provides a root.
-The module owns the subtree inside that root.
+The host provides either:
+
+- a dock root
+- or an editor pane inside the split tree
+
+The module owns the subtree inside that mounted pane/root.
 
 Examples:
 
@@ -251,10 +273,13 @@ Examples:
 
 A tool has:
 
-- a host root target
+- a default root target
 - light metadata
 - arbitrary internal UI
 - zero implication that it is a built-in product responsibility
+
+A tool type's `root` is its **default placement**, not a prison.
+Extensions may also open tools into editor splits through the host workbench API.
 
 ## Rule of thumb
 
@@ -271,8 +296,8 @@ The host shell must stay stable and predictable.
 
 It owns:
 
-- workbench layout tree
-- root allocation for roles and tools
+- the editor split tree
+- dock root allocation for roles and tools
 - focus graph
 - key routing and scope activation
 - workbench/session persistence
@@ -506,23 +531,53 @@ Expected tool metadata:
 - `toolTypeId`
 - title
 - icon
-- root target
+- default root target
 - closeability
 - persistence key/policy
 - focus behavior
 - maybe instance policy (`singleton` vs `multi-instance`)
 
-Inside the root, the tool owns its subtree.
+Inside the mounted pane/root, the tool owns its subtree.
 
 The host should be able to do things like:
 
-- open tool type X
+- open tool type X in its default root
+- open tool type X in an editor split
+- open tool type X as a tab in the active group
 - reopen prior persisted tools
 - focus tool Y
 - close tool Y
 - reload tool package Z
 
 But the host should not care how the tool internally renders itself.
+
+### Editor split placement API
+
+The host should expose placement intents, not raw tree mutation.
+
+Example shape:
+
+```ts
+editor.workbench.openTool("webview.video", {
+  title: "Subway Surfers",
+  input: { url: "https://..." },
+  placement: { kind: "split", direction: "right", of: "active" },
+});
+```
+
+And for text surfaces:
+
+```ts
+editor.workbench.openSurface(surfaceDescriptor, {
+  placement: { kind: "tab", group: "active" },
+});
+```
+
+Good placement intents for v1 are:
+
+- `{ kind: "tab", group?: "active" | groupId, index?: number }`
+- `{ kind: "split", direction: "left" | "right" | "up" | "down", of?: "active" | paneId | groupId }`
+- `{ kind: "dock", root: "leftSidebar" | "rightSidebar" | "bottomPanel" | "overlayModal" | "overlayFloating" }`
 
 ---
 
@@ -709,8 +764,10 @@ Examples:
 
 - document/text-surface/session state
 - layout truth
+- split tree / groups / pane descriptors
 - active role selections
 - active interaction profile selection
+- active group / active pane truth
 - palette history
 - recent commands
 - persisted open tools
@@ -915,59 +972,32 @@ The host treats it as a tool, not as a role.
 
 ---
 
-## What v1 should build first
+## Current v1 status
 
-The first version does not need to solve every extension dream.
-It should prove the architecture.
+The first version now proves the core architecture instead of only sketching it.
 
-## Recommended order
+Current host-owned seams include:
 
-### 1. Extend the current module/contribution substrate
+- package/target loading and explicit `:reload`
+- role registry
+- tool registry
+- interaction profile registry
+- dock roots (`leftSidebar`, `rightSidebar`, `bottomPanel`, overlays)
+- editor split tree with groups, tabs, and pane placement intents
 
-Add:
+Current public workbench direction is:
 
-- package/target identity
-- reload command
-- contribution scopes by target
+- use `editor.workbench.openTool(...)` for tool placement
+- use `editor.workbench.openSurface(...)` for surface placement
+- use placement intents like tab/split/dock
+- let the host keep layout truth and focus truth
 
-### 2. Build a role registry
+That is the important v1 proof:
 
-First roles:
-
-- `commandPalette`
-- `statusline`
-
-### 3. Build a tool registry
-
-First tool targets:
-
-- left panel
-- right panel
-- bottom panel
-- modal overlay
-- floating overlay
-
-### 4. Build an interaction profile registry
-
-Support:
-
-- one base profile
-- overlays
-- explicit host arbitration
-
-### 5. Implement the default command palette as a first-party role module
-
-This is the key test.
-If the built-in palette itself uses the public role system, then the seam is honest.
-
-### 6. Add `:reload`
-
-First package-level, then target-level.
-
-### 7. Add one arbitrary tool app
-
-Something intentionally weird is good here.
-A Doom tool is not a joke architecturally; it is a stress test that proves the subtree model is real.
+- built-in product UI is already using the extension seams
+- arbitrary tools can live in dock roots or editor splits
+- reload can preserve the host shell while swapping module code
+- the editor area is no longer a one-off special case
 
 ---
 
@@ -994,10 +1024,11 @@ The target architecture is:
 stable host shell
   + typed replaceable roles
   + pluggable tools
+  + a host-owned editor split tree
   + first-class interaction profiles
   + explicit reload lifecycle
   + host-owned focus/layout/state truth
-  + extension-owned arbitrary subtrees inside host roots
+  + extension-owned arbitrary subtrees inside mounted panes/roots
 ```
 
 That gives us:
@@ -1005,7 +1036,7 @@ That gives us:
 - hot swapping via `:reload`
 - replaceable command palette/statusline/tabstrip
 - swappable Helix/Vim-style interaction layers
-- support for arbitrary panel apps like Doom
+- support for arbitrary panel apps like Doom or a video tool in a right split
 - clanker-friendly module boundaries
 - room for native-backed extensions without collapsing the core shell
 ```

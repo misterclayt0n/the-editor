@@ -41,6 +41,7 @@ export interface GutterProvider {
   title?: string;
   priority?: number;
   lane: string;
+  mode?: "append" | "replace";
   laneSpec?: GutterLaneSpec;
   provide(ctx: GutterProviderContext): GutterLine[] | Promise<GutterLine[]>;
 }
@@ -97,6 +98,11 @@ export class GutterRegistry {
     const gutters: GutterSnapshot[] = [];
     for (const provider of providers) {
       const lane = normalizeLane(provider.lane, provider.laneSpec, provider.order);
+      if (provider.mode === "replace") {
+        for (let index = gutters.length - 1; index >= 0; index -= 1) {
+          if (gutters[index]?.lane.id === lane.id) gutters.splice(index, 1);
+        }
+      }
       gutters.push({
         providerId: provider.id,
         lane,

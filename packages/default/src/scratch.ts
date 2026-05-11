@@ -1,6 +1,13 @@
 import type { RenderFrame, Viewport } from "@the-editor/contracts/runtime";
-import { commandId, type EditorHost, type EditorModule } from "@the-editor/editor";
-import { getDefaultState, refreshActiveSurface, setEditorMode, type DefaultEditorState } from "./state.js";
+import { commandId, type EditorHost, type EditorModule, type WorkbenchPaneDescriptor } from "@the-editor/editor";
+import {
+  activeSurfacePane,
+  getDefaultState,
+  refreshActiveSurface,
+  setEditorMode,
+  upsertSurfacePaneState,
+  type DefaultEditorState,
+} from "./state.js";
 import { resolveFilePathFromWorkingDirectory } from "./workingDirectory.js";
 
 export interface CreateScratchArgs {
@@ -24,7 +31,9 @@ export function defaultScratch(): EditorModule {
       title: "Create Scratch Buffer",
       async run(_ctx, args) {
         const state = getDefaultState(editor);
-        const viewport = args?.viewport ?? state.surfaceViewport ?? defaultViewport();
+        const activePane = activeSurfacePane(editor);
+        const viewport = args?.viewport ?? activePane?.viewport ?? state.surfaceViewport ?? defaultViewport();
+        const metrics = activePane?.metrics ?? state.surfaceMetrics;
         const document = await editor.runtime.documents.createScratch({
           text: args?.text ?? "",
         });
@@ -32,23 +41,36 @@ export function defaultScratch(): EditorModule {
           documentId: document.documentId,
           viewport,
         });
-        if (state.surfaceMetrics) {
+        if (metrics) {
           await editor.runtime.surfaces.setMetrics({
             surfaceId: surface.surfaceId,
-            metrics: state.surfaceMetrics,
+            metrics,
           });
         }
         if (state.softWrap) {
           await editor.runtime.surfaces.setSoftWrap({ surfaceId: surface.surfaceId, softWrap: true });
         }
 
-        state.activeDocumentId = document.documentId;
-        state.activeSurfaceId = surface.surfaceId;
-        state.activePath = undefined;
+        const pane = editor.workbench.openSurface({
+          title: "Scratch",
+          surfaceId: surface.surfaceId,
+          documentId: document.documentId,
+          path: undefined,
+          closeable: true,
+        });
+        upsertSurfacePaneState(editor, {
+          paneId: pane.id,
+          surfaceId: surface.surfaceId,
+          documentId: document.documentId,
+          path: undefined,
+          title: "Scratch",
+          viewport,
+          metrics,
+        });
         setEditorMode(editor, "normal");
         editor.focus.setEditor();
         await refreshActiveSurface(editor, viewport);
-        editor.workbench.invalidate("frame", "focus");
+        editor.workbench.invalidate("frame", "focus", "layout", "tabs");
         return state;
       },
     });
@@ -58,30 +80,64 @@ export function defaultScratch(): EditorModule {
       title: "Open File",
       async run(_ctx, args) {
         const state = getDefaultState(editor);
-        const viewport = args.viewport ?? state.surfaceViewport ?? defaultViewport();
+        const activePane = activeSurfacePane(editor);
+        const viewport = args.viewport ?? activePane?.viewport ?? state.surfaceViewport ?? defaultViewport();
+        const metrics = activePane?.metrics ?? state.surfaceMetrics;
         const path = resolveFilePathFromWorkingDirectory(editor, args.path);
+        const existingPane = findOpenFilePane(editor, path);
+        if (existingPane) {
+          editor.workbench.focusPane(existingPane.id);
+          setEditorMode(editor, "normal");
+          editor.focus.setEditor();
+          await refreshActiveSurface(editor);
+          editor.workbench.invalidate("frame", "focus", "layout", "tabs");
+          return state;
+        }
+
         const document = await editor.runtime.documents.openFile({ path });
         const surface = await editor.runtime.surfaces.create({
           documentId: document.documentId,
           viewport,
         });
-        if (state.surfaceMetrics) {
+        if (metrics) {
           await editor.runtime.surfaces.setMetrics({
             surfaceId: surface.surfaceId,
-            metrics: state.surfaceMetrics,
+            metrics,
           });
         }
         if (state.softWrap) {
           await editor.runtime.surfaces.setSoftWrap({ surfaceId: surface.surfaceId, softWrap: true });
         }
 
-        state.activeDocumentId = document.documentId;
-        state.activeSurfaceId = surface.surfaceId;
-        state.activePath = path;
+        const title = fileTitle(path);
+        const pane = await shouldReplaceInitialScratch(editor)
+          ? editor.workbench.replaceActiveSurface({
+            title,
+            surfaceId: surface.surfaceId,
+            documentId: document.documentId,
+            path,
+            closeable: true,
+          })
+          : editor.workbench.openSurface({
+            title,
+            surfaceId: surface.surfaceId,
+            documentId: document.documentId,
+            path,
+            closeable: true,
+          });
+        upsertSurfacePaneState(editor, {
+          paneId: pane.id,
+          surfaceId: surface.surfaceId,
+          documentId: document.documentId,
+          path,
+          title,
+          viewport,
+          metrics,
+        });
         setEditorMode(editor, "normal");
         editor.focus.setEditor();
         await refreshActiveSurface(editor, viewport);
-        editor.workbench.invalidate("frame", "focus");
+        editor.workbench.invalidate("frame", "focus", "layout", "tabs");
         return state;
       },
     });
@@ -91,9 +147,11 @@ export function defaultScratch(): EditorModule {
       title: "Toggle Soft Wrap",
       async run() {
         const state = getDefaultState(editor);
-        if (!state.activeSurfaceId) throw new Error("no active surface");
+        if (!state.surfacePanes.size) throw new Error("no active surface");
         state.softWrap = !state.softWrap;
-        await editor.runtime.surfaces.setSoftWrap({ surfaceId: state.activeSurfaceId, softWrap: state.softWrap });
+        for (const pane of state.surfacePanes.values()) {
+          await editor.runtime.surfaces.setSoftWrap({ surfaceId: pane.surfaceId, softWrap: state.softWrap });
+        }
         await refreshActiveSurface(editor);
         editor.workbench.invalidate("frame");
         return state;
@@ -121,4 +179,25 @@ export function defaultViewport(): Viewport {
     firstCol: 0,
     wrapWidth: 80,
   };
+}
+
+async function shouldReplaceInitialScratch(editor: EditorHost): Promise<boolean> {
+  const activePane = activeSurfacePane(editor);
+  if (!activePane || activePane.path || activePane.title !== "Scratch") return false;
+  const layout = editor.workbench.snapshotEditorLayout();
+  if (layout.panes.length !== 1) return false;
+  const state = await editor.runtime.surfaces.readState({ surfaceId: activePane.surfaceId });
+  return state.text.length === 0;
+}
+
+function findOpenFilePane(editor: EditorHost, path: string): Extract<WorkbenchPaneDescriptor, { kind: "surface" }> | undefined {
+  const item = editor.workbench.allItems().find((candidate) => candidate.kind === "surface" && candidate.path === path);
+  if (!item) return undefined;
+  return editor.workbench.findPanesForItem(item.id).find((pane): pane is Extract<WorkbenchPaneDescriptor, { kind: "surface" }> => pane.kind === "surface");
+}
+
+function fileTitle(path: string): string {
+  const normalized = path.replace(/\\/g, "/");
+  const slash = normalized.lastIndexOf("/");
+  return slash >= 0 ? normalized.slice(slash + 1) : normalized;
 }

@@ -253,7 +253,8 @@
   background: color-mix(in lab, var(--pickerFg) 1.5%, var(--pickerBg));
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior: contain;
   position: relative;
   scrollbar-color: color-mix(in lab, var(--pickerFg) 28%, var(--pickerBg)) transparent;
@@ -261,21 +262,23 @@
   scrollbar-width: thin;
 }
 
-.pickerPreviewSurfaceContent {
-  min-height: 100%;
-  min-width: 100%;
-  position: relative;
-}
-
 .pickerPreviewCanvasViewport {
+  inset: 0 0 auto 0;
   pointer-events: none;
-  position: absolute;
+  position: sticky;
+  z-index: 1;
 }
 
 .pickerPreviewCanvas {
   display: block;
   height: 100%;
   width: 100%;
+}
+
+.pickerPreviewScrollSize {
+  min-height: 100%;
+  pointer-events: none;
+  width: 1px;
 }
 
 .pickerPreviewCode {

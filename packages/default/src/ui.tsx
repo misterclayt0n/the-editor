@@ -4,7 +4,6 @@ import type { DiagnosticEntry, NotificationEntry } from "@the-editor/editor";
 import {
   configureCanvasTextSurface,
   loadEditorFont,
-  measureTextSurfaceColumns,
   paintCanvasTextSurface,
   type CanvasTextSurfaceConfiguration,
   type CanvasTextSurfaceStyleOptions,
@@ -485,7 +484,7 @@ function PickerSurfacePreview({
   const layoutRef = useRef<CanvasTextSurfaceConfiguration | null>(null);
   const rafRef = useRef<number | null>(null);
   const syncingScrollRef = useRef(false);
-  const [contentSize, setContentSize] = useState({ width: 1, height: 1 });
+  const [scrollHeight, setScrollHeight] = useState(1);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -497,16 +496,14 @@ function PickerSurfacePreview({
     const configure = () => {
       const next = configureCanvasTextSurface(canvas, PICKER_PREVIEW_SURFACE_STYLE);
       layoutRef.current = next;
-      setContentSize({
-        width: previewSurfaceContentWidth(preview, next, scrollElement.clientWidth),
-        height: previewSurfaceContentHeight(preview, next, scrollElement.clientHeight),
-      });
+      setScrollHeight(previewSurfaceScrollHeight(preview, next, scrollElement.clientHeight));
       syncingScrollRef.current = syncPreviewSurfaceScroll(scrollElement, preview, next);
       void sessions.dispatch(sessionId, "configurePreview", {
         metrics: next.metrics,
         viewport: {
-          ...(preview.viewport ?? previewViewportFromScroll(scrollElement, next, preview.lineCount ?? 0)),
+          firstRow: preview.viewport?.firstRow ?? 0,
           rowCount: next.viewport.rowCount,
+          firstCol: 0,
           wrapWidth: next.viewport.wrapWidth,
         },
       });
@@ -531,10 +528,7 @@ function PickerSurfacePreview({
     const scrollElement = scrollRef.current;
     const layout = layoutRef.current;
     if (!canvas || !preview.frame || !scrollElement || !layout) return;
-    setContentSize({
-      width: previewSurfaceContentWidth(preview, layout, scrollElement.clientWidth),
-      height: previewSurfaceContentHeight(preview, layout, scrollElement.clientHeight),
-    });
+    setScrollHeight(previewSurfaceScrollHeight(preview, layout, scrollElement.clientHeight));
     syncingScrollRef.current = syncPreviewSurfaceScroll(scrollElement, preview, layout);
     paintCanvasTextSurface(
       canvas,
@@ -547,9 +541,6 @@ function PickerSurfacePreview({
     );
   }, [preview, theme]);
 
-  const canvasOffsetTop = previewSurfaceOffsetTop(preview, layoutRef.current);
-  const canvasOffsetLeft = previewSurfaceOffsetLeft(preview, layoutRef.current);
-
   return (
     <>
       <div className="pickerPreviewHeader">
@@ -560,6 +551,21 @@ function PickerSurfacePreview({
       <div
         ref={scrollRef}
         className="pickerPreviewSurface"
+        onWheel={(event) => {
+          event.preventDefault();
+          const layout = layoutRef.current;
+          const scrollElement = scrollRef.current;
+          if (!layout || !scrollElement) return;
+          const deltaRows = Math.sign(event.deltaY) * Math.max(1, Math.round(Math.abs(event.deltaY) / 30));
+          if (!deltaRows) return;
+          const currentFirstRow = preview.viewport?.firstRow ?? 0;
+          const maxFirstRow = Math.max(0, (preview.lineCount ?? 0) - layout.viewport.rowCount);
+          const nextFirstRow = clampNumber(currentFirstRow + deltaRows, 0, maxFirstRow);
+          if (nextFirstRow === currentFirstRow) return;
+          syncingScrollRef.current = true;
+          scrollElement.scrollTop = nextFirstRow * layout.metrics.rowHeightPx;
+          void sessions.dispatch(sessionId, "scrollPreview", { deltaRows: nextFirstRow - currentFirstRow });
+        }}
         onScroll={() => {
           const scrollElement = scrollRef.current;
           const layout = layoutRef.current;
@@ -571,32 +577,17 @@ function PickerSurfacePreview({
           if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
           rafRef.current = requestAnimationFrame(() => {
             rafRef.current = null;
-            const viewport = previewViewportFromScroll(scrollElement, layout, preview.lineCount ?? 0);
-            if (
-              viewport.firstRow === (preview.viewport?.firstRow ?? 0)
-              && viewport.firstCol === (preview.viewport?.firstCol ?? 0)
-            ) return;
-            void sessions.dispatch(sessionId, "scrollPreview", viewport);
+            const nextFirstRow = scrollPreviewFirstRow(scrollElement, layout, preview.lineCount ?? 0);
+            const currentFirstRow = preview.viewport?.firstRow ?? 0;
+            if (nextFirstRow === currentFirstRow) return;
+            void sessions.dispatch(sessionId, "scrollPreview", { deltaRows: nextFirstRow - currentFirstRow });
           });
         }}
       >
-        <div
-          className="pickerPreviewSurfaceContent"
-          style={{
-            width: `${contentSize.width}px`,
-            height: `${contentSize.height}px`,
-          }}
-        >
-          <div
-            className="pickerPreviewCanvasViewport"
-            style={{
-              top: `${canvasOffsetTop}px`,
-              left: `${canvasOffsetLeft}px`,
-            }}
-          >
-            <canvas ref={canvasRef} className="pickerPreviewCanvas" />
-          </div>
+        <div className="pickerPreviewCanvasViewport">
+          <canvas ref={canvasRef} className="pickerPreviewCanvas" />
         </div>
+        <div className="pickerPreviewScrollSize" style={{ height: `${scrollHeight}px` }} />
       </div>
     </>
   );
@@ -614,7 +605,7 @@ function surfacePreviewSummary(preview: PickerPreviewViewState & { kind: "surfac
   return "Preview";
 }
 
-function previewSurfaceContentHeight(
+function previewSurfaceScrollHeight(
   preview: PickerPreviewViewState & { kind: "surface" },
   layout: CanvasTextSurfaceConfiguration,
   minHeight: number,
@@ -624,32 +615,16 @@ function previewSurfaceContentHeight(
   return Math.max(minHeight, padding * 2 + lineCount * layout.metrics.rowHeightPx);
 }
 
-function previewSurfaceContentWidth(
-  preview: PickerPreviewViewState & { kind: "surface" },
-  layout: CanvasTextSurfaceConfiguration,
-  minWidth: number,
-): number {
-  const padding = PICKER_PREVIEW_SURFACE_STYLE.paddingPx ?? 0;
-  const firstCol = preview.viewport?.firstCol ?? 0;
-  const widestVisibleRow = Math.max(
-    layout.viewport.wrapWidth,
-    ...(preview.frame?.rows ?? []).map((row) => firstCol + measureTextSurfaceColumns(row.text)),
-  );
-  return Math.max(minWidth, padding * 2 + widestVisibleRow * layout.metrics.cellWidthPx);
-}
-
-function previewViewportFromScroll(
+function scrollPreviewFirstRow(
   scrollElement: HTMLDivElement,
   layout: CanvasTextSurfaceConfiguration,
   lineCount: number,
-): Viewport {
-  const maxFirstRow = Math.max(0, lineCount - layout.viewport.rowCount);
-  return {
-    firstRow: clampNumber(Math.floor(scrollElement.scrollTop / layout.metrics.rowHeightPx), 0, maxFirstRow),
-    rowCount: layout.viewport.rowCount,
-    firstCol: Math.max(0, Math.floor(scrollElement.scrollLeft / layout.metrics.cellWidthPx)),
-    wrapWidth: layout.viewport.wrapWidth,
-  };
+): number {
+  return clampNumber(
+    Math.floor(scrollElement.scrollTop / layout.metrics.rowHeightPx),
+    0,
+    Math.max(0, lineCount - layout.viewport.rowCount),
+  );
 }
 
 function syncPreviewSurfaceScroll(
@@ -658,27 +633,9 @@ function syncPreviewSurfaceScroll(
   layout: CanvasTextSurfaceConfiguration,
 ): boolean {
   const targetTop = Math.max(0, (preview.viewport?.firstRow ?? 0) * layout.metrics.rowHeightPx);
-  const targetLeft = Math.max(0, (preview.viewport?.firstCol ?? 0) * layout.metrics.cellWidthPx);
-  if (Math.abs(scrollElement.scrollTop - targetTop) <= 1 && Math.abs(scrollElement.scrollLeft - targetLeft) <= 1) return false;
+  if (Math.abs(scrollElement.scrollTop - targetTop) <= 1) return false;
   scrollElement.scrollTop = targetTop;
-  scrollElement.scrollLeft = targetLeft;
   return true;
-}
-
-function previewSurfaceOffsetTop(
-  preview: PickerPreviewViewState & { kind: "surface" },
-  layout: CanvasTextSurfaceConfiguration | null,
-): number {
-  if (!layout) return 0;
-  return Math.max(0, (preview.viewport?.firstRow ?? 0) * layout.metrics.rowHeightPx);
-}
-
-function previewSurfaceOffsetLeft(
-  preview: PickerPreviewViewState & { kind: "surface" },
-  layout: CanvasTextSurfaceConfiguration | null,
-): number {
-  if (!layout) return 0;
-  return Math.max(0, (preview.viewport?.firstCol ?? 0) * layout.metrics.cellWidthPx);
 }
 
 function clampNumber(value: number, min: number, max: number): number {

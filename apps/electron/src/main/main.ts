@@ -41,7 +41,7 @@ function startPolicyWorker(): void {
   policyWorker = new Worker(path.join(__dirname, "../policy/worker.cjs"), {
     workerData: {
       root: path.resolve(__dirname, "../../../../"),
-      cwd: process.cwd(),
+      cwd: resolveLaunchCwd(),
     },
   });
 
@@ -116,6 +116,11 @@ function handlePolicyResponse(response: PolicyBridgeResponse): void {
 function rejectPendingPolicyRequests(error: Error): void {
   for (const pending of pendingPolicyRequests.values()) pending.reject(error);
   pendingPolicyRequests.clear();
+}
+
+function resolveLaunchCwd(): string {
+  const initCwd = process.env.INIT_CWD?.trim();
+  return initCwd || process.cwd();
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

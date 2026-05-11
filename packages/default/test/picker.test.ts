@@ -18,8 +18,8 @@ interface PickerSnapshot {
   status?: { primary?: string; secondary?: string };
 }
 
-async function createPickerEditor() {
-  const editor = createEditorHost({ runtime: createRuntimeClient() });
+async function createPickerEditor(cwd?: string) {
+  const editor = createEditorHost({ runtime: createRuntimeClient(), cwd });
   await defaultScratch()(editor);
   await defaultPicker()(editor);
   await defaultKeymaps()(editor);
@@ -66,7 +66,7 @@ describe("default picker", () => {
     await writeFile(first, "alpha\n", "utf8");
     await writeFile(second, "beta\npreview\n", "utf8");
 
-    const editor = await createPickerEditor();
+    const editor = await createPickerEditor(dir);
     await editor.commands.dispatch({ id: commandId("file.open"), args: { path: first } });
     await editor.commands.dispatch({ id: commandId("file_picker") });
     await editor.commands.dispatch({ id: commandId("picker.close") });
@@ -90,7 +90,7 @@ describe("default picker", () => {
     await writeFile(first, "alpha\n", "utf8");
     await writeFile(second, "beta\npreview\n", "utf8");
 
-    const editor = await createPickerEditor();
+    const editor = await createPickerEditor(dir);
     await editor.commands.dispatch({ id: commandId("file.open"), args: { path: first } });
     await editor.commands.dispatch({ id: commandId("file_picker") });
 

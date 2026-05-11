@@ -232,17 +232,12 @@ class RendererUiSessionClient implements UiSessionClient {
   }
 
   reset(snapshots: readonly InteractiveSessionSnapshot[]): void {
-    const nextIds = new Set(snapshots.map((snapshot) => snapshot.id));
     for (const snapshot of snapshots) this.update(snapshot);
-    for (const id of [...this.sessions.keys()]) {
-      if (nextIds.has(id)) continue;
-      this.remove(id);
-    }
   }
 
   update(snapshot: InteractiveSessionSnapshot): void {
     const previous = this.sessions.get(snapshot.id);
-    if (previous && previous.revision === snapshot.revision) return;
+    if (previous && previous.revision >= snapshot.revision) return;
     this.sessions.set(snapshot.id, snapshot);
     this.emit(snapshot.id);
   }

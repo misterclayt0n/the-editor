@@ -1,5 +1,5 @@
 import { existsSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { resolve } from "node:path";
 import type { FileSearchResult } from "@the-editor/contracts/runtime";
 import {
   commandId,
@@ -467,38 +467,15 @@ function filePickerPath(item: PickerItem): string | undefined {
 }
 
 function resolveFilePickerRoot(editor: Parameters<EditorModule>[0]): string {
-  const activePath = getDefaultState(editor).activePath;
-  if (!activePath) {
-    const cwd = resolve(editor.cwd.current());
-    const start = existingDirectory(cwd) ?? cwd;
-    return findProjectRoot(start) ?? start;
-  }
-  const absolute = resolve(activePath);
-  const start = existingDirectory(absolute) ?? dirname(absolute);
-  return findProjectRoot(start) ?? start;
+  const cwd = resolve(editor.cwd.current());
+  return existingDirectory(cwd) ?? cwd;
 }
 
 function existingDirectory(path: string): string | undefined {
   try {
     if (!existsSync(path)) return undefined;
-    return statSync(path).isDirectory() ? path : dirname(path);
+    return statSync(path).isDirectory() ? path : undefined;
   } catch {
     return undefined;
   }
-}
-
-function findProjectRoot(start: string): string | undefined {
-  let current = start;
-  let found: string | undefined;
-  while (true) {
-    if (hasProjectMarker(current)) found = current;
-    const parent = dirname(current);
-    if (parent === current) return found;
-    current = parent;
-  }
-}
-
-function hasProjectMarker(dir: string): boolean {
-  return [".git", ".the-editor", "package.json", "Cargo.toml", "pnpm-workspace.yaml", "bun.lock", "bun.lockb"]
-    .some((name) => existsSync(join(dir, name)));
 }

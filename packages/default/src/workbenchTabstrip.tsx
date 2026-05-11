@@ -109,7 +109,15 @@ function DefaultFileTab({
 }) {
   return (
     <div className={`workbenchFileTab ${isActive ? "isActive" : "isInactive"}`}>
-      <button type="button" onClick={activate} title={path} className="workbenchFileTabButton">
+      <button
+        type="button"
+        onMouseDown={(event) => {
+          event.preventDefault();
+        }}
+        onClick={activate}
+        title={path}
+        className="workbenchFileTabButton"
+      >
         <DefaultWorkbenchTabIcon icon={icon} />
         <span className="workbenchFileTabLabel">{label}</span>
       </button>
@@ -118,6 +126,10 @@ function DefaultFileTab({
           <div aria-hidden="true" className="workbenchFileTabCloseFade" />
           <button
             type="button"
+            onMouseDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
             onClick={(event) => { event.stopPropagation(); close(); }}
             title="Close tab"
             aria-label={`Close ${label}`}

@@ -8,6 +8,12 @@ import "./style.css";
 
 const uiRuntime = new RendererPackageRuntime();
 
+let pickerAppTraceSeq = 0;
+
+function pickerAppTrace(payload: Record<string, unknown>): void {
+  console.log(`[picker-app] ${JSON.stringify({ seq: ++pickerAppTraceSeq, ...payload })}`);
+}
+
 function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [frame, setFrame] = useState<RenderFrame | undefined>();
@@ -26,11 +32,29 @@ function App() {
       if (!isObject(event)) return;
       if (event.type === "policy.error") console.error(String(event.message ?? "policy error"));
       if (event.type === "default.sessionUpdated") {
-        if (isObject(event.session)) uiRuntime.updateSession(event.session as unknown as InteractiveSessionSnapshot);
+        if (isObject(event.session)) {
+          const session = event.session as unknown as InteractiveSessionSnapshot;
+          if (session.role === "picker") {
+            const state = session.state as { query?: unknown; selectedIndex?: unknown; items?: unknown[]; preview?: { kind?: unknown } } | undefined;
+            pickerAppTrace({
+              event: "policy.sessionUpdated",
+              sessionId: session.id,
+              revision: session.revision,
+              query: state?.query,
+              selectedIndex: state?.selectedIndex,
+              itemCount: Array.isArray(state?.items) ? state.items.length : undefined,
+              previewKind: state?.preview?.kind,
+            });
+          }
+          uiRuntime.updateSession(session);
+        }
         return;
       }
       if (event.type === "default.sessionDisposed") {
-        if (typeof event.sessionId === "string") uiRuntime.removeSession(event.sessionId);
+        if (typeof event.sessionId === "string") {
+          pickerAppTrace({ event: "policy.sessionDisposed", sessionId: event.sessionId });
+          uiRuntime.removeSession(event.sessionId);
+        }
         return;
       }
       if (event.type === "default.sessionChanged") {
@@ -52,6 +76,27 @@ function App() {
             ? event.workingDirectory as unknown as WorkbenchSnapshot["workingDirectory"]
             : undefined,
         };
+        const pickerRole = isObject(snapshot.roles?.picker) ? snapshot.roles.picker as { state?: { visible?: unknown; sessionId?: unknown }; implementationId?: unknown } : undefined;
+        const pickerRoleState = isObject(pickerRole?.state) ? pickerRole.state as { visible?: unknown; sessionId?: unknown } : undefined;
+        const pickerSessions = (snapshot.sessions ?? []).filter((session) => session.role === "picker").map((session) => {
+          const state = session.state as { query?: unknown; selectedIndex?: unknown; items?: unknown[]; preview?: { kind?: unknown } } | undefined;
+          return {
+            id: session.id,
+            revision: session.revision,
+            query: state?.query,
+            selectedIndex: state?.selectedIndex,
+            itemCount: Array.isArray(state?.items) ? state.items.length : undefined,
+            previewKind: state?.preview?.kind,
+          };
+        });
+        pickerAppTrace({
+          event: "policy.sessionChanged",
+          focus: snapshot.focus,
+          pickerVisible: Boolean(pickerRoleState?.visible),
+          pickerSessionId: typeof pickerRoleState?.sessionId === "string" ? pickerRoleState.sessionId : undefined,
+          pickerImplementationId: pickerRole?.implementationId,
+          pickerSessions,
+        });
         setTheme(snapshot.theme);
         setSyntaxLegend(snapshot.syntaxLegend ?? {});
         setSelectionPickerActive(Boolean(event.selectionPickerActive));

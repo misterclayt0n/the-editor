@@ -100,6 +100,22 @@ interface NotificationsViewState {
 
 const inspectorToolTypeId = "default.inspector";
 
+let pickerUiTraceSeq = 0;
+let pickerOverlayInstanceSeq = 0;
+
+function pickerUiTrace(payload: Record<string, unknown>): void {
+  console.log(`[picker-ui] ${JSON.stringify({ seq: ++pickerUiTraceSeq, ...payload })}`);
+}
+
+function describeElement(element: Element | null | undefined): string | undefined {
+  if (!(element instanceof HTMLElement)) return undefined;
+  const id = element.id ? `#${element.id}` : "";
+  const className = typeof element.className === "string"
+    ? element.className.trim().split(/\s+/).filter(Boolean).slice(0, 3).map((name) => `.${name}`).join("")
+    : "";
+  return `${element.tagName.toLowerCase()}${id}${className}`;
+}
+
 const uiModule: EditorUiModule = (host) => {
   host.roles.register<CommandPaletteViewState>({
     role: "commandPalette",
@@ -123,7 +139,19 @@ const uiModule: EditorUiModule = (host) => {
     role: "picker",
     implementationId: "default.picker",
     render({ state, sessions, workbench }) {
-      if (!state?.visible || !state.sessionId) return null;
+      pickerUiTrace({
+        event: "role.render",
+        visible: Boolean(state?.visible),
+        sessionId: state?.sessionId,
+      });
+      if (!state?.visible || !state.sessionId) {
+        pickerUiTrace({
+          event: "role.render.null",
+          visible: Boolean(state?.visible),
+          sessionId: state?.sessionId,
+        });
+        return null;
+      }
       return <PickerOverlay sessionId={state.sessionId} sessions={sessions} workbench={workbench} />;
     },
   });
@@ -312,30 +340,159 @@ function PickerOverlay({
   const syntaxLegend = workbench.syntaxLegend ?? {};
   const inputRef = useRef<HTMLInputElement>(null);
   const itemsRef = useRef<HTMLDivElement>(null);
+  const overlayIdRef = useRef<number>(0);
+  if (!overlayIdRef.current) overlayIdRef.current = ++pickerOverlayInstanceSeq;
+  const overlayId = overlayIdRef.current;
+
+  useEffect(() => {
+    pickerUiTrace({
+      event: "overlay.mount",
+      overlayId,
+      sessionId,
+      activeElement: describeElement(document.activeElement),
+    });
+    return () => {
+      pickerUiTrace({
+        event: "overlay.unmount",
+        overlayId,
+        sessionId,
+        activeElement: describeElement(document.activeElement),
+      });
+    };
+  }, []);
+
+  useEffect(() => {
+    pickerUiTrace({
+      event: "overlay.session",
+      overlayId,
+      sessionId,
+      activeElement: describeElement(document.activeElement),
+    });
+  }, [overlayId, sessionId]);
+
+  useEffect(() => {
+    pickerUiTrace({
+      event: state ? "overlay.state" : "overlay.state.missing",
+      overlayId,
+      sessionId,
+      query: state?.query,
+      selectedIndex: state?.selectedIndex,
+      itemCount: state?.items.length,
+      previewKind: state?.preview?.kind,
+      previewTitle: state?.preview?.title,
+      activeElement: describeElement(document.activeElement),
+    });
+  }, [overlayId, sessionId, state, state?.query, state?.selectedIndex, state?.items.length, state?.preview?.kind, state?.preview?.title]);
 
   useEffect(() => {
     const input = inputRef.current;
-    if (!input || !state) return;
+    if (!input || !state) {
+      pickerUiTrace({
+        event: "overlay.focus.skipped",
+        overlayId,
+        sessionId,
+        hasInput: Boolean(input),
+        hasState: Boolean(state),
+        activeElement: describeElement(document.activeElement),
+      });
+      return;
+    }
+    pickerUiTrace({
+      event: "overlay.focus.begin",
+      overlayId,
+      sessionId,
+      activeElement: describeElement(document.activeElement),
+      input: describeElement(input),
+    });
     input.focus();
     const end = input.value.length;
     input.setSelectionRange(end, end);
-  }, [sessionId]);
+    pickerUiTrace({
+      event: "overlay.focus.done",
+      overlayId,
+      sessionId,
+      activeElement: describeElement(document.activeElement),
+      selectionStart: input.selectionStart,
+      selectionEnd: input.selectionEnd,
+    });
+  }, [overlayId, sessionId]);
 
   useLayoutEffect(() => {
     if (!state) return;
+    pickerUiTrace({
+      event: "overlay.scrollActive",
+      overlayId,
+      sessionId,
+      selectedIndex: state.selectedIndex,
+      itemCount: state.items.length,
+    });
     scrollActiveItemIntoView(itemsRef.current, '.pickerItem[data-active="true"]');
-  }, [state?.items, state?.selectedIndex]);
+  }, [overlayId, sessionId, state?.items, state?.selectedIndex]);
 
-  if (!state) return null;
+  if (!state) {
+    pickerUiTrace({
+      event: "overlay.render.null",
+      overlayId,
+      sessionId,
+      activeElement: describeElement(document.activeElement),
+    });
+    return null;
+  }
+
+  pickerUiTrace({
+    event: "overlay.render",
+    overlayId,
+    sessionId,
+    query: state.query,
+    selectedIndex: state.selectedIndex,
+    itemCount: state.items.length,
+    previewKind: state.preview?.kind,
+    activeElement: describeElement(document.activeElement),
+  });
 
   return (
-    <section className="pickerOverlay">
-      <button
-        type="button"
+    <section
+      className="pickerOverlay"
+      onMouseDown={(event) => {
+        pickerUiTrace({
+          event: "overlay.mouseDown",
+          overlayId,
+          sessionId,
+          target: describeElement(event.target as Element | null),
+          activeElement: describeElement(document.activeElement),
+        });
+      }}
+      onClick={(event) => {
+        pickerUiTrace({
+          event: "overlay.click",
+          overlayId,
+          sessionId,
+          target: describeElement(event.target as Element | null),
+          activeElement: describeElement(document.activeElement),
+        });
+      }}
+    >
+      <div
         className="pickerBackdrop"
-        aria-label="Close picker"
-        onClick={() => {
-          void sessions.dispatch(sessionId, "close");
+        onMouseDown={(event) => {
+          event.preventDefault();
+          pickerUiTrace({
+            event: "backdrop.mouseDown.ignored",
+            overlayId,
+            sessionId,
+            target: describeElement(event.target as Element | null),
+            activeElement: describeElement(document.activeElement),
+          });
+        }}
+        onClick={(event) => {
+          event.preventDefault();
+          pickerUiTrace({
+            event: "backdrop.click.ignored",
+            overlayId,
+            sessionId,
+            target: describeElement(event.target as Element | null),
+            activeElement: describeElement(document.activeElement),
+          });
         }}
       />
       <div className="pickerViewport">
@@ -350,10 +507,56 @@ function PickerOverlay({
                   placeholder={state.placeholder || "Find files"}
                   spellCheck={false}
                   value={state.query}
+                  onFocus={(event) => {
+                    pickerUiTrace({
+                      event: "input.focus",
+                      overlayId,
+                      sessionId,
+                      target: describeElement(event.target),
+                      activeElement: describeElement(document.activeElement),
+                    });
+                  }}
+                  onBlur={(event) => {
+                    pickerUiTrace({
+                      event: "input.blur",
+                      overlayId,
+                      sessionId,
+                      target: describeElement(event.target),
+                      relatedTarget: describeElement(event.relatedTarget as Element | null),
+                      activeElement: describeElement(document.activeElement),
+                    });
+                  }}
+                  onMouseDown={(event) => {
+                    pickerUiTrace({
+                      event: "input.mouseDown",
+                      overlayId,
+                      sessionId,
+                      target: describeElement(event.target),
+                      activeElement: describeElement(document.activeElement),
+                    });
+                  }}
                   onChange={(event) => {
+                    pickerUiTrace({
+                      event: "input.change",
+                      overlayId,
+                      sessionId,
+                      query: event.target.value,
+                      activeElement: describeElement(document.activeElement),
+                    });
                     void sessions.dispatch(sessionId, "setQuery", { query: event.target.value });
                   }}
                   onKeyDown={(event) => {
+                    pickerUiTrace({
+                      event: "input.keyDown",
+                      overlayId,
+                      sessionId,
+                      key: event.key,
+                      metaKey: event.metaKey,
+                      ctrlKey: event.ctrlKey,
+                      altKey: event.altKey,
+                      shiftKey: event.shiftKey,
+                      activeElement: describeElement(document.activeElement),
+                    });
                     if (event.key === "ArrowUp") {
                       event.preventDefault();
                       void sessions.dispatch(sessionId, "moveSelection", { delta: -1 });
@@ -390,8 +593,26 @@ function PickerOverlay({
                       data-active={isActive ? "true" : undefined}
                       onMouseDown={(event) => {
                         event.preventDefault();
+                        pickerUiTrace({
+                          event: "item.mouseDown",
+                          overlayId,
+                          sessionId,
+                          index,
+                          itemId: item.id,
+                          active: isActive,
+                          activeElement: describeElement(document.activeElement),
+                        });
                       }}
                       onClick={() => {
+                        pickerUiTrace({
+                          event: "item.click",
+                          overlayId,
+                          sessionId,
+                          index,
+                          itemId: item.id,
+                          active: isActive,
+                          activeElement: describeElement(document.activeElement),
+                        });
                         void sessions.dispatch(sessionId, "selectIndex", { index }).then(() => sessions.dispatch(sessionId, "accept"));
                       }}
                     >

@@ -249,10 +249,16 @@
   margin-top: 6px;
 }
 
-.pickerPreviewSurface {
+.pickerPreviewViewport {
   background: color-mix(in lab, var(--pickerFg) 1.5%, var(--pickerBg));
   flex: 1 1 auto;
   min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.pickerPreviewSurface {
+  height: 100%;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -263,16 +269,40 @@
 }
 
 .pickerPreviewCanvasViewport {
-  inset: 0 0 auto 0;
-  pointer-events: none;
-  position: sticky;
+  inset: 0;
+  position: absolute;
   z-index: 1;
 }
 
 .pickerPreviewCanvas {
   display: block;
   height: 100%;
+  pointer-events: none;
   width: 100%;
+}
+
+.pickerPreviewSelectableText {
+  caret-color: transparent;
+  color: transparent;
+  font-family: Iosevka, ui-monospace, monospace;
+  font-size: 13px;
+  inset: 0;
+  line-height: 19px;
+  margin: 0;
+  overflow: hidden;
+  padding: 12px;
+  pointer-events: auto;
+  position: absolute;
+  tab-size: 4;
+  user-select: text;
+  white-space: pre;
+  word-break: normal;
+  z-index: 2;
+  -webkit-text-fill-color: transparent;
+}
+
+.pickerPreviewSelectableText::selection {
+  background: color-mix(in lab, var(--pickerAccent) 42%, white 18%);
 }
 
 .pickerPreviewScrollSize {

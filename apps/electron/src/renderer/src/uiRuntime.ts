@@ -4,6 +4,7 @@ import ts from "typescript";
 import type { InteractiveSessionSnapshot, PackageSnapshot, ThemeSnapshot, ToolRootTarget } from "@the-editor/editor";
 import type { DiagnosticEntry } from "@the-editor/editor";
 import * as editorTextSurfaceCanvasModule from "@the-editor/editor/textSurfaceCanvas";
+import * as editorSurfaceViewportControllerModule from "@the-editor/editor/surfaceViewportController";
 import * as editorThemesModule from "@the-editor/editor/themes";
 import { themeCssVariables } from "@the-editor/editor/themes";
 import * as editorUiModule from "@the-editor/editor/ui";
@@ -326,6 +327,7 @@ class RendererSourceModuleLoader {
     if (specifier === "@the-editor/editor/ui") return editorUiModule;
     if (specifier === "@the-editor/editor/themes") return editorThemesModule;
     if (specifier === "@the-editor/editor/textSurfaceCanvas") return editorTextSurfaceCanvasModule;
+    if (specifier === "@the-editor/editor/surfaceViewportController") return editorSurfaceViewportControllerModule;
     if (!specifier.startsWith(".") && !specifier.startsWith("/")) {
       throw new Error(`unsupported ui module import ${specifier} from ${importerPath}`);
     }

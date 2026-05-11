@@ -18,6 +18,8 @@ export interface CanvasTextSurfaceStyleOptions {
 export interface CanvasTextSurfacePaintOptions {
   selectionPickerActive?: boolean;
   showCursors?: boolean;
+  offsetXPx?: number;
+  offsetYPx?: number;
 }
 
 interface TextSurfaceTheme {
@@ -88,6 +90,25 @@ export function configureCanvasTextSurface(
   };
 }
 
+export function clearCanvasTextSurface(
+  canvas: HTMLCanvasElement,
+  themeSnapshot?: ThemeSnapshot,
+  styleOptions: CanvasTextSurfaceStyleOptions = {},
+): void {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  const dpr = window.devicePixelRatio || 1;
+  const cssWidth = canvas.width / dpr;
+  const cssHeight = canvas.height / dpr;
+  const style = resolveTextSurfaceStyle(styleOptions);
+  const theme = resolveTextSurfaceTheme(themeSnapshot?.active, {});
+
+  prepareContext(ctx, dpr, style);
+  ctx.fillStyle = theme.background;
+  ctx.fillRect(0, 0, cssWidth, cssHeight);
+}
+
 export function paintCanvasTextSurface(
   canvas: HTMLCanvasElement,
   frame: RenderFrame,
@@ -104,7 +125,7 @@ export function paintCanvasTextSurface(
   const cssWidth = canvas.width / dpr;
   const cssHeight = canvas.height / dpr;
   const style = resolveTextSurfaceStyle(styleOptions);
-  const metrics = rendererMetrics(ctx, style);
+  const metrics = rendererMetrics(ctx, style, options);
   const theme = resolveTextSurfaceTheme(themeSnapshot?.active, syntaxLegend);
 
   prepareContext(ctx, dpr, style);
@@ -142,14 +163,22 @@ interface RendererMetrics {
   rowHeight: number;
   baselineOffset: number;
   padding: number;
+  offsetX: number;
+  offsetY: number;
 }
 
-function rendererMetrics(ctx: CanvasRenderingContext2D, style: Required<CanvasTextSurfaceStyleOptions>): RendererMetrics {
+function rendererMetrics(
+  ctx: CanvasRenderingContext2D,
+  style: Required<CanvasTextSurfaceStyleOptions>,
+  options: CanvasTextSurfacePaintOptions = {},
+): RendererMetrics {
   return {
     cellWidth: measureCellWidth(ctx, style),
     rowHeight: style.lineHeightPx,
     baselineOffset: Math.round((style.lineHeightPx - style.fontSizePx) / 2 + style.fontSizePx * 0.82),
     padding: style.paddingPx,
+    offsetX: options.offsetXPx ?? 0,
+    offsetY: options.offsetYPx ?? 0,
   };
 }
 
@@ -416,9 +445,9 @@ function fontForStyle(style: Required<CanvasTextSurfaceStyleOptions>): string {
 }
 
 function xForCol(col: number, metrics: RendererMetrics): number {
-  return metrics.padding + col * metrics.cellWidth;
+  return metrics.padding - metrics.offsetX + col * metrics.cellWidth;
 }
 
 function yForRow(row: number, metrics: RendererMetrics): number {
-  return metrics.padding + row * metrics.rowHeight;
+  return metrics.padding - metrics.offsetY + row * metrics.rowHeight;
 }

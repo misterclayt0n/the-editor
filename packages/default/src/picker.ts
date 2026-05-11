@@ -41,8 +41,6 @@ interface ActivePickerHandle {
   previewTimer?: ReturnType<typeof setTimeout>;
   providerSession: PickerSession;
   previewSurfaceId?: SurfaceId;
-  previewMetrics?: CellGridMetrics;
-  previewViewport: Viewport;
   previewPath?: string;
 }
 
@@ -270,7 +268,6 @@ async function openPicker(
     providerModuleId: provider.moduleId,
     requestVersion: 0,
     providerSession,
-    previewViewport: defaultPreviewViewport(),
   };
 
   const session = editor.sessions.create<PickerSessionState>({
@@ -324,54 +321,14 @@ async function openPicker(
         handle.requestVersion += 1;
         schedulePickerPreview(editor, session, handle);
       },
-      configurePreview: async ({ session }, args) => {
+      readPreviewFrame: async (_ctx, args) => {
+        const path = typeof (args as { path?: unknown } | undefined)?.path === "string"
+          ? (args as { path: string }).path
+          : undefined;
         const metrics = readPreviewMetrics(args);
         const viewport = readPreviewViewport(args);
-        if (metrics) handle.previewMetrics = metrics;
-        if (viewport) {
-          handle.previewViewport = {
-            firstRow: Math.max(0, viewport.firstRow),
-            rowCount: viewport.rowCount,
-            firstCol: Math.max(0, viewport.firstCol),
-            wrapWidth: viewport.wrapWidth,
-          };
-        }
-        const preview = session.snapshot().state.preview;
-        if (!isSurfacePreview(preview)) return;
-        const nextPreview = await renderSurfacePreview(editor, handle, preview);
-        if (!isCurrentPicker(editor, handle, handle.requestVersion)) return;
-        session.updateState((state) => {
-          state.preview = nextPreview;
-        });
-      },
-      scrollPreview: async ({ session }, args) => {
-        const preview = session.snapshot().state.preview;
-        if (!isSurfacePreview(preview)) return;
-        const nextViewport = readPreviewViewport(args);
-        const lineCount = preview.lineCount ?? 0;
-        const maxFirstRow = Math.max(0, lineCount - handle.previewViewport.rowCount);
-        if (nextViewport) {
-          handle.previewViewport = {
-            firstRow: clampNumber(nextViewport.firstRow, 0, maxFirstRow),
-            rowCount: handle.previewViewport.rowCount,
-            firstCol: Math.max(0, nextViewport.firstCol),
-            wrapWidth: handle.previewViewport.wrapWidth,
-          };
-        } else {
-          const deltaRows = typeof (args as { deltaRows?: unknown } | undefined)?.deltaRows === "number"
-            ? Math.trunc((args as { deltaRows: number }).deltaRows)
-            : 0;
-          if (!deltaRows) return;
-          handle.previewViewport = {
-            ...handle.previewViewport,
-            firstRow: clampNumber(handle.previewViewport.firstRow + deltaRows, 0, maxFirstRow),
-          };
-        }
-        const nextPreview = await renderSurfacePreview(editor, handle, preview);
-        if (!isCurrentPicker(editor, handle, handle.requestVersion)) return;
-        session.updateState((state) => {
-          state.preview = nextPreview;
-        });
+        if (!path || !metrics || !viewport) return null;
+        return readSurfacePreviewFrame(editor, handle, path, viewport, metrics);
       },
       accept: async ({ session }) => {
         const snapshot = session.snapshot().state;
@@ -479,10 +436,8 @@ async function refreshPickerPreview(
       return;
     }
     if (preview.kind === "surface") {
-      const nextPreview = await renderSurfacePreview(editor, handle, preview);
-      if (!isCurrentPicker(editor, handle, requestVersion)) return;
       session.updateState((next) => {
-        next.preview = nextPreview;
+        next.preview = preview;
       });
       return;
     }
@@ -511,40 +466,30 @@ function isCurrentPicker(
   return active === handle && handle.requestVersion === requestVersion;
 }
 
-async function renderSurfacePreview(
+async function readSurfacePreviewFrame(
   editor: Parameters<EditorModule>[0],
   handle: ActivePickerHandle,
-  preview: PickerSurfacePreview,
-): Promise<PickerSurfacePreview> {
-  const surfaceId = await ensurePreviewSurface(editor, handle);
-  if (handle.previewPath !== preview.path) {
-    handle.previewPath = preview.path;
-    handle.previewViewport = {
-      ...handle.previewViewport,
-      firstRow: 0,
-      firstCol: 0,
-    };
-    await editor.runtime.surfaces.loadFile({ surfaceId, path: preview.path });
+  path: string,
+  viewport: Viewport,
+  metrics: CellGridMetrics,
+): Promise<Pick<PickerSurfacePreview, "frame" | "viewport" | "lineCount" | "syntaxLegend">> {
+  const surfaceId = await ensurePreviewSurface(editor, handle, viewport);
+  if (handle.previewPath !== path) {
+    handle.previewPath = path;
+    await editor.runtime.surfaces.loadFile({ surfaceId, path });
   }
-  if (handle.previewMetrics) {
-    await editor.runtime.surfaces.setMetrics({ surfaceId, metrics: handle.previewMetrics });
-  }
+  await editor.runtime.surfaces.setMetrics({ surfaceId, metrics });
   await editor.runtime.surfaces.setSoftWrap({ surfaceId, softWrap: false });
   const { lineCount } = await editor.runtime.surfaces.lineCount({ surfaceId });
-  handle.previewViewport = {
-    ...handle.previewViewport,
-    firstRow: clampNumber(
-      handle.previewViewport.firstRow,
-      0,
-      Math.max(0, lineCount - handle.previewViewport.rowCount),
-    ),
-    firstCol: Math.max(0, handle.previewViewport.firstCol),
+  const boundedViewport = {
+    ...viewport,
+    firstRow: clampNumber(viewport.firstRow, 0, Math.max(0, lineCount - viewport.rowCount)),
+    firstCol: Math.max(0, viewport.firstCol),
   };
-  const frame = await editor.runtime.surfaces.renderFrame({ surfaceId, viewport: handle.previewViewport });
+  const frame = await editor.runtime.surfaces.renderFrame({ surfaceId, viewport: boundedViewport });
   return {
-    ...preview,
     frame,
-    viewport: handle.previewViewport,
+    viewport: boundedViewport,
     lineCount,
     syntaxLegend: await editor.runtime.syntax.highlightLegend(),
   };
@@ -553,12 +498,13 @@ async function renderSurfacePreview(
 async function ensurePreviewSurface(
   editor: Parameters<EditorModule>[0],
   handle: ActivePickerHandle,
+  viewport: Viewport,
 ): Promise<SurfaceId> {
   if (handle.previewSurfaceId !== undefined) return handle.previewSurfaceId;
   const document = await editor.runtime.documents.createScratch({ text: "" });
   const surface = await editor.runtime.surfaces.create({
     documentId: document.documentId,
-    viewport: handle.previewViewport,
+    viewport,
   });
   handle.previewSurfaceId = surface.surfaceId;
   return surface.surfaceId;
@@ -588,15 +534,6 @@ function readPreviewViewport(args: unknown): Viewport | undefined {
     rowCount,
     firstCol: typeof (viewport as { firstCol?: unknown }).firstCol === "number" ? (viewport as { firstCol: number }).firstCol : 0,
     wrapWidth,
-  };
-}
-
-function defaultPreviewViewport(): Viewport {
-  return {
-    firstRow: 0,
-    rowCount: 24,
-    firstCol: 0,
-    wrapWidth: 80,
   };
 }
 

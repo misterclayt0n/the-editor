@@ -16,6 +16,7 @@ export * from "./pickers.js";
 export * from "./roles.js";
 export * from "./runtimeClient.js";
 export * from "./sessions.js";
+export * from "./surfaceViewportController.js";
 export * from "./themes.js";
 export * from "./tools.js";
 export * from "./workingDirectory.js";

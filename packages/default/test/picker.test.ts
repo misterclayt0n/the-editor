@@ -102,15 +102,20 @@ describe("default picker", () => {
     expect(index).toBeGreaterThanOrEqual(0);
 
     await editor.commands.dispatch({ id: commandId("picker.selectIndex"), args: { index } });
-    await waitFor(() => {
-      const preview = pickerSnapshot(editor)?.preview;
-      return preview?.kind === "surface" && preview.lineCount === 141;
-    });
+    await waitFor(() => pickerSnapshot(editor)?.preview?.kind === "surface");
 
     const preview = pickerSnapshot(editor)?.preview;
     expect(preview?.kind).toBe("surface");
-    expect(preview?.lineCount).toBe(141);
-    expect((preview?.frame?.rows?.length ?? 0)).toBeGreaterThan(0);
+
+    const roleState = editor.roles.snapshot("picker")?.state as { sessionId?: string } | undefined;
+    const frameResult = await editor.sessions.dispatch(roleState?.sessionId!, "readPreviewFrame", {
+      path,
+      metrics: { cellWidthPx: 9, rowHeightPx: 19 },
+      viewport: { firstRow: 0, rowCount: 24, firstCol: 0, wrapWidth: 80 },
+    }) as { lineCount: number; frame?: { rows?: unknown[] } };
+
+    expect(frameResult.lineCount).toBe(141);
+    expect((frameResult.frame?.rows?.length ?? 0)).toBeGreaterThan(0);
   }, 15_000);
 
   it("opens the file picker and opens a selected file", async () => {

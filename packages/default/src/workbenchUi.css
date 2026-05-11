@@ -1,37 +1,49 @@
-.pierreWorkbenchTabbarRoot {
+.workbenchFileTabbarRoot {
+  -webkit-app-region: drag;
   position: relative;
 }
 
-.pierreWorkbenchTabSprite {
+.workbenchFileTabSprite {
   height: 0;
   overflow: hidden;
   position: absolute;
   width: 0;
 }
 
-.pierreWorkbenchTabbarGroup {
+.workbenchFileTabbarGroup {
+  -webkit-app-region: no-drag;
   align-items: center;
   display: flex;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   gap: 4px;
   height: 40px;
+  max-width: 100%;
   min-width: 0;
   padding: 3px 8px 0;
 }
 
-.pierreWorkbenchTabScrollerShell {
-  display: flex;
+.workbenchFileTabbarDragFill {
+  -webkit-app-region: drag;
+  align-self: stretch;
   flex: 1 1 auto;
+  min-width: 18px;
+}
+
+.workbenchFileTabScrollerShell {
+  display: flex;
+  flex: 0 1 auto;
+  max-width: 100%;
   min-width: 0;
   position: relative;
 }
 
-.pierreWorkbenchTabScroller {
+.workbenchFileTabScroller {
   -ms-overflow-style: none;
   -webkit-overflow-scrolling: touch;
+  -webkit-app-region: no-drag;
   align-items: center;
   display: flex;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   gap: 4px;
   min-width: 0;
   overflow-x: auto;
@@ -40,20 +52,21 @@
   scrollbar-width: none;
 }
 
-.pierreWorkbenchTabScroller::-webkit-scrollbar {
+.workbenchFileTabScroller::-webkit-scrollbar {
   display: none;
 }
 
-.pierreWorkbenchTabItem {
+.workbenchFileTabItem {
   display: flex;
   flex: 0 0 auto;
 }
 
-.pierreWorkbenchTab {
+.workbenchFileTab {
   color: var(--theme-ui-text-inactive-fg);
   display: flex;
   font-size: 12px;
   font-weight: 500;
+  border-radius: 2px;
   height: 28px;
   isolation: isolate;
   max-width: 200px;
@@ -62,26 +75,27 @@
   transition: color 150ms ease, background-color 150ms ease;
 }
 
-.pierreWorkbenchTab.isActive {
+.workbenchFileTab.isActive {
   background: var(--theme-ui-menu-selected-bg);
   color: var(--theme-ui-menu-selected-fg);
 }
 
-.pierreWorkbenchTab.isInactive {
+.workbenchFileTab.isInactive {
   background: transparent;
   color: var(--theme-ui-text-inactive-fg);
 }
 
-.pierreWorkbenchTabbarRoot:hover .pierreWorkbenchTab.isInactive {
+.workbenchFileTabbarRoot:hover .workbenchFileTab.isInactive {
   background: color-mix(in srgb, var(--theme-ui-menu-selected-bg) 38%, transparent);
 }
 
-.pierreWorkbenchTabbarRoot:hover .pierreWorkbenchTab.isInactive:hover {
+.workbenchFileTabbarRoot:hover .workbenchFileTab.isInactive:hover {
   background: color-mix(in srgb, var(--theme-ui-menu-selected-bg) 56%, transparent);
   color: var(--theme-ui-text-fg);
 }
 
-.pierreWorkbenchTabButton {
+.workbenchFileTabButton {
+  -webkit-app-region: no-drag;
   align-items: center;
   appearance: none;
   background: transparent;
@@ -99,13 +113,13 @@
   z-index: 0;
 }
 
-.pierreWorkbenchTabIcon {
+.workbenchFileTabIcon {
   flex: 0 0 auto;
   height: 16px;
   width: 16px;
 }
 
-.pierreWorkbenchTabLabel {
+.workbenchFileTabLabel {
   display: block;
   min-width: 0;
   overflow: hidden;
@@ -113,7 +127,7 @@
   white-space: nowrap;
 }
 
-.pierreWorkbenchTabCloseFade {
+.workbenchFileTabCloseFade {
   background: linear-gradient(to left, var(--theme-ui-menu-selected-bg), var(--theme-ui-menu-selected-bg), transparent);
   bottom: 0;
   opacity: 0;
@@ -126,11 +140,12 @@
   z-index: 10;
 }
 
-.pierreWorkbenchTab.isInactive .pierreWorkbenchTabCloseFade {
+.workbenchFileTab.isInactive .workbenchFileTabCloseFade {
   background: linear-gradient(to left, color-mix(in srgb, var(--theme-ui-menu-bg) 88%, transparent), color-mix(in srgb, var(--theme-ui-menu-bg) 88%, transparent), transparent);
 }
 
-.pierreWorkbenchTabClose {
+.workbenchFileTabClose {
+  -webkit-app-region: no-drag;
   align-items: center;
   appearance: none;
   background: color-mix(in srgb, var(--theme-ui-background-bg) 48%, transparent);
@@ -151,26 +166,24 @@
   z-index: 20;
 }
 
-.pierreWorkbenchTabCloseIcon {
+.workbenchFileTabCloseIcon {
   height: 12px;
   width: 12px;
 }
 
-.pierreWorkbenchTab:hover .pierreWorkbenchTabCloseFade,
-.pierreWorkbenchTab:hover .pierreWorkbenchTabClose,
-.pierreWorkbenchTab:focus-within .pierreWorkbenchTabCloseFade,
-.pierreWorkbenchTab:focus-within .pierreWorkbenchTabClose,
-.pierreWorkbenchTab.isActive .pierreWorkbenchTabCloseFade,
-.pierreWorkbenchTab.isActive .pierreWorkbenchTabClose {
+.workbenchFileTab:hover .workbenchFileTabCloseFade,
+.workbenchFileTab:hover .workbenchFileTabClose,
+.workbenchFileTab:focus-within .workbenchFileTabCloseFade,
+.workbenchFileTab:focus-within .workbenchFileTabClose {
   opacity: 1;
 }
 
-.pierreWorkbenchTabClose:hover {
+.workbenchFileTabClose:hover {
   background: color-mix(in srgb, var(--theme-ui-menu-selected-fg) 12%, transparent);
   color: var(--theme-ui-text-focus-fg);
 }
 
-.pierreWorkbenchTabFade {
+.workbenchFileTabFade {
   bottom: 0;
   opacity: 0;
   pointer-events: none;
@@ -180,17 +193,17 @@
   width: 32px;
 }
 
-.pierreWorkbenchTabFade.left {
+.workbenchFileTabFade.left {
   background: linear-gradient(to right, var(--theme-ui-menu-bg), transparent);
   left: 0;
 }
 
-.pierreWorkbenchTabFade.right {
+.workbenchFileTabFade.right {
   background: linear-gradient(to left, var(--theme-ui-menu-bg), transparent);
   right: 0;
 }
 
-.pierreWorkbenchTabFade.isVisible {
+.workbenchFileTabFade.isVisible {
   opacity: 1;
 }
 

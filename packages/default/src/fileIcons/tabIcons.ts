@@ -5,16 +5,16 @@ import {
   resolveBuiltInFileIconToken,
 } from "./builtInIcons.js";
 
-export interface PierreTabResolvedIcon {
+export interface ResolvedFileIcon {
   name: string;
   color?: string;
 }
 
-export function pierreTabIconSpriteMarkup(): string {
+export function fileIconSpriteMarkup(): string {
   return getBuiltInSpriteSheet("complete");
 }
 
-export function resolvePierreTabIcon(input: { kind: string; path?: string; title: string }): PierreTabResolvedIcon {
+export function resolveTabFileIcon(input: { kind: string; path?: string; title: string }): ResolvedFileIcon {
   const fileName = fileNameForTab(input);
   const token = resolveBuiltInFileIconToken("complete", fileName, extensionCandidates(fileName));
   if (!token) return { name: "file-tree-icon-file" };

@@ -8,7 +8,7 @@ import {
 import type { CanvasTextSurfaceStyleOptions } from "@the-editor/editor/textSurfaceCanvas";
 import { resolveThemeStyleLoose, type ResolvedThemeDefinition } from "@the-editor/editor/themes";
 import type { EditorUiModule, UiSessionClient, WorkbenchSnapshot } from "@the-editor/editor/ui";
-import { PierreWorkbenchTabstrip } from "./pierreTabstrip.js";
+import { DefaultWorkbenchTabstrip } from "./workbenchTabstrip.js";
 import "./commandPalette.css";
 import "./inputPrompt.css";
 import "./picker.css";
@@ -168,7 +168,7 @@ const uiModule: EditorUiModule = (host) => {
     implementationId: defaultTabstripImplementationId,
     render({ commands, panes, activePaneId, showWindowControls }) {
       return (
-        <PierreWorkbenchTabstrip
+        <DefaultWorkbenchTabstrip
           dispatch={commands.dispatch}
           panes={panes}
           activePaneId={activePaneId}

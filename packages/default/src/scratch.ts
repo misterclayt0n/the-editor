@@ -48,6 +48,7 @@ export function defaultScratch(): EditorModule {
         setEditorMode(editor, "normal");
         editor.focus.setEditor();
         await refreshActiveSurface(editor, viewport);
+        editor.workbench.invalidate("frame", "focus");
         return state;
       },
     });
@@ -80,6 +81,7 @@ export function defaultScratch(): EditorModule {
         setEditorMode(editor, "normal");
         editor.focus.setEditor();
         await refreshActiveSurface(editor, viewport);
+        editor.workbench.invalidate("frame", "focus");
         return state;
       },
     });
@@ -93,6 +95,7 @@ export function defaultScratch(): EditorModule {
         state.softWrap = !state.softWrap;
         await editor.runtime.surfaces.setSoftWrap({ surfaceId: state.activeSurfaceId, softWrap: state.softWrap });
         await refreshActiveSurface(editor);
+        editor.workbench.invalidate("frame");
         return state;
       },
     });

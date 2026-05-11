@@ -494,6 +494,7 @@ impl RuntimeSession {
         start_col: span.start_col.min(row_len),
         end_col: span.end_col.min(row_len),
         kind: span.kind.get() as usize,
+        scope: self.syntax.registry().highlight_name(span.kind),
       });
     }
 

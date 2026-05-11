@@ -47,14 +47,14 @@ export function setEditorMode(editor: EditorHost, mode: EditorMode): DefaultEdit
 
 export async function refreshActiveSurface(editor: EditorHost, viewport?: Viewport): Promise<DefaultEditorState> {
   const state = getDefaultState(editor);
-  if (!Object.keys(state.syntaxLegend).length) {
-    state.syntaxLegend = await editor.runtime.syntax.highlightLegend();
-  }
   if (state.activeSurfaceId) {
     state.lastFrame = await editor.runtime.surfaces.renderFrame({
       surfaceId: state.activeSurfaceId,
       viewport,
     });
+  }
+  if (shouldRefreshSyntaxLegend(state)) {
+    state.syntaxLegend = await editor.runtime.syntax.highlightLegend();
   }
   state.roleStates = editor.roles.snapshotAll();
   state.decorations = await editor.decorations.collect({
@@ -65,6 +65,12 @@ export async function refreshActiveSurface(editor: EditorHost, viewport?: Viewpo
     frame: state.lastFrame,
   });
   return state;
+}
+
+function shouldRefreshSyntaxLegend(state: DefaultEditorState): boolean {
+  if (!Object.keys(state.syntaxLegend).length) return true;
+  const kinds = state.lastFrame?.syntax ?? [];
+  return kinds.some((span) => state.syntaxLegend[span.kind] === undefined);
 }
 
 export async function handleKeyInput(editor: EditorHost, input: KeyInput): Promise<DefaultEditorState> {

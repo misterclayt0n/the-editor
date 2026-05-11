@@ -29,6 +29,7 @@ export interface PickerPreviewSyntaxSpan {
   startCol: number;
   endCol: number;
   kind: number;
+  scope?: string;
 }
 
 export type PickerPreview =

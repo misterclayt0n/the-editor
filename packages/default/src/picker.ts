@@ -237,7 +237,13 @@ export function defaultPicker(): EditorModule {
                 text: row.text,
                 lineNumber: row.lineNumber,
               })),
-              syntax: preview.syntax,
+              syntax: preview.syntax?.map((span) => ({
+                row: span.row,
+                startCol: span.startCol,
+                endCol: span.endCol,
+                kind: span.kind,
+                scope: span.scope,
+              })),
             } satisfies PickerPreview;
           },
           async accept(item) {

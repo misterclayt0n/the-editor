@@ -258,6 +258,7 @@ export interface TextPreviewSyntaxSpan {
   startCol: number;
   endCol: number;
   kind: number;
+  scope?: string;
 }
 
 export interface TextPreviewResult {

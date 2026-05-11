@@ -137,6 +137,7 @@ pub struct TextPreviewSyntaxSpan {
   pub start_col: usize,
   pub end_col:   usize,
   pub kind:      usize,
+  pub scope:     Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

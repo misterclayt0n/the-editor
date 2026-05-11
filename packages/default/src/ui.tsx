@@ -54,6 +54,7 @@ interface PickerPreviewViewSyntaxSpan {
   startCol: number;
   endCol: number;
   kind: number;
+  scope?: string;
 }
 
 interface PickerPreviewViewState {
@@ -704,7 +705,7 @@ function renderPreviewLine(
         parts.push(
           <span
             key={`syntax:${start}-${end}-${span.kind}`}
-            style={{ color: previewSyntaxColor(theme, syntaxLegend[span.kind]) }}
+            style={{ color: previewSyntaxColor(theme, span.scope ?? syntaxLegend[span.kind]) }}
           >
             {chunk}
           </span>,

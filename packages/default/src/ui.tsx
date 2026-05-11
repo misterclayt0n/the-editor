@@ -482,7 +482,6 @@ function PickerSurfacePreview({
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const viewportRef = useRef<HTMLDivElement>(null);
   const layoutRef = useRef<CanvasTextSurfaceConfiguration | null>(null);
   const rafRef = useRef<number | null>(null);
   const syncingScrollRef = useRef(false);
@@ -502,17 +501,14 @@ function PickerSurfacePreview({
         width: previewSurfaceContentWidth(preview, next, scrollElement.clientWidth),
         height: previewSurfaceContentHeight(preview, next, scrollElement.clientHeight),
       });
-      const derivedViewport = previewViewportFromScroll(scrollElement, next, preview.lineCount ?? 0);
-      const viewport = {
-        firstRow: preview.viewport?.firstRow ?? derivedViewport.firstRow,
-        rowCount: next.viewport.rowCount,
-        firstCol: preview.viewport?.firstCol ?? derivedViewport.firstCol,
-        wrapWidth: next.viewport.wrapWidth,
-      };
-      syncPreviewSurfaceTransform(scrollElement, viewportRef.current, next, preview.lineCount ?? 0);
+      syncingScrollRef.current = syncPreviewSurfaceScroll(scrollElement, preview, next);
       void sessions.dispatch(sessionId, "configurePreview", {
         metrics: next.metrics,
-        viewport,
+        viewport: {
+          ...(preview.viewport ?? previewViewportFromScroll(scrollElement, next, preview.lineCount ?? 0)),
+          rowCount: next.viewport.rowCount,
+          wrapWidth: next.viewport.wrapWidth,
+        },
       });
     };
 
@@ -540,7 +536,6 @@ function PickerSurfacePreview({
       height: previewSurfaceContentHeight(preview, layout, scrollElement.clientHeight),
     });
     syncingScrollRef.current = syncPreviewSurfaceScroll(scrollElement, preview, layout);
-    syncPreviewSurfaceTransform(scrollElement, viewportRef.current, layout, preview.lineCount ?? 0);
     paintCanvasTextSurface(
       canvas,
       preview.frame,
@@ -551,6 +546,9 @@ function PickerSurfacePreview({
       PICKER_PREVIEW_SURFACE_STYLE,
     );
   }, [preview, theme]);
+
+  const canvasOffsetTop = previewSurfaceOffsetTop(preview, layoutRef.current);
+  const canvasOffsetLeft = previewSurfaceOffsetLeft(preview, layoutRef.current);
 
   return (
     <>
@@ -566,7 +564,6 @@ function PickerSurfacePreview({
           const scrollElement = scrollRef.current;
           const layout = layoutRef.current;
           if (!scrollElement || !layout) return;
-          syncPreviewSurfaceTransform(scrollElement, viewportRef.current, layout, preview.lineCount ?? 0);
           if (syncingScrollRef.current) {
             syncingScrollRef.current = false;
             return;
@@ -584,14 +581,21 @@ function PickerSurfacePreview({
         }}
       >
         <div
-          className="pickerPreviewSpacer"
+          className="pickerPreviewSurfaceContent"
           style={{
             width: `${contentSize.width}px`,
             height: `${contentSize.height}px`,
           }}
-        />
-        <div ref={viewportRef} className="pickerPreviewCanvasViewport">
-          <canvas ref={canvasRef} className="pickerPreviewCanvas" />
+        >
+          <div
+            className="pickerPreviewCanvasViewport"
+            style={{
+              top: `${canvasOffsetTop}px`,
+              left: `${canvasOffsetLeft}px`,
+            }}
+          >
+            <canvas ref={canvasRef} className="pickerPreviewCanvas" />
+          </div>
         </div>
       </div>
     </>
@@ -661,17 +665,20 @@ function syncPreviewSurfaceScroll(
   return true;
 }
 
-function syncPreviewSurfaceTransform(
-  scrollElement: HTMLDivElement,
-  viewportElement: HTMLDivElement | null,
-  layout: CanvasTextSurfaceConfiguration,
-  lineCount: number,
-): void {
-  if (!viewportElement) return;
-  const viewport = previewViewportFromScroll(scrollElement, layout, lineCount);
-  const offsetX = viewport.firstCol * layout.metrics.cellWidthPx - scrollElement.scrollLeft;
-  const offsetY = viewport.firstRow * layout.metrics.rowHeightPx - scrollElement.scrollTop;
-  viewportElement.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
+function previewSurfaceOffsetTop(
+  preview: PickerPreviewViewState & { kind: "surface" },
+  layout: CanvasTextSurfaceConfiguration | null,
+): number {
+  if (!layout) return 0;
+  return Math.max(0, (preview.viewport?.firstRow ?? 0) * layout.metrics.rowHeightPx);
+}
+
+function previewSurfaceOffsetLeft(
+  preview: PickerPreviewViewState & { kind: "surface" },
+  layout: CanvasTextSurfaceConfiguration | null,
+): number {
+  if (!layout) return 0;
+  return Math.max(0, (preview.viewport?.firstCol ?? 0) * layout.metrics.cellWidthPx);
 }
 
 function clampNumber(value: number, min: number, max: number): number {

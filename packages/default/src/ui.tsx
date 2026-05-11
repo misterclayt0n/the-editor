@@ -8,7 +8,6 @@ import {
 import type { CanvasTextSurfaceStyleOptions } from "@the-editor/editor/textSurfaceCanvas";
 import { resolveThemeStyleLoose, type ResolvedThemeDefinition } from "@the-editor/editor/themes";
 import type { EditorUiModule, UiSessionClient, WorkbenchSnapshot } from "@the-editor/editor/ui";
-import { tabstripImplementationId } from "./workbenchControls.js";
 import "./commandPalette.css";
 import "./inputPrompt.css";
 import "./picker.css";
@@ -112,6 +111,7 @@ interface NotificationsViewState {
 }
 
 const inspectorToolTypeId = "default.inspector";
+const defaultTabstripImplementationId = "default.tabstrip";
 const PICKER_PREVIEW_SURFACE_STYLE: CanvasTextSurfaceStyleOptions = {
   paddingPx: 12,
   fontSizePx: 13,
@@ -164,7 +164,7 @@ const uiModule: EditorUiModule = (host) => {
   });
 
   host.tabstrips.register({
-    implementationId: tabstripImplementationId,
+    implementationId: defaultTabstripImplementationId,
     render({ commands, panes, activePaneId, showWindowControls }) {
       return (
         <DefaultWorkbenchTabstrip

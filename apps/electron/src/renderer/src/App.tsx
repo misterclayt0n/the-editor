@@ -176,57 +176,6 @@ function WorkbenchSidebarChrome(_props: { workbench: WorkbenchSnapshot }) {
   );
 }
 
-function WorkbenchPaneTabs({
-  showWindowControls,
-  panes,
-  activePaneId,
-}: {
-  showWindowControls?: boolean;
-  panes: WorkbenchPaneDescriptor[];
-  activePaneId?: string;
-}) {
-  return (
-    <div className="workbenchTopTabsBar" data-leading={showWindowControls ? "true" : undefined}>
-      <div className="workbenchTopTabs" role="tablist" aria-label="Open tabs">
-        {panes.map((pane) => {
-          const active = pane.id === activePaneId;
-          return (
-            <div key={pane.id} className="workbenchTopTabWrap" data-active={active ? "true" : undefined}>
-              <button
-                type="button"
-                className="workbenchTopTab"
-                data-active={active ? "true" : undefined}
-                onMouseDown={(event) => {
-                  event.preventDefault();
-                  focusPane(pane.id);
-                }}
-              >
-                <span className="workbenchTopTabBadge" aria-hidden="true">{paneBadgeLabel(pane)}</span>
-                <span className="workbenchTopTabTitle">{pane.title}</span>
-              </button>
-              {pane.closeable ? (
-                <button
-                  type="button"
-                  className="workbenchTopTabClose"
-                  aria-label={`Close ${pane.title}`}
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    closePane(pane.id);
-                  }}
-                >
-                  ×
-                </button>
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
-      <div className="workbenchTopTabsDragFill" />
-    </div>
-  );
-}
-
 function SidebarSearchGlyph() {
   return (
     <span className="workbenchSidebarGlyph" aria-hidden="true">
@@ -475,13 +424,7 @@ function EditorGroupView({
           panes: tabs,
           activePaneId,
           showWindowControls: showWindowChrome,
-        }) ?? (
-          <WorkbenchPaneTabs
-            panes={tabs}
-            activePaneId={activePaneId}
-            showWindowControls={showWindowChrome}
-          />
-        )}
+        })}
       </header>
       <div className="editorGroupBody" onMouseDown={() => focusGroup(group.id)}>
         {activePane ? renderPane(activePane, active, workbench, selectionPickerActive) : <EmptyEditorGroup />}
@@ -821,24 +764,6 @@ function findLeadingGroupId(node: WorkbenchEditorLayoutNodeSnapshot): string | u
   if (node.kind === "group") return node.groupId;
   const first = node.children[0];
   return first ? findLeadingGroupId(first) : undefined;
-}
-
-function basename(path: string): string {
-  const normalized = path.replace(/\\/g, "/").replace(/\/$/, "");
-  const slash = normalized.lastIndexOf("/");
-  return slash >= 0 ? normalized.slice(slash + 1) : normalized;
-}
-
-function paneBadgeLabel(pane: WorkbenchPaneDescriptor): string {
-  if (pane.kind === "tool") {
-    const type = pane.typeId.split(".").pop() ?? pane.typeId;
-    return type.slice(0, 2).toUpperCase();
-  }
-  const source = pane.path ?? pane.title;
-  const match = /\.([a-z0-9]+)$/i.exec(source);
-  if (!match) return "TXT";
-  const ext = match[1].toUpperCase();
-  return ext.slice(0, Math.min(3, ext.length));
 }
 
 function clamp(value: number, min: number, max: number): number {

@@ -15,6 +15,7 @@ import {
   type WorkbenchSnapshot,
   type WorkbenchTabstripViewContext,
 } from "@the-editor/editor/ui";
+import { UI_SOURCE_ALLOWED_SPECIFIERS, validateUiModuleImportGraph } from "./uiModuleGraph.js";
 
 type LoadedTarget = {
   moduleKey: string;
@@ -134,6 +135,7 @@ export class RendererPackageRuntime {
   private async instantiate(moduleKey: string, entryPath: string, version: number, target: "ui"): Promise<LoadedTarget> {
     const contributionModuleId = `${moduleKey}@${version}`;
     const loader = new RendererSourceModuleLoader(contributionModuleId, version);
+    loader.validate(entryPath);
     const activate = loader.loadDefault<EditorUiModule>(entryPath);
     let moduleDisposable: { dispose(): void } | undefined;
     await this.host.withModule(contributionModuleId, async () => {
@@ -275,6 +277,14 @@ class RendererSourceModuleLoader {
     private readonly version: number,
   ) {}
 
+  validate(entryPath: string): void {
+    validateUiModuleImportGraph(
+      entryPath,
+      (path) => window.theEditor.readExtensionFile(path),
+      (specifier, importerPath) => window.theEditor.resolveExtensionPath(specifier, importerPath) ?? undefined,
+    );
+  }
+
   loadDefault<T>(entryPath: string): T {
     const module = this.evaluate(entryPath).exports as { default?: T } | T;
     if (typeof module === "function") return module as T;
@@ -339,7 +349,10 @@ class RendererSourceModuleLoader {
     if (specifier === "@the-editor/editor/textSurfaceCanvas") return editorTextSurfaceCanvasModule;
     if (specifier === "@the-editor/editor/surfaceViewportController") return editorSurfaceViewportControllerModule;
     if (!specifier.startsWith(".") && !specifier.startsWith("/")) {
-      throw new Error(`unsupported ui module import ${specifier} from ${importerPath}`);
+      throw new Error(
+        `unsupported ui module import ${specifier} from ${importerPath}; `
+        + `allowed: ${[...UI_SOURCE_ALLOWED_SPECIFIERS].join(", ")}`,
+      );
     }
     const resolved = window.theEditor.resolveExtensionPath(specifier, importerPath);
     if (!resolved) throw new Error(`unable to resolve ${specifier} from ${importerPath}`);

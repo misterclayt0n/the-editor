@@ -5,6 +5,7 @@ export * from "./diagnostics.js";
 export * from "./disposable.js";
 export * from "./editorHost.js";
 export * from "./focus.js";
+export * from "./gutters.js";
 export * from "./hooks.js";
 export * from "./interaction.js";
 export * from "./keymaps.js";

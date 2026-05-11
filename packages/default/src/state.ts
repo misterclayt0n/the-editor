@@ -1,5 +1,5 @@
 import type { CellGridMetrics, DocumentId, RenderFrame, SurfaceId, Viewport } from "@the-editor/contracts/runtime";
-import { commandId, type BufferDecoration, type EditorHost, type KeyInput, type RoleSnapshot, type WorkbenchPaneId } from "@the-editor/editor";
+import { commandId, type BufferDecoration, type EditorHost, type GutterSnapshot, type KeyInput, type RoleSnapshot, type WorkbenchPaneId } from "@the-editor/editor";
 
 export type EditorMode = "normal" | "insert" | "select";
 
@@ -24,6 +24,7 @@ export interface DefaultEditorState {
   preferredColumn: number | undefined;
   lastFrame: RenderFrame | undefined;
   decorations: BufferDecoration[];
+  gutters: GutterSnapshot[];
   roleStates: Record<string, RoleSnapshot>;
   syntaxLegend: Record<number, string>;
   surfaceViewport?: Viewport;
@@ -45,6 +46,7 @@ export function getDefaultState(editor: EditorHost): DefaultEditorState {
     preferredColumn: undefined,
     lastFrame: undefined,
     decorations: [],
+    gutters: [],
     roleStates: {},
     syntaxLegend: {},
     surfaceViewport: undefined,
@@ -100,13 +102,15 @@ export async function refreshActiveSurface(editor: EditorHost, viewport?: Viewpo
     state.syntaxLegend = await editor.runtime.syntax.highlightLegend();
   }
   state.roleStates = editor.roles.snapshotAll();
-  state.decorations = await editor.decorations.collect({
+  const surfaceContext = {
     mode: state.mode,
     activeDocumentId: state.activeDocumentId,
     activeSurfaceId: state.activeSurfaceId,
     activePath: state.activePath,
     frame: state.lastFrame,
-  });
+  };
+  state.decorations = await editor.decorations.collect(surfaceContext);
+  state.gutters = await editor.gutters?.collect(surfaceContext) ?? [];
   return state;
 }
 

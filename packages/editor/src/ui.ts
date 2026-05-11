@@ -3,6 +3,7 @@ import type { BufferDecoration } from "./decorations.js";
 import type { DiagnosticEntry } from "./diagnostics.js";
 import { toDisposable, type Disposable } from "./disposable.js";
 import type { FocusTarget } from "./focus.js";
+import type { GutterSnapshot } from "./gutters.js";
 import type { CommandDispatch } from "./commands.js";
 import type { InteractionSnapshot } from "./interaction.js";
 import type { NotificationEntry } from "./notifications.js";
@@ -25,6 +26,7 @@ export interface WorkbenchSnapshot {
   interaction?: InteractionSnapshot;
   tools?: ToolSnapshot[];
   decorations?: BufferDecoration[];
+  gutters?: GutterSnapshot[];
   focus?: FocusTarget;
   theme?: ThemeSnapshot;
   syntaxLegend?: Record<number, string>;

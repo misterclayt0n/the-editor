@@ -5,6 +5,7 @@ import { DecorationRegistry } from "./decorations.js";
 import { DiagnosticRegistry } from "./diagnostics.js";
 import { DisposableStore } from "./disposable.js";
 import { FocusRegistry } from "./focus.js";
+import { GutterRegistry } from "./gutters.js";
 import { Hooks } from "./hooks.js";
 import { InteractionRegistry } from "./interaction.js";
 import { KeymapRegistry } from "./keymaps.js";
@@ -44,6 +45,7 @@ export class EditorHost {
   readonly tools = new ToolRegistry(this);
   readonly interaction = new InteractionRegistry(this);
   readonly decorations = new DecorationRegistry(this);
+  readonly gutters = new GutterRegistry(this);
   readonly focus = new FocusRegistry(this);
   readonly themes = new ThemeRegistry(this);
   readonly sessions = new InteractiveSessionRegistry(this);

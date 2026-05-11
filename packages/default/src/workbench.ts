@@ -54,6 +54,27 @@ export function defaultWorkbench(): EditorModule {
       },
     });
 
+    editor.commands.register<{ paneId: WorkbenchPaneId | string; placement: unknown }, void>({
+      id: commandId("workbench.movePane"),
+      title: "Move Pane",
+      hidden: true,
+      async run(_ctx, args) {
+        const previousActivePaneId = getDefaultState(editor).activePaneId;
+        const pane = editor.workbench.movePane(args.paneId, args.placement as never);
+        if (pane?.kind === "surface" && previousActivePaneId !== pane.id) {
+          const paneState = surfacePaneState(editor, pane.id);
+          if (paneState?.viewport) {
+            await editor.runtime.surfaces.setViewport({ surfaceId: pane.surfaceId, viewport: paneState.viewport });
+          }
+          if (paneState?.metrics) {
+            await editor.runtime.surfaces.setMetrics({ surfaceId: pane.surfaceId, metrics: paneState.metrics });
+          }
+        }
+        await refreshActiveSurface(editor);
+        editor.workbench.invalidate("frame", "focus", "layout", "tabs");
+      },
+    });
+
     editor.commands.register<{ splitId: WorkbenchSplitId | string; sizes: number[] }, void>({
       id: commandId("workbench.resizeSplit"),
       title: "Resize Split",
@@ -175,6 +196,7 @@ export function defaultWorkbench(): EditorModule {
           roles: editor.roles.snapshotAll(),
           tools,
           decorations: state.decorations,
+          gutters: state.gutters,
           diagnostics: editor.diagnostics.all(),
           focus: editor.focus.current(),
           theme: editor.themes.snapshot(),

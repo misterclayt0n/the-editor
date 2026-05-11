@@ -131,6 +131,7 @@ async function postSessionState() {
     roles: state.roles ?? {},
     tools: state.tools ?? [],
     decorations: state.decorations ?? [],
+    gutters: state.gutters ?? [],
     focus: state.focus ?? editor.focus.current(),
     packages: editor.packages.snapshot(),
     diagnostics: state.diagnostics ?? [],

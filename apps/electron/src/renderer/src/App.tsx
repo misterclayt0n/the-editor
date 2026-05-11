@@ -1,7 +1,7 @@
-import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Component, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import type { CellGridMetrics, RenderFrame, Viewport } from "@the-editor/contracts/runtime";
-import type { BufferDecoration, InteractiveSessionSnapshot, ThemeSnapshot, ToolSnapshot } from "@the-editor/editor";
+import type { BufferDecoration, GutterSnapshot, InteractiveSessionSnapshot, ThemeSnapshot, ToolSnapshot } from "@the-editor/editor";
 import type {
   WorkbenchEditorLayoutNodeSnapshot,
   WorkbenchEditorLayoutSnapshot,
@@ -38,6 +38,7 @@ function App() {
     diagnostics: [],
     tools: [],
     decorations: [],
+    gutters: [],
     focus: { kind: "editor" },
     theme: { available: [] },
     syntaxLegend: {},
@@ -78,6 +79,7 @@ function App() {
           interaction: isObject(event.interaction) ? event.interaction as unknown as WorkbenchSnapshot["interaction"] : undefined,
           tools: (Array.isArray(event.tools) ? event.tools : []) as WorkbenchSnapshot["tools"],
           decorations: (Array.isArray(event.decorations) ? event.decorations : []) as WorkbenchSnapshot["decorations"],
+          gutters: (Array.isArray(event.gutters) ? event.gutters : []) as WorkbenchSnapshot["gutters"],
           focus: isObject(event.focus) ? event.focus as WorkbenchSnapshot["focus"] : undefined,
           theme: isObject(event.theme) ? event.theme as unknown as ThemeSnapshot : undefined,
           syntaxLegend: isObject(event.syntaxLegend) ? event.syntaxLegend as Record<number, string> : {},
@@ -403,6 +405,7 @@ function EditorGroupView({
   selectionPickerActive: boolean;
   showWindowChrome?: boolean;
 }) {
+  const [dropDirection, setDropDirection] = useState<"left" | "right" | "up" | "down" | null>(null);
   const activePaneId = group.activePaneId;
   const activePane = activePaneId ? panes.get(activePaneId) : undefined;
   const active = layout.activeGroupId === group.id;
@@ -413,8 +416,29 @@ function EditorGroupView({
     <section
       className="editorGroup"
       data-active={active ? "true" : undefined}
+      data-drop-direction={dropDirection ?? undefined}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) focusGroup(group.id);
+      }}
+      onDragOver={(event) => {
+        if (!hasDraggedWorkbenchPane(event)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        setDropDirection(groupDropDirection(event));
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropDirection(null);
+      }}
+      onDrop={(event) => {
+        const dragged = readDraggedWorkbenchPane(event);
+        if (!dragged || !dropDirection) return;
+        event.preventDefault();
+        const direction = dropDirection;
+        setDropDirection(null);
+        void window.theEditor.policyRequest("command.dispatch", {
+          id: "workbench.movePane",
+          args: { paneId: dragged.paneId, placement: { kind: "split", direction, of: group.id } },
+        }).catch(console.error);
       }}
     >
       <header className="editorGroupHeader">
@@ -433,6 +457,36 @@ function EditorGroupView({
   );
 }
 
+function hasDraggedWorkbenchPane(event: DragEvent<HTMLElement>): boolean {
+  return Array.from(event.dataTransfer.types).includes("application/x-the-editor-pane");
+}
+
+function readDraggedWorkbenchPane(event: DragEvent<HTMLElement>): { paneId: string } | undefined {
+  const raw = event.dataTransfer.getData("application/x-the-editor-pane");
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as { kind?: unknown; paneId?: unknown };
+    return parsed.kind === "the-editor/pane" && typeof parsed.paneId === "string" ? { paneId: parsed.paneId } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function groupDropDirection(event: DragEvent<HTMLElement>): "left" | "right" | "up" | "down" {
+  const rect = event.currentTarget.getBoundingClientRect();
+  const x = (event.clientX - rect.left) / Math.max(1, rect.width);
+  const y = (event.clientY - rect.top) / Math.max(1, rect.height);
+  const distanceToLeft = x;
+  const distanceToRight = 1 - x;
+  const distanceToTop = y;
+  const distanceToBottom = 1 - y;
+  const nearest = Math.min(distanceToLeft, distanceToRight, distanceToTop, distanceToBottom);
+  if (nearest === distanceToLeft) return "left";
+  if (nearest === distanceToRight) return "right";
+  if (nearest === distanceToTop) return "up";
+  return "down";
+}
+
 function renderPane(
   pane: WorkbenchPaneDescriptor,
   active: boolean,
@@ -445,6 +499,7 @@ function renderPane(
         pane={pane}
         active={active}
         decorations={active ? workbench.decorations ?? [] : []}
+        gutters={active ? workbench.gutters ?? [] : []}
         theme={workbench.theme}
         syntaxLegend={workbench.syntaxLegend ?? {}}
         selectionPickerActive={active && selectionPickerActive}
@@ -458,6 +513,7 @@ function SurfaceEditorPane({
   pane,
   active,
   decorations,
+  gutters,
   theme,
   syntaxLegend,
   selectionPickerActive,
@@ -465,6 +521,7 @@ function SurfaceEditorPane({
   pane: Extract<WorkbenchPaneDescriptor, { kind: "surface" }>;
   active: boolean;
   decorations: BufferDecoration[];
+  gutters: GutterSnapshot[];
   theme: ThemeSnapshot | undefined;
   syntaxLegend: Record<number, string>;
   selectionPickerActive: boolean;
@@ -473,6 +530,7 @@ function SurfaceEditorPane({
   const lastConfigRef = useRef<string>("");
   const latestFrameRef = useRef<RenderFrame | undefined>(undefined);
   const latestDecorationsRef = useRef<BufferDecoration[]>([]);
+  const latestGuttersRef = useRef<GutterSnapshot[]>([]);
   const latestThemeRef = useRef<ThemeSnapshot | undefined>(undefined);
   const latestSyntaxLegendRef = useRef<Record<number, string>>({});
   const latestSelectionPickerActiveRef = useRef(false);
@@ -480,6 +538,7 @@ function SurfaceEditorPane({
 
   latestFrameRef.current = paneState?.frame;
   latestDecorationsRef.current = decorations;
+  latestGuttersRef.current = gutters;
   latestThemeRef.current = theme;
   latestSyntaxLegendRef.current = syntaxLegend;
   latestSelectionPickerActiveRef.current = selectionPickerActive;
@@ -487,6 +546,7 @@ function SurfaceEditorPane({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    lastConfigRef.current = "";
     let disposed = false;
     let observer: ResizeObserver | undefined;
     let raf = 0;
@@ -502,7 +562,7 @@ function SurfaceEditorPane({
           latestDecorationsRef.current,
           latestThemeRef.current,
           latestSyntaxLegendRef.current,
-          { selectionPickerActive: latestSelectionPickerActiveRef.current },
+          { selectionPickerActive: latestSelectionPickerActiveRef.current, gutters: latestGuttersRef.current }, 
           EDITOR_SURFACE_STYLE,
         );
       } else {
@@ -541,8 +601,8 @@ function SurfaceEditorPane({
       clearCanvasTextSurface(canvas, theme, EDITOR_SURFACE_STYLE);
       return;
     }
-    paintCanvasTextSurface(canvas, paneState.frame, decorations, theme, syntaxLegend, { selectionPickerActive }, EDITOR_SURFACE_STYLE);
-  }, [decorations, paneState?.frame, selectionPickerActive, syntaxLegend, theme]);
+    paintCanvasTextSurface(canvas, paneState.frame, decorations, theme, syntaxLegend, { selectionPickerActive, gutters }, EDITOR_SURFACE_STYLE);
+  }, [decorations, gutters, paneState?.frame, selectionPickerActive, syntaxLegend, theme]);
 
   return (
     <div className="editorSurfacePane" data-active={active ? "true" : undefined} onMouseDown={() => focusPane(pane.id)}>

@@ -1,5 +1,6 @@
 import type { CellGridMetrics, CursorPlacement, RenderFrame, RenderRow, SyntaxSpan, Viewport } from "@the-editor/contracts/runtime";
 import type { BufferDecoration, InlineTextDecoration, RangeDecoration } from "./decorations.js";
+import type { GutterSnapshot } from "./gutters.js";
 import type { ThemeSnapshot } from "./themes.js";
 import { resolveThemeStyle, resolveThemeStyleLoose, type ResolvedThemeDefinition } from "./themes.js";
 
@@ -20,6 +21,7 @@ export interface CanvasTextSurfacePaintOptions {
   showCursors?: boolean;
   offsetXPx?: number;
   offsetYPx?: number;
+  gutters?: GutterSnapshot[];
 }
 
 interface TextSurfaceTheme {
@@ -28,6 +30,7 @@ interface TextSurfaceTheme {
   cursorBackground: string;
   cursorForeground: string;
   selectionBackground: string;
+  gutterForeground: string;
   syntaxColor(kind: number): string;
 }
 
@@ -73,7 +76,7 @@ export function configureCanvasTextSurface(
   const ctx = canvas.getContext("2d");
   const style = resolveTextSurfaceStyle(styleOptions);
   const cellWidthPx = ctx ? measureCellWidth(ctx, style) : 8;
-  const contentWidth = Math.max(1, cssWidth - style.paddingPx * 2);
+  const contentWidth = Math.max(1, cssWidth - style.paddingPx * 2 - 56);
   const contentHeight = Math.max(1, cssHeight - style.paddingPx * 2);
 
   return {
@@ -135,6 +138,7 @@ export function paintCanvasTextSurface(
   const rows = new Map<number, RenderRow>();
   for (const row of frame.rows) rows.set(row.surfaceRow, row);
 
+  paintGutters(ctx, options.gutters ?? [], metrics, theme);
   paintSelections(ctx, frame, metrics, theme);
   paintDecorationRanges(ctx, decorations, metrics);
   paintRows(ctx, frame, rows, metrics, theme);
@@ -165,6 +169,7 @@ interface RendererMetrics {
   padding: number;
   offsetX: number;
   offsetY: number;
+  gutterWidth: number;
 }
 
 function rendererMetrics(
@@ -179,6 +184,7 @@ function rendererMetrics(
     padding: style.paddingPx,
     offsetX: options.offsetXPx ?? 0,
     offsetY: options.offsetYPx ?? 0,
+    gutterWidth: gutterWidthPx(options.gutters ?? [], measureCellWidth(ctx, style)),
   };
 }
 
@@ -187,6 +193,42 @@ function measureCellWidth(ctx: CanvasRenderingContext2D, style: Required<CanvasT
   ctx.fontKerning = "normal";
   const sample = "mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm";
   return ctx.measureText(sample).width / sample.length;
+}
+
+function paintGutters(
+  ctx: CanvasRenderingContext2D,
+  gutters: GutterSnapshot[],
+  metrics: RendererMetrics,
+  theme: TextSurfaceTheme,
+): void {
+  const lanes = gutterLaneGroups(gutters);
+  let x = metrics.padding;
+  for (const lane of lanes) {
+    const laneWidth = gutterLaneGroupWidthPx(lane, metrics.cellWidth);
+    const laneSpec = lane[0]!.lane;
+    const contentX = x + laneSpec.paddingLeftPx;
+    const contentWidth = Math.max(0, laneWidth - laneSpec.paddingLeftPx - laneSpec.paddingRightPx);
+    for (const gutter of lane) {
+      for (const line of gutter.lines) {
+        const y = yForRow(line.surfaceRow, { ...metrics, gutterWidth: 0 });
+        if (line.background) {
+          ctx.fillStyle = line.background;
+          ctx.fillRect(x, y, laneWidth, metrics.rowHeight);
+        }
+        if (!line.text) continue;
+        ctx.save();
+        ctx.globalAlpha = line.opacity ?? 0.6;
+        ctx.fillStyle = line.foreground ?? theme.gutterForeground;
+        const align = line.align ?? "right";
+        ctx.textAlign = align;
+        const textX = align === "left" ? contentX : align === "center" ? contentX + contentWidth / 2 : contentX + contentWidth;
+        ctx.fillText(line.text, textX, y + metrics.baselineOffset);
+        ctx.restore();
+      }
+    }
+    x += laneWidth;
+  }
+  ctx.textAlign = "left";
 }
 
 function paintSelections(ctx: CanvasRenderingContext2D, frame: RenderFrame, metrics: RendererMetrics, theme: TextSurfaceTheme): void {
@@ -398,6 +440,7 @@ function resolveTextSurfaceTheme(
   const background = resolveThemeStyle(activeTheme ?? { styles: {} }, "ui.background")?.bg ?? "#101010";
   const foreground = resolveThemeStyle(activeTheme ?? { styles: {} }, "ui.text")?.fg ?? "#d8d8d8";
   const selectionBackground = resolveThemeStyle(activeTheme ?? { styles: {} }, "ui.selection")?.bg ?? "#264f78";
+  const gutterForeground = resolveThemeStyle(activeTheme ?? { styles: {} }, "ui.gutter", ["ui.text"])?.fg ?? "rgba(220, 220, 220, 0.58)";
   const cursorStyle = resolveThemeStyle(activeTheme ?? { styles: {} }, "ui.cursor", ["ui.cursor.insert", "ui.cursor.normal"]);
   const cursorBackground = cursorStyle?.bg ?? cursorStyle?.fg ?? "#e6e6e6";
   const cursorForeground = cursorStyle?.fg ?? background;
@@ -406,6 +449,7 @@ function resolveTextSurfaceTheme(
     background,
     foreground,
     selectionBackground,
+    gutterForeground,
     cursorBackground,
     cursorForeground,
     syntaxColor(kind) {
@@ -444,8 +488,34 @@ function fontForStyle(style: Required<CanvasTextSurfaceStyleOptions>): string {
   return `${style.fontSizePx}px ${style.fontFamily}`;
 }
 
+function gutterWidthPx(gutters: GutterSnapshot[], cellWidth: number): number {
+  return gutterLaneGroups(gutters)
+    .reduce((sum, lane) => sum + gutterLaneGroupWidthPx(lane, cellWidth), 0);
+}
+
+function gutterLaneGroups(gutters: GutterSnapshot[]): GutterSnapshot[][] {
+  const groups = new Map<string, GutterSnapshot[]>();
+  for (const gutter of gutters) {
+    if (gutter.lane.side !== "left") continue;
+    const group = groups.get(gutter.lane.id);
+    if (group) group.push(gutter);
+    else groups.set(gutter.lane.id, [gutter]);
+  }
+  return [...groups.values()].sort((a, b) => {
+    const left = a[0]!.lane;
+    const right = b[0]!.lane;
+    return left.order - right.order || left.id.localeCompare(right.id);
+  });
+}
+
+function gutterLaneGroupWidthPx(lane: GutterSnapshot[], cellWidth: number): number {
+  const spec = lane[0]!.lane;
+  const contentWidth = Math.max(...lane.map((gutter) => gutter.lane.widthPx ?? (gutter.lane.widthCells ?? 1) * cellWidth));
+  return Math.ceil(contentWidth + spec.paddingLeftPx + spec.paddingRightPx);
+}
+
 function xForCol(col: number, metrics: RendererMetrics): number {
-  return metrics.padding - metrics.offsetX + col * metrics.cellWidth;
+  return metrics.padding + metrics.gutterWidth - metrics.offsetX + col * metrics.cellWidth;
 }
 
 function yForRow(row: number, metrics: RendererMetrics): number {

@@ -3,6 +3,7 @@ import type { BufferDecoration } from "./decorations.js";
 import type { DiagnosticEntry } from "./diagnostics.js";
 import type { EditorHost } from "./editorHost.js";
 import type { FocusTarget } from "./focus.js";
+import type { GutterSnapshot } from "./gutters.js";
 import type { NotificationEntry } from "./notifications.js";
 import type { RoleSnapshot } from "./roles.js";
 import type { InteractiveSessionSnapshot } from "./sessions.js";
@@ -27,6 +28,7 @@ export type WorkbenchInvalidationKind =
   | "roles"
   | "tools"
   | "decorations"
+  | "gutters"
   | "focus"
   | "interaction"
   | "theme"
@@ -189,6 +191,7 @@ export interface WorkbenchSessionState {
   roles?: Record<string, RoleSnapshot>;
   tools?: ToolSnapshot[];
   decorations?: BufferDecoration[];
+  gutters?: GutterSnapshot[];
   diagnostics?: DiagnosticEntry[];
   focus?: FocusTarget;
   theme?: ThemeSnapshot;
@@ -475,6 +478,54 @@ export class WorkbenchController {
     return this.snapshotGroup(group);
   }
 
+  movePane(id: WorkbenchPaneId | string, placement: WorkbenchPanePlacement): WorkbenchPaneDescriptor | undefined {
+    const state = this.layoutState();
+    const pane = state.panes.get(workbenchPaneId(id));
+    if (!pane) return undefined;
+
+    const targetGroupId = placement.kind === "split"
+      ? this.resolveSplitTarget(state, placement)
+      : this.resolveTabGroup(state, placement);
+    if (!targetGroupId) return undefined;
+
+    const sourceGroup = this.groupForPane(pane.id);
+    if (placement.kind === "split" && sourceGroup?.id === targetGroupId && sourceGroup.paneIds.length <= 1) {
+      return undefined;
+    }
+    const sourceIndex = sourceGroup?.paneIds.indexOf(pane.id) ?? -1;
+    const tabIndex = placement.kind === "tab" && typeof placement.index === "number"
+      ? sourceGroup?.id === targetGroupId && sourceIndex >= 0 && placement.index > sourceIndex
+        ? placement.index - 1
+        : placement.index
+      : undefined;
+
+    this.detachPaneFromGroup(pane.id);
+
+    if (placement.kind === "split") {
+      const group = this.createGroup(state);
+      this.insertTabIntoGroup(pane.id, group.id, undefined);
+      state.root = insertSplitForGroup(
+        state.root,
+        targetGroupId,
+        directionAxis(placement.direction),
+        splitAfter(placement.direction),
+        { kind: "group", groupId: group.id },
+        () => workbenchSplitId(`split:${state.nextSplit++}`),
+      );
+      state.activeGroupId = group.id;
+    } else {
+      this.insertTabIntoGroup(pane.id, targetGroupId, tabIndex);
+      state.activeGroupId = targetGroupId;
+    }
+
+    state.activePaneId = pane.id;
+    state.activeItemId = pane.itemId;
+    this.focusPane(pane.id);
+    state.root = collapseSplitTree(pruneEmptyGroups(state.root, state.groups));
+    this.invalidate("layout", "focus", "tabs");
+    return pane;
+  }
+
   closePane(id: WorkbenchPaneId | string): void {
     const pane = this.findPane(id);
     if (!pane) return;
@@ -716,6 +767,22 @@ export class WorkbenchController {
       if (group.paneIds.includes(id)) return group;
     }
     return undefined;
+  }
+
+  private detachPaneFromGroup(id: WorkbenchPaneId): void {
+    const state = this.layoutState();
+    const group = this.groupForPane(id);
+    if (!group) return;
+    const index = group.paneIds.indexOf(id);
+    if (index >= 0) group.paneIds.splice(index, 1);
+    if (group.activePaneId === id) {
+      group.activePaneId = group.paneIds[Math.min(index, group.paneIds.length - 1)] ?? group.paneIds[group.paneIds.length - 1];
+    }
+    if (group.paneIds.length === 0 && state.groups.size > 1) {
+      state.groups.delete(group.id);
+      state.root = pruneEmptyGroups(state.root, state.groups);
+    }
+    state.root = collapseSplitTree(state.root);
   }
 
   private removePane(id: WorkbenchPaneId): void {

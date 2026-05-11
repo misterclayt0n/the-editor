@@ -686,40 +686,62 @@ function renderPreviewLine(
   theme: ResolvedThemeDefinition | undefined,
   syntaxLegend: Record<number, string>,
 ) {
-  if (!spans.length) return <>{text || " "}</>;
-  const cells = Array.from(text);
-  const parts: ReactNode[] = [];
-  let col = 0;
+  try {
+    const safeText = typeof text === "string" ? text : String(text ?? "");
+    if (!spans.length) return <>{safeText || " "}</>;
+    const cells = Array.from(safeText);
+    const parts: ReactNode[] = [];
+    let col = 0;
 
-  for (const span of spans) {
-    const start = Math.max(0, Math.min(cells.length, span.startCol));
-    const end = Math.max(start, Math.min(cells.length, span.endCol));
-    if (start > col) {
-      parts.push(<Fragment key={`plain:${col}-${start}`}>{cells.slice(col, start).join("") || " "}</Fragment>);
+    for (const span of spans) {
+      const start = Math.max(0, Math.min(cells.length, span.startCol));
+      const end = Math.max(start, Math.min(cells.length, span.endCol));
+      if (start > col) {
+        parts.push(<Fragment key={`plain:${col}-${start}`}>{cells.slice(col, start).join("") || " "}</Fragment>);
+      }
+      const chunk = cells.slice(start, end).join("");
+      if (chunk) {
+        parts.push(
+          <span
+            key={`syntax:${start}-${end}-${span.kind}`}
+            style={{ color: previewSyntaxColor(theme, syntaxLegend[span.kind]) }}
+          >
+            {chunk}
+          </span>,
+        );
+      }
+      col = end;
     }
-    const chunk = cells.slice(start, end).join("");
-    if (chunk) {
-      parts.push(
-        <span
-          key={`syntax:${start}-${end}-${span.kind}`}
-          style={{ color: previewSyntaxColor(theme, syntaxLegend[span.kind]) }}
-        >
-          {chunk}
-        </span>,
-      );
+
+    if (col < cells.length) {
+      parts.push(<Fragment key={`plain:${col}-${cells.length}`}>{cells.slice(col).join("") || " "}</Fragment>);
     }
-    col = end;
-  }
 
-  if (col < cells.length) {
-    parts.push(<Fragment key={`plain:${col}-${cells.length}`}>{cells.slice(col).join("") || " "}</Fragment>);
+    return parts.length ? parts : <>{safeText || " "}</>;
+  } catch (error) {
+    pickerUiTrace({
+      event: "preview.line.error",
+      message: error instanceof Error ? error.message : String(error),
+      textType: typeof text,
+      spanCount: spans.length,
+    });
+    const safeText = typeof text === "string" ? text : String(text ?? "");
+    return <>{safeText || " "}</>;
   }
-
-  return parts.length ? parts : <>{text || " "}</>;
 }
 
-function previewSyntaxColor(theme: ResolvedThemeDefinition | undefined, scope: string | undefined): string | undefined {
-  if (!theme || !scope) return undefined;
+function previewSyntaxColor(theme: ResolvedThemeDefinition | undefined, scope: unknown): string | undefined {
+  if (!theme) return undefined;
+  if (typeof scope !== "string") {
+    if (scope !== undefined) {
+      pickerUiTrace({
+        event: "preview.scope.invalid",
+        scopeType: typeof scope,
+        scope,
+      });
+    }
+    return resolveThemeStyleLoose(theme, "ui.text")?.fg;
+  }
   return resolveThemeStyleLoose(theme, scope, fallbackSyntaxScopes[scope as keyof typeof fallbackSyntaxScopes] ?? "ui.text")?.fg
     ?? resolveThemeStyleLoose(theme, "ui.text")?.fg;
 }

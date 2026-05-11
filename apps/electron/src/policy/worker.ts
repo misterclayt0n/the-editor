@@ -88,7 +88,16 @@ async function handlePolicyRequest(request: PolicyRequest): Promise<void> {
         break;
       }
       case "input.keyDown": {
-        const handled = await handleWorkbenchKeyInput(editor, request.params as KeyInput);
+        const input = request.params as KeyInput;
+        const focusBefore = editor.focus.current();
+        if (focusBefore.kind === "role" && focusBefore.role === "picker") {
+          console.log(`[picker-worker] input.keyDown ${JSON.stringify({ input, focusBefore })}`);
+        }
+        const handled = await handleWorkbenchKeyInput(editor, input);
+        const focusAfter = editor.focus.current();
+        if (focusBefore.kind === "role" && focusBefore.role === "picker") {
+          console.log(`[picker-worker] input.keyDown.result ${JSON.stringify({ input, handled, focusAfter })}`);
+        }
         if (!handled) throw new Error("no workbench key input handler");
         result = await postSessionState();
         break;
@@ -101,7 +110,26 @@ async function handlePolicyRequest(request: PolicyRequest): Promise<void> {
       }
       case "command.dispatch": {
         const params = request.params as { id: string; args?: unknown };
+        const focusBefore = editor.focus.current();
+        const shouldTrace = params.id.startsWith("picker.")
+          || params.id === "file_picker"
+          || (focusBefore.kind === "role" && focusBefore.role === "picker");
+        if (shouldTrace) {
+          console.log(`[picker-worker] command.dispatch ${JSON.stringify({
+            id: params.id,
+            args: params.args,
+            focusBefore,
+          })}`);
+        }
         await editor.commands.dispatch({ id: params.id, args: params.args });
+        const focusAfter = editor.focus.current();
+        if (shouldTrace) {
+          console.log(`[picker-worker] command.dispatch.done ${JSON.stringify({
+            id: params.id,
+            focusAfter,
+            pickerVisible: Boolean(editor.roles.snapshot("picker")?.state && (editor.roles.snapshot("picker")?.state as { visible?: unknown }).visible),
+          })}`);
+        }
         result = await postSessionState();
         break;
       }

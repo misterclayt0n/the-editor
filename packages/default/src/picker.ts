@@ -61,7 +61,7 @@ export function defaultPicker(): EditorModule {
       implementationId: pickerImplementationId,
       title: "Default Picker",
       async close() {
-        closePicker(editor, true);
+        closePicker(editor, true, "role.close");
       },
       async focus() {
         editor.focus.setRole(pickerRoleId);
@@ -110,7 +110,7 @@ export function defaultPicker(): EditorModule {
       title: "Close Picker",
       hidden: true,
       run() {
-        closePicker(editor, true);
+        closePicker(editor, true, "command:picker.close");
       },
     });
 

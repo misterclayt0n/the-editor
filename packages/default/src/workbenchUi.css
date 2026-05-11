@@ -59,6 +59,27 @@
 .workbenchFileTabItem {
   display: flex;
   flex: 0 0 auto;
+  position: relative;
+}
+
+.workbenchFileTabItem[data-drop-before="true"]::before,
+.workbenchFileTabDropTail[data-drop-before="true"]::before {
+  background: var(--theme-ui-menu-selected-fg, var(--theme-ui-text-focus-fg, var(--theme-ui-text-fg)));
+  border-radius: 999px;
+  bottom: 4px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--theme-ui-menu-selected-fg, var(--theme-ui-text-focus-fg, var(--theme-ui-text-fg))) 35%, transparent);
+  content: "";
+  left: -3px;
+  position: absolute;
+  top: 4px;
+  width: 2px;
+  z-index: 30;
+}
+
+.workbenchFileTabDropTail {
+  align-self: stretch;
+  flex: 0 0 10px;
+  position: relative;
 }
 
 .workbenchFileTab {
@@ -72,7 +93,12 @@
   max-width: 200px;
   overflow: hidden;
   position: relative;
-  transition: color 150ms ease, background-color 150ms ease;
+  transition: color 150ms ease, background-color 150ms ease, opacity 120ms ease, transform 120ms ease;
+}
+
+.workbenchFileTab.isDragging {
+  opacity: 0.48;
+  transform: scale(0.98);
 }
 
 .workbenchFileTab.isActive {

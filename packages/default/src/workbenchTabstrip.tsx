@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from "react";
 import { resolveTabFileIcon, fileIconSpriteMarkup, tabLabel, type ResolvedFileIcon } from "./fileIcons/tabIcons.js";
 
 export interface WorkbenchTabPane {
@@ -9,19 +9,27 @@ export interface WorkbenchTabPane {
   kind: string;
 }
 
+interface DraggedWorkbenchPane {
+  kind: "the-editor/pane";
+  paneId: string;
+}
+
 export function DefaultWorkbenchTabstrip({
   dispatch,
   panes,
   activePaneId,
   showWindowControls,
+  groupId,
 }: {
   dispatch: (dispatch: { id: string; args?: unknown }) => Promise<unknown>;
   panes: WorkbenchTabPane[];
   activePaneId?: string;
   showWindowControls?: boolean;
+  groupId?: string;
 }) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const [scrollState, setScrollState] = useState({ canScrollLeft: false, canScrollRight: false });
+  const [dragState, setDragState] = useState<{ paneId: string; index: number } | null>(null);
   const spriteMarkup = useMemo(() => fileIconSpriteMarkup(), []);
 
   useEffect(() => {
@@ -53,19 +61,56 @@ export function DefaultWorkbenchTabstrip({
     };
   }, [panes.length]);
 
+  const updateDragIndex = (event: DragEvent<HTMLElement>) => {
+    if (!hasDraggedPane(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "move";
+    const index = tabDropIndex(event, panes.length);
+    setDragState({ paneId: readDraggedPane(event)?.paneId ?? "", index });
+  };
+
+  const dropPane = (event: DragEvent<HTMLElement>) => {
+    const dragged = readDraggedPane(event);
+    if (!dragged) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const index = dragState?.index ?? tabDropIndex(event, panes.length);
+    setDragState(null);
+    void dispatch({
+      id: "workbench.movePane",
+      args: { paneId: dragged.paneId, placement: { kind: "tab", group: groupId ?? "active", index } },
+    }).catch(console.error);
+  };
+
   return (
     <div className="workbenchTopTabsBar workbenchFileTabbarRoot" data-leading={showWindowControls ? "true" : undefined}>
       <div aria-hidden="true" className="workbenchFileTabSprite" dangerouslySetInnerHTML={{ __html: spriteMarkup }} />
       <div className="workbenchFileTabbarGroup">
         <div className="workbenchFileTabScrollerShell">
-          <div ref={scrollerRef} className="workbenchFileTabScroller">
-            {panes.map((pane) => {
+          <div
+            ref={scrollerRef}
+            className="workbenchFileTabScroller"
+            onDragOver={updateDragIndex}
+            onDragLeave={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragState(null);
+            }}
+            onDrop={dropPane}
+          >
+            {panes.map((pane, index) => {
               const isActive = pane.id === activePaneId;
               const icon = resolveTabFileIcon(pane);
               return (
-                <div key={pane.id} className="workbenchFileTabItem" data-workbench-tab-active={isActive ? "true" : undefined}>
+                <div
+                  key={pane.id}
+                  className="workbenchFileTabItem"
+                  data-workbench-tab-active={isActive ? "true" : undefined}
+                  data-drop-before={dragState?.index === index ? "true" : undefined}
+                >
                   <DefaultFileTab
-                    activate={() => {
+                    paneId={pane.id}
+                    activate={(event) => {
+                      event.currentTarget.blur();
                       void dispatch({ id: "workbench.focusPane", args: { paneId: pane.id } });
                     }}
                     close={() => {
@@ -80,6 +125,7 @@ export function DefaultWorkbenchTabstrip({
                 </div>
               );
             })}
+            <div aria-hidden="true" className="workbenchFileTabDropTail" data-drop-before={dragState?.index === panes.length ? "true" : undefined} />
           </div>
           <div aria-hidden="true" className={`workbenchFileTabFade left ${scrollState.canScrollLeft ? "isVisible" : ""}`} />
           <div aria-hidden="true" className={`workbenchFileTabFade right ${scrollState.canScrollRight ? "isVisible" : ""}`} />
@@ -91,6 +137,7 @@ export function DefaultWorkbenchTabstrip({
 }
 
 function DefaultFileTab({
+  paneId,
   activate,
   close,
   icon,
@@ -99,7 +146,8 @@ function DefaultFileTab({
   path,
   closeable,
 }: {
-  activate: () => void;
+  paneId: string;
+  activate: (event: MouseEvent<HTMLButtonElement>) => void;
   close: () => void;
   icon: ResolvedFileIcon;
   isActive: boolean;
@@ -111,8 +159,16 @@ function DefaultFileTab({
     <div className={`workbenchFileTab ${isActive ? "isActive" : "isInactive"}`}>
       <button
         type="button"
-        onMouseDown={(event) => {
-          event.preventDefault();
+        draggable
+        onDragStart={(event) => {
+          const payload: DraggedWorkbenchPane = { kind: "the-editor/pane", paneId };
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData("application/x-the-editor-pane", JSON.stringify(payload));
+          event.dataTransfer.setData("text/plain", label);
+          event.currentTarget.parentElement?.classList.add("isDragging");
+        }}
+        onDragEnd={(event) => {
+          event.currentTarget.parentElement?.classList.remove("isDragging");
         }}
         onClick={activate}
         title={path}
@@ -158,4 +214,31 @@ function DefaultWorkbenchTabIcon({ icon }: { icon: ResolvedFileIcon }) {
       <use href={`#${icon.name}`} />
     </svg>
   );
+}
+
+function hasDraggedPane(event: DragEvent<HTMLElement>): boolean {
+  return Array.from(event.dataTransfer.types).includes("application/x-the-editor-pane");
+}
+
+function readDraggedPane(event: DragEvent<HTMLElement>): DraggedWorkbenchPane | undefined {
+  const raw = event.dataTransfer.getData("application/x-the-editor-pane");
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as Partial<DraggedWorkbenchPane>;
+    return parsed.kind === "the-editor/pane" && typeof parsed.paneId === "string"
+      ? { kind: "the-editor/pane", paneId: parsed.paneId }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function tabDropIndex(event: DragEvent<HTMLElement>, fallback: number): number {
+  const item = (event.target as Element | null)?.closest?.(".workbenchFileTabItem");
+  if (!(item instanceof HTMLElement)) return fallback;
+  const siblings = Array.from(item.parentElement?.querySelectorAll<HTMLElement>(".workbenchFileTabItem") ?? []);
+  const index = siblings.indexOf(item);
+  if (index < 0) return fallback;
+  const rect = item.getBoundingClientRect();
+  return event.clientX < rect.left + rect.width / 2 ? index : index + 1;
 }

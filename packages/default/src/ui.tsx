@@ -166,13 +166,14 @@ const uiModule: EditorUiModule = (host) => {
 
   host.tabstrips.register({
     implementationId: defaultTabstripImplementationId,
-    render({ commands, panes, activePaneId, showWindowControls }) {
+    render({ commands, group, panes, activePaneId, showWindowControls }) {
       return (
         <DefaultWorkbenchTabstrip
           dispatch={commands.dispatch}
           panes={panes}
           activePaneId={activePaneId}
           showWindowControls={showWindowControls}
+          groupId={group.id}
         />
       );
     },
@@ -311,20 +312,8 @@ function CommandPaletteOverlay({
 }
 
 function scrollActiveItemIntoView(container: HTMLDivElement | null, selector: string): void {
-  if (!container) return;
-  const active = container.querySelector<HTMLElement>(selector);
-  if (!active) return;
-
-  const activeRect = active.getBoundingClientRect();
-  const containerRect = container.getBoundingClientRect();
-
-  if (activeRect.top < containerRect.top) {
-    container.scrollTop += activeRect.top - containerRect.top;
-    return;
-  }
-  if (activeRect.bottom > containerRect.bottom) {
-    container.scrollTop += activeRect.bottom - containerRect.bottom;
-  }
+  const active = container?.querySelector<HTMLElement>(selector);
+  active?.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 
 function PickerOverlay({

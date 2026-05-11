@@ -17,6 +17,7 @@ async function createWindow(): Promise<void> {
     trafficLightPosition: process.platform === "darwin" ? { x: 16, y: 18 } : undefined,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
+      scrollBounce: true,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,

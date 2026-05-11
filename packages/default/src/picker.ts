@@ -405,10 +405,8 @@ function schedulePickerPreview(
   requestVersion = handle.requestVersion,
 ): void {
   if (handle.previewTimer) clearTimeout(handle.previewTimer);
-  handle.previewTimer = setTimeout(() => {
-    handle.previewTimer = undefined;
-    void refreshPickerPreview(editor, session, handle, requestVersion);
-  }, 75);
+  handle.previewTimer = undefined;
+  void refreshPickerPreview(editor, session, handle, requestVersion);
 }
 
 async function refreshPickerPreview(

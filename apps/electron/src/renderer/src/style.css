@@ -168,6 +168,7 @@ body.isResizingSplits {
 
 .workbenchTopTabs {
   -webkit-app-region: no-drag;
+  -webkit-overflow-scrolling: touch;
   align-items: center;
   display: flex;
   flex: 1 1 auto;
@@ -175,6 +176,7 @@ body.isResizingSplits {
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
+  overscroll-behavior: auto;
 }
 
 .workbenchTopTabs::-webkit-scrollbar {
@@ -395,6 +397,34 @@ body.isResizingSplits {
   height: 100%;
   min-height: 0;
   min-width: 0;
+  position: relative;
+}
+
+.editorGroup[data-drop-direction]::after {
+  background: color-mix(in srgb, var(--theme-ui-menu-selected-bg, var(--theme-ui-selection-bg, var(--theme-ui-text-focus-fg))) 58%, transparent);
+  border: 1px solid color-mix(in srgb, var(--theme-ui-menu-selected-fg, var(--theme-ui-text-focus-fg, var(--theme-ui-text-fg))) 62%, transparent);
+  border-radius: 10px;
+  content: "";
+  inset: 8px;
+  pointer-events: none;
+  position: absolute;
+  z-index: 60;
+}
+
+.editorGroup[data-drop-direction="left"]::after {
+  right: 50%;
+}
+
+.editorGroup[data-drop-direction="right"]::after {
+  left: 50%;
+}
+
+.editorGroup[data-drop-direction="up"]::after {
+  bottom: 50%;
+}
+
+.editorGroup[data-drop-direction="down"]::after {
+  top: 50%;
 }
 
 .editorGroupHeader {

@@ -102,6 +102,35 @@ describe("workbench splits", () => {
     expect(reopened.activePath).toBe(first);
   });
 
+  it("moves panes between tab positions and split groups", async () => {
+    const editor = await createWorkbenchEditor();
+    await editor.commands.dispatch({ id: "workbench.vsplit" });
+    let snapshot = await getWorkbenchSessionState(editor);
+    const groups = snapshot.editorLayout?.groups ?? [];
+    const leftGroup = groups[0]!;
+    const rightGroup = groups[1]!;
+    const rightPaneId = rightGroup.activePaneId!;
+
+    await editor.commands.dispatch({
+      id: "workbench.movePane",
+      args: { paneId: rightPaneId, placement: { kind: "tab", group: leftGroup.id, index: 0 } },
+    });
+
+    snapshot = await getWorkbenchSessionState(editor);
+    const remainingGroup = snapshot.editorLayout?.groups[0];
+    expect(snapshot.editorLayout?.groups).toHaveLength(1);
+    expect(remainingGroup?.paneIds[0]).toBe(rightPaneId);
+    expect(snapshot.editorLayout?.activePaneId).toBe(rightPaneId);
+
+    await editor.commands.dispatch({
+      id: "workbench.movePane",
+      args: { paneId: rightPaneId, placement: { kind: "split", direction: "right", of: remainingGroup!.id } },
+    });
+    snapshot = await getWorkbenchSessionState(editor);
+    expect(snapshot.editorLayout?.root).toMatchObject({ kind: "split", axis: "row" });
+    expect(snapshot.editorLayout?.activePaneId).toBe(rightPaneId);
+  });
+
   it("exposes :hsplit and :vsplit in the command palette provider registry", async () => {
     const editor = await createWorkbenchEditor();
 

@@ -42,6 +42,10 @@
   border-radius: 16px;
   box-shadow: 0 22px 56px rgba(0, 0, 0, 0.28);
   color: var(--pickerFg);
+  display: grid;
+  grid-template-columns: minmax(300px, 0.95fr) minmax(360px, 1.05fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: min(620px, calc(78vh - 32px));
   overflow: hidden;
   position: relative;
 }
@@ -56,7 +60,9 @@
 }
 
 .pickerHeader {
-  padding: 12px;
+  grid-column: 1;
+  grid-row: 1;
+  padding: 12px 12px 8px;
 }
 
 .pickerInputRow {
@@ -106,15 +112,14 @@
 }
 
 .pickerBody {
-  display: grid;
-  gap: 0;
-  grid-template-columns: minmax(300px, 0.95fr) minmax(360px, 1.05fr);
-  min-height: min(560px, calc(78vh - 92px));
+  display: contents;
 }
 
 .pickerResults {
   border-inline-end: 1px solid color-mix(in lab, var(--pickerBorder) 92%, transparent);
-  max-height: min(560px, calc(78vh - 92px));
+  grid-column: 1;
+  grid-row: 2;
+  min-height: 0;
   -webkit-overflow-scrolling: touch;
   overflow: auto;
   overscroll-behavior: auto;
@@ -219,9 +224,12 @@
 }
 
 .pickerPreviewPane {
+  border-inline-start: 1px solid color-mix(in lab, var(--pickerBorder) 92%, transparent);
   display: flex;
   flex-direction: column;
-  max-height: min(560px, calc(78vh - 92px));
+  grid-column: 2;
+  grid-row: 1 / 3;
+  min-height: 0;
   min-width: 0;
   overflow: hidden;
 }
@@ -395,23 +403,38 @@
   color: var(--pickerMuted);
   display: flex;
   font-size: 12px;
+  grid-column: 1 / -1;
+  grid-row: 3;
   gap: 12px;
   justify-content: space-between;
   padding: 10px 14px;
 }
 
 @media (max-width: 900px) {
-  .pickerBody {
+  .pickerSurface {
     grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 260px) minmax(0, 260px) auto;
+  }
+
+  .pickerHeader,
+  .pickerResults,
+  .pickerPreviewPane,
+  .pickerFooter {
+    grid-column: 1;
   }
 
   .pickerResults {
-    border-inline-end: 0;
     border-bottom: 1px solid color-mix(in lab, var(--pickerBorder) 92%, transparent);
-    max-height: 260px;
+    border-inline-end: 0;
+    grid-row: 2;
   }
 
   .pickerPreviewPane {
-    max-height: 260px;
+    border-inline-start: 0;
+    grid-row: 3;
+  }
+
+  .pickerFooter {
+    grid-row: 4;
   }
 }

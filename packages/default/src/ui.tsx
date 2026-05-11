@@ -1,7 +1,14 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { RenderFrame, Viewport } from "@the-editor/contracts/runtime";
 import type { DiagnosticEntry, NotificationEntry } from "@the-editor/editor";
-import { configureCanvasTextSurface, loadEditorFont, paintCanvasTextSurface } from "@the-editor/editor/textSurfaceCanvas";
+import {
+  configureCanvasTextSurface,
+  loadEditorFont,
+  measureTextSurfaceColumns,
+  paintCanvasTextSurface,
+  type CanvasTextSurfaceConfiguration,
+  type CanvasTextSurfaceStyleOptions,
+} from "@the-editor/editor/textSurfaceCanvas";
 import { resolveThemeStyleLoose, type ResolvedThemeDefinition } from "@the-editor/editor/themes";
 import type { EditorUiModule, UiSessionClient, WorkbenchSnapshot } from "@the-editor/editor/ui";
 import "./commandPalette.css";
@@ -107,6 +114,11 @@ interface NotificationsViewState {
 }
 
 const inspectorToolTypeId = "default.inspector";
+const PICKER_PREVIEW_SURFACE_STYLE: CanvasTextSurfaceStyleOptions = {
+  paddingPx: 12,
+  fontSizePx: 13,
+  lineHeightPx: 19,
+};
 
 const uiModule: EditorUiModule = (host) => {
   host.roles.register<CommandPaletteViewState>({
@@ -469,50 +481,76 @@ function PickerSurfacePreview({
   theme: WorkbenchSnapshot["theme"];
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const layoutRef = useRef<CanvasTextSurfaceConfiguration | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const syncingScrollRef = useRef(false);
+  const [contentSize, setContentSize] = useState({ width: 1, height: 1 });
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const scrollElement = scrollRef.current;
+    if (!canvas || !scrollElement) return;
     let disposed = false;
     let observer: ResizeObserver | undefined;
 
     const configure = () => {
-      const config = configureCanvasTextSurface(canvas);
-      const viewport = preview.viewport ?? {
-        firstRow: 0,
-        rowCount: config.viewport.rowCount,
-        firstCol: 0,
-        wrapWidth: config.viewport.wrapWidth,
+      const next = configureCanvasTextSurface(canvas, PICKER_PREVIEW_SURFACE_STYLE);
+      layoutRef.current = next;
+      setContentSize({
+        width: previewSurfaceContentWidth(preview, next, scrollElement.clientWidth),
+        height: previewSurfaceContentHeight(preview, next, scrollElement.clientHeight),
+      });
+      const derivedViewport = previewViewportFromScroll(scrollElement, next, preview.lineCount ?? 0);
+      const viewport = {
+        firstRow: preview.viewport?.firstRow ?? derivedViewport.firstRow,
+        rowCount: next.viewport.rowCount,
+        firstCol: preview.viewport?.firstCol ?? derivedViewport.firstCol,
+        wrapWidth: next.viewport.wrapWidth,
       };
+      syncPreviewSurfaceTransform(scrollElement, viewportRef.current, next, preview.lineCount ?? 0);
       void sessions.dispatch(sessionId, "configurePreview", {
-        metrics: config.metrics,
-        viewport: {
-          ...viewport,
-          rowCount: config.viewport.rowCount,
-          wrapWidth: config.viewport.wrapWidth,
-          firstCol: 0,
-        },
+        metrics: next.metrics,
+        viewport,
       });
     };
 
-    void loadEditorFont().finally(() => {
+    void loadEditorFont(PICKER_PREVIEW_SURFACE_STYLE).finally(() => {
       if (disposed) return;
       configure();
       observer = new ResizeObserver(configure);
-      observer.observe(canvas.parentElement ?? canvas);
+      observer.observe(scrollElement);
     });
 
     return () => {
       disposed = true;
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
       observer?.disconnect();
     };
-  }, [preview.path, sessionId, sessions]);
+  }, [preview.path, preview.lineCount, sessionId, sessions]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !preview.frame) return;
-    paintCanvasTextSurface(canvas, preview.frame, [], theme, preview.syntaxLegend ?? {}, { showCursors: false });
-  }, [preview.frame, preview.syntaxLegend, theme]);
+    const scrollElement = scrollRef.current;
+    const layout = layoutRef.current;
+    if (!canvas || !preview.frame || !scrollElement || !layout) return;
+    setContentSize({
+      width: previewSurfaceContentWidth(preview, layout, scrollElement.clientWidth),
+      height: previewSurfaceContentHeight(preview, layout, scrollElement.clientHeight),
+    });
+    syncingScrollRef.current = syncPreviewSurfaceScroll(scrollElement, preview, layout);
+    syncPreviewSurfaceTransform(scrollElement, viewportRef.current, layout, preview.lineCount ?? 0);
+    paintCanvasTextSurface(
+      canvas,
+      preview.frame,
+      [],
+      theme,
+      preview.syntaxLegend ?? {},
+      { showCursors: false },
+      PICKER_PREVIEW_SURFACE_STYLE,
+    );
+  }, [preview, theme]);
 
   return (
     <>
@@ -522,15 +560,39 @@ function PickerSurfacePreview({
         <div className="pickerPreviewMeta">{surfacePreviewSummary(preview)}</div>
       </div>
       <div
+        ref={scrollRef}
         className="pickerPreviewSurface"
-        onWheel={(event) => {
-          event.preventDefault();
-          const deltaRows = Math.sign(event.deltaY) * Math.max(1, Math.round(Math.abs(event.deltaY) / 30));
-          if (!deltaRows) return;
-          void sessions.dispatch(sessionId, "scrollPreview", { deltaRows });
+        onScroll={() => {
+          const scrollElement = scrollRef.current;
+          const layout = layoutRef.current;
+          if (!scrollElement || !layout) return;
+          syncPreviewSurfaceTransform(scrollElement, viewportRef.current, layout, preview.lineCount ?? 0);
+          if (syncingScrollRef.current) {
+            syncingScrollRef.current = false;
+            return;
+          }
+          if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+          rafRef.current = requestAnimationFrame(() => {
+            rafRef.current = null;
+            const viewport = previewViewportFromScroll(scrollElement, layout, preview.lineCount ?? 0);
+            if (
+              viewport.firstRow === (preview.viewport?.firstRow ?? 0)
+              && viewport.firstCol === (preview.viewport?.firstCol ?? 0)
+            ) return;
+            void sessions.dispatch(sessionId, "scrollPreview", viewport);
+          });
         }}
       >
-        <canvas ref={canvasRef} className="pickerPreviewCanvas" />
+        <div
+          className="pickerPreviewSpacer"
+          style={{
+            width: `${contentSize.width}px`,
+            height: `${contentSize.height}px`,
+          }}
+        />
+        <div ref={viewportRef} className="pickerPreviewCanvasViewport">
+          <canvas ref={canvasRef} className="pickerPreviewCanvas" />
+        </div>
       </div>
     </>
   );
@@ -546,6 +608,74 @@ function surfacePreviewSummary(preview: PickerPreviewViewState & { kind: "surfac
     return preview.lineCount === 1 ? "1 line" : `${preview.lineCount} lines`;
   }
   return "Preview";
+}
+
+function previewSurfaceContentHeight(
+  preview: PickerPreviewViewState & { kind: "surface" },
+  layout: CanvasTextSurfaceConfiguration,
+  minHeight: number,
+): number {
+  const padding = PICKER_PREVIEW_SURFACE_STYLE.paddingPx ?? 0;
+  const lineCount = Math.max(preview.lineCount ?? 0, layout.viewport.rowCount);
+  return Math.max(minHeight, padding * 2 + lineCount * layout.metrics.rowHeightPx);
+}
+
+function previewSurfaceContentWidth(
+  preview: PickerPreviewViewState & { kind: "surface" },
+  layout: CanvasTextSurfaceConfiguration,
+  minWidth: number,
+): number {
+  const padding = PICKER_PREVIEW_SURFACE_STYLE.paddingPx ?? 0;
+  const firstCol = preview.viewport?.firstCol ?? 0;
+  const widestVisibleRow = Math.max(
+    layout.viewport.wrapWidth,
+    ...(preview.frame?.rows ?? []).map((row) => firstCol + measureTextSurfaceColumns(row.text)),
+  );
+  return Math.max(minWidth, padding * 2 + widestVisibleRow * layout.metrics.cellWidthPx);
+}
+
+function previewViewportFromScroll(
+  scrollElement: HTMLDivElement,
+  layout: CanvasTextSurfaceConfiguration,
+  lineCount: number,
+): Viewport {
+  const maxFirstRow = Math.max(0, lineCount - layout.viewport.rowCount);
+  return {
+    firstRow: clampNumber(Math.floor(scrollElement.scrollTop / layout.metrics.rowHeightPx), 0, maxFirstRow),
+    rowCount: layout.viewport.rowCount,
+    firstCol: Math.max(0, Math.floor(scrollElement.scrollLeft / layout.metrics.cellWidthPx)),
+    wrapWidth: layout.viewport.wrapWidth,
+  };
+}
+
+function syncPreviewSurfaceScroll(
+  scrollElement: HTMLDivElement,
+  preview: PickerPreviewViewState & { kind: "surface" },
+  layout: CanvasTextSurfaceConfiguration,
+): boolean {
+  const targetTop = Math.max(0, (preview.viewport?.firstRow ?? 0) * layout.metrics.rowHeightPx);
+  const targetLeft = Math.max(0, (preview.viewport?.firstCol ?? 0) * layout.metrics.cellWidthPx);
+  if (Math.abs(scrollElement.scrollTop - targetTop) <= 1 && Math.abs(scrollElement.scrollLeft - targetLeft) <= 1) return false;
+  scrollElement.scrollTop = targetTop;
+  scrollElement.scrollLeft = targetLeft;
+  return true;
+}
+
+function syncPreviewSurfaceTransform(
+  scrollElement: HTMLDivElement,
+  viewportElement: HTMLDivElement | null,
+  layout: CanvasTextSurfaceConfiguration,
+  lineCount: number,
+): void {
+  if (!viewportElement) return;
+  const viewport = previewViewportFromScroll(scrollElement, layout, lineCount);
+  const offsetX = viewport.firstCol * layout.metrics.cellWidthPx - scrollElement.scrollLeft;
+  const offsetY = viewport.firstRow * layout.metrics.rowHeightPx - scrollElement.scrollTop;
+  viewportElement.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }
 
 function previewSyntaxByRow(spans: readonly PickerPreviewViewSyntaxSpan[]): Map<number, PickerPreviewViewSyntaxSpan[]> {

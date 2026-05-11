@@ -8,6 +8,13 @@ export interface CanvasTextSurfaceConfiguration {
   metrics: CellGridMetrics;
 }
 
+export interface CanvasTextSurfaceStyleOptions {
+  paddingPx?: number;
+  fontSizePx?: number;
+  lineHeightPx?: number;
+  fontFamily?: string;
+}
+
 export interface CanvasTextSurfacePaintOptions {
   selectionPickerActive?: boolean;
   showCursors?: boolean;
@@ -22,11 +29,12 @@ interface TextSurfaceTheme {
   syntaxColor(kind: number): string;
 }
 
-const PADDING_PX = 18;
-const FONT_SIZE_PX = 15;
-const LINE_HEIGHT_PX = 22;
-const FONT_FAMILY = "Iosevka, Menlo, Monaco, Consolas, 'SF Mono', ui-monospace, monospace";
-const FONT = `${FONT_SIZE_PX}px ${FONT_FAMILY}`;
+const DEFAULT_TEXT_SURFACE_STYLE = {
+  paddingPx: 18,
+  fontSizePx: 15,
+  lineHeightPx: 22,
+  fontFamily: "Iosevka, Menlo, Monaco, Consolas, 'SF Mono', ui-monospace, monospace",
+} satisfies Required<CanvasTextSurfaceStyleOptions>;
 const SEGMENTER = typeof Intl !== "undefined" && "Segmenter" in Intl
   ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
   : undefined;
@@ -39,13 +47,17 @@ const fallbackSyntaxScopes: Record<number, string> = {
   5: "comment",
 };
 
-export async function loadEditorFont(): Promise<void> {
+export async function loadEditorFont(styleOptions: CanvasTextSurfaceStyleOptions = {}): Promise<void> {
   if (!("fonts" in document)) return;
-  await document.fonts.load(FONT, "mmmmmmmmmmmmmmmm");
+  const style = resolveTextSurfaceStyle(styleOptions);
+  await document.fonts.load(fontForStyle(style), "mmmmmmmmmmmmmmmm");
   await document.fonts.ready;
 }
 
-export function configureCanvasTextSurface(canvas: HTMLCanvasElement): CanvasTextSurfaceConfiguration {
+export function configureCanvasTextSurface(
+  canvas: HTMLCanvasElement,
+  styleOptions: CanvasTextSurfaceStyleOptions = {},
+): CanvasTextSurfaceConfiguration {
   const rect = (canvas.parentElement ?? canvas).getBoundingClientRect();
   const cssWidth = Math.max(1, Math.floor(rect.width));
   const cssHeight = Math.max(1, Math.floor(rect.height));
@@ -57,18 +69,19 @@ export function configureCanvasTextSurface(canvas: HTMLCanvasElement): CanvasTex
   canvas.height = Math.max(1, Math.floor(cssHeight * dpr));
 
   const ctx = canvas.getContext("2d");
-  const cellWidthPx = ctx ? measureCellWidth(ctx) : 8;
-  const contentWidth = Math.max(1, cssWidth - PADDING_PX * 2);
-  const contentHeight = Math.max(1, cssHeight - PADDING_PX * 2);
+  const style = resolveTextSurfaceStyle(styleOptions);
+  const cellWidthPx = ctx ? measureCellWidth(ctx, style) : 8;
+  const contentWidth = Math.max(1, cssWidth - style.paddingPx * 2);
+  const contentHeight = Math.max(1, cssHeight - style.paddingPx * 2);
 
   return {
     metrics: {
       cellWidthPx: Math.ceil(cellWidthPx),
-      rowHeightPx: LINE_HEIGHT_PX,
+      rowHeightPx: style.lineHeightPx,
     },
     viewport: {
       firstRow: 0,
-      rowCount: Math.max(1, Math.floor(contentHeight / LINE_HEIGHT_PX)),
+      rowCount: Math.max(1, Math.floor(contentHeight / style.lineHeightPx)),
       firstCol: 0,
       wrapWidth: Math.max(1, Math.floor(contentWidth / cellWidthPx)),
     },
@@ -82,6 +95,7 @@ export function paintCanvasTextSurface(
   themeSnapshot?: ThemeSnapshot,
   syntaxLegend: Record<number, string> = {},
   options: CanvasTextSurfacePaintOptions = {},
+  styleOptions: CanvasTextSurfaceStyleOptions = {},
 ): void {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -89,10 +103,11 @@ export function paintCanvasTextSurface(
   const dpr = window.devicePixelRatio || 1;
   const cssWidth = canvas.width / dpr;
   const cssHeight = canvas.height / dpr;
-  const metrics = rendererMetrics(ctx);
+  const style = resolveTextSurfaceStyle(styleOptions);
+  const metrics = rendererMetrics(ctx, style);
   const theme = resolveTextSurfaceTheme(themeSnapshot?.active, syntaxLegend);
 
-  prepareContext(ctx, dpr);
+  prepareContext(ctx, dpr, style);
   ctx.fillStyle = theme.background;
   ctx.fillRect(0, 0, cssWidth, cssHeight);
 
@@ -109,10 +124,14 @@ export function paintCanvasTextSurface(
   }
 }
 
-function prepareContext(ctx: CanvasRenderingContext2D, dpr: number): void {
+function prepareContext(
+  ctx: CanvasRenderingContext2D,
+  dpr: number,
+  style: Required<CanvasTextSurfaceStyleOptions>,
+): void {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.imageSmoothingEnabled = false;
-  ctx.font = FONT;
+  ctx.font = fontForStyle(style);
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
   ctx.fontKerning = "normal";
@@ -122,18 +141,20 @@ interface RendererMetrics {
   cellWidth: number;
   rowHeight: number;
   baselineOffset: number;
+  padding: number;
 }
 
-function rendererMetrics(ctx: CanvasRenderingContext2D): RendererMetrics {
+function rendererMetrics(ctx: CanvasRenderingContext2D, style: Required<CanvasTextSurfaceStyleOptions>): RendererMetrics {
   return {
-    cellWidth: measureCellWidth(ctx),
-    rowHeight: LINE_HEIGHT_PX,
-    baselineOffset: Math.round((LINE_HEIGHT_PX - FONT_SIZE_PX) / 2 + FONT_SIZE_PX * 0.82),
+    cellWidth: measureCellWidth(ctx, style),
+    rowHeight: style.lineHeightPx,
+    baselineOffset: Math.round((style.lineHeightPx - style.fontSizePx) / 2 + style.fontSizePx * 0.82),
+    padding: style.paddingPx,
   };
 }
 
-function measureCellWidth(ctx: CanvasRenderingContext2D): number {
-  ctx.font = FONT;
+function measureCellWidth(ctx: CanvasRenderingContext2D, style: Required<CanvasTextSurfaceStyleOptions>): number {
+  ctx.font = fontForStyle(style);
   ctx.fontKerning = "normal";
   const sample = "mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm";
   return ctx.measureText(sample).width / sample.length;
@@ -322,6 +343,10 @@ function textForCols(cells: string[], startCol: number, endCol: number): string 
     .join("");
 }
 
+export function measureTextSurfaceColumns(text: string): number {
+  return cellsForText(text).length;
+}
+
 function cellsForText(text: string): string[] {
   const cells: string[] = [];
   const graphemes = SEGMENTER
@@ -377,10 +402,23 @@ function syntaxSpansByRow(spans: SyntaxSpan[]): Map<number, SyntaxSpan[]> {
   return byRow;
 }
 
+function resolveTextSurfaceStyle(styleOptions: CanvasTextSurfaceStyleOptions): Required<CanvasTextSurfaceStyleOptions> {
+  return {
+    paddingPx: styleOptions.paddingPx ?? DEFAULT_TEXT_SURFACE_STYLE.paddingPx,
+    fontSizePx: styleOptions.fontSizePx ?? DEFAULT_TEXT_SURFACE_STYLE.fontSizePx,
+    lineHeightPx: styleOptions.lineHeightPx ?? DEFAULT_TEXT_SURFACE_STYLE.lineHeightPx,
+    fontFamily: styleOptions.fontFamily ?? DEFAULT_TEXT_SURFACE_STYLE.fontFamily,
+  };
+}
+
+function fontForStyle(style: Required<CanvasTextSurfaceStyleOptions>): string {
+  return `${style.fontSizePx}px ${style.fontFamily}`;
+}
+
 function xForCol(col: number, metrics: RendererMetrics): number {
-  return PADDING_PX + col * metrics.cellWidth;
+  return metrics.padding + col * metrics.cellWidth;
 }
 
 function yForRow(row: number, metrics: RendererMetrics): number {
-  return PADDING_PX + row * metrics.rowHeight;
+  return metrics.padding + row * metrics.rowHeight;
 }

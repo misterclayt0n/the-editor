@@ -330,9 +330,9 @@ async function openPicker(
         if (metrics) handle.previewMetrics = metrics;
         if (viewport) {
           handle.previewViewport = {
-            firstRow: handle.previewViewport.firstRow,
+            firstRow: Math.max(0, viewport.firstRow),
             rowCount: viewport.rowCount,
-            firstCol: 0,
+            firstCol: Math.max(0, viewport.firstCol),
             wrapWidth: viewport.wrapWidth,
           };
         }
@@ -345,19 +345,28 @@ async function openPicker(
         });
       },
       scrollPreview: async ({ session }, args) => {
-        const deltaRows = typeof (args as { deltaRows?: unknown } | undefined)?.deltaRows === "number"
-          ? Math.trunc((args as { deltaRows: number }).deltaRows)
-          : 0;
-        if (!deltaRows) return;
         const preview = session.snapshot().state.preview;
         if (!isSurfacePreview(preview)) return;
+        const nextViewport = readPreviewViewport(args);
         const lineCount = preview.lineCount ?? 0;
         const maxFirstRow = Math.max(0, lineCount - handle.previewViewport.rowCount);
-        handle.previewViewport = {
-          ...handle.previewViewport,
-          firstRow: clampNumber(handle.previewViewport.firstRow + deltaRows, 0, maxFirstRow),
-          firstCol: 0,
-        };
+        if (nextViewport) {
+          handle.previewViewport = {
+            firstRow: clampNumber(nextViewport.firstRow, 0, maxFirstRow),
+            rowCount: handle.previewViewport.rowCount,
+            firstCol: Math.max(0, nextViewport.firstCol),
+            wrapWidth: handle.previewViewport.wrapWidth,
+          };
+        } else {
+          const deltaRows = typeof (args as { deltaRows?: unknown } | undefined)?.deltaRows === "number"
+            ? Math.trunc((args as { deltaRows: number }).deltaRows)
+            : 0;
+          if (!deltaRows) return;
+          handle.previewViewport = {
+            ...handle.previewViewport,
+            firstRow: clampNumber(handle.previewViewport.firstRow + deltaRows, 0, maxFirstRow),
+          };
+        }
         const nextPreview = await renderSurfacePreview(editor, handle, preview);
         if (!isCurrentPicker(editor, handle, handle.requestVersion)) return;
         session.updateState((state) => {
@@ -529,7 +538,7 @@ async function renderSurfacePreview(
       0,
       Math.max(0, lineCount - handle.previewViewport.rowCount),
     ),
-    firstCol: 0,
+    firstCol: Math.max(0, handle.previewViewport.firstCol),
   };
   const frame = await editor.runtime.surfaces.renderFrame({ surfaceId, viewport: handle.previewViewport });
   return {
@@ -577,7 +586,7 @@ function readPreviewViewport(args: unknown): Viewport | undefined {
   return {
     firstRow: typeof (viewport as { firstRow?: unknown }).firstRow === "number" ? (viewport as { firstRow: number }).firstRow : 0,
     rowCount,
-    firstCol: 0,
+    firstCol: typeof (viewport as { firstCol?: unknown }).firstCol === "number" ? (viewport as { firstCol: number }).firstCol : 0,
     wrapWidth,
   };
 }

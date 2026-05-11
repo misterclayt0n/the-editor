@@ -14,7 +14,7 @@
   -webkit-app-region: no-drag;
   align-items: center;
   display: flex;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   gap: 4px;
   height: 40px;
   max-width: 100%;
@@ -31,7 +31,7 @@
 
 .workbenchFileTabScrollerShell {
   display: flex;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   max-width: 100%;
   min-width: 0;
   position: relative;
@@ -43,7 +43,7 @@
   -webkit-app-region: no-drag;
   align-items: center;
   display: flex;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   gap: 4px;
   min-width: 0;
   overflow-x: auto;
@@ -85,11 +85,7 @@
   color: var(--theme-ui-text-inactive-fg);
 }
 
-.workbenchFileTabbarRoot:hover .workbenchFileTab.isInactive {
-  background: color-mix(in srgb, var(--theme-ui-menu-selected-bg) 38%, transparent);
-}
-
-.workbenchFileTabbarRoot:hover .workbenchFileTab.isInactive:hover {
+.workbenchFileTab.isInactive:hover {
   background: color-mix(in srgb, var(--theme-ui-menu-selected-bg) 56%, transparent);
   color: var(--theme-ui-text-fg);
 }
@@ -148,7 +144,7 @@
   -webkit-app-region: no-drag;
   align-items: center;
   appearance: none;
-  background: color-mix(in srgb, var(--theme-ui-background-bg) 48%, transparent);
+  background: color-mix(in srgb, var(--theme-ui-menu-selected-fg) 8%, var(--theme-ui-menu-selected-bg));
   border: 0;
   border-radius: 4px;
   color: var(--theme-ui-text-inactive-fg);
@@ -179,7 +175,7 @@
 }
 
 .workbenchFileTabClose:hover {
-  background: color-mix(in srgb, var(--theme-ui-menu-selected-fg) 12%, transparent);
+  background: color-mix(in srgb, var(--theme-ui-menu-selected-fg) 12%, var(--theme-ui-menu-selected-bg));
   color: var(--theme-ui-text-focus-fg);
 }
 

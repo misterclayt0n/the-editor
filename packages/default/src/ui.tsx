@@ -600,13 +600,6 @@ function PickerSurfacePreview({
               ref={selectionRef}
               className="pickerPreviewSelectableText"
               style={surfacePreviewSelectableStyle(controllerState)}
-              onWheel={(event) => {
-                const scrollElement = scrollRef.current;
-                if (!scrollElement) return;
-                event.preventDefault();
-                scrollElement.scrollTop += event.deltaY;
-                scrollElement.scrollLeft += event.deltaX;
-              }}
             >
               {selectablePreviewText}
             </pre>

@@ -88,6 +88,7 @@ export interface SurfaceChange {
 export interface SurfaceState {
   text: string;
   lineEnding: string;
+  lineCount: number;
   selection: SurfaceSelectionRange[];
   activeCursorId: number | null;
   viewport: Viewport;
@@ -285,6 +286,9 @@ export interface RuntimeApi {
   };
   surfaces: {
     create(params: { documentId: DocumentId; viewport?: Viewport }): Promise<SurfaceCreated>;
+    destroy(params: { surfaceId: SurfaceId }): Promise<OkResult>;
+    loadFile(params: { surfaceId: SurfaceId; path: string }): Promise<OkResult>;
+    lineCount(params: { surfaceId: SurfaceId }): Promise<{ lineCount: number }>;
     setViewport(params: { surfaceId: SurfaceId; viewport: Viewport }): Promise<OkResult>;
     setMetrics(params: { surfaceId: SurfaceId; metrics: CellGridMetrics }): Promise<OkResult>;
     setSoftWrap(params: { surfaceId: SurfaceId; softWrap: boolean }): Promise<OkResult>;

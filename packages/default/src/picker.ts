@@ -1,6 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import type { FileSearchResult } from "@the-editor/contracts/runtime";
+import type { CellGridMetrics, FileSearchResult, SurfaceId, Viewport } from "@the-editor/contracts/runtime";
 import {
   commandId,
   pickerRoleId,
@@ -40,17 +40,22 @@ interface ActivePickerHandle {
   refreshTimer?: ReturnType<typeof setTimeout>;
   previewTimer?: ReturnType<typeof setTimeout>;
   providerSession: PickerSession;
+  previewSurfaceId?: SurfaceId;
+  previewMetrics?: CellGridMetrics;
+  previewViewport: Viewport;
+  previewPath?: string;
 }
 
 interface StoredPickerState {
   active?: ActivePickerHandle;
 }
 
+type PickerSurfacePreview = Extract<PickerPreview, { kind: "surface" }>;
+
 const pickerImplementationId = roleImplementationId("default.picker");
 const pickerStateSlot = "default.picker.state";
 const FILE_PICKER_PROVIDER_ID = "default.files";
 const FILE_PICKER_LIMIT = 200;
-let pickerTraceSequence = 0;
 
 export function defaultPicker(): EditorModule {
   return (editor) => {
@@ -61,7 +66,7 @@ export function defaultPicker(): EditorModule {
       implementationId: pickerImplementationId,
       title: "Default Picker",
       async close() {
-        closePicker(editor, true, "role.close");
+        closePicker(editor, true);
       },
       async focus() {
         editor.focus.setRole(pickerRoleId);
@@ -110,7 +115,7 @@ export function defaultPicker(): EditorModule {
       title: "Close Picker",
       hidden: true,
       run() {
-        closePicker(editor, true, "command:picker.close");
+        closePicker(editor, true);
       },
     });
 
@@ -182,73 +187,32 @@ export function defaultPicker(): EditorModule {
       placeholder: "Find files",
       async createSession() {
         const rootPath = resolveFilePickerRoot(editor);
-        pickerTrace(editor, "provider.createSession.begin", { providerId: FILE_PICKER_PROVIDER_ID, rootPath });
         const { indexId } = await editor.runtime.search.ensureIndex({ rootPath });
-        pickerTrace(editor, "provider.createSession.ready", { providerId: FILE_PICKER_PROVIDER_ID, rootPath, indexId });
         let latestQuery = "";
 
         return {
           async search(query) {
             latestQuery = query;
-            pickerTrace(editor, "provider.search.begin", { indexId, query, currentPath: getDefaultState(editor).activePath });
             const result = await editor.runtime.search.queryFiles({
               indexId,
               query,
               limit: FILE_PICKER_LIMIT,
               currentPath: getDefaultState(editor).activePath,
             });
-            pickerTrace(editor, "provider.search.result", {
-              indexId,
-              query,
-              matched: result.totalMatched,
-              itemCount: result.items.length,
-              scanning: result.scanning,
-              rootPath: result.rootPath,
-            });
             return filePickerPage(result);
           },
           async preview(item) {
             const path = filePickerPath(item);
-            pickerTrace(editor, "provider.preview.begin", { indexId, itemId: item.id, path });
             if (!path) return null;
-            const preview = await editor.runtime.search.readTextPreview({
-              path,
-              maxBytes: 12_000,
-              maxLines: 96,
-            });
-            pickerTrace(editor, "provider.preview.result", {
-              indexId,
-              path,
-              binary: preview.binary,
-              truncated: preview.truncated,
-              startLine: preview.startLine,
-              endLine: preview.endLine,
-            });
             return {
-              kind: "text",
+              kind: "surface",
               title: item.title,
-              detail: preview.path,
-              text: preview.binary ? "" : preview.text,
-              startLine: preview.startLine,
-              endLine: preview.endLine,
-              truncated: preview.truncated,
-              binary: preview.binary,
-              rows: preview.rows?.map((row) => ({
-                text: row.text,
-                lineNumber: row.lineNumber,
-              })),
-              syntax: preview.syntax?.map((span) => ({
-                row: span.row,
-                startCol: span.startCol,
-                endCol: span.endCol,
-                kind: span.kind,
-                scope: span.scope,
-              })),
+              detail: path,
+              path,
             } satisfies PickerPreview;
           },
           async accept(item) {
             const path = filePickerPath(item);
-            pickerTrace(editor, "provider.accept.begin", { indexId, itemId: item.id, path, latestQuery });
             if (!path) return;
             await editor.runtime.search.recordSelection({
               indexId,
@@ -259,7 +223,6 @@ export function defaultPicker(): EditorModule {
               id: commandId("file.open"),
               args: { path },
             });
-            pickerTrace(editor, "provider.accept.done", { indexId, path, latestQuery });
           },
         } satisfies PickerSession;
       },
@@ -277,25 +240,12 @@ function activePicker(editor: Parameters<EditorModule>[0]): ActivePickerHandle |
   const provider = editor.pickers.entry(active.providerId);
   const session = editor.sessions.snapshot(active.sessionId);
   if (provider && provider.moduleId === active.providerModuleId && session) return active;
-  pickerTrace(editor, "activePicker.invalid", {
-    activeSessionId: active.sessionId,
-    providerId: active.providerId,
-    providerModuleId: active.providerModuleId,
-    providerPresent: Boolean(provider),
-    providerModuleMatches: provider?.moduleId === active.providerModuleId,
-    sessionPresent: Boolean(session),
-  });
-  disposePicker(editor, false, "activePicker.invalid");
+  disposePicker(editor, false);
   return undefined;
 }
 
 async function dispatchPickerSession(editor: Parameters<EditorModule>[0], method: string, args?: unknown): Promise<void> {
   const active = activePicker(editor);
-  pickerTrace(editor, "session.dispatch", {
-    method,
-    args,
-    activeSessionId: active?.sessionId,
-  });
   if (!active) return;
   await editor.sessions.dispatch(active.sessionId, method, args);
 }
@@ -310,23 +260,17 @@ async function openPicker(
     sessionArgs?: unknown;
   } = {},
 ): Promise<void> {
-  pickerTrace(editor, "open.begin", { providerId, options });
-  disposePicker(editor, false, "openPicker.begin");
+  disposePicker(editor, false);
   const provider = editor.pickers.entry(providerId);
   if (!provider) throw new Error(`unknown picker provider ${providerId}`);
-  pickerTrace(editor, "open.provider", {
-    providerId,
-    providerModuleId: provider.moduleId,
-    providerTitle: provider.title,
-  });
   const providerSession = await provider.createSession({ editor }, options.sessionArgs);
-  pickerTrace(editor, "open.providerSession.created", { providerId });
   const handle: ActivePickerHandle = {
     sessionId: "" as InteractiveSessionId,
     providerId,
     providerModuleId: provider.moduleId,
     requestVersion: 0,
     providerSession,
+    previewViewport: defaultPreviewViewport(),
   };
 
   const session = editor.sessions.create<PickerSessionState>({
@@ -350,11 +294,6 @@ async function openPicker(
         const query = typeof (args as { query?: unknown } | undefined)?.query === "string"
           ? (args as { query: string }).query
           : "";
-        pickerTrace(editor, "session.setQuery", {
-          sessionId: session.id,
-          previousQuery: session.snapshot().state.query,
-          query,
-        });
         session.updateState((state) => {
           state.query = query;
           state.selectedIndex = 0;
@@ -365,60 +304,78 @@ async function openPicker(
         const delta = typeof (args as { delta?: unknown } | undefined)?.delta === "number"
           ? (args as { delta: number }).delta
           : 0;
-        pickerTrace(editor, "session.moveSelection", {
-          sessionId: session.id,
-          delta,
-          selectedIndexBefore: session.snapshot().state.selectedIndex,
-          itemCount: session.snapshot().state.items.length,
-        });
         session.updateState((state) => {
           if (!state.items.length) return;
           state.selectedIndex = clampIndex(state.selectedIndex + delta, state.items.length);
           state.preview = null;
         });
+        handle.requestVersion += 1;
         schedulePickerPreview(editor, session, handle);
       },
       selectIndex: ({ session }, args) => {
         const index = typeof (args as { index?: unknown } | undefined)?.index === "number"
           ? (args as { index: number }).index
           : 0;
-        pickerTrace(editor, "session.selectIndex", {
-          sessionId: session.id,
-          index,
-          itemCount: session.snapshot().state.items.length,
-        });
         session.updateState((state) => {
           if (!state.items.length) return;
           state.selectedIndex = clampIndex(index, state.items.length);
           state.preview = null;
         });
+        handle.requestVersion += 1;
         schedulePickerPreview(editor, session, handle);
+      },
+      configurePreview: async ({ session }, args) => {
+        const metrics = readPreviewMetrics(args);
+        const viewport = readPreviewViewport(args);
+        if (metrics) handle.previewMetrics = metrics;
+        if (viewport) {
+          handle.previewViewport = {
+            firstRow: handle.previewViewport.firstRow,
+            rowCount: viewport.rowCount,
+            firstCol: 0,
+            wrapWidth: viewport.wrapWidth,
+          };
+        }
+        const preview = session.snapshot().state.preview;
+        if (!isSurfacePreview(preview)) return;
+        const nextPreview = await renderSurfacePreview(editor, handle, preview);
+        if (!isCurrentPicker(editor, handle, handle.requestVersion)) return;
+        session.updateState((state) => {
+          state.preview = nextPreview;
+        });
+      },
+      scrollPreview: async ({ session }, args) => {
+        const deltaRows = typeof (args as { deltaRows?: unknown } | undefined)?.deltaRows === "number"
+          ? Math.trunc((args as { deltaRows: number }).deltaRows)
+          : 0;
+        if (!deltaRows) return;
+        const preview = session.snapshot().state.preview;
+        if (!isSurfacePreview(preview)) return;
+        const lineCount = preview.lineCount ?? 0;
+        const maxFirstRow = Math.max(0, lineCount - handle.previewViewport.rowCount);
+        handle.previewViewport = {
+          ...handle.previewViewport,
+          firstRow: clampNumber(handle.previewViewport.firstRow + deltaRows, 0, maxFirstRow),
+          firstCol: 0,
+        };
+        const nextPreview = await renderSurfacePreview(editor, handle, preview);
+        if (!isCurrentPicker(editor, handle, handle.requestVersion)) return;
+        session.updateState((state) => {
+          state.preview = nextPreview;
+        });
       },
       accept: async ({ session }) => {
         const snapshot = session.snapshot().state;
         const item = snapshot.items[snapshot.selectedIndex];
-        pickerTrace(editor, "session.accept", {
-          sessionId: session.id,
-          selectedIndex: snapshot.selectedIndex,
-          itemId: item?.id,
-          itemDetail: item?.detail,
-        });
         if (!item) return;
-        closePicker(editor, true, "session.accept");
+        closePicker(editor, true);
         await providerSession.accept(item);
       },
       close: () => {
-        pickerTrace(editor, "session.close", { sessionId: session.id });
-        closePicker(editor, true, "session.close");
+        closePicker(editor, true);
       },
     },
     dispose: () => {
-      pickerTrace(editor, "session.dispose", {
-        sessionId: handle.sessionId,
-        requestVersion: handle.requestVersion,
-        hadRefreshTimer: Boolean(handle.refreshTimer),
-        hadPreviewTimer: Boolean(handle.previewTimer),
-      });
       if (handle.refreshTimer) clearTimeout(handle.refreshTimer);
       if (handle.previewTimer) clearTimeout(handle.previewTimer);
       providerSession.dispose?.();
@@ -427,43 +384,26 @@ async function openPicker(
 
   handle.sessionId = session.id;
   pickerState(editor).active = handle;
-  pickerTrace(editor, "open.activated", {
-    sessionId: handle.sessionId,
-    providerId,
-    providerModuleId: handle.providerModuleId,
-    query: options.query ?? "",
-    cwd: editor.cwd.current(),
-    focusBefore: editor.focus.current(),
-  });
   editor.focus.setRole(pickerRoleId);
   editor.workbench.invalidate("roles", "focus");
   await refreshPicker(editor, session, handle);
 }
 
-function closePicker(editor: Parameters<EditorModule>[0], restoreFocus: boolean, reason = "closePicker"): void {
-  disposePicker(editor, restoreFocus, reason);
+function closePicker(editor: Parameters<EditorModule>[0], restoreFocus: boolean): void {
+  disposePicker(editor, restoreFocus);
 }
 
-function disposePicker(editor: Parameters<EditorModule>[0], restoreFocus: boolean, reason = "disposePicker"): void {
+function disposePicker(editor: Parameters<EditorModule>[0], restoreFocus: boolean): void {
   const active = pickerState(editor).active;
-  pickerTrace(editor, "dispose", {
-    reason,
-    restoreFocus,
-    activeSessionId: active?.sessionId,
-    requestVersion: active?.requestVersion,
-    focusBefore: editor.focus.current(),
-  });
   pickerState(editor).active = undefined;
   if (active?.refreshTimer) clearTimeout(active.refreshTimer);
   if (active?.previewTimer) clearTimeout(active.previewTimer);
+  if (active?.previewSurfaceId !== undefined) {
+    void editor.runtime.surfaces.destroy({ surfaceId: active.previewSurfaceId }).catch(() => {});
+  }
   if (active) editor.sessions.dispose(active.sessionId);
   if (restoreFocus) editor.focus.restore();
   editor.workbench.invalidate("roles", "focus");
-  pickerTrace(editor, "dispose.done", {
-    reason,
-    restoreFocus,
-    focusAfter: editor.focus.current(),
-  });
 }
 
 async function refreshPicker(
@@ -473,23 +413,7 @@ async function refreshPicker(
 ): Promise<void> {
   const snapshotBefore = session.snapshot().state;
   const requestVersion = ++handle.requestVersion;
-  pickerTrace(editor, "refresh.begin", {
-    sessionId: session.id,
-    requestVersion,
-    query: snapshotBefore.query,
-    selectedIndex: snapshotBefore.selectedIndex,
-    itemCount: snapshotBefore.items.length,
-  });
   const page = await handle.providerSession.search(snapshotBefore.query, { offset: 0, limit: FILE_PICKER_LIMIT });
-  pickerTrace(editor, "refresh.result", {
-    sessionId: session.id,
-    requestVersion,
-    query: snapshotBefore.query,
-    resultCount: page.items.length,
-    refreshAfterMs: page.refreshAfterMs,
-    status: page.status,
-    emptyText: page.emptyText,
-  });
   if (!isCurrentPicker(editor, handle, requestVersion)) return;
   session.updateState((state) => {
     state.items = page.items;
@@ -498,22 +422,10 @@ async function refreshPicker(
     state.selectedIndex = clampIndex(state.selectedIndex, state.items.length);
     state.preview = null;
   });
-  const snapshotAfter = session.snapshot().state;
-  pickerTrace(editor, "refresh.applied", {
-    sessionId: session.id,
-    requestVersion,
-    selectedIndex: snapshotAfter.selectedIndex,
-    itemCount: snapshotAfter.items.length,
-    firstItem: snapshotAfter.items[0]?.detail ?? snapshotAfter.items[0]?.title,
-  });
   if (handle.refreshTimer) clearTimeout(handle.refreshTimer);
   if (handle.previewTimer) clearTimeout(handle.previewTimer);
   handle.refreshTimer = page.refreshAfterMs && page.refreshAfterMs > 0
     ? setTimeout(() => {
-        pickerTrace(editor, "refresh.timer.fire", {
-          sessionId: session.id,
-          requestVersion: handle.requestVersion,
-        });
         void refreshPicker(editor, session, handle);
       }, page.refreshAfterMs)
     : undefined;
@@ -526,21 +438,9 @@ function schedulePickerPreview(
   handle: ActivePickerHandle,
   requestVersion = handle.requestVersion,
 ): void {
-  const snapshot = session.snapshot().state;
-  pickerTrace(editor, "preview.schedule", {
-    sessionId: session.id,
-    requestVersion,
-    selectedIndex: snapshot.selectedIndex,
-    itemCount: snapshot.items.length,
-    item: snapshot.items[snapshot.selectedIndex]?.detail ?? snapshot.items[snapshot.selectedIndex]?.title,
-  });
   if (handle.previewTimer) clearTimeout(handle.previewTimer);
   handle.previewTimer = setTimeout(() => {
     handle.previewTimer = undefined;
-    pickerTrace(editor, "preview.timer.fire", {
-      sessionId: session.id,
-      requestVersion,
-    });
     void refreshPickerPreview(editor, session, handle, requestVersion);
   }, 75);
 }
@@ -553,22 +453,9 @@ async function refreshPickerPreview(
 ): Promise<void> {
   const state = session.snapshot().state;
   const item = state.items[state.selectedIndex];
-  pickerTrace(editor, "preview.begin", {
-    sessionId: session.id,
-    requestVersion,
-    selectedIndex: state.selectedIndex,
-    itemCount: state.items.length,
-    item: item?.detail ?? item?.title,
-    hasPreviewProvider: Boolean(handle.providerSession.preview),
-  });
   if (!item || !handle.providerSession.preview) {
     session.updateState((next) => {
       next.preview = null;
-    });
-    pickerTrace(editor, "preview.skipped", {
-      sessionId: session.id,
-      requestVersion,
-      reason: !item ? "no-item" : "no-preview-provider",
     });
     return;
   }
@@ -576,15 +463,22 @@ async function refreshPickerPreview(
   try {
     const preview = await handle.providerSession.preview(item);
     if (!isCurrentPicker(editor, handle, requestVersion)) return;
+    if (!preview) {
+      session.updateState((next) => {
+        next.preview = null;
+      });
+      return;
+    }
+    if (preview.kind === "surface") {
+      const nextPreview = await renderSurfacePreview(editor, handle, preview);
+      if (!isCurrentPicker(editor, handle, requestVersion)) return;
+      session.updateState((next) => {
+        next.preview = nextPreview;
+      });
+      return;
+    }
     session.updateState((next) => {
       next.preview = preview;
-    });
-    pickerTrace(editor, "preview.applied", {
-      sessionId: session.id,
-      requestVersion,
-      previewKind: preview?.kind,
-      previewDetail: preview?.detail,
-      binary: preview?.kind === "text" ? preview.binary : undefined,
     });
   } catch (error) {
     if (!isCurrentPicker(editor, handle, requestVersion)) return;
@@ -596,12 +490,6 @@ async function refreshPickerPreview(
         detail,
       };
     });
-    pickerTrace(editor, "preview.error", {
-      sessionId: session.id,
-      requestVersion,
-      item: item.detail ?? item.title,
-      detail,
-    });
   }
 }
 
@@ -611,17 +499,100 @@ function isCurrentPicker(
   requestVersion: number,
 ): boolean {
   const active = pickerState(editor).active;
-  const ok = active === handle && handle.requestVersion === requestVersion;
-  if (!ok) {
-    pickerTrace(editor, "request.stale", {
-      requestVersion,
-      handleRequestVersion: handle.requestVersion,
-      activeSessionId: active?.sessionId,
-      handleSessionId: handle.sessionId,
-      sameHandle: active === handle,
-    });
+  return active === handle && handle.requestVersion === requestVersion;
+}
+
+async function renderSurfacePreview(
+  editor: Parameters<EditorModule>[0],
+  handle: ActivePickerHandle,
+  preview: PickerSurfacePreview,
+): Promise<PickerSurfacePreview> {
+  const surfaceId = await ensurePreviewSurface(editor, handle);
+  if (handle.previewPath !== preview.path) {
+    handle.previewPath = preview.path;
+    handle.previewViewport = {
+      ...handle.previewViewport,
+      firstRow: 0,
+      firstCol: 0,
+    };
+    await editor.runtime.surfaces.loadFile({ surfaceId, path: preview.path });
   }
-  return ok;
+  if (handle.previewMetrics) {
+    await editor.runtime.surfaces.setMetrics({ surfaceId, metrics: handle.previewMetrics });
+  }
+  await editor.runtime.surfaces.setSoftWrap({ surfaceId, softWrap: false });
+  const { lineCount } = await editor.runtime.surfaces.lineCount({ surfaceId });
+  handle.previewViewport = {
+    ...handle.previewViewport,
+    firstRow: clampNumber(
+      handle.previewViewport.firstRow,
+      0,
+      Math.max(0, lineCount - handle.previewViewport.rowCount),
+    ),
+    firstCol: 0,
+  };
+  const frame = await editor.runtime.surfaces.renderFrame({ surfaceId, viewport: handle.previewViewport });
+  return {
+    ...preview,
+    frame,
+    viewport: handle.previewViewport,
+    lineCount,
+    syntaxLegend: await editor.runtime.syntax.highlightLegend(),
+  };
+}
+
+async function ensurePreviewSurface(
+  editor: Parameters<EditorModule>[0],
+  handle: ActivePickerHandle,
+): Promise<SurfaceId> {
+  if (handle.previewSurfaceId !== undefined) return handle.previewSurfaceId;
+  const document = await editor.runtime.documents.createScratch({ text: "" });
+  const surface = await editor.runtime.surfaces.create({
+    documentId: document.documentId,
+    viewport: handle.previewViewport,
+  });
+  handle.previewSurfaceId = surface.surfaceId;
+  return surface.surfaceId;
+}
+
+function isSurfacePreview(preview: PickerPreview | null | undefined): preview is PickerSurfacePreview {
+  return preview?.kind === "surface" && typeof preview.path === "string";
+}
+
+function readPreviewMetrics(args: unknown): CellGridMetrics | undefined {
+  const metrics = (args as { metrics?: unknown } | undefined)?.metrics;
+  if (!metrics || typeof metrics !== "object") return undefined;
+  const cellWidthPx = (metrics as { cellWidthPx?: unknown }).cellWidthPx;
+  const rowHeightPx = (metrics as { rowHeightPx?: unknown }).rowHeightPx;
+  if (typeof cellWidthPx !== "number" || typeof rowHeightPx !== "number") return undefined;
+  return { cellWidthPx, rowHeightPx };
+}
+
+function readPreviewViewport(args: unknown): Viewport | undefined {
+  const viewport = (args as { viewport?: unknown } | undefined)?.viewport;
+  if (!viewport || typeof viewport !== "object") return undefined;
+  const rowCount = (viewport as { rowCount?: unknown }).rowCount;
+  const wrapWidth = (viewport as { wrapWidth?: unknown }).wrapWidth;
+  if (typeof rowCount !== "number" || typeof wrapWidth !== "number") return undefined;
+  return {
+    firstRow: typeof (viewport as { firstRow?: unknown }).firstRow === "number" ? (viewport as { firstRow: number }).firstRow : 0,
+    rowCount,
+    firstCol: 0,
+    wrapWidth,
+  };
+}
+
+function defaultPreviewViewport(): Viewport {
+  return {
+    firstRow: 0,
+    rowCount: 24,
+    firstCol: 0,
+    wrapWidth: 80,
+  };
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }
 
 function clampIndex(index: number, length: number): number {
@@ -670,22 +641,3 @@ function existingDirectory(path: string): string | undefined {
   }
 }
 
-function pickerTrace(editor: Parameters<EditorModule>[0], event: string, details: Record<string, unknown> = {}): void {
-  const active = pickerState(editor).active;
-  const activeSession = active ? editor.sessions.snapshot<PickerSessionState>(active.sessionId)?.state : undefined;
-  const payload = {
-    seq: ++pickerTraceSequence,
-    event,
-    cwd: editor.cwd.current(),
-    activeSessionId: active?.sessionId,
-    activeProviderId: active?.providerId,
-    activeRequestVersion: active?.requestVersion,
-    focus: editor.focus.current(),
-    query: activeSession?.query,
-    selectedIndex: activeSession?.selectedIndex,
-    itemCount: activeSession?.items.length,
-    visible: Boolean(active),
-    ...details,
-  };
-  console.log(`[picker-trace] ${JSON.stringify(payload)}`);
-}

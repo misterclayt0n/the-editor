@@ -2,17 +2,11 @@ import { Component, useEffect, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import type { RenderFrame } from "@the-editor/contracts/runtime";
 import type { BufferDecoration, InteractiveSessionSnapshot, ThemeSnapshot } from "@the-editor/editor";
-import { configureTextSurface, loadEditorFont, paintTextSurface } from "./textSurface.js";
+import { configureCanvasTextSurface, loadEditorFont, paintCanvasTextSurface } from "@the-editor/editor/textSurfaceCanvas";
 import { RendererPackageRuntime, type WorkbenchSnapshot } from "./uiRuntime.js";
 import "./style.css";
 
 const uiRuntime = new RendererPackageRuntime();
-
-let pickerAppTraceSeq = 0;
-
-function pickerAppTrace(payload: Record<string, unknown>): void {
-  console.log(`[picker-app] ${JSON.stringify({ seq: ++pickerAppTraceSeq, ...payload })}`);
-}
 
 function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -34,25 +28,12 @@ function App() {
       if (event.type === "default.sessionUpdated") {
         if (isObject(event.session)) {
           const session = event.session as unknown as InteractiveSessionSnapshot;
-          if (session.role === "picker") {
-            const state = session.state as { query?: unknown; selectedIndex?: unknown; items?: unknown[]; preview?: { kind?: unknown } } | undefined;
-            pickerAppTrace({
-              event: "policy.sessionUpdated",
-              sessionId: session.id,
-              revision: session.revision,
-              query: state?.query,
-              selectedIndex: state?.selectedIndex,
-              itemCount: Array.isArray(state?.items) ? state.items.length : undefined,
-              previewKind: state?.preview?.kind,
-            });
-          }
           uiRuntime.updateSession(session);
         }
         return;
       }
       if (event.type === "default.sessionDisposed") {
         if (typeof event.sessionId === "string") {
-          pickerAppTrace({ event: "policy.sessionDisposed", sessionId: event.sessionId });
           uiRuntime.removeSession(event.sessionId);
         }
         return;
@@ -76,27 +57,6 @@ function App() {
             ? event.workingDirectory as unknown as WorkbenchSnapshot["workingDirectory"]
             : undefined,
         };
-        const pickerRole = isObject(snapshot.roles?.picker) ? snapshot.roles.picker as { state?: { visible?: unknown; sessionId?: unknown }; implementationId?: unknown } : undefined;
-        const pickerRoleState = isObject(pickerRole?.state) ? pickerRole.state as { visible?: unknown; sessionId?: unknown } : undefined;
-        const pickerSessions = (snapshot.sessions ?? []).filter((session) => session.role === "picker").map((session) => {
-          const state = session.state as { query?: unknown; selectedIndex?: unknown; items?: unknown[]; preview?: { kind?: unknown } } | undefined;
-          return {
-            id: session.id,
-            revision: session.revision,
-            query: state?.query,
-            selectedIndex: state?.selectedIndex,
-            itemCount: Array.isArray(state?.items) ? state.items.length : undefined,
-            previewKind: state?.preview?.kind,
-          };
-        });
-        pickerAppTrace({
-          event: "policy.sessionChanged",
-          focus: snapshot.focus,
-          pickerVisible: Boolean(pickerRoleState?.visible),
-          pickerSessionId: typeof pickerRoleState?.sessionId === "string" ? pickerRoleState.sessionId : undefined,
-          pickerImplementationId: pickerRole?.implementationId,
-          pickerSessions,
-        });
         setTheme(snapshot.theme);
         setSyntaxLegend(snapshot.syntaxLegend ?? {});
         setSelectionPickerActive(Boolean(event.selectionPickerActive));
@@ -132,7 +92,7 @@ function App() {
     let observer: ResizeObserver | undefined;
 
     const configure = () => {
-      const config = configureTextSurface(canvas);
+      const config = configureCanvasTextSurface(canvas);
       void window.theEditor.policyRequest("surface.configure", config).catch((error) => {
         console.error(error);
       });
@@ -154,7 +114,7 @@ function App() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !frame) return;
-    paintTextSurface(canvas, frame, decorations, theme, syntaxLegend, selectionPickerActive);
+    paintCanvasTextSurface(canvas, frame, decorations, theme, syntaxLegend, { selectionPickerActive });
   }, [frame, decorations, theme, syntaxLegend, selectionPickerActive]);
 
   const leftSidebar = uiRuntime.renderToolRoot("leftSidebar");

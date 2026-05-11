@@ -1035,6 +1035,57 @@ impl RuntimeSession {
     Ok(handle)
   }
 
+  pub fn destroy_surface(&mut self, surface: SurfaceHandle) -> RuntimeResult<()> {
+    let entry = self
+      .surfaces
+      .remove(&surface)
+      .ok_or(RuntimeError::UnknownSurface(surface))?;
+    self.syntax_scheduler.surface_demands.remove(&surface);
+    self.drop_orphan_document(entry.document);
+    Ok(())
+  }
+
+  pub fn load_surface_file(&mut self, surface: SurfaceHandle, path: &Path) -> RuntimeResult<()> {
+    let normalized = normalize_file_path(path)?;
+    let (old_document, viewport, measurements, text_format) = {
+      let entry = self
+        .surfaces
+        .get(&surface)
+        .ok_or(RuntimeError::UnknownSurface(surface))?;
+      (
+        entry.document,
+        entry.surface.viewport(),
+        entry.surface.measurements(),
+        entry.surface.text_format().clone(),
+      )
+    };
+
+    let preview_document = preview_document_for_path(&self.syntax, &normalized)?;
+    let preview_handle = DocumentHandle::next(&mut self.next_document_id);
+    let mut render = CellGridRenderSurface::new(
+      SurfaceId::new(surface.get()).expect("runtime surface handle must be non-zero"),
+      text_format.clone(),
+    );
+    render.set_measurements(measurements);
+    let mut preview_surface = Surface::new(&preview_document, render, viewport)?;
+    preview_surface.set_viewport_reconcile_document(&preview_document, viewport);
+    let saved_revision = Some(preview_document.revision());
+
+    self.documents.insert(preview_handle, RuntimeDocument {
+      document: preview_document,
+      resource: None,
+      saved_revision,
+      readonly: true,
+    });
+    self.surfaces.insert(surface, RuntimeSurface {
+      surface: preview_surface,
+      document: preview_handle,
+    });
+    self.syntax_scheduler.touch_document(preview_handle);
+    self.drop_orphan_document(old_document);
+    Ok(())
+  }
+
   pub fn save(&mut self, document: DocumentHandle) -> RuntimeResult<()> {
     let entry = self
       .documents
@@ -1118,6 +1169,34 @@ impl RuntimeSession {
     self.resources.insert(resource, record);
     Ok(resource)
   }
+
+  fn drop_orphan_document(&mut self, document: DocumentHandle) {
+    if self.surfaces.values().any(|entry| entry.document == document) {
+      return;
+    }
+    let Some(entry) = self.documents.get(&document) else {
+      return;
+    };
+    if entry.resource.is_some() {
+      return;
+    }
+    self.documents.remove(&document);
+    self.syntax_scheduler.document_touches.remove(&document);
+  }
+}
+
+fn preview_document_for_path(
+  syntax: &RuntimeSyntax,
+  path: &Path,
+) -> RuntimeResult<Document> {
+  let bytes = fs::read(path)?;
+  if bytes.contains(&0) {
+    return Ok(Document::new(Rope::from("<Binary file>\n")));
+  }
+
+  let mut document = Document::new(Rope::from(String::from_utf8_lossy(&bytes).into_owned()));
+  syntax.activate_document(&mut document, Some(path));
+  Ok(document)
 }
 
 fn truncate_string_at_char_boundary(text: &mut String, max_bytes: usize) {
@@ -1205,6 +1284,33 @@ mod tests {
       runtime.surface(surface).unwrap().selection().ranges()[0],
       the_lib::selection::Range::point(0)
     );
+  }
+
+  #[test]
+  fn load_surface_file_rebinds_surface_and_drops_orphan_scratch() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("preview.rs");
+    std::fs::write(&path, "fn main() {}\n").unwrap();
+
+    let mut runtime = RuntimeSession::default();
+    let scratch = runtime.create_scratch(Rope::from("scratch")).unwrap();
+    let surface = runtime
+      .create_surface_with_viewport(scratch, Viewport::new(0, 8, 0, 80))
+      .unwrap();
+
+    runtime.load_surface_file(surface, &path).unwrap();
+
+    let preview_document = runtime.document_for_surface(surface).unwrap();
+    assert_ne!(preview_document, scratch);
+    assert!(runtime.document(scratch).is_none());
+    assert_eq!(
+      runtime.document(preview_document).unwrap().text().to_string(),
+      "fn main() {}\n"
+    );
+
+    runtime.destroy_surface(surface).unwrap();
+    assert!(runtime.surface(surface).is_none());
+    assert!(runtime.document(preview_document).is_none());
   }
 
   #[test]

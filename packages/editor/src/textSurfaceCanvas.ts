@@ -1,10 +1,16 @@
 import type { CellGridMetrics, CursorPlacement, RenderFrame, RenderRow, SyntaxSpan, Viewport } from "@the-editor/contracts/runtime";
-import type { BufferDecoration, InlineTextDecoration, RangeDecoration, ThemeSnapshot } from "@the-editor/editor";
-import { resolveThemeStyle, resolveThemeStyleLoose, type ResolvedThemeDefinition } from "@the-editor/editor/themes";
+import type { BufferDecoration, InlineTextDecoration, RangeDecoration } from "./decorations.js";
+import type { ThemeSnapshot } from "./themes.js";
+import { resolveThemeStyle, resolveThemeStyleLoose, type ResolvedThemeDefinition } from "./themes.js";
 
-export interface SurfaceConfiguration {
+export interface CanvasTextSurfaceConfiguration {
   viewport: Viewport;
   metrics: CellGridMetrics;
+}
+
+export interface CanvasTextSurfacePaintOptions {
+  selectionPickerActive?: boolean;
+  showCursors?: boolean;
 }
 
 interface TextSurfaceTheme {
@@ -39,7 +45,7 @@ export async function loadEditorFont(): Promise<void> {
   await document.fonts.ready;
 }
 
-export function configureTextSurface(canvas: HTMLCanvasElement): SurfaceConfiguration {
+export function configureCanvasTextSurface(canvas: HTMLCanvasElement): CanvasTextSurfaceConfiguration {
   const rect = (canvas.parentElement ?? canvas).getBoundingClientRect();
   const cssWidth = Math.max(1, Math.floor(rect.width));
   const cssHeight = Math.max(1, Math.floor(rect.height));
@@ -69,13 +75,13 @@ export function configureTextSurface(canvas: HTMLCanvasElement): SurfaceConfigur
   };
 }
 
-export function paintTextSurface(
+export function paintCanvasTextSurface(
   canvas: HTMLCanvasElement,
   frame: RenderFrame,
   decorations: BufferDecoration[] = [],
   themeSnapshot?: ThemeSnapshot,
   syntaxLegend: Record<number, string> = {},
-  selectionPickerActive = false,
+  options: CanvasTextSurfacePaintOptions = {},
 ): void {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -98,7 +104,9 @@ export function paintTextSurface(
   paintRows(ctx, frame, rows, metrics, theme);
   paintInlineTextDecorations(ctx, decorations, metrics, theme);
   paintDecorationUnderlines(ctx, decorations, metrics);
-  paintCursors(ctx, frame, rows, metrics, theme, selectionPickerActive);
+  if (options.showCursors ?? true) {
+    paintCursors(ctx, frame, rows, metrics, theme, options.selectionPickerActive ?? false);
+  }
 }
 
 function prepareContext(ctx: CanvasRenderingContext2D, dpr: number): void {

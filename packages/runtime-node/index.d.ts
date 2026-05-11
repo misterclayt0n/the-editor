@@ -5,12 +5,15 @@ export declare class NativeRuntimeSession {
   createScratch(text: string): number
   openFile(path: string): number
   createSurface(documentId: number, viewport?: JsViewport | undefined | null): number
+  destroySurface(surfaceId: number): void
+  loadSurfaceFile(surfaceId: number, path: string): void
   setSurfaceViewport(surfaceId: number, viewport: JsViewport): void
   setSurfaceMeasurements(surfaceId: number, metrics: JsCellGridMetrics): void
   setSurfaceSoftWrap(surfaceId: number, softWrap: boolean): void
   applySurfaceOperation(surfaceId: number, operation: JsSurfaceOperation): void
   readSurfaceText(surfaceId: number): string
   readSurfaceLineEnding(surfaceId: number): string
+  readSurfaceLineCount(surfaceId: number): number
   readSurfaceSelection(surfaceId: number): Array<JsSurfaceSelectionRange>
   readSurfaceActiveCursor(surfaceId: number): number | null
   readSurfaceViewport(surfaceId: number): JsViewport

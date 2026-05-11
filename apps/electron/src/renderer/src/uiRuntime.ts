@@ -3,6 +3,7 @@ import * as ReactJsxRuntime from "react/jsx-runtime";
 import ts from "typescript";
 import type { InteractiveSessionSnapshot, PackageSnapshot, ThemeSnapshot, ToolRootTarget } from "@the-editor/editor";
 import type { DiagnosticEntry } from "@the-editor/editor";
+import * as editorTextSurfaceCanvasModule from "@the-editor/editor/textSurfaceCanvas";
 import * as editorThemesModule from "@the-editor/editor/themes";
 import { themeCssVariables } from "@the-editor/editor/themes";
 import * as editorUiModule from "@the-editor/editor/ui";
@@ -16,12 +17,6 @@ type LoadedTarget = {
   version: number;
   target: "ui";
 };
-
-let pickerRendererTraceSeq = 0;
-
-function pickerRendererTrace(payload: Record<string, unknown>): void {
-  console.log(`[picker-renderer] ${JSON.stringify({ seq: ++pickerRendererTraceSeq, ...payload })}`);
-}
 
 export class RendererPackageRuntime {
   private readonly sessions = new RendererUiSessionClient();
@@ -234,91 +229,21 @@ class RendererUiSessionClient implements UiSessionClient {
   }
 
   dispatch(id: string, method: string, args?: unknown): Promise<unknown> {
-    const session = this.sessions.get(id);
-    if (session?.role === "picker") {
-      pickerRendererTrace({
-        event: "session.dispatch",
-        sessionId: id,
-        revision: session.revision,
-        method,
-        args,
-      });
-    }
-    return window.theEditor.policyRequest("session.dispatch", { sessionId: id, method, args })
-      .then((result) => {
-        if (session?.role === "picker") {
-          pickerRendererTrace({
-            event: "session.dispatch.done",
-            sessionId: id,
-            revision: session.revision,
-            method,
-          });
-        }
-        return result;
-      })
-      .catch((error) => {
-        if (session?.role === "picker") {
-          pickerRendererTrace({
-            event: "session.dispatch.error",
-            sessionId: id,
-            revision: session.revision,
-            method,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-        throw error;
-      });
+    return window.theEditor.policyRequest("session.dispatch", { sessionId: id, method, args });
   }
 
   reset(snapshots: readonly InteractiveSessionSnapshot[]): void {
-    const pickerSessions = snapshots.filter((snapshot) => snapshot.role === "picker");
-    if (pickerSessions.length) {
-      pickerRendererTrace({
-        event: "sessions.reset",
-        sessions: pickerSessions.map((snapshot) => ({
-          id: snapshot.id,
-          revision: snapshot.revision,
-          query: (snapshot.state as { query?: unknown } | undefined)?.query,
-          selectedIndex: (snapshot.state as { selectedIndex?: unknown } | undefined)?.selectedIndex,
-          itemCount: Array.isArray((snapshot.state as { items?: unknown } | undefined)?.items)
-            ? ((snapshot.state as { items?: unknown[] }).items?.length ?? 0)
-            : undefined,
-        })),
-      });
-    }
     for (const snapshot of snapshots) this.update(snapshot);
   }
 
   update(snapshot: InteractiveSessionSnapshot): void {
     const previous = this.sessions.get(snapshot.id);
-    if (snapshot.role === "picker") {
-      pickerRendererTrace({
-        event: "session.update",
-        sessionId: snapshot.id,
-        revision: snapshot.revision,
-        previousRevision: previous?.revision,
-        ignored: Boolean(previous && previous.revision >= snapshot.revision),
-        query: (snapshot.state as { query?: unknown } | undefined)?.query,
-        selectedIndex: (snapshot.state as { selectedIndex?: unknown } | undefined)?.selectedIndex,
-        itemCount: Array.isArray((snapshot.state as { items?: unknown } | undefined)?.items)
-          ? ((snapshot.state as { items?: unknown[] }).items?.length ?? 0)
-          : undefined,
-      });
-    }
     if (previous && previous.revision >= snapshot.revision) return;
     this.sessions.set(snapshot.id, snapshot);
     this.emit(snapshot.id);
   }
 
   remove(sessionId: string): void {
-    const existing = this.sessions.get(sessionId);
-    if (existing?.role === "picker") {
-      pickerRendererTrace({
-        event: "session.remove",
-        sessionId,
-        revision: existing.revision,
-      });
-    }
     if (!this.sessions.delete(sessionId)) return;
     this.emit(sessionId);
   }
@@ -397,8 +322,10 @@ class RendererSourceModuleLoader {
   private requireFrom(specifier: string, importerPath: string): unknown {
     if (specifier === "react") return React;
     if (specifier === "react/jsx-runtime") return ReactJsxRuntime;
+    if (specifier === "@the-editor/contracts/runtime") return {};
     if (specifier === "@the-editor/editor/ui") return editorUiModule;
     if (specifier === "@the-editor/editor/themes") return editorThemesModule;
+    if (specifier === "@the-editor/editor/textSurfaceCanvas") return editorTextSurfaceCanvasModule;
     if (!specifier.startsWith(".") && !specifier.startsWith("/")) {
       throw new Error(`unsupported ui module import ${specifier} from ${importerPath}`);
     }

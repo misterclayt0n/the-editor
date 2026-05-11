@@ -52,6 +52,17 @@ export class RuntimeNativeClient implements RuntimeApi {
     create: async (params: { documentId: DocumentId; viewport?: Viewport }): Promise<SurfaceCreated> => ({
       surfaceId: this.session.createSurface(params.documentId, params.viewport ?? null) as SurfaceId,
     }),
+    destroy: async (params: { surfaceId: SurfaceId }): Promise<OkResult> => {
+      this.session.destroySurface(params.surfaceId);
+      return { ok: true };
+    },
+    loadFile: async (params: { surfaceId: SurfaceId; path: string }): Promise<OkResult> => {
+      this.session.loadSurfaceFile(params.surfaceId, params.path);
+      return { ok: true };
+    },
+    lineCount: async (params: { surfaceId: SurfaceId }): Promise<{ lineCount: number }> => ({
+      lineCount: this.session.readSurfaceLineCount(params.surfaceId),
+    }),
     setViewport: async (params: { surfaceId: SurfaceId; viewport: Viewport }): Promise<OkResult> => {
       this.session.setSurfaceViewport(params.surfaceId, params.viewport);
       return { ok: true };
@@ -71,6 +82,7 @@ export class RuntimeNativeClient implements RuntimeApi {
     readState: async (params: { surfaceId: SurfaceId }): Promise<SurfaceState> => ({
       text: this.session.readSurfaceText(params.surfaceId),
       lineEnding: this.session.readSurfaceLineEnding(params.surfaceId),
+      lineCount: this.session.readSurfaceLineCount(params.surfaceId),
       selection: this.session.readSurfaceSelection(params.surfaceId),
       activeCursorId: this.session.readSurfaceActiveCursor(params.surfaceId),
       viewport: this.session.readSurfaceViewport(params.surfaceId),
@@ -189,6 +201,12 @@ export class RuntimeNativeClient implements RuntimeApi {
         return this.documents.createScratch(params as Parameters<RuntimeApi["documents"]["createScratch"]>[0]);
       case "surfaces.create":
         return this.surfaces.create(params as Parameters<RuntimeApi["surfaces"]["create"]>[0]);
+      case "surfaces.destroy":
+        return this.surfaces.destroy(params as Parameters<RuntimeApi["surfaces"]["destroy"]>[0]);
+      case "surfaces.loadFile":
+        return this.surfaces.loadFile(params as Parameters<RuntimeApi["surfaces"]["loadFile"]>[0]);
+      case "surfaces.lineCount":
+        return this.surfaces.lineCount(params as Parameters<RuntimeApi["surfaces"]["lineCount"]>[0]);
       case "surfaces.setViewport":
         return this.surfaces.setViewport(params as Parameters<RuntimeApi["surfaces"]["setViewport"]>[0]);
       case "surfaces.setMetrics":

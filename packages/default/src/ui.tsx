@@ -1,5 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
+import type { RenderFrame, Viewport } from "@the-editor/contracts/runtime";
 import type { DiagnosticEntry, NotificationEntry } from "@the-editor/editor";
+import { configureCanvasTextSurface, loadEditorFont, paintCanvasTextSurface } from "@the-editor/editor/textSurfaceCanvas";
 import { resolveThemeStyleLoose, type ResolvedThemeDefinition } from "@the-editor/editor/themes";
 import type { EditorUiModule, UiSessionClient, WorkbenchSnapshot } from "@the-editor/editor/ui";
 import "./commandPalette.css";
@@ -58,7 +60,7 @@ interface PickerPreviewViewSyntaxSpan {
 }
 
 interface PickerPreviewViewState {
-  kind: "text" | "empty";
+  kind: "text" | "surface" | "empty";
   title?: string;
   detail?: string;
   text?: string;
@@ -68,6 +70,11 @@ interface PickerPreviewViewState {
   binary?: boolean;
   rows?: PickerPreviewViewRowState[];
   syntax?: PickerPreviewViewSyntaxSpan[];
+  path?: string;
+  frame?: RenderFrame;
+  viewport?: Viewport;
+  lineCount?: number;
+  syntaxLegend?: Record<number, string>;
 }
 
 interface PickerViewState {
@@ -101,22 +108,6 @@ interface NotificationsViewState {
 
 const inspectorToolTypeId = "default.inspector";
 
-let pickerUiTraceSeq = 0;
-let pickerOverlayInstanceSeq = 0;
-
-function pickerUiTrace(payload: Record<string, unknown>): void {
-  console.log(`[picker-ui] ${JSON.stringify({ seq: ++pickerUiTraceSeq, ...payload })}`);
-}
-
-function describeElement(element: Element | null | undefined): string | undefined {
-  if (!(element instanceof HTMLElement)) return undefined;
-  const id = element.id ? `#${element.id}` : "";
-  const className = typeof element.className === "string"
-    ? element.className.trim().split(/\s+/).filter(Boolean).slice(0, 3).map((name) => `.${name}`).join("")
-    : "";
-  return `${element.tagName.toLowerCase()}${id}${className}`;
-}
-
 const uiModule: EditorUiModule = (host) => {
   host.roles.register<CommandPaletteViewState>({
     role: "commandPalette",
@@ -140,19 +131,7 @@ const uiModule: EditorUiModule = (host) => {
     role: "picker",
     implementationId: "default.picker",
     render({ state, sessions, workbench }) {
-      pickerUiTrace({
-        event: "role.render",
-        visible: Boolean(state?.visible),
-        sessionId: state?.sessionId,
-      });
-      if (!state?.visible || !state.sessionId) {
-        pickerUiTrace({
-          event: "role.render.null",
-          visible: Boolean(state?.visible),
-          sessionId: state?.sessionId,
-        });
-        return null;
-      }
+      if (!state?.visible || !state.sessionId) return null;
       return <PickerOverlay sessionId={state.sessionId} sessions={sessions} workbench={workbench} />;
     },
   });
@@ -341,159 +320,31 @@ function PickerOverlay({
   const syntaxLegend = workbench.syntaxLegend ?? {};
   const inputRef = useRef<HTMLInputElement>(null);
   const itemsRef = useRef<HTMLDivElement>(null);
-  const overlayIdRef = useRef<number>(0);
-  if (!overlayIdRef.current) overlayIdRef.current = ++pickerOverlayInstanceSeq;
-  const overlayId = overlayIdRef.current;
-
-  useEffect(() => {
-    pickerUiTrace({
-      event: "overlay.mount",
-      overlayId,
-      sessionId,
-      activeElement: describeElement(document.activeElement),
-    });
-    return () => {
-      pickerUiTrace({
-        event: "overlay.unmount",
-        overlayId,
-        sessionId,
-        activeElement: describeElement(document.activeElement),
-      });
-    };
-  }, []);
-
-  useEffect(() => {
-    pickerUiTrace({
-      event: "overlay.session",
-      overlayId,
-      sessionId,
-      activeElement: describeElement(document.activeElement),
-    });
-  }, [overlayId, sessionId]);
-
-  useEffect(() => {
-    pickerUiTrace({
-      event: state ? "overlay.state" : "overlay.state.missing",
-      overlayId,
-      sessionId,
-      query: state?.query,
-      selectedIndex: state?.selectedIndex,
-      itemCount: state?.items.length,
-      previewKind: state?.preview?.kind,
-      previewTitle: state?.preview?.title,
-      activeElement: describeElement(document.activeElement),
-    });
-  }, [overlayId, sessionId, state, state?.query, state?.selectedIndex, state?.items.length, state?.preview?.kind, state?.preview?.title]);
 
   useEffect(() => {
     const input = inputRef.current;
-    if (!input || !state) {
-      pickerUiTrace({
-        event: "overlay.focus.skipped",
-        overlayId,
-        sessionId,
-        hasInput: Boolean(input),
-        hasState: Boolean(state),
-        activeElement: describeElement(document.activeElement),
-      });
-      return;
-    }
-    pickerUiTrace({
-      event: "overlay.focus.begin",
-      overlayId,
-      sessionId,
-      activeElement: describeElement(document.activeElement),
-      input: describeElement(input),
-    });
+    if (!input || !state) return;
     input.focus();
     const end = input.value.length;
     input.setSelectionRange(end, end);
-    pickerUiTrace({
-      event: "overlay.focus.done",
-      overlayId,
-      sessionId,
-      activeElement: describeElement(document.activeElement),
-      selectionStart: input.selectionStart,
-      selectionEnd: input.selectionEnd,
-    });
-  }, [overlayId, sessionId]);
+  }, [sessionId]);
 
   useLayoutEffect(() => {
     if (!state) return;
-    pickerUiTrace({
-      event: "overlay.scrollActive",
-      overlayId,
-      sessionId,
-      selectedIndex: state.selectedIndex,
-      itemCount: state.items.length,
-    });
     scrollActiveItemIntoView(itemsRef.current, '.pickerItem[data-active="true"]');
-  }, [overlayId, sessionId, state?.items, state?.selectedIndex]);
+  }, [state?.items, state?.selectedIndex]);
 
-  if (!state) {
-    pickerUiTrace({
-      event: "overlay.render.null",
-      overlayId,
-      sessionId,
-      activeElement: describeElement(document.activeElement),
-    });
-    return null;
-  }
-
-  pickerUiTrace({
-    event: "overlay.render",
-    overlayId,
-    sessionId,
-    query: state.query,
-    selectedIndex: state.selectedIndex,
-    itemCount: state.items.length,
-    previewKind: state.preview?.kind,
-    activeElement: describeElement(document.activeElement),
-  });
+  if (!state) return null;
 
   return (
-    <section
-      className="pickerOverlay"
-      onMouseDown={(event) => {
-        pickerUiTrace({
-          event: "overlay.mouseDown",
-          overlayId,
-          sessionId,
-          target: describeElement(event.target as Element | null),
-          activeElement: describeElement(document.activeElement),
-        });
-      }}
-      onClick={(event) => {
-        pickerUiTrace({
-          event: "overlay.click",
-          overlayId,
-          sessionId,
-          target: describeElement(event.target as Element | null),
-          activeElement: describeElement(document.activeElement),
-        });
-      }}
-    >
+    <section className="pickerOverlay">
       <div
         className="pickerBackdrop"
         onMouseDown={(event) => {
           event.preventDefault();
-          pickerUiTrace({
-            event: "backdrop.mouseDown.ignored",
-            overlayId,
-            sessionId,
-            target: describeElement(event.target as Element | null),
-            activeElement: describeElement(document.activeElement),
-          });
         }}
         onClick={(event) => {
           event.preventDefault();
-          pickerUiTrace({
-            event: "backdrop.click.ignored",
-            overlayId,
-            sessionId,
-            target: describeElement(event.target as Element | null),
-            activeElement: describeElement(document.activeElement),
-          });
         }}
       />
       <div className="pickerViewport">
@@ -508,56 +359,10 @@ function PickerOverlay({
                   placeholder={state.placeholder || "Find files"}
                   spellCheck={false}
                   value={state.query}
-                  onFocus={(event) => {
-                    pickerUiTrace({
-                      event: "input.focus",
-                      overlayId,
-                      sessionId,
-                      target: describeElement(event.target),
-                      activeElement: describeElement(document.activeElement),
-                    });
-                  }}
-                  onBlur={(event) => {
-                    pickerUiTrace({
-                      event: "input.blur",
-                      overlayId,
-                      sessionId,
-                      target: describeElement(event.target),
-                      relatedTarget: describeElement(event.relatedTarget as Element | null),
-                      activeElement: describeElement(document.activeElement),
-                    });
-                  }}
-                  onMouseDown={(event) => {
-                    pickerUiTrace({
-                      event: "input.mouseDown",
-                      overlayId,
-                      sessionId,
-                      target: describeElement(event.target),
-                      activeElement: describeElement(document.activeElement),
-                    });
-                  }}
                   onChange={(event) => {
-                    pickerUiTrace({
-                      event: "input.change",
-                      overlayId,
-                      sessionId,
-                      query: event.target.value,
-                      activeElement: describeElement(document.activeElement),
-                    });
                     void sessions.dispatch(sessionId, "setQuery", { query: event.target.value });
                   }}
                   onKeyDown={(event) => {
-                    pickerUiTrace({
-                      event: "input.keyDown",
-                      overlayId,
-                      sessionId,
-                      key: event.key,
-                      metaKey: event.metaKey,
-                      ctrlKey: event.ctrlKey,
-                      altKey: event.altKey,
-                      shiftKey: event.shiftKey,
-                      activeElement: describeElement(document.activeElement),
-                    });
                     if (event.key === "ArrowUp") {
                       event.preventDefault();
                       void sessions.dispatch(sessionId, "moveSelection", { delta: -1 });
@@ -594,26 +399,8 @@ function PickerOverlay({
                       data-active={isActive ? "true" : undefined}
                       onMouseDown={(event) => {
                         event.preventDefault();
-                        pickerUiTrace({
-                          event: "item.mouseDown",
-                          overlayId,
-                          sessionId,
-                          index,
-                          itemId: item.id,
-                          active: isActive,
-                          activeElement: describeElement(document.activeElement),
-                        });
                       }}
                       onClick={() => {
-                        pickerUiTrace({
-                          event: "item.click",
-                          overlayId,
-                          sessionId,
-                          index,
-                          itemId: item.id,
-                          active: isActive,
-                          activeElement: describeElement(document.activeElement),
-                        });
                         void sessions.dispatch(sessionId, "selectIndex", { index }).then(() => sessions.dispatch(sessionId, "accept"));
                       }}
                     >
@@ -650,6 +437,8 @@ function PickerOverlay({
                       <pre className="pickerPreviewText">{state.preview.text || ""}</pre>
                     )}
                   </>
+                ) : state.preview?.kind === "surface" ? (
+                  <PickerSurfacePreview preview={state.preview} sessions={sessions} sessionId={sessionId} theme={workbench.theme} />
                 ) : state.preview?.kind === "empty" ? (
                   <div className="pickerPreviewEmpty">{state.preview.detail || state.preview.title || "No preview"}</div>
                 ) : (
@@ -666,6 +455,97 @@ function PickerOverlay({
       </div>
     </section>
   );
+}
+
+function PickerSurfacePreview({
+  preview,
+  sessions,
+  sessionId,
+  theme,
+}: {
+  preview: PickerPreviewViewState & { kind: "surface" };
+  sessions: UiSessionClient;
+  sessionId: string;
+  theme: WorkbenchSnapshot["theme"];
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    let disposed = false;
+    let observer: ResizeObserver | undefined;
+
+    const configure = () => {
+      const config = configureCanvasTextSurface(canvas);
+      const viewport = preview.viewport ?? {
+        firstRow: 0,
+        rowCount: config.viewport.rowCount,
+        firstCol: 0,
+        wrapWidth: config.viewport.wrapWidth,
+      };
+      void sessions.dispatch(sessionId, "configurePreview", {
+        metrics: config.metrics,
+        viewport: {
+          ...viewport,
+          rowCount: config.viewport.rowCount,
+          wrapWidth: config.viewport.wrapWidth,
+          firstCol: 0,
+        },
+      });
+    };
+
+    void loadEditorFont().finally(() => {
+      if (disposed) return;
+      configure();
+      observer = new ResizeObserver(configure);
+      observer.observe(canvas.parentElement ?? canvas);
+    });
+
+    return () => {
+      disposed = true;
+      observer?.disconnect();
+    };
+  }, [preview.path, sessionId, sessions]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !preview.frame) return;
+    paintCanvasTextSurface(canvas, preview.frame, [], theme, preview.syntaxLegend ?? {}, { showCursors: false });
+  }, [preview.frame, preview.syntaxLegend, theme]);
+
+  return (
+    <>
+      <div className="pickerPreviewHeader">
+        <div className="pickerPreviewTitle">{preview.title || "Preview"}</div>
+        {preview.detail ? <div className="pickerPreviewDetail">{preview.detail}</div> : null}
+        <div className="pickerPreviewMeta">{surfacePreviewSummary(preview)}</div>
+      </div>
+      <div
+        className="pickerPreviewSurface"
+        onWheel={(event) => {
+          event.preventDefault();
+          const deltaRows = Math.sign(event.deltaY) * Math.max(1, Math.round(Math.abs(event.deltaY) / 30));
+          if (!deltaRows) return;
+          void sessions.dispatch(sessionId, "scrollPreview", { deltaRows });
+        }}
+      >
+        <canvas ref={canvasRef} className="pickerPreviewCanvas" />
+      </div>
+    </>
+  );
+}
+
+function surfacePreviewSummary(preview: PickerPreviewViewState & { kind: "surface" }): string {
+  const rows = preview.frame?.rows ?? [];
+  const visible = rows.filter((row) => row.docLine !== null).map((row) => (row.docLine ?? 0) + 1);
+  if (visible.length && preview.lineCount) {
+    return `Lines ${visible[0]}–${visible[visible.length - 1]} of ${preview.lineCount}`;
+  }
+  if (preview.lineCount) {
+    return preview.lineCount === 1 ? "1 line" : `${preview.lineCount} lines`;
+  }
+  return "Preview";
 }
 
 function previewSyntaxByRow(spans: readonly PickerPreviewViewSyntaxSpan[]): Map<number, PickerPreviewViewSyntaxSpan[]> {
@@ -719,13 +599,7 @@ function renderPreviewLine(
     }
 
     return parts.length ? parts : <>{safeText || " "}</>;
-  } catch (error) {
-    pickerUiTrace({
-      event: "preview.line.error",
-      message: error instanceof Error ? error.message : String(error),
-      textType: typeof text,
-      spanCount: spans.length,
-    });
+  } catch {
     const safeText = typeof text === "string" ? text : String(text ?? "");
     return <>{safeText || " "}</>;
   }
@@ -734,13 +608,6 @@ function renderPreviewLine(
 function previewSyntaxColor(theme: ResolvedThemeDefinition | undefined, scope: unknown): string | undefined {
   if (!theme) return undefined;
   if (typeof scope !== "string") {
-    if (scope !== undefined) {
-      pickerUiTrace({
-        event: "preview.scope.invalid",
-        scopeType: typeof scope,
-        scope,
-      });
-    }
     return resolveThemeStyleLoose(theme, "ui.text")?.fg;
   }
   return resolveThemeStyleLoose(theme, scope, fallbackSyntaxScopes[scope as keyof typeof fallbackSyntaxScopes] ?? "ui.text")?.fg

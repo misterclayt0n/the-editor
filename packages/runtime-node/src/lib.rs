@@ -136,6 +136,22 @@ impl NativeRuntimeSession {
   }
 
   #[napi]
+  pub fn destroy_surface(&self, surface_id: u32) -> Result<()> {
+    let mut runtime = self.lock()?;
+    runtime
+      .destroy_surface(surface_handle(surface_id)?)
+      .map_err(runtime_error)
+  }
+
+  #[napi]
+  pub fn load_surface_file(&self, surface_id: u32, path: String) -> Result<()> {
+    let mut runtime = self.lock()?;
+    runtime
+      .load_surface_file(surface_handle(surface_id)?, path.as_ref())
+      .map_err(runtime_error)
+  }
+
+  #[napi]
   pub fn set_surface_viewport(&self, surface_id: u32, viewport: JsViewport) -> Result<()> {
     let mut runtime = self.lock()?;
     runtime
@@ -198,6 +214,17 @@ impl NativeRuntimeSession {
       .and_then(|document| runtime.document(document))
       .ok_or_else(|| Error::from_reason(format!("unknown surface {surface_id}")))?;
     Ok(document.line_ending().as_str().to_string())
+  }
+
+  #[napi]
+  pub fn read_surface_line_count(&self, surface_id: u32) -> Result<u32> {
+    let runtime = self.lock()?;
+    let surface = surface_handle(surface_id)?;
+    let document = runtime
+      .document_for_surface(surface)
+      .and_then(|document| runtime.document(document))
+      .ok_or_else(|| Error::from_reason(format!("unknown surface {surface_id}")))?;
+    Ok(document.text().len_lines() as u32)
   }
 
   #[napi]

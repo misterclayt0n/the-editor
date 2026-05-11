@@ -1,3 +1,4 @@
+import type { RenderFrame, Viewport } from "@the-editor/contracts/runtime";
 import { contributionKind, type ModuleId } from "./contributions.js";
 import type { EditorHost } from "./editorHost.js";
 import { toDisposable, type Disposable } from "./disposable.js";
@@ -44,6 +45,16 @@ export type PickerPreview =
       binary?: boolean;
       rows?: PickerPreviewRow[];
       syntax?: PickerPreviewSyntaxSpan[];
+    }
+  | {
+      kind: "surface";
+      title?: string;
+      detail?: string;
+      path: string;
+      frame?: RenderFrame;
+      viewport?: Viewport;
+      lineCount?: number;
+      syntaxLegend?: Record<number, string>;
     }
   | {
       kind: "empty";

@@ -28,22 +28,9 @@ editor.workbench.subscribe(() => {
 });
 editor.sessions.subscribe((event) => {
   if (event.type === "updated") {
-    if (event.session.kind === "picker") {
-      console.log(`[picker-worker] session.updated ${JSON.stringify({
-        id: event.session.id,
-        revision: event.session.revision,
-        role: event.session.role,
-        query: (event.session.state as { query?: unknown }).query,
-        selectedIndex: (event.session.state as { selectedIndex?: unknown }).selectedIndex,
-        itemCount: Array.isArray((event.session.state as { items?: unknown }).items)
-          ? ((event.session.state as { items: unknown[] }).items).length
-          : undefined,
-      })}`);
-    }
     parentPort?.postMessage({ type: "default.sessionUpdated", session: event.session });
     return;
   }
-  console.log(`[picker-worker] session.disposed ${JSON.stringify({ sessionId: event.sessionId })}`);
   parentPort?.postMessage({ type: "default.sessionDisposed", sessionId: event.sessionId });
 });
 
@@ -89,15 +76,7 @@ async function handlePolicyRequest(request: PolicyRequest): Promise<void> {
       }
       case "input.keyDown": {
         const input = request.params as KeyInput;
-        const focusBefore = editor.focus.current();
-        if (focusBefore.kind === "role" && focusBefore.role === "picker") {
-          console.log(`[picker-worker] input.keyDown ${JSON.stringify({ input, focusBefore })}`);
-        }
         const handled = await handleWorkbenchKeyInput(editor, input);
-        const focusAfter = editor.focus.current();
-        if (focusBefore.kind === "role" && focusBefore.role === "picker") {
-          console.log(`[picker-worker] input.keyDown.result ${JSON.stringify({ input, handled, focusAfter })}`);
-        }
         if (!handled) throw new Error("no workbench key input handler");
         result = await postSessionState();
         break;
@@ -110,32 +89,12 @@ async function handlePolicyRequest(request: PolicyRequest): Promise<void> {
       }
       case "command.dispatch": {
         const params = request.params as { id: string; args?: unknown };
-        const focusBefore = editor.focus.current();
-        const shouldTrace = params.id.startsWith("picker.")
-          || params.id === "file_picker"
-          || (focusBefore.kind === "role" && focusBefore.role === "picker");
-        if (shouldTrace) {
-          console.log(`[picker-worker] command.dispatch ${JSON.stringify({
-            id: params.id,
-            args: params.args,
-            focusBefore,
-          })}`);
-        }
         await editor.commands.dispatch({ id: params.id, args: params.args });
-        const focusAfter = editor.focus.current();
-        if (shouldTrace) {
-          console.log(`[picker-worker] command.dispatch.done ${JSON.stringify({
-            id: params.id,
-            focusAfter,
-            pickerVisible: Boolean(editor.roles.snapshot("picker")?.state && (editor.roles.snapshot("picker")?.state as { visible?: unknown }).visible),
-          })}`);
-        }
         result = await postSessionState();
         break;
       }
       case "session.dispatch": {
         const params = request.params as { sessionId: string; method: string; args?: unknown };
-        console.log(`[picker-worker] session.dispatch ${JSON.stringify(params)}`);
         result = await editor.sessions.dispatch(params.sessionId, params.method, params.args);
         break;
       }
@@ -183,22 +142,6 @@ async function postSessionState() {
     workingDirectory: state.workingDirectory ?? editor.cwd.snapshot(),
     selectionPickerActive: state.selectionPickerActive ?? false,
   };
-  const pickerRole = (payload.roles as Record<string, { state?: { visible?: unknown; sessionId?: unknown } } | undefined>).picker;
-  const pickerSessions = (payload.sessions as Array<{ id: string; kind: string; revision: number; state?: { query?: unknown; selectedIndex?: unknown; items?: unknown[] } }> )
-    .filter((session) => session.kind === "picker")
-    .map((session) => ({
-      id: session.id,
-      revision: session.revision,
-      query: session.state?.query,
-      selectedIndex: session.state?.selectedIndex,
-      itemCount: Array.isArray(session.state?.items) ? session.state.items.length : undefined,
-    }));
-  console.log(`[picker-worker] postSessionState ${JSON.stringify({
-    focus: payload.focus,
-    pickerVisible: pickerRole?.state?.visible,
-    pickerSessionId: pickerRole?.state?.sessionId,
-    pickerSessions,
-  })}`);
   parentPort?.postMessage(payload);
   return payload;
 }

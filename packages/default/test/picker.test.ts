@@ -16,7 +16,7 @@ interface PickerSnapshot {
   selectedIndex: number;
   items: Array<{ id: string; title: string; detail?: string }>;
   status?: { primary?: string; secondary?: string };
-  preview?: { kind: string; detail?: string; binary?: boolean } | null;
+  preview?: { kind: string; detail?: string; binary?: boolean; lineCount?: number; frame?: { rows?: unknown[] } } | null;
 }
 
 async function createPickerEditor(cwd?: string) {
@@ -82,6 +82,35 @@ describe("default picker", () => {
     const snapshot = pickerSnapshot(editor)!;
     expect(snapshot.visible).toBe(true);
     expect(snapshot.items.some((item) => item.detail?.includes("beta-file.txt"))).toBe(true);
+  }, 15_000);
+
+  it("uses a real surface preview for files", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "the-editor-picker-preview-"));
+    const path = join(dir, "many-lines.ts");
+    await writeFile(path, Array.from({ length: 140 }, (_, index) => `const line${index} = ${index};`).join("\n") + "\n", "utf8");
+
+    const editor = await createPickerEditor(dir);
+    await editor.commands.dispatch({ id: commandId("file_picker") });
+
+    await waitFor(async () => {
+      await editor.commands.dispatch({ id: commandId("picker.setQuery"), args: { query: "many-lines" } });
+      return Boolean(pickerSnapshot(editor)?.items.some((item) => item.detail?.includes("many-lines.ts")));
+    });
+
+    const snapshot = pickerSnapshot(editor)!;
+    const index = snapshot.items.findIndex((item) => item.detail?.includes("many-lines.ts"));
+    expect(index).toBeGreaterThanOrEqual(0);
+
+    await editor.commands.dispatch({ id: commandId("picker.selectIndex"), args: { index } });
+    await waitFor(() => {
+      const preview = pickerSnapshot(editor)?.preview;
+      return preview?.kind === "surface" && preview.lineCount === 141;
+    });
+
+    const preview = pickerSnapshot(editor)?.preview;
+    expect(preview?.kind).toBe("surface");
+    expect(preview?.lineCount).toBe(141);
+    expect((preview?.frame?.rows?.length ?? 0)).toBeGreaterThan(0);
   }, 15_000);
 
   it("opens the file picker and opens a selected file", async () => {

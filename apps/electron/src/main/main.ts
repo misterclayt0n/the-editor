@@ -28,11 +28,6 @@ async function createWindow(): Promise<void> {
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
     console.error("renderer process gone", details);
   });
-  mainWindow.webContents.on("console-message", (_event, level, message, line, sourceId) => {
-    const prefix = `[renderer-console:${level}]`;
-    if (sourceId) console.log(`${prefix} ${message} (${sourceId}:${line})`);
-    else console.log(`${prefix} ${message}`);
-  });
 
   if (isDev) {
     await mainWindow.loadURL(process.env.THE_EDITOR_DEV_SERVER_URL!);

@@ -418,11 +418,23 @@ async function refreshPickerPreview(
     });
     return;
   }
-  const preview = await handle.providerSession.preview(item);
-  if (!isCurrentPicker(editor, handle, requestVersion)) return;
-  session.updateState((next) => {
-    next.preview = preview;
-  });
+
+  try {
+    const preview = await handle.providerSession.preview(item);
+    if (!isCurrentPicker(editor, handle, requestVersion)) return;
+    session.updateState((next) => {
+      next.preview = preview;
+    });
+  } catch (error) {
+    if (!isCurrentPicker(editor, handle, requestVersion)) return;
+    session.updateState((next) => {
+      next.preview = {
+        kind: "empty",
+        title: item.title,
+        detail: error instanceof Error ? error.message : String(error),
+      };
+    });
+  }
 }
 
 function isCurrentPicker(

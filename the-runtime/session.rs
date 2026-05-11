@@ -1,5 +1,6 @@
 use std::{
   collections::BTreeMap,
+  fs,
   num::NonZeroU64,
   ops::Range,
   path::{
@@ -408,7 +409,21 @@ impl RuntimeSession {
     context_lines: usize,
   ) -> RuntimeResult<TextPreviewResult> {
     let normalized = normalize_file_path(path)?;
-    let mut document = Document::new(read_text_file(&normalized)?);
+    let bytes = fs::read(&normalized)?;
+    if bytes.contains(&0) {
+      return Ok(TextPreviewResult {
+        path: normalized.to_string_lossy().into_owned(),
+        text: String::new(),
+        start_line: 0,
+        end_line: 0,
+        truncated: false,
+        binary: true,
+        rows: None,
+        syntax: None,
+      });
+    }
+
+    let mut document = Document::new(Rope::from(String::from_utf8_lossy(&bytes).into_owned()));
     self.syntax.activate_document(&mut document, Some(&normalized));
     let _ = self.syntax.reparse_document(&mut document);
 

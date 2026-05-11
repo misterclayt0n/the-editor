@@ -16,6 +16,7 @@ interface PickerSnapshot {
   selectedIndex: number;
   items: Array<{ id: string; title: string; detail?: string }>;
   status?: { primary?: string; secondary?: string };
+  preview?: { kind: string; detail?: string; binary?: boolean } | null;
 }
 
 async function createPickerEditor(cwd?: string) {
@@ -126,6 +127,7 @@ function pickerSnapshot(editor: ReturnType<typeof createEditorHost>) {
     selectedIndex: sessionState?.selectedIndex ?? 0,
     items: sessionState?.items ?? [],
     status: sessionState?.status,
+    preview: sessionState?.preview as PickerSnapshot["preview"],
   };
 }
 

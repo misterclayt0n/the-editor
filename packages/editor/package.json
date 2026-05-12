@@ -17,6 +17,11 @@
       "import": "./dist/runtimeClient.mjs",
       "require": "./dist/runtimeClient.cjs"
     },
+    "./completion": {
+      "types": "./src/completion.ts",
+      "import": "./dist/completion.mjs",
+      "require": "./dist/completion.cjs"
+    },
     "./ui": {
       "types": "./src/ui.ts",
       "import": "./dist/ui.mjs",
@@ -37,6 +42,31 @@
       "import": "./dist/gutters.mjs",
       "require": "./dist/gutters.cjs"
     },
+    "./lsp": {
+      "types": "./src/lsp.ts",
+      "import": "./dist/lsp.mjs",
+      "require": "./dist/lsp.cjs"
+    },
+    "./cursorAnchors": {
+      "types": "./src/cursorAnchors.ts",
+      "import": "./dist/cursorAnchors.mjs",
+      "require": "./dist/cursorAnchors.cjs"
+    },
+    "./markdown": {
+      "types": "./src/markdown.ts",
+      "import": "./dist/markdown.mjs",
+      "require": "./dist/markdown.cjs"
+    },
+    "./markdownLinks": {
+      "types": "./src/markdownLinks.ts",
+      "import": "./dist/markdownLinks.mjs",
+      "require": "./dist/markdownLinks.cjs"
+    },
+    "./markdownView": {
+      "types": "./src/markdownView.tsx",
+      "import": "./dist/markdownView.mjs",
+      "require": "./dist/markdownView.cjs"
+    },
     "./textSurfaceCanvas": {
       "types": "./src/textSurfaceCanvas.ts",
       "import": "./dist/textSurfaceCanvas.mjs",
@@ -49,16 +79,23 @@
     }
   },
   "scripts": {
-    "build": "tsdown src/index.ts src/runtimeClient.ts src/editorHost.ts src/disposable.ts src/contributions.ts src/hooks.ts src/commands.ts src/keymaps.ts src/modules.ts src/ui.ts src/themes.ts src/workbench.ts src/gutters.ts src/diagnostics.ts src/textSurfaceCanvas.ts src/surfaceViewportController.ts --format esm,cjs --dts --clean",
+    "build": "tsdown src/index.ts src/runtimeClient.ts src/editorHost.ts src/disposable.ts src/contributions.ts src/hooks.ts src/commands.ts src/completion.ts src/keymaps.ts src/modules.ts src/ui.ts src/themes.ts src/workbench.ts src/gutters.ts src/lsp.ts src/cursorAnchors.ts src/markdown.ts src/markdownLinks.ts src/markdownView.tsx src/diagnostics.ts src/textSurfaceCanvas.ts src/surfaceViewportController.ts --format esm,cjs --dts --clean",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@pierre/diffs": "^1.1.22",
     "@the-editor/contracts": "workspace:*",
-    "@the-editor/runtime-node": "workspace:*"
+    "@the-editor/runtime-node": "workspace:*",
+    "markdown-it": "^14.1.1",
+    "react": "^19.2.6",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
     "@types/node": "catalog:",
+    "@types/react": "^19.2.14",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

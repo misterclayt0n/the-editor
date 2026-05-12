@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import type { SurfaceChange, SurfaceEdit, SurfaceId, SurfaceSelectionRange } from "@the-editor/contracts/runtime";
+import type { JsonValue, SurfaceChange, SurfaceEdit, SurfaceId, SurfaceSelectionRange, SurfaceState } from "@the-editor/contracts/runtime";
 import {
   commandId,
   roleId,
@@ -8,7 +8,8 @@ import {
   type InteractiveSessionController,
   type InteractiveSessionId,
 } from "@the-editor/editor";
-import { getDefaultState } from "./state.js";
+import { ensureLspForPath, fileUri } from "./lsp.js";
+import { activeSurfacePane, getDefaultState, refreshActiveSurface } from "./state.js";
 
 type InputPromptKind =
   | "selectRegex"
@@ -17,6 +18,7 @@ type InputPromptKind =
   | "removeSelections"
   | "searchForward"
   | "searchBackward"
+  | "renameSymbol"
   | "shellPipe"
   | "shellPipeTo"
   | "shellInsertOutput"
@@ -71,7 +73,7 @@ export function defaultInputPrompt(): EditorModule {
         await closeInputPrompt(editor, true);
       },
       async focus() {
-        editor.focus.setRole(inputPromptRoleId);
+        editor.overlays.open(inputPromptRoleId, { focus: true });
       },
       snapshot() {
         const sessionId = activeInputPromptSessionId(editor);
@@ -213,7 +215,7 @@ async function openInputPrompt(editor: Parameters<EditorModule>[0], kind: InputP
       kind,
       title: promptTitle(kind),
       placeholder: promptPlaceholder(kind),
-      query: "",
+      query: await initialPromptQuery(editor, kind),
       error: undefined,
       surfaceId,
       originalSelection: state.selection.map(cloneRange),
@@ -226,10 +228,15 @@ async function openInputPrompt(editor: Parameters<EditorModule>[0], kind: InputP
             ? (args as { query: string }).query
             : "";
         });
+        session.invalidate();
         await updateInputPromptPreview(editor, session);
+        await refreshActiveSurface(editor);
+        editor.workbench.invalidate("frame", "roles");
       },
       accept: async ({ session }) => {
         const accepted = await finalizeInputPrompt(editor, session);
+        await refreshActiveSurface(editor);
+        editor.workbench.invalidate("frame", "roles");
         if (!accepted) return;
         await closeInputPrompt(editor, false);
       },
@@ -240,8 +247,7 @@ async function openInputPrompt(editor: Parameters<EditorModule>[0], kind: InputP
   });
 
   inputPromptState(editor).activeSessionId = session.id;
-  editor.focus.setRole(inputPromptRoleId);
-  editor.workbench.invalidate("roles", "focus");
+  editor.overlays.open(inputPromptRoleId, { focus: true });
 }
 
 async function closeInputPrompt(editor: Parameters<EditorModule>[0], restoreSelection: boolean): Promise<void> {
@@ -256,8 +262,10 @@ async function closeInputPrompt(editor: Parameters<EditorModule>[0], restoreSele
   }
   inputPromptState(editor).activeSessionId = undefined;
   editor.sessions.dispose(sessionId);
-  editor.focus.restore();
-  editor.workbench.invalidate("roles", "focus");
+  editor.overlays.close(inputPromptRoleId, { restoreFocus: true });
+  editor.focus.setEditor();
+  await refreshActiveSurface(editor);
+  editor.workbench.invalidate("frame", "roles", "focus");
 }
 
 async function updateInputPromptPreview(
@@ -283,6 +291,9 @@ async function updateInputPromptPreview(
       break;
     case "searchBackward":
       await updateSearchPreview(editor, active, "backward");
+      break;
+    case "renameSymbol":
+      active.error = undefined;
       break;
     case "shellPipe":
     case "shellPipeTo":
@@ -317,6 +328,9 @@ async function finalizeInputPrompt(
     case "searchForward":
     case "searchBackward":
       accepted = await finalizeSearch(editor, active);
+      break;
+    case "renameSymbol":
+      accepted = await finalizeRenameSymbol(editor, active);
       break;
     case "shellPipe":
       accepted = await finalizeShellPrompt(editor, active, "replace");
@@ -602,6 +616,43 @@ async function repeatStoredSearch(
       edit: { selection: nextSelection },
     });
   }
+}
+
+async function finalizeRenameSymbol(
+  editor: Parameters<EditorModule>[0],
+  active: ActiveInputPromptState,
+): Promise<boolean> {
+  const newName = active.query.trim();
+  if (!newName) {
+    active.error = "symbol name cannot be empty";
+    return false;
+  }
+  const pane = activeSurfacePane(editor);
+  if (!pane?.path || pane.surfaceId !== active.surfaceId) return false;
+  await ensureLspForPath(editor, pane.path);
+  const state = await editor.runtime.surfaces.readState({ surfaceId: active.surfaceId });
+  const cursor = state.selection.find((range) => range.cursorId === state.activeCursorId) ?? state.selection[0];
+  if (!cursor) return false;
+  const uri = fileUri(pane.path);
+  const position = positionAtByteOffset(state.text, cursorByteOffset(state, cursor));
+  const running = await runningServersForPath(editor, pane.path);
+  for (const server of running) {
+    try {
+      const edit = await editor.lsp.request({
+        serverId: server.handle,
+        method: "textDocument/rename",
+        timeoutMs: 5000,
+        params: { textDocument: { uri }, position, newName },
+      });
+      await applyWorkspaceEdit(editor, edit);
+      active.error = undefined;
+      return true;
+    } catch {
+      // Try the next running server.
+    }
+  }
+  active.error = "rename unavailable";
+  return false;
 }
 
 async function finalizeShellPrompt(
@@ -941,6 +992,127 @@ function rangeContainsInclusive(range: Pick<SurfaceSelectionRange, "anchor" | "h
   return from <= pos && pos <= to;
 }
 
+async function runningServersForPath(editor: Parameters<EditorModule>[0], path: string) {
+  const serverIds = editor.lsp.serverIdsForPath(path);
+  const statuses = await editor.lsp.status();
+  return statuses.filter((status) => serverIds.includes(status.id) && (status.state === "running" || status.state === "initialized"));
+}
+
+async function applyWorkspaceEdit(editor: Parameters<EditorModule>[0], edit: JsonValue): Promise<void> {
+  const object = asRecord(edit);
+  const documentChanges = Array.isArray(object?.documentChanges) ? object.documentChanges : undefined;
+  if (documentChanges) {
+    for (const change of documentChanges) {
+      const changeObject = asRecord(change);
+      const textDocument = asRecord(changeObject?.textDocument);
+      const uri = typeof textDocument?.uri === "string" ? textDocument.uri : undefined;
+      const edits = Array.isArray(changeObject?.edits) ? changeObject.edits : undefined;
+      const path = uri ? pathForFileUri(uri) : undefined;
+      if (path && edits) await applyTextEditsToPath(editor, path, edits);
+    }
+    return;
+  }
+  const changes = asRecord(object?.changes);
+  if (!changes) return;
+  for (const [uri, edits] of Object.entries(changes)) {
+    const path = pathForFileUri(uri);
+    if (path && Array.isArray(edits)) await applyTextEditsToPath(editor, path, edits);
+  }
+}
+
+async function applyTextEditsToPath(editor: Parameters<EditorModule>[0], path: string, edits: JsonValue[]): Promise<void> {
+  await editor.commands.dispatch({ id: commandId("file.open"), args: { path } });
+  const pane = activeSurfacePane(editor);
+  if (!pane?.surfaceId) return;
+  const state = await editor.runtime.surfaces.readState({ surfaceId: pane.surfaceId });
+  const changes = edits.map((edit) => lspTextEditToSurfaceChange(edit, state.text)).filter((change): change is SurfaceChange => Boolean(change)).sort((a, b) => b.start - a.start || b.end - a.end);
+  if (changes.length) await editor.runtime.surfaces.applyEdit({ surfaceId: pane.surfaceId, edit: { changes } });
+}
+
+function lspTextEditToSurfaceChange(value: JsonValue, text: string): SurfaceChange | undefined {
+  const object = asRecord(value);
+  const range = parseLspRange(object?.range);
+  const newText = typeof object?.newText === "string" ? object.newText : undefined;
+  if (!range || newText === undefined) return undefined;
+  return { start: utf8ByteOffsetAtStringIndex(text, utf16PositionToStringIndex(text, range.start)), end: utf8ByteOffsetAtStringIndex(text, utf16PositionToStringIndex(text, range.end)), text: newText };
+}
+
+function parseLspRange(value: JsonValue | undefined): { start: { line: number; character: number }; end: { line: number; character: number } } | undefined {
+  const object = asRecord(value);
+  const start = parseLspPosition(object?.start);
+  const end = parseLspPosition(object?.end);
+  return start && end ? { start, end } : undefined;
+}
+
+function parseLspPosition(value: JsonValue | undefined): { line: number; character: number } | undefined {
+  const object = asRecord(value);
+  return object && typeof object.line === "number" && typeof object.character === "number" ? { line: object.line, character: object.character } : undefined;
+}
+
+function asRecord(value: JsonValue | undefined): Record<string, any> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : undefined;
+}
+
+function pathForFileUri(uri: string): string | undefined {
+  if (!uri.startsWith("file://")) return undefined;
+  try { return decodeURIComponent(new URL(uri).pathname); } catch { return undefined; }
+}
+
+function cursorByteOffset(state: SurfaceState, cursor: SurfaceSelectionRange): number {
+  if (state.cursorSemantics === "InsertionPoint") return cursor.head;
+  if (cursor.head <= cursor.anchor) return cursor.head;
+  return utf8ByteOffsetAtStringIndex(state.text, previousGraphemeIndex(state.text, stringIndexAtUtf8ByteOffset(state.text, cursor.head)));
+}
+
+function previousGraphemeIndex(text: string, index: number): number {
+  if (index <= 0) return 0;
+  if (typeof Intl !== "undefined" && "Segmenter" in Intl) {
+    const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+    let previous = 0;
+    for (const part of segmenter.segment(text)) {
+      if (part.index >= index) break;
+      previous = part.index;
+    }
+    return previous;
+  }
+  return index - 1;
+}
+
+function positionAtByteOffset(text: string, byteOffset: number): { line: number; character: number } {
+  const index = stringIndexAtUtf8ByteOffset(text, byteOffset);
+  let line = 0;
+  let lineStart = 0;
+  for (let i = 0; i < index; i++) if (text.charCodeAt(i) === 10) { line++; lineStart = i + 1; }
+  return { line, character: index - lineStart };
+}
+
+function utf16PositionToStringIndex(text: string, position: { line: number; character: number }): number {
+  let line = 0;
+  let lineStart = 0;
+  for (let i = 0; i < text.length && line < position.line; i++) if (text.charCodeAt(i) === 10) { line++; lineStart = i + 1; }
+  const lineEnd = text.indexOf("\n", lineStart);
+  return Math.min(lineStart + position.character, lineEnd < 0 ? text.length : lineEnd);
+}
+
+function stringIndexAtUtf8ByteOffset(text: string, byteOffset: number): number {
+  if (byteOffset <= 0) return 0;
+  let bytes = 0;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    const next = code >= 0xd800 && code <= 0xdbff && i + 1 < text.length ? text.slice(i, i + 2) : text[i] ?? "";
+    const length = new TextEncoder().encode(next).length;
+    if (bytes + length > byteOffset) return i;
+    bytes += length;
+    if (next.length === 2) i++;
+    if (bytes >= byteOffset) return i + 1;
+  }
+  return text.length;
+}
+
+function utf8ByteOffsetAtStringIndex(text: string, index: number): number {
+  return index <= 0 ? 0 : new TextEncoder().encode(text.slice(0, index)).length;
+}
+
 function cloneRange(range: SurfaceSelectionRange): SurfaceSelectionRange {
   return { ...range };
 }
@@ -949,8 +1121,27 @@ function charCount(value: string): number {
   return Array.from(value).length;
 }
 
+function isSymbolWordChar(char: string): boolean {
+  return /[A-Za-z0-9_]/.test(char);
+}
+
 function containsUppercase(value: string): boolean {
   return Array.from(value).some((ch) => ch.toLocaleLowerCase() !== ch.toLocaleUpperCase() && ch === ch.toLocaleUpperCase());
+}
+
+async function initialPromptQuery(editor: Parameters<EditorModule>[0], kind: InputPromptKind): Promise<string> {
+  if (kind !== "renameSymbol") return "";
+  const surfaceId = getDefaultState(editor).activeSurfaceId;
+  if (!surfaceId) return "";
+  const state = await editor.runtime.surfaces.readState({ surfaceId });
+  const cursor = state.selection.find((range) => range.cursorId === state.activeCursorId) ?? state.selection[0];
+  if (!cursor) return "";
+  const index = stringIndexAtUtf8ByteOffset(state.text, cursorByteOffset(state, cursor));
+  let start = index;
+  let end = index;
+  while (start > 0 && isSymbolWordChar(state.text[start - 1] ?? "")) start -= 1;
+  while (end < state.text.length && isSymbolWordChar(state.text[end] ?? "")) end += 1;
+  return state.text.slice(start, end);
 }
 
 function promptTitle(kind: InputPromptKind): string {
@@ -967,6 +1158,8 @@ function promptTitle(kind: InputPromptKind): string {
       return "/";
     case "searchBackward":
       return "?";
+    case "renameSymbol":
+      return "RENAME";
     case "shellPipe":
       return "PIPE";
     case "shellPipeTo":
@@ -990,6 +1183,8 @@ function promptPlaceholder(kind: InputPromptKind): string {
     case "searchForward":
     case "searchBackward":
       return "Search";
+    case "renameSymbol":
+      return "New symbol name";
     case "shellPipe":
     case "shellPipeTo":
     case "shellInsertOutput":
@@ -1006,6 +1201,7 @@ function isInputPromptKind(value: unknown): value is InputPromptKind {
     || value === "removeSelections"
     || value === "searchForward"
     || value === "searchBackward"
+    || value === "renameSymbol"
     || value === "shellPipe"
     || value === "shellPipeTo"
     || value === "shellInsertOutput"
@@ -1027,6 +1223,7 @@ function searchDirectionForKind(kind: InputPromptKind): SearchDirection | undefi
     case "splitSelection":
     case "keepSelections":
     case "removeSelections":
+    case "renameSymbol":
     case "shellPipe":
     case "shellPipeTo":
     case "shellInsertOutput":

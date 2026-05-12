@@ -1,5 +1,5 @@
 import type { CellGridMetrics, CursorPlacement, RenderFrame, RenderRow, SyntaxSpan, Viewport } from "@the-editor/contracts/runtime";
-import type { BufferDecoration, InlineTextDecoration, RangeDecoration } from "./decorations.js";
+import type { BufferDecoration, DecorationStroke, InlineTextDecoration, RangeDecoration } from "./decorations.js";
 import type { GutterSnapshot } from "./gutters.js";
 import type { ThemeSnapshot } from "./themes.js";
 import { resolveThemeStyle, resolveThemeStyleLoose, type ResolvedThemeDefinition } from "./themes.js";
@@ -17,12 +17,15 @@ export interface CanvasTextSurfaceStyleOptions {
   gutterReservePx?: number;
 }
 
+export type CanvasCursorShape = "bar" | "block";
+
 export interface CanvasTextSurfacePaintOptions {
   selectionPickerActive?: boolean;
   showCursors?: boolean;
   offsetXPx?: number;
   offsetYPx?: number;
   gutters?: GutterSnapshot[];
+  cursorShape?: CanvasCursorShape;
 }
 
 interface TextSurfaceTheme {
@@ -146,8 +149,9 @@ export function paintCanvasTextSurface(
   paintRows(ctx, frame, rows, metrics, theme);
   paintInlineTextDecorations(ctx, decorations, metrics, theme);
   paintDecorationUnderlines(ctx, decorations, metrics);
+  paintDecorationStrikes(ctx, decorations, metrics);
   if (options.showCursors ?? true) {
-    paintCursors(ctx, frame, rows, metrics, theme, options.selectionPickerActive ?? false);
+    paintCursors(ctx, frame, rows, metrics, theme, options.selectionPickerActive ?? false, options.cursorShape);
   }
 }
 
@@ -336,13 +340,19 @@ function paintDecorationUnderlines(
   for (const decoration of decorations) {
     if (decoration.kind !== "range" || !decoration.underline) continue;
     const y = yForRow(decoration.surfaceRow, metrics) + metrics.rowHeight - 2;
-    ctx.fillStyle = decoration.underline;
-    ctx.fillRect(
-      xForCol(decoration.startCol, metrics),
-      y,
-      Math.max(metrics.cellWidth, (decoration.endCol - decoration.startCol) * metrics.cellWidth),
-      1,
-    );
+    paintDecorationStroke(ctx, decoration, metrics, decoration.underline, y);
+  }
+}
+
+function paintDecorationStrikes(
+  ctx: CanvasRenderingContext2D,
+  decorations: BufferDecoration[],
+  metrics: RendererMetrics,
+): void {
+  for (const decoration of decorations) {
+    if (decoration.kind !== "range" || !decoration.strike) continue;
+    const y = yForRow(decoration.surfaceRow, metrics) + Math.round(metrics.rowHeight * 0.54);
+    paintDecorationStroke(ctx, decoration, metrics, decoration.strike, y);
   }
 }
 
@@ -353,11 +363,13 @@ function paintCursors(
   metrics: RendererMetrics,
   theme: TextSurfaceTheme,
   selectionPickerActive: boolean,
+  cursorShape?: CanvasCursorShape,
 ): void {
   for (const cursor of frame.cursors) {
     ctx.save();
     if (selectionPickerActive && !cursor.active) ctx.globalAlpha = 0.25;
-    if (cursor.semantics === "InsertionPoint") paintBarCursor(ctx, cursor, metrics, theme);
+    const shape = cursorShape ?? (cursor.semantics === "InsertionPoint" ? "bar" : "block");
+    if (shape === "bar") paintBarCursor(ctx, cursor, metrics, theme);
     else paintBlockCursor(ctx, cursor, rows.get(cursor.surfaceRow), metrics, theme);
     ctx.restore();
   }
@@ -395,6 +407,8 @@ function paintRangeDecoration(
   metrics: RendererMetrics,
   color: string,
 ): void {
+  ctx.save();
+  ctx.globalAlpha = decoration.opacity ?? 1;
   ctx.fillStyle = color;
   ctx.fillRect(
     xForCol(decoration.startCol, metrics),
@@ -402,6 +416,7 @@ function paintRangeDecoration(
     Math.max(metrics.cellWidth, (decoration.endCol - decoration.startCol) * metrics.cellWidth),
     metrics.rowHeight,
   );
+  ctx.restore();
 }
 
 function paintInlineTextDecoration(
@@ -414,6 +429,66 @@ function paintInlineTextDecoration(
   ctx.globalAlpha = decoration.opacity ?? 0.65;
   ctx.fillStyle = decoration.foreground ?? resolveInlineDecorationColor(theme);
   ctx.fillText(decoration.text, xForCol(decoration.col, metrics), yForRow(decoration.surfaceRow, metrics) + metrics.baselineOffset);
+  ctx.restore();
+}
+
+function paintDecorationStroke(
+  ctx: CanvasRenderingContext2D,
+  decoration: RangeDecoration,
+  metrics: RendererMetrics,
+  stroke: string | DecorationStroke,
+  y: number,
+): void {
+  const spec = typeof stroke === "string" ? { color: stroke, style: "solid" as const } : stroke;
+  const x = xForCol(decoration.startCol, metrics);
+  const width = Math.max(metrics.cellWidth, (decoration.endCol - decoration.startCol) * metrics.cellWidth);
+  ctx.save();
+  ctx.globalAlpha = decoration.opacity ?? 1;
+  ctx.strokeStyle = spec.color;
+  ctx.fillStyle = spec.color;
+  ctx.lineWidth = 1;
+
+  switch (spec.style ?? "solid") {
+    case "dotted": {
+      for (let offset = 0; offset < width; offset += 4) {
+        ctx.fillRect(x + offset, y, 2, 1);
+      }
+      break;
+    }
+    case "dashed": {
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.moveTo(x, y + 0.5);
+      ctx.lineTo(x + width, y + 0.5);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      break;
+    }
+    case "double": {
+      ctx.fillRect(x, y - 1, width, 1);
+      ctx.fillRect(x, y + 1, width, 1);
+      break;
+    }
+    case "curl": {
+      ctx.beginPath();
+      const amplitude = 1.5;
+      const wavelength = 6;
+      ctx.moveTo(x, y);
+      for (let offset = 0; offset <= width; offset += 2) {
+        const dx = x + offset;
+        const dy = y + Math.sin((offset / wavelength) * Math.PI * 2) * amplitude;
+        ctx.lineTo(dx, dy);
+      }
+      ctx.stroke();
+      break;
+    }
+    case "solid":
+    default: {
+      ctx.fillRect(x, y, width, 1);
+      break;
+    }
+  }
+
   ctx.restore();
 }
 
@@ -435,7 +510,7 @@ function drawCells(
 function textForCols(cells: string[], startCol: number, endCol: number): string {
   return cells
     .slice(startCol, Math.min(endCol, cells.length))
-    .filter((cell) => cell !== "\t")
+    .map((cell) => cell === "\t" ? " " : cell)
     .join("");
 }
 

@@ -45,6 +45,8 @@ export type PickerPreview =
       binary?: boolean;
       rows?: PickerPreviewRow[];
       syntax?: PickerPreviewSyntaxSpan[];
+      activeLine?: number;
+      annotation?: { line: number; severity?: "error" | "warning" | "info" | "hint"; message: string };
     }
   | {
       kind: "surface";

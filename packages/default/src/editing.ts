@@ -1,4 +1,5 @@
 import type {
+  CursorSemantics,
   SurfaceChange,
   SurfaceEdit,
   SurfaceId,
@@ -13,7 +14,7 @@ import {
   type EditorModule,
   type KeyInput,
 } from "@the-editor/editor";
-import { getDefaultState, setEditorMode } from "./state.js";
+import { getDefaultState, refreshActiveSurface, setEditorMode } from "./state.js";
 
 const RUST_OPERATIONS = [
   "move_char_left",
@@ -155,6 +156,7 @@ const lastMotionSlot = "default.editing.lastMotion";
 const selectionPickerSlot = "default.editing.selectionPicker";
 const jumpListSlot = "default.editing.jumpList";
 const objectSelectionHistorySlot = "default.editing.objectSelectionHistory";
+const appendRestoreCursorPendingSlot = "default.editing.appendRestoreCursorPending";
 const TAB_WIDTH = 4;
 
 const MOTION_COMMANDS = new Set<string>([
@@ -248,10 +250,24 @@ const JUMP_SAVING_OPERATIONS = new Set<string>([
   "extend_to_last_line",
 ]);
 
+const INSERT_MODE_COLLAPSE_SELECTION_OPERATIONS = new Set<string>([
+  "insert_text",
+  "insert_tab",
+  "smart_tab",
+  "insert_newline",
+  "delete_char_backward",
+  "delete_char_forward",
+  "delete_word_backward",
+  "delete_word_forward",
+  "kill_to_line_start",
+  "kill_to_line_end",
+]);
+
 export function defaultEditing(): EditorModule {
   return (editor) => {
     editor.commands.register({ id: commandId("normal_mode"), title: "Normal Mode", run: () => applyMode(editor, "normal") });
     editor.commands.register({ id: commandId("mode.normal"), title: "Normal Mode", run: () => applyMode(editor, "normal") });
+    editor.commands.register({ id: commandId("exit_insert_mode"), title: "Exit Insert Mode", run: () => exitInsertMode(editor) });
     editor.commands.register({ id: commandId("insert_mode"), title: "Insert Mode", run: () => applyMode(editor, "insert") });
     editor.commands.register({ id: commandId("mode.insert"), title: "Insert Mode", run: () => applyMode(editor, "insert") });
     editor.commands.register({ id: commandId("select_mode"), title: "Select Mode", run: () => applyMode(editor, "select") });
@@ -264,6 +280,7 @@ export function defaultEditing(): EditorModule {
         const pending = takePendingInput(editor);
         if (!pending) return undefined;
         await handlePendingInput(editor, pending, input);
+        await refreshActiveSurface(editor);
         return true;
       },
     });
@@ -274,7 +291,9 @@ export function defaultEditing(): EditorModule {
       async handler(input: KeyInput) {
         const picker = selectionPickerState(editor);
         if (!picker) return undefined;
-        return handleSelectionPickerInput(editor, picker, input);
+        const handled = await handleSelectionPickerInput(editor, picker, input);
+        if (handled) await refreshActiveSurface(editor);
+        return handled;
       },
     });
 
@@ -800,8 +819,7 @@ export function defaultEditing(): EditorModule {
       id: commandId("append_mode"),
       title: "Append Mode",
       async run() {
-        await applyOperation(editor, { name: "move_char_right" });
-        await applyMode(editor, "insert");
+        await enterAppendMode(editor);
       },
     });
     editor.commands.register({
@@ -1453,12 +1471,21 @@ async function jumpInSelectionHistory(
 }
 
 async function applyJumpEntry(editor: EditorHost, entry: JumpListEntry): Promise<void> {
-  if (entry.surfaceId !== activeSurfaceId(editor)) return;
-  await applyEdit(editor, { selection: entry.selection.map(cloneSelectionRange) });
+  if (entry.surfaceId !== activeSurfaceId(editor)) {
+    const pane = editor.workbench.snapshotEditorLayout().panes.find((candidate) => candidate.kind === "surface" && candidate.surfaceId === entry.surfaceId);
+    if (!pane) return;
+    editor.workbench.focusPane(pane.id);
+  }
+  await editor.runtime.surfaces.applyEdit({
+    surfaceId: entry.surfaceId,
+    edit: { selection: entry.selection.map(cloneSelectionRange) },
+  });
   await editor.runtime.surfaces.setActiveCursor({
     surfaceId: entry.surfaceId,
     cursorId: entry.activeCursorId,
   });
+  await refreshActiveSurface(editor);
+  editor.workbench.invalidate("frame", "focus", "layout", "tabs");
 }
 
 function currentRegisterState(editor: EditorHost, next?: string): string | undefined {
@@ -2175,9 +2202,109 @@ function mod(value: number, base: number): number {
 async function applyMode(editor: EditorHost, mode: "normal" | "insert" | "select"): Promise<void> {
   const previous = getDefaultState(editor).mode;
   if (previous === "insert" && mode !== "insert") {
+    if (appendRestoreCursorPending(editor)) {
+      await restoreAppendModeSelection(editor);
+      setAppendRestoreCursorPending(editor, false);
+    }
     await editor.runtime.surfaces.commitUndoCheckpoint({ surfaceId: activeSurfaceId(editor) });
   }
+
+  if (mode !== "insert") {
+    setAppendRestoreCursorPending(editor, false);
+  }
+
+  if (previous === "normal" && mode === "insert") {
+    await applyInsertModeSelection(editor);
+  }
+
   setEditorMode(editor, mode);
+  await syncActiveSurfaceCursorSemantics(editor, mode === "insert" ? "InsertionPoint" : "Cell");
+}
+
+async function exitInsertMode(editor: EditorHost): Promise<void> {
+  if (getDefaultState(editor).mode !== "insert") {
+    await applyMode(editor, "normal");
+    return;
+  }
+  await applyMode(editor, "normal");
+  await editor.overlays.dismissAttachedToEditor({ restoreFocus: false, fallback: { kind: "editor" } });
+}
+
+async function enterAppendMode(editor: EditorHost): Promise<void> {
+  await enterInsertModeDirect(editor);
+  setAppendRestoreCursorPending(editor, true);
+  const state = await readActiveSurfaceState(editor);
+  const boundaries = graphemeBoundaries(state.text);
+  const len = Array.from(state.text).length;
+  const selection = state.selection.map((range) => appendModeSelectionRange(range, boundaries, len));
+  if (!sameSelection(state.selection, selection)) {
+    await applyEdit(editor, { selection });
+  }
+}
+
+async function enterInsertModeDirect(editor: EditorHost): Promise<void> {
+  setAppendRestoreCursorPending(editor, false);
+  setEditorMode(editor, "insert");
+  await syncActiveSurfaceCursorSemantics(editor, "InsertionPoint");
+}
+
+async function applyInsertModeSelection(editor: EditorHost): Promise<void> {
+  const state = await readActiveSurfaceState(editor);
+  const selection = state.selection.map(insertModeSelectionRange);
+  if (sameSelection(state.selection, selection)) return;
+  await applyEdit(editor, { selection });
+}
+
+function insertModeSelectionRange(range: SurfaceSelectionRange): SurfaceSelectionRange {
+  const from = Math.min(range.anchor, range.head);
+  const to = Math.max(range.anchor, range.head);
+  return { cursorId: range.cursorId, anchor: to, head: from };
+}
+
+async function restoreAppendModeSelection(editor: EditorHost): Promise<void> {
+  const state = await readActiveSurfaceState(editor);
+  const boundaries = graphemeBoundaries(state.text);
+  const selection = state.selection.map((range) => {
+    const head = range.head;
+    return {
+      cursorId: range.cursorId,
+      anchor: prevGraphemeBoundary(boundaries, head),
+      head,
+    } satisfies SurfaceSelectionRange;
+  });
+  if (sameSelection(state.selection, selection)) return;
+  await applyEdit(editor, { selection });
+}
+
+function appendModeSelectionRange(
+  range: SurfaceSelectionRange,
+  boundaries: readonly number[],
+  len: number,
+): SurfaceSelectionRange {
+  if (range.anchor === range.head) {
+    const next = nextGraphemeBoundary(boundaries, range.head, len);
+    return { cursorId: range.cursorId, anchor: range.anchor, head: next };
+  }
+  return {
+    cursorId: range.cursorId,
+    anchor: Math.min(range.anchor, range.head),
+    head: Math.max(range.anchor, range.head),
+  };
+}
+
+function appendRestoreCursorPending(editor: EditorHost): boolean {
+  return editor.getStateSlot<boolean | undefined>(appendRestoreCursorPendingSlot) ?? false;
+}
+
+function setAppendRestoreCursorPending(editor: EditorHost, pending: boolean): void {
+  if (pending) editor.setStateSlot(appendRestoreCursorPendingSlot, true);
+  else editor.deleteStateSlot(appendRestoreCursorPendingSlot);
+}
+
+async function syncActiveSurfaceCursorSemantics(editor: EditorHost, semantics: CursorSemantics): Promise<void> {
+  const surfaceId = getDefaultState(editor).activeSurfaceId;
+  if (!surfaceId) return;
+  await editor.runtime.surfaces.setCursorSemantics({ surfaceId, semantics });
 }
 
 async function pasteFromRegister(editor: EditorHost, name: string, after: boolean): Promise<void> {
@@ -2205,6 +2332,9 @@ async function applyOperation(
   operation: SurfaceOperation,
   checkpoint = true,
 ): Promise<void> {
+  if (getDefaultState(editor).mode === "insert" && INSERT_MODE_COLLAPSE_SELECTION_OPERATIONS.has(operation.name)) {
+    await collapseInsertModeSelections(editor);
+  }
   if (JUMP_SAVING_OPERATIONS.has(operation.name)) {
     await saveSelection(editor);
   }
@@ -2215,6 +2345,17 @@ async function applyOperation(
   if (checkpoint && getDefaultState(editor).mode !== "insert" && CHECKPOINT_AFTER_OPERATION.has(operation.name)) {
     await editor.runtime.surfaces.commitUndoCheckpoint({ surfaceId: activeSurfaceId(editor) });
   }
+}
+
+async function collapseInsertModeSelections(editor: EditorHost): Promise<void> {
+  const state = await readActiveSurfaceState(editor);
+  const selection = state.selection.map((range) => ({
+    cursorId: range.cursorId,
+    anchor: range.head,
+    head: range.head,
+  }));
+  if (sameSelection(state.selection, selection)) return;
+  await applyEdit(editor, { selection });
 }
 
 function activeSurfaceId(editor: EditorHost): SurfaceId {

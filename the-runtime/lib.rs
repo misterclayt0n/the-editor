@@ -1,11 +1,20 @@
 pub mod clipboard;
 pub mod io;
+pub mod lsp;
 pub mod resource;
 pub mod search;
 pub mod session;
 pub mod syntax;
 
 pub use clipboard::SystemClipboard;
+pub use lsp::{
+  LspDiagnosticEntry,
+  LspError,
+  LspLogEntry,
+  LspServerConfig,
+  LspServerHandle,
+  LspServerStatus,
+};
 pub use resource::{
   Resource,
   ResourceId,

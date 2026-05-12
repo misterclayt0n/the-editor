@@ -27,6 +27,7 @@ use the_lib::{
   render::{
     CellGridMetrics,
     CellGridRenderSurface,
+    CursorSemantics,
     RenderFrame,
     SurfaceId,
     TextFormat,
@@ -45,6 +46,15 @@ use crate::{
     read_text_file,
     write_text_file,
   },
+  lsp::{
+    LspDiagnosticEntry,
+    LspError,
+    LspLogEntry,
+    LspServerConfig,
+    LspServerHandle,
+    LspServerStatus,
+    LspStore,
+  },
   resource::{
     Resource,
     ResourceId,
@@ -55,11 +65,11 @@ use crate::{
     FileSearchResult,
     GrepSearchResult,
     MixedSearchResult,
+    SearchError,
     SearchIndexHandle,
     SearchIndexReady,
     SearchIndexStatus,
     SearchManager,
-    SearchError,
     TextPreviewResult,
     TextPreviewRow,
     TextPreviewSyntaxSpan,
@@ -192,6 +202,9 @@ pub enum RuntimeError {
   #[error(transparent)]
   Search(#[from] SearchError),
 
+  #[error(transparent)]
+  Lsp(#[from] LspError),
+
   #[error("unknown document handle {0:?}")]
   UnknownDocument(DocumentHandle),
 
@@ -219,6 +232,7 @@ pub struct RuntimeSession {
   registers:          Registers,
   syntax_scheduler:   SyntaxScheduler,
   search:             SearchManager,
+  lsp:                LspStore,
   next_resource_id:   u64,
   next_document_id:   u64,
   next_surface_id:    u64,
@@ -260,6 +274,7 @@ impl RuntimeSession {
       registers: Registers::new(),
       syntax_scheduler: SyntaxScheduler::default(),
       search: SearchManager::default(),
+      lsp: LspStore::default(),
       next_resource_id: 0,
       next_document_id: 0,
       next_surface_id: 0,
@@ -269,6 +284,66 @@ impl RuntimeSession {
       documents: BTreeMap::new(),
       surfaces: BTreeMap::new(),
     }
+  }
+
+  pub fn lsp_register_server(&mut self, config: LspServerConfig) {
+    self.lsp.register_server(config);
+  }
+
+  pub fn lsp_configured_servers(&self) -> Vec<LspServerConfig> {
+    self.lsp.configured_servers()
+  }
+
+  pub fn lsp_start_server(
+    &mut self,
+    id: &str,
+    root_uri: Option<String>,
+  ) -> RuntimeResult<LspServerHandle> {
+    let handle = self.lsp.start_server(id, root_uri)?;
+    let documents = self.documents.keys().copied().collect::<Vec<_>>();
+    for document in documents {
+      self.lsp_open_document(document)?;
+    }
+    Ok(handle)
+  }
+
+  pub fn lsp_shutdown_server(&mut self, handle: LspServerHandle) -> RuntimeResult<()> {
+    Ok(self.lsp.shutdown_server(handle)?)
+  }
+
+  pub fn lsp_status(&mut self) -> Vec<LspServerStatus> {
+    self.lsp.status()
+  }
+
+  pub fn lsp_diagnostics(&mut self) -> Vec<LspDiagnosticEntry> {
+    self.lsp.diagnostics()
+  }
+
+  pub fn lsp_logs(&mut self, handle: LspServerHandle) -> RuntimeResult<Vec<LspLogEntry>> {
+    Ok(self.lsp.logs(handle)?)
+  }
+
+  pub fn lsp_request(
+    &mut self,
+    handle: LspServerHandle,
+    method: &str,
+    params: serde_json::Value,
+    timeout_ms: u64,
+  ) -> RuntimeResult<serde_json::Value> {
+    Ok(
+      self
+        .lsp
+        .request(handle, method, params, Duration::from_millis(timeout_ms))?,
+    )
+  }
+
+  pub fn lsp_notify(
+    &mut self,
+    handle: LspServerHandle,
+    method: &str,
+    params: serde_json::Value,
+  ) -> RuntimeResult<()> {
+    Ok(self.lsp.notify(handle, method, params)?)
   }
 
   pub fn syntax(&self) -> &RuntimeSyntax {
@@ -324,10 +399,7 @@ impl RuntimeSession {
     Ok(self.search.ensure_index(root_path)?)
   }
 
-  pub fn search_index_status(
-    &self,
-    index: SearchIndexHandle,
-  ) -> RuntimeResult<SearchIndexStatus> {
+  pub fn search_index_status(&self, index: SearchIndexHandle) -> RuntimeResult<SearchIndexStatus> {
     Ok(self.search.status(index)?)
   }
 
@@ -344,7 +416,11 @@ impl RuntimeSession {
     limit: usize,
     current_path: Option<&str>,
   ) -> RuntimeResult<FileSearchResult> {
-    Ok(self.search.query_files(index, query, offset, limit, current_path)?)
+    Ok(
+      self
+        .search
+        .query_files(index, query, offset, limit, current_path)?,
+    )
   }
 
   pub fn query_search_dirs(
@@ -355,7 +431,11 @@ impl RuntimeSession {
     limit: usize,
     current_path: Option<&str>,
   ) -> RuntimeResult<DirSearchResult> {
-    Ok(self.search.query_dirs(index, query, offset, limit, current_path)?)
+    Ok(
+      self
+        .search
+        .query_dirs(index, query, offset, limit, current_path)?,
+    )
   }
 
   pub fn query_search_mixed(
@@ -366,7 +446,11 @@ impl RuntimeSession {
     limit: usize,
     current_path: Option<&str>,
   ) -> RuntimeResult<MixedSearchResult> {
-    Ok(self.search.query_mixed(index, query, offset, limit, current_path)?)
+    Ok(
+      self
+        .search
+        .query_mixed(index, query, offset, limit, current_path)?,
+    )
   }
 
   pub fn query_search_grep(
@@ -409,22 +493,18 @@ impl RuntimeSession {
     context_lines: usize,
   ) -> RuntimeResult<TextPreviewResult> {
     let normalized = normalize_file_path(path)?;
-    let bytes = fs::read(&normalized)?;
-    if bytes.contains(&0) {
+    let Some(mut document) = self.preview_document_for_normalized_path(&normalized)? else {
       return Ok(TextPreviewResult {
-        path: normalized.to_string_lossy().into_owned(),
-        text: String::new(),
+        path:       normalized.to_string_lossy().into_owned(),
+        text:       String::new(),
         start_line: 0,
-        end_line: 0,
-        truncated: false,
-        binary: true,
-        rows: None,
-        syntax: None,
+        end_line:   0,
+        truncated:  false,
+        binary:     true,
+        rows:       None,
+        syntax:     None,
       });
-    }
-
-    let mut document = Document::new(Rope::from(String::from_utf8_lossy(&bytes).into_owned()));
-    self.syntax.activate_document(&mut document, Some(&normalized));
+    };
     let _ = self.syntax.reparse_document(&mut document);
 
     let total_lines = document.text().len_lines();
@@ -472,7 +552,7 @@ impl RuntimeSession {
       remaining_bytes = remaining_bytes.saturating_sub(row_text.len());
       row_index_by_surface_row.insert(row.surface_row, rows.len());
       rows.push(TextPreviewRow {
-        text: row_text,
+        text:        row_text,
         line_number: row.doc_line.map(|line| line + 1),
       });
       if truncated {
@@ -490,11 +570,11 @@ impl RuntimeSession {
         continue;
       }
       syntax.push(TextPreviewSyntaxSpan {
-        row: row_index,
+        row:       row_index,
         start_col: span.start_col.min(row_len),
-        end_col: span.end_col.min(row_len),
-        kind: span.kind.get() as usize,
-        scope: self.syntax.registry().highlight_name(span.kind),
+        end_col:   span.end_col.min(row_len),
+        kind:      span.kind.get() as usize,
+        scope:     self.syntax.registry().highlight_name(span.kind),
       });
     }
 
@@ -798,6 +878,7 @@ impl RuntimeSession {
     });
     self.resource_documents.insert(resource, handle);
     self.syntax_scheduler.touch_document(handle);
+    self.lsp_open_document(handle)?;
     Ok(handle)
   }
 
@@ -856,6 +937,19 @@ impl RuntimeSession {
     Ok(())
   }
 
+  pub fn set_surface_cursor_semantics(
+    &mut self,
+    surface: SurfaceHandle,
+    semantics: CursorSemantics,
+  ) -> RuntimeResult<()> {
+    let entry = self
+      .surfaces
+      .get_mut(&surface)
+      .ok_or(RuntimeError::UnknownSurface(surface))?;
+    entry.surface.set_cursor_semantics(semantics);
+    Ok(())
+  }
+
   pub fn set_surface_active_cursor(
     &mut self,
     surface: SurfaceHandle,
@@ -865,7 +959,9 @@ impl RuntimeSession {
       .surfaces
       .get_mut(&surface)
       .ok_or(RuntimeError::UnknownSurface(surface))?;
-    let cursor_id = cursor_id.and_then(NonZeroU64::new).map(the_lib::selection::CursorId::new);
+    let cursor_id = cursor_id
+      .and_then(NonZeroU64::new)
+      .map(the_lib::selection::CursorId::new);
     entry.surface.set_active_cursor(cursor_id)?;
     Ok(())
   }
@@ -875,9 +971,12 @@ impl RuntimeSession {
     surface: SurfaceHandle,
     edit: the_lib::operation::Edit,
   ) -> RuntimeResult<()> {
+    let old_text = self.surface_document_text(surface)?;
+    let changeset = edit.transaction.changes().clone();
     self.with_surface_document_mut(surface, move |surface, document| {
       surface.apply_edit(document, edit)
     })??;
+    self.lsp_sync_surface_document_incremental(surface, &old_text, &changeset)?;
     Ok(())
   }
 
@@ -942,15 +1041,115 @@ impl RuntimeSession {
         })??;
       },
       OperationAtom::Edit(edit) => {
+        let old_text = self.surface_document_text(surface)?;
+        let changeset = edit.transaction.changes().clone();
         self.with_surface_document_mut(surface, move |surface, document| {
           surface.apply_edit(document, edit)
         })??;
+        self.lsp_sync_surface_document_incremental(surface, &old_text, &changeset)?;
       },
       OperationAtom::RegisterWrite(write) => {
         self.registers.write(write.name, write.values);
       },
     }
     Ok(())
+  }
+
+  fn surface_document_text(&self, surface: SurfaceHandle) -> RuntimeResult<ropey::Rope> {
+    let document = self
+      .surfaces
+      .get(&surface)
+      .ok_or(RuntimeError::UnknownSurface(surface))?
+      .document;
+    Ok(
+      self
+        .documents
+        .get(&document)
+        .ok_or(RuntimeError::UnknownDocument(document))?
+        .document
+        .text()
+        .clone(),
+    )
+  }
+
+  fn lsp_sync_surface_document(&mut self, surface: SurfaceHandle) -> RuntimeResult<()> {
+    let document = self
+      .surfaces
+      .get(&surface)
+      .ok_or(RuntimeError::UnknownSurface(surface))?
+      .document;
+    self.lsp_change_document(document)
+  }
+
+  fn lsp_sync_surface_document_incremental(
+    &mut self,
+    surface: SurfaceHandle,
+    old_text: &ropey::Rope,
+    changeset: &the_lib::transaction::ChangeSet,
+  ) -> RuntimeResult<()> {
+    let document = self
+      .surfaces
+      .get(&surface)
+      .ok_or(RuntimeError::UnknownSurface(surface))?
+      .document;
+    self.lsp_change_document_incremental(document, old_text, changeset)
+  }
+
+  fn lsp_open_document(&mut self, document: DocumentHandle) -> RuntimeResult<()> {
+    let Some((uri, language_id, text, version)) = self.lsp_document_payload(document) else {
+      return Ok(());
+    };
+    Ok(
+      self
+        .lsp
+        .did_open_document(&uri, &language_id, &text, version)?,
+    )
+  }
+
+  fn lsp_change_document(&mut self, document: DocumentHandle) -> RuntimeResult<()> {
+    let Some((uri, _language_id, text, version)) = self.lsp_document_payload(document) else {
+      return Ok(());
+    };
+    Ok(self.lsp.did_change_document(&uri, &text, version)?)
+  }
+
+  fn lsp_change_document_incremental(
+    &mut self,
+    document: DocumentHandle,
+    old_text: &ropey::Rope,
+    changeset: &the_lib::transaction::ChangeSet,
+  ) -> RuntimeResult<()> {
+    let Some((uri, _language_id, _text, version)) = self.lsp_document_payload(document) else {
+      return Ok(());
+    };
+    let new_text = self
+      .documents
+      .get(&document)
+      .ok_or(RuntimeError::UnknownDocument(document))?
+      .document
+      .text();
+    Ok(
+      self
+        .lsp
+        .did_change_document_incremental(&uri, old_text, new_text, changeset, version)?,
+    )
+  }
+
+  fn lsp_document_payload(
+    &self,
+    document: DocumentHandle,
+  ) -> Option<(String, String, String, i64)> {
+    let entry = self.documents.get(&document)?;
+    let resource = entry.resource?;
+    let path = self.resources.get(&resource)?.path();
+    let uri = file_uri(path);
+    let language_id = lsp_language_id_for_path(path);
+    Some((
+      uri,
+      language_id,
+      entry.document.text().to_string(),
+      entry.document.revision() as i64,
+    ))
   }
 
   pub fn commit_surface_undo_checkpoint(&mut self, surface: SurfaceHandle) -> RuntimeResult<()> {
@@ -970,6 +1169,7 @@ impl RuntimeSession {
       }
       Ok::<_, the_lib::surface::SurfaceError>(())
     })??;
+    self.lsp_sync_surface_document(surface)?;
     Ok(())
   }
 
@@ -983,6 +1183,7 @@ impl RuntimeSession {
       }
       Ok::<_, the_lib::surface::SurfaceError>(())
     })??;
+    self.lsp_sync_surface_document(surface)?;
     Ok(())
   }
 
@@ -1060,7 +1261,9 @@ impl RuntimeSession {
       )
     };
 
-    let preview_document = preview_document_for_path(&self.syntax, &normalized)?;
+    let preview_document = self
+      .preview_document_for_normalized_path(&normalized)?
+      .unwrap_or_else(|| Document::new(Rope::from("<Binary file>\n")));
     let preview_handle = DocumentHandle::next(&mut self.next_document_id);
     let mut render = CellGridRenderSurface::new(
       SurfaceId::new(surface.get()).expect("runtime surface handle must be non-zero"),
@@ -1078,7 +1281,7 @@ impl RuntimeSession {
       readonly: true,
     });
     self.surfaces.insert(surface, RuntimeSurface {
-      surface: preview_surface,
+      surface:  preview_surface,
       document: preview_handle,
     });
     self.syntax_scheduler.touch_document(preview_handle);
@@ -1158,6 +1361,64 @@ impl RuntimeSession {
     Ok(resource)
   }
 
+  pub fn preview_path_cache_key(&self, path: &Path) -> RuntimeResult<String> {
+    let normalized = normalize_file_path(path)?;
+    if let Some(document) = self.document_for_normalized_path(&normalized) {
+      let revision = self
+        .documents
+        .get(&document)
+        .map(|entry| entry.document.revision())
+        .unwrap_or(0);
+      return Ok(format!(
+        "document:{}:{}",
+        normalized.to_string_lossy(),
+        revision
+      ));
+    }
+    let metadata = fs::metadata(&normalized)?;
+    let modified = metadata
+      .modified()
+      .ok()
+      .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+      .map(|duration| duration.as_nanos())
+      .unwrap_or(0);
+    Ok(format!(
+      "file:{}:{}:{}",
+      normalized.to_string_lossy(),
+      metadata.len(),
+      modified
+    ))
+  }
+
+  fn document_for_normalized_path(&self, normalized: &Path) -> Option<DocumentHandle> {
+    let resource = self.resource_paths.get(normalized)?;
+    self.resource_documents.get(resource).copied()
+  }
+
+  fn preview_document_for_normalized_path(
+    &self,
+    normalized: &Path,
+  ) -> RuntimeResult<Option<Document>> {
+    if let Some(handle) = self.document_for_normalized_path(normalized)
+      && let Some(entry) = self.documents.get(&handle)
+    {
+      let mut document = Document::new(entry.document.text().clone());
+      self
+        .syntax
+        .activate_document(&mut document, Some(normalized));
+      return Ok(Some(document));
+    }
+    let bytes = fs::read(normalized)?;
+    if bytes.contains(&0) {
+      return Ok(None);
+    }
+    let mut document = Document::new(Rope::from(String::from_utf8_lossy(&bytes).into_owned()));
+    self
+      .syntax
+      .activate_document(&mut document, Some(normalized));
+    Ok(Some(document))
+  }
+
   fn insert_or_get_resource(&mut self, path: PathBuf) -> RuntimeResult<ResourceId> {
     if let Some(resource) = self.resource_paths.get(&path).copied() {
       return Ok(resource);
@@ -1171,7 +1432,11 @@ impl RuntimeSession {
   }
 
   fn drop_orphan_document(&mut self, document: DocumentHandle) {
-    if self.surfaces.values().any(|entry| entry.document == document) {
+    if self
+      .surfaces
+      .values()
+      .any(|entry| entry.document == document)
+    {
       return;
     }
     let Some(entry) = self.documents.get(&document) else {
@@ -1185,20 +1450,6 @@ impl RuntimeSession {
   }
 }
 
-fn preview_document_for_path(
-  syntax: &RuntimeSyntax,
-  path: &Path,
-) -> RuntimeResult<Document> {
-  let bytes = fs::read(path)?;
-  if bytes.contains(&0) {
-    return Ok(Document::new(Rope::from("<Binary file>\n")));
-  }
-
-  let mut document = Document::new(Rope::from(String::from_utf8_lossy(&bytes).into_owned()));
-  syntax.activate_document(&mut document, Some(path));
-  Ok(document)
-}
-
 fn truncate_string_at_char_boundary(text: &mut String, max_bytes: usize) {
   if text.len() <= max_bytes {
     return;
@@ -1208,6 +1459,31 @@ fn truncate_string_at_char_boundary(text: &mut String, max_bytes: usize) {
     boundary -= 1;
   }
   text.truncate(boundary);
+}
+
+fn file_uri(path: &Path) -> String {
+  format!("file://{}", path.to_string_lossy())
+}
+
+fn lsp_language_id_for_path(path: &Path) -> String {
+  match path
+    .extension()
+    .and_then(|extension| extension.to_str())
+    .unwrap_or_default()
+  {
+    "ts" => "typescript",
+    "tsx" => "typescriptreact",
+    "js" => "javascript",
+    "jsx" => "javascriptreact",
+    "rs" => "rust",
+    "json" => "json",
+    "css" => "css",
+    "html" => "html",
+    "md" => "markdown",
+    other if !other.is_empty() => other,
+    _ => "plaintext",
+  }
+  .to_string()
 }
 
 fn merge_range(ranges: &mut Vec<Range<usize>>, mut range: Range<usize>) {
@@ -1304,7 +1580,11 @@ mod tests {
     assert_ne!(preview_document, scratch);
     assert!(runtime.document(scratch).is_none());
     assert_eq!(
-      runtime.document(preview_document).unwrap().text().to_string(),
+      runtime
+        .document(preview_document)
+        .unwrap()
+        .text()
+        .to_string(),
       "fn main() {}\n"
     );
 

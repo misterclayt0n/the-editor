@@ -1,135 +1,65 @@
-import type { CellGridMetrics, DocumentId, RenderFrame, SurfaceId, Viewport } from "@the-editor/contracts/runtime";
-import { commandId, type BufferDecoration, type EditorHost, type GutterSnapshot, type KeyInput, type RoleSnapshot, type WorkbenchPaneId } from "@the-editor/editor";
+import { commandId, type EditorHost, type KeyInput } from "@the-editor/editor";
+import type { Viewport } from "@the-editor/contracts/runtime";
+import {
+  activeWorkbenchSurfacePane,
+  refreshWorkbenchSnapshot,
+  removeWorkbenchSurfacePane,
+  setWorkbenchEditorMode,
+  snapshotWorkbenchSession,
+  syncWorkbenchActiveSurface,
+  upsertWorkbenchSurfacePane,
+  workbenchSnapshotState,
+  workbenchSurfacePaneState,
+  type DefaultEditorState,
+  type EditorMode,
+  type SurfacePaneViewState,
+} from "./workbenchSnapshot.js";
 
-export type EditorMode = "normal" | "insert" | "select";
-
-export interface SurfacePaneViewState {
-  paneId: WorkbenchPaneId;
-  surfaceId: SurfaceId;
-  documentId?: DocumentId;
-  path?: string;
-  title: string;
-  viewport: Viewport;
-  metrics?: CellGridMetrics;
-  frame?: RenderFrame;
-  lineCount?: number;
-  gutters?: GutterSnapshot[];
-}
-
-export interface DefaultEditorState {
-  mode: EditorMode;
-  activeDocumentId: DocumentId | undefined;
-  activeSurfaceId: SurfaceId | undefined;
-  activePath: string | undefined;
-  activePaneId: WorkbenchPaneId | undefined;
-  softWrap: boolean;
-  preferredColumn: number | undefined;
-  lastFrame: RenderFrame | undefined;
-  decorations: BufferDecoration[];
-  gutters: GutterSnapshot[];
-  roleStates: Record<string, RoleSnapshot>;
-  syntaxLegend: Record<number, string>;
-  surfaceViewport?: Viewport;
-  surfaceMetrics?: CellGridMetrics;
-  currentRegister?: string;
-  surfacePanes: Map<WorkbenchPaneId, SurfacePaneViewState>;
-}
-
-const defaultEditorStateSlot = "default.editor.state";
+export type { DefaultEditorState, EditorMode, SurfacePaneViewState };
 
 export function getDefaultState(editor: EditorHost): DefaultEditorState {
-  return editor.stateSlot(defaultEditorStateSlot, () => ({
-    mode: "normal",
-    activeDocumentId: undefined,
-    activeSurfaceId: undefined,
-    activePath: undefined,
-    activePaneId: undefined,
-    softWrap: false,
-    preferredColumn: undefined,
-    lastFrame: undefined,
-    decorations: [],
-    gutters: [],
-    roleStates: {},
-    syntaxLegend: {},
-    surfaceViewport: undefined,
-    surfaceMetrics: undefined,
-    currentRegister: undefined,
-    surfacePanes: new Map(),
-  }));
+  return workbenchSnapshotState(editor);
 }
 
 export function setEditorMode(editor: EditorHost, mode: EditorMode): DefaultEditorState {
-  const state = getDefaultState(editor);
-  state.mode = mode;
-  return state;
+  return setWorkbenchEditorMode(editor, mode);
 }
 
 export function activeSurfacePane(editor: EditorHost): SurfacePaneViewState | undefined {
-  const state = getDefaultState(editor);
-  syncActiveSurfaceFromWorkbench(editor, state);
-  return state.activePaneId ? state.surfacePanes.get(state.activePaneId) : undefined;
+  return activeWorkbenchSurfacePane(editor);
 }
 
-export function surfacePaneState(editor: EditorHost, paneId: WorkbenchPaneId | string): SurfacePaneViewState | undefined {
-  return getDefaultState(editor).surfacePanes.get(paneId as WorkbenchPaneId);
+export function surfacePaneState(editor: EditorHost, paneId: string): SurfacePaneViewState | undefined {
+  return workbenchSurfacePaneState(editor, paneId);
 }
 
 export function upsertSurfacePaneState(editor: EditorHost, pane: SurfacePaneViewState): SurfacePaneViewState {
-  getDefaultState(editor).surfacePanes.set(pane.paneId, pane);
-  syncActiveSurfaceFromWorkbench(editor);
-  return pane;
+  return upsertWorkbenchSurfacePane(editor, pane);
 }
 
-export function removeSurfacePaneState(editor: EditorHost, paneId: WorkbenchPaneId | string): void {
-  const state = getDefaultState(editor);
-  state.surfacePanes.delete(paneId as WorkbenchPaneId);
-  syncActiveSurfaceFromWorkbench(editor, state);
+export function removeSurfacePaneState(editor: EditorHost, paneId: string): void {
+  removeWorkbenchSurfacePane(editor, paneId);
 }
 
 export async function refreshActiveSurface(editor: EditorHost, viewport?: Viewport): Promise<DefaultEditorState> {
-  const state = getDefaultState(editor);
-  syncActiveSurfaceFromWorkbench(editor, state);
+  return refreshWorkbenchSnapshot(editor, viewport);
+}
 
-  if (viewport && state.activePaneId) {
-    const activePane = state.surfacePanes.get(state.activePaneId);
-    if (activePane) activePane.viewport = viewport;
-  }
+export async function buildWorkbenchSessionState(editor: EditorHost) {
+  return snapshotWorkbenchSession(editor);
+}
 
-  for (const pane of state.surfacePanes.values()) {
-    pane.frame = await editor.runtime.surfaces.renderFrame({ surfaceId: pane.surfaceId });
-    const surfaceState = await editor.runtime.surfaces.readState({ surfaceId: pane.surfaceId });
-    pane.lineCount = surfaceState.lineCount;
-    pane.gutters = await editor.gutters?.collect({
-      mode: state.mode,
-      activeDocumentId: pane.documentId,
-      activeSurfaceId: pane.surfaceId,
-      activePath: pane.path,
-      frame: pane.frame,
-      lineCount: pane.lineCount,
-      text: surfaceState.text,
-    }) ?? [];
-  }
-
-  state.lastFrame = state.activePaneId ? state.surfacePanes.get(state.activePaneId)?.frame : undefined;
-  if (shouldRefreshSyntaxLegend(state)) {
-    state.syntaxLegend = await editor.runtime.syntax.highlightLegend();
-  }
-  state.roleStates = editor.roles.snapshotAll();
-  const surfaceContext = {
-    mode: state.mode,
-    activeDocumentId: state.activeDocumentId,
-    activeSurfaceId: state.activeSurfaceId,
-    activePath: state.activePath,
-    frame: state.lastFrame,
-    lineCount: state.activePaneId ? state.surfacePanes.get(state.activePaneId)?.lineCount : undefined,
-  };
-  state.decorations = await editor.decorations.collect(surfaceContext);
-  state.gutters = state.activePaneId ? state.surfacePanes.get(state.activePaneId)?.gutters ?? [] : [];
-  return state;
+export function syncActiveSurfaceFromWorkbench(editor: EditorHost): void {
+  syncWorkbenchActiveSurface(editor);
 }
 
 export async function handleKeyInput(editor: EditorHost, input: KeyInput): Promise<DefaultEditorState> {
   const state = getDefaultState(editor);
+  if (editor.overlays.isOpen("hover")) {
+    editor.setStateSlot("default.hover.state", { visible: false });
+    editor.overlays.close("hover", { restoreFocus: false });
+    editor.workbench.invalidate("roles");
+  }
   const scopes = editor.focus.scopes(state.mode);
   const result = await editor.keymaps.pressScopes(scopes, input);
   const focus = editor.focus.current();
@@ -162,31 +92,4 @@ export async function handleKeyInput(editor: EditorHost, input: KeyInput): Promi
   }
 
   return state;
-}
-
-function shouldRefreshSyntaxLegend(state: DefaultEditorState): boolean {
-  if (!Object.keys(state.syntaxLegend).length) return true;
-  const kinds = state.lastFrame?.syntax ?? [];
-  return kinds.some((span) => state.syntaxLegend[span.kind] === undefined);
-}
-
-function syncActiveSurfaceFromWorkbench(editor: EditorHost, state = getDefaultState(editor)): void {
-  const activePane = editor.workbench.activePane();
-  if (activePane?.kind !== "surface") {
-    state.activePaneId = undefined;
-    state.activeDocumentId = undefined;
-    state.activeSurfaceId = undefined;
-    state.activePath = undefined;
-    state.lastFrame = undefined;
-    return;
-  }
-
-  const paneState = state.surfacePanes.get(activePane.id);
-  state.activePaneId = activePane.id;
-  state.activeDocumentId = activePane.documentId;
-  state.activeSurfaceId = activePane.surfaceId;
-  state.activePath = activePane.path;
-  state.surfaceViewport = paneState?.viewport;
-  state.surfaceMetrics = paneState?.metrics;
-  state.lastFrame = paneState?.frame;
 }

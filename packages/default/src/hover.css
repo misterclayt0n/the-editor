@@ -1,0 +1,175 @@
+.defaultHoverOverlay {
+  position: fixed;
+  z-index: 80;
+  box-sizing: border-box;
+  min-width: 240px;
+  width: min(420px, calc(100vw - 24px));
+  max-height: min(236px, calc(100vh - 24px));
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 6px 8px;
+  border: 1px solid var(--theme-ui-popup-border-fg, var(--theme-ui-background-separator-fg));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--theme-ui-popup-bg) 97%, transparent);
+  color: var(--theme-ui-popup-fg);
+  box-shadow:
+    0 6px 18px color-mix(in srgb, var(--theme-ui-popup-border-fg) 16%, transparent),
+    0 1px 2px color-mix(in srgb, var(--theme-ui-popup-border-fg) 22%, transparent);
+  font: 12px/1.4 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  backdrop-filter: blur(12px);
+  pointer-events: auto;
+  user-select: text;
+  scrollbar-gutter: stable both-edges;
+  scrollbar-color: color-mix(in lab, var(--theme-ui-popup-fg) 32%, var(--theme-ui-popup-bg)) transparent;
+  scrollbar-width: thin;
+}
+
+.defaultHoverOverlay::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.defaultHoverOverlay::-webkit-scrollbar-thumb {
+  background: color-mix(in lab, var(--theme-ui-popup-fg) 32%, var(--theme-ui-popup-bg));
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+.defaultHoverOverlay::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.defaultHoverOverlay:focus {
+  outline: 1px solid var(--theme-ui-text-focus-fg);
+  outline-offset: 1px;
+}
+
+.defaultHoverSource {
+  margin: 0 0 4px;
+  color: var(--theme-ui-text-inactive-fg);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.defaultHoverOverlay .editorMarkdown p,
+.defaultHoverOverlay .editorMarkdown ul,
+.defaultHoverOverlay .editorMarkdown ol,
+.defaultHoverOverlay .editorMarkdown blockquote,
+.defaultHoverOverlay .editorMarkdown pre,
+.defaultHoverOverlay .editorMarkdown table,
+.defaultHoverOverlay .editorMarkdown h1,
+.defaultHoverOverlay .editorMarkdown h2,
+.defaultHoverOverlay .editorMarkdown h3,
+.defaultHoverOverlay .editorMarkdown h4,
+.defaultHoverOverlay .editorMarkdown h5,
+.defaultHoverOverlay .editorMarkdown h6 {
+  margin: 0.45rem 0;
+}
+
+.defaultHoverOverlay .editorMarkdown h1,
+.defaultHoverOverlay .editorMarkdown h2 {
+  font-size: 1.02rem;
+}
+
+.defaultHoverOverlay .editorMarkdown h3,
+.defaultHoverOverlay .editorMarkdown h4 {
+  font-size: 0.95rem;
+}
+
+.defaultHoverOverlay .editorMarkdown ul,
+.defaultHoverOverlay .editorMarkdown ol {
+  padding-left: 16px;
+}
+
+.defaultHoverOverlay .editorMarkdown blockquote {
+  padding-left: 0.65rem;
+}
+
+.defaultHoverOverlay .editorMarkdown pre {
+  border-radius: 0.625rem;
+  padding: 0.65rem 0.75rem;
+}
+
+.defaultHoverOverlay .editorMarkdown .editorMarkdownCopyButton {
+  top: 0.4rem;
+  right: 0.4rem;
+  width: 1.35rem;
+  height: 1.35rem;
+}
+
+.defaultHoverOverlay .editorMarkdown hr {
+  margin: 0.65rem 0;
+}
+
+.completionMenuHoverCard {
+  position: static;
+  z-index: auto;
+  min-width: 240px;
+  width: min(260px, calc(100vw - 24px));
+  max-height: min(236px, calc(100vh - 24px));
+  flex: none;
+  padding: 6px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.completionMenuHoverCard .defaultHoverSource {
+  margin-bottom: 4px;
+  font-size: 10px;
+}
+
+.signatureHelpOverlay {
+  min-width: 260px;
+  width: min(420px, calc(100vw - 24px));
+  max-height: min(236px, calc(100vh - 24px));
+  padding: 6px 8px;
+}
+
+.signatureHelpCounter {
+  margin: 0 0 4px;
+  color: var(--theme-ui-text-inactive-fg);
+  font-size: 10px;
+}
+
+.signatureHelpSignature {
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--theme-ui-popup-fg) 5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--theme-ui-popup-border-fg) 72%, transparent);
+}
+
+.signatureHelpCode {
+  display: block;
+  color: var(--theme-ui-popup-fg);
+  font: 12px/1.4 Iosevka, Menlo, Monaco, Consolas, "SF Mono", ui-monospace, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.signatureHelpActiveParameter {
+  color: var(--theme-ui-text-focus-fg, var(--theme-palette-accent, var(--theme-ui-popup-fg)));
+  background: color-mix(in srgb, var(--theme-ui-text-focus-fg, var(--theme-palette-accent, var(--theme-ui-popup-fg))) 14%, transparent);
+  border-radius: 6px;
+  box-decoration-break: clone;
+  padding: 0 2px;
+}
+
+.signatureHelpDivider {
+  height: 1px;
+  margin: 8px 0 6px;
+  background: color-mix(in srgb, var(--theme-ui-popup-border-fg) 82%, transparent);
+}
+
+.signatureHelpMarkdown {
+  font-size: 11px;
+}
+
+.signatureHelpMarkdown > :first-child {
+  margin-top: 0;
+}
+
+.signatureHelpMarkdown > :last-child {
+  margin-bottom: 0;
+}

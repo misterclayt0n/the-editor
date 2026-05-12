@@ -144,7 +144,7 @@ export class PackageRegistry {
         try {
           await this.loadTarget(pkg, nextTarget);
         } catch (error) {
-          this.editor.diagnostics.report({
+          this.editor.health.report({
             id: `packages:reload:${pkg.manifest.id}/${nextTarget}`,
             severity: "error",
             source: "packages",
@@ -210,8 +210,8 @@ export class PackageRegistry {
       loadVersion: nextVersion,
     };
 
-    this.editor.diagnostics.clear(`packages:load:${pkg.manifest.id}/${target}`);
-    this.editor.diagnostics.clear(`packages:reload:${pkg.manifest.id}/${target}`);
+    this.editor.health.clear(`packages:load:${pkg.manifest.id}/${target}`);
+    this.editor.health.clear(`packages:reload:${pkg.manifest.id}/${target}`);
 
     try {
       if (isEditorModuleEntrypoint(entrypoint)) {
@@ -221,7 +221,7 @@ export class PackageRegistry {
         if (adapter) await adapter.activate(ctx);
       }
     } catch (error) {
-      this.editor.diagnostics.report({
+      this.editor.health.report({
         id: `packages:load:${pkg.manifest.id}/${target}`,
         severity: "error",
         source: "packages",
@@ -259,7 +259,7 @@ export class PackageRegistry {
         await this.adapters[target]?.deactivate?.(ctx);
       }
     } catch (error) {
-      this.editor.diagnostics.report({
+      this.editor.health.report({
         id: `packages:unload:${pkg.manifest.id}/${target}`,
         severity: "warn",
         source: "packages",

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
 
@@ -76,6 +76,12 @@ ipcMain.handle("app:open-file-dialog", async () => {
     properties: ["openFile"],
   });
   return result.canceled ? null : result.filePaths[0];
+});
+
+ipcMain.handle("app:open-external", async (_event, url: unknown) => {
+  if (typeof url !== "string" || !url.trim()) throw new Error("invalid external url");
+  await shell.openExternal(url);
+  return true;
 });
 
 ipcMain.handle("policy:request", async (_event, request: { method: string; params?: unknown }) => {

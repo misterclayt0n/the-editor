@@ -2083,6 +2083,7 @@ dependencies = [
  "ropey",
  "rust-embed",
  "serde",
+ "serde_json",
  "tempfile",
  "the-lib",
  "the-stdx",

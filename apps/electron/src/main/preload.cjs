@@ -11,6 +11,9 @@ contextBridge.exposeInMainWorld("theEditor", {
   policyRequest(method, params) {
     return ipcRenderer.invoke("policy:request", { method, params });
   },
+  openExternal(url) {
+    return ipcRenderer.invoke("app:open-external", url);
+  },
   onPolicyEvent(handler) {
     const listener = (_event, payload) => handler(payload);
     ipcRenderer.on("policy:event", listener);

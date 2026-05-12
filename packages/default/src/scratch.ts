@@ -1,4 +1,4 @@
-import type { RenderFrame, Viewport } from "@the-editor/contracts/runtime";
+import type { RenderFrame, SurfaceId, SurfaceSelectionRange, Viewport } from "@the-editor/contracts/runtime";
 import { commandId, type EditorHost, type EditorModule, type WorkbenchPaneDescriptor } from "@the-editor/editor";
 import {
   activeSurfacePane,
@@ -18,6 +18,8 @@ export interface CreateScratchArgs {
 export interface OpenFileArgs {
   path: string;
   viewport?: Viewport;
+  line?: number;
+  column?: number;
 }
 
 export interface RenderActiveSurfaceArgs {
@@ -89,7 +91,13 @@ export function defaultScratch(): EditorModule {
           editor.workbench.focusPane(existingPane.id);
           setEditorMode(editor, "normal");
           editor.focus.setEditor();
-          await refreshActiveSurface(editor);
+          const existingViewport = args.line ? viewportForLocation(viewport, args.line) : undefined;
+          if (args.line) {
+            const paneState = getDefaultState(editor).surfacePanes.get(existingPane.id);
+            if (paneState && existingViewport) paneState.viewport = existingViewport;
+            await navigateSurfaceToLocation(editor, existingPane.surfaceId, { line: args.line, column: args.column, viewport: existingViewport });
+          }
+          await refreshActiveSurface(editor, existingViewport);
           editor.workbench.invalidate("frame", "focus", "layout", "tabs");
           return state;
         }
@@ -136,7 +144,13 @@ export function defaultScratch(): EditorModule {
         });
         setEditorMode(editor, "normal");
         editor.focus.setEditor();
-        await refreshActiveSurface(editor, viewport);
+        const nextViewport = args.line ? viewportForLocation(viewport, args.line) : viewport;
+        if (args.line) {
+          const paneState = getDefaultState(editor).surfacePanes.get(pane.id);
+          if (paneState) paneState.viewport = nextViewport;
+          await navigateSurfaceToLocation(editor, surface.surfaceId, { line: args.line, column: args.column, viewport: nextViewport });
+        }
+        await refreshActiveSurface(editor, nextViewport);
         editor.workbench.invalidate("frame", "focus", "layout", "tabs");
         return state;
       },
@@ -200,4 +214,40 @@ function fileTitle(path: string): string {
   const normalized = path.replace(/\\/g, "/");
   const slash = normalized.lastIndexOf("/");
   return slash >= 0 ? normalized.slice(slash + 1) : normalized;
+}
+
+async function navigateSurfaceToLocation(
+  editor: EditorHost,
+  surfaceId: SurfaceId,
+  location: { line: number; column?: number; viewport?: Viewport },
+): Promise<void> {
+  const surface = await editor.runtime.surfaces.readState({ surfaceId });
+  const cursor = offsetForLineColumn(surface.text, location.line, location.column);
+  const cursorId = Math.max(1, (surface.activeCursorId ?? surface.selection[0]?.cursorId ?? 0));
+  const selection: SurfaceSelectionRange[] = [{ cursorId, anchor: cursor, head: cursor }];
+  if (location.viewport) {
+    await editor.runtime.surfaces.setViewport({ surfaceId, viewport: location.viewport });
+  }
+  await editor.runtime.surfaces.applyEdit({ surfaceId, edit: { selection } });
+  await editor.runtime.surfaces.setActiveCursor({ surfaceId, cursorId });
+}
+
+function viewportForLocation(viewport: Viewport, line: number): Viewport {
+  const firstRow = Math.max(0, line - 3);
+  return { ...viewport, firstRow };
+}
+
+function offsetForLineColumn(text: string, line: number, column = 1): number {
+  const targetLine = Math.max(1, line);
+  const targetColumn = Math.max(1, column);
+  let currentLine = 1;
+  let index = 0;
+  while (currentLine < targetLine && index < text.length) {
+    if (text.charCodeAt(index) === 10) currentLine += 1;
+    index += 1;
+  }
+  const lineStart = index;
+  let lineEnd = text.indexOf("\n", lineStart);
+  if (lineEnd < 0) lineEnd = text.length;
+  return Math.min(lineStart + targetColumn - 1, lineEnd);
 }

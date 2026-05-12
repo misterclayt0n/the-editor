@@ -2,6 +2,15 @@
 /* eslint-disable */
 export declare class NativeRuntimeSession {
   constructor()
+  lspRegisterServer(configJson: string): void
+  lspConfiguredServersJson(): string
+  lspStartServer(id: string, rootUri?: string | undefined | null): number
+  lspShutdownServer(serverId: number): void
+  lspStatusJson(): string
+  lspDiagnosticsJson(): string
+  lspLogsJson(serverId: number): string
+  lspRequestJson(serverId: number, method: string, paramsJson: string, timeoutMs?: number | undefined | null): string
+  lspNotifyJson(serverId: number, method: string, paramsJson: string): void
   createScratch(text: string): number
   openFile(path: string): number
   createSurface(documentId: number, viewport?: JsViewport | undefined | null): number
@@ -10,12 +19,16 @@ export declare class NativeRuntimeSession {
   setSurfaceViewport(surfaceId: number, viewport: JsViewport): void
   setSurfaceMeasurements(surfaceId: number, metrics: JsCellGridMetrics): void
   setSurfaceSoftWrap(surfaceId: number, softWrap: boolean): void
+  setSurfaceCursorSemantics(surfaceId: number, semantics: string): void
   applySurfaceOperation(surfaceId: number, operation: JsSurfaceOperation): void
   readSurfaceText(surfaceId: number): string
+  readSurfaceRevision(surfaceId: number): number
   readSurfaceLineEnding(surfaceId: number): string
   readSurfaceLineCount(surfaceId: number): number
   readSurfaceSelection(surfaceId: number): Array<JsSurfaceSelectionRange>
+  completeSurfaceWordsJson(surfaceId: number, cursorOffset: number, query: string, limit?: number | undefined | null): string
   readSurfaceActiveCursor(surfaceId: number): number | null
+  readSurfaceCursorSemantics(surfaceId: number): string
   readSurfaceViewport(surfaceId: number): JsViewport
   setSurfaceActiveCursor(surfaceId: number, cursorId?: number | undefined | null): void
   applySurfaceEdit(surfaceId: number, edit: JsSurfaceEdit): void
@@ -39,6 +52,7 @@ export declare class NativeRuntimeSession {
   querySearchMixedJson(indexId: number, query: string, offset?: number | undefined | null, limit?: number | undefined | null, currentPath?: string | undefined | null): string
   querySearchGrepJson(indexId: number, query: string, offset?: number | undefined | null, limit?: number | undefined | null, currentPath?: string | undefined | null, beforeContext?: number | undefined | null, afterContext?: number | undefined | null): string
   recordSearchSelection(indexId: number, query: string, path: string): void
+  previewPathCacheKey(path: string): string
   readTextPreviewJson(path: string, maxBytes?: number | undefined | null, maxLines?: number | undefined | null, aroundLine?: number | undefined | null, contextLines?: number | undefined | null): string
 }
 

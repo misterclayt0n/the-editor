@@ -43,7 +43,7 @@ export function defaultCommandPalette(): EditorModule {
         closePalette(editor, true);
       },
       async focus() {
-        editor.focus.setRole(commandPaletteRoleId);
+        editor.overlays.open(commandPaletteRoleId, { focus: true });
         if (!activeSessionId(editor)) await openPalette();
       },
       snapshot(): CommandPaletteRoleState & { sessionId?: string } {
@@ -288,8 +288,7 @@ export function defaultCommandPalette(): EditorModule {
       });
 
       paletteState(editor).activeSessionId = session.id;
-      editor.focus.setRole(commandPaletteRoleId);
-      editor.workbench.invalidate("roles", "focus");
+      editor.overlays.open(commandPaletteRoleId, { focus: true });
       await refresh(session, requestState, ++requestState.version);
     }
 
@@ -337,8 +336,7 @@ function closePalette(editor: Parameters<EditorModule>[0], restoreFocus: boolean
   const sessionId = activeSessionId(editor);
   paletteState(editor).activeSessionId = undefined;
   if (sessionId) editor.sessions.dispose(sessionId);
-  if (restoreFocus) editor.focus.restore();
-  editor.workbench.invalidate("roles", "focus");
+  editor.overlays.close(commandPaletteRoleId, { restoreFocus });
 }
 
 function clampIndex(index: number, length: number): number {

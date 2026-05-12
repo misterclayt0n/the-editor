@@ -42,6 +42,7 @@ interface ActivePickerHandle {
   providerSession: PickerSession;
   previewSurfaceId?: SurfaceId;
   previewPath?: string;
+  previewCacheKey?: string;
 }
 
 interface StoredPickerState {
@@ -67,7 +68,7 @@ export function defaultPicker(): EditorModule {
         closePicker(editor, true);
       },
       async focus() {
-        editor.focus.setRole(pickerRoleId);
+        editor.overlays.open(pickerRoleId, { focus: true });
       },
       snapshot() {
         const active = activePicker(editor);
@@ -350,8 +351,7 @@ async function openPicker(
 
   handle.sessionId = session.id;
   pickerState(editor).active = handle;
-  editor.focus.setRole(pickerRoleId);
-  editor.workbench.invalidate("roles", "focus");
+  editor.overlays.open(pickerRoleId, { focus: true });
   await refreshPicker(editor, session, handle);
 }
 
@@ -368,8 +368,7 @@ function disposePicker(editor: Parameters<EditorModule>[0], restoreFocus: boolea
     void editor.runtime.surfaces.destroy({ surfaceId: active.previewSurfaceId }).catch(() => {});
   }
   if (active) editor.sessions.dispose(active.sessionId);
-  if (restoreFocus) editor.focus.restore();
-  editor.workbench.invalidate("roles", "focus");
+  editor.overlays.close(pickerRoleId, { restoreFocus });
 }
 
 async function refreshPicker(
@@ -472,8 +471,10 @@ async function readSurfacePreviewFrame(
   metrics: CellGridMetrics,
 ): Promise<Pick<PickerSurfacePreview, "frame" | "viewport" | "lineCount" | "syntaxLegend">> {
   const surfaceId = await ensurePreviewSurface(editor, handle, viewport);
-  if (handle.previewPath !== path) {
+  const cacheKey = await editor.runtime.search.previewPathCacheKey({ path });
+  if (handle.previewPath !== path || handle.previewCacheKey !== cacheKey) {
     handle.previewPath = path;
+    handle.previewCacheKey = cacheKey;
     await editor.runtime.surfaces.loadFile({ surfaceId, path });
   }
   await editor.runtime.surfaces.setMetrics({ surfaceId, metrics });

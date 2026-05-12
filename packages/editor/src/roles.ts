@@ -196,14 +196,14 @@ export class RoleRegistry {
     const selected = this.selections().get(role);
     const fallbackReasons = this.fallbackReasons();
 
-    this.editor.diagnostics.clear(`role:missing:${role}`);
-    this.editor.diagnostics.clear(`role:selected-missing:${role}`);
+    this.editor.health.clear(`role:missing:${role}`);
+    this.editor.health.clear(`role:selected-missing:${role}`);
 
     if (!list.length) {
       this.active.delete(role);
       if (selected) {
         fallbackReasons.set(role, `selected implementation ${selected} is unavailable`);
-        this.editor.diagnostics.report({
+        this.editor.health.report({
           id: `role:selected-missing:${role}`,
           severity: "warn",
           source: "roles",
@@ -213,7 +213,7 @@ export class RoleRegistry {
         });
       } else {
         fallbackReasons.delete(role);
-        this.editor.diagnostics.report({
+        this.editor.health.report({
           id: `role:missing:${role}`,
           severity: "warn",
           source: "roles",
@@ -240,7 +240,7 @@ export class RoleRegistry {
       if (selected) {
         const reason = fallbackReason ?? `selected implementation ${selected} is unavailable; using fallback ${fallbackEntry.implementationId}`;
         fallbackReasons.set(role, reason);
-        this.editor.diagnostics.report({
+        this.editor.health.report({
           id: `role:selected-missing:${role}`,
           severity: "warn",
           source: "roles",
@@ -268,7 +268,7 @@ export class RoleRegistry {
     if (selected) {
       const reason = fallbackReason ?? `selected implementation ${selected} is unavailable; using ${next.implementationId}`;
       fallbackReasons.set(role, reason);
-      this.editor.diagnostics.report({
+      this.editor.health.report({
         id: `role:selected-missing:${role}`,
         severity: "warn",
         source: "roles",

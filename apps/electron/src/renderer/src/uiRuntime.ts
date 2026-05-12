@@ -1,9 +1,15 @@
 import * as React from "react";
 import * as ReactJsxRuntime from "react/jsx-runtime";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import * as PierreDiffs from "@pierre/diffs";
 import * as PierreTreesReact from "@pierre/trees/react";
 import ts from "typescript";
-import type { InteractiveSessionSnapshot, PackageSnapshot, ThemeSnapshot, ToolRootTarget } from "@the-editor/editor";
-import type { DiagnosticEntry } from "@the-editor/editor";
+import type { HealthDiagnosticEntry, InteractiveSessionSnapshot, PackageSnapshot, ThemeSnapshot, ToolRootTarget } from "@the-editor/editor";
+import * as editorCursorAnchorsModule from "@the-editor/editor/cursorAnchors";
+import * as editorMarkdownModule from "@the-editor/editor/markdown";
+import * as editorMarkdownLinksModule from "@the-editor/editor/markdownLinks";
+import * as editorMarkdownViewModule from "@the-editor/editor/markdownView";
 import * as editorTextSurfaceCanvasModule from "@the-editor/editor/textSurfaceCanvas";
 import * as editorSurfaceViewportControllerModule from "@the-editor/editor/surfaceViewportController";
 import * as editorThemesModule from "@the-editor/editor/themes";
@@ -38,7 +44,7 @@ export class RendererPackageRuntime {
 
   private readonly listeners = new Set<() => void>();
   private readonly loaded = new Map<string, LoadedTarget>();
-  private readonly localDiagnostics = new Map<string, DiagnosticEntry>();
+  private readonly localDiagnostics = new Map<string, HealthDiagnosticEntry>();
   private readonly appliedThemeVariables = new Set<string>();
 
   async update(snapshot: WorkbenchSnapshot): Promise<void> {
@@ -92,7 +98,7 @@ export class RendererPackageRuntime {
     this.sessions.reset(snapshot.sessions ?? []);
     this.host.update({
       ...snapshot,
-      diagnostics: [...(snapshot.diagnostics ?? []), ...this.localDiagnostics.values()],
+      healthDiagnostics: [...(snapshot.healthDiagnostics ?? []), ...this.localDiagnostics.values()],
       sessions: this.sessions.all(),
     });
     this.applyTheme(snapshot);
@@ -172,7 +178,7 @@ export class RendererPackageRuntime {
   ): boolean {
     const id = `ui:${moduleKey}`;
     const previous = this.localDiagnostics.get(id);
-    const entry: DiagnosticEntry = {
+    const entry: HealthDiagnosticEntry = {
       id,
       severity: "error",
       source: "ui-runtime",
@@ -344,12 +350,19 @@ class RendererSourceModuleLoader {
   private requireFrom(specifier: string, importerPath: string): unknown {
     if (specifier === "react") return React;
     if (specifier === "react/jsx-runtime") return ReactJsxRuntime;
+    if (specifier === "react-markdown") return ReactMarkdown;
+    if (specifier === "remark-gfm") return remarkGfm;
+    if (specifier === "@pierre/diffs") return PierreDiffs;
     if (specifier === "@pierre/trees/react") return PierreTreesReact;
     if (specifier === "@the-editor/contracts/runtime") return {};
     if (specifier === "@the-editor/editor/ui") return editorUiModule;
     if (specifier === "@the-editor/editor/themes") return editorThemesModule;
     if (specifier === "@the-editor/editor/textSurfaceCanvas") return editorTextSurfaceCanvasModule;
     if (specifier === "@the-editor/editor/surfaceViewportController") return editorSurfaceViewportControllerModule;
+    if (specifier === "@the-editor/editor/cursorAnchors") return editorCursorAnchorsModule;
+    if (specifier === "@the-editor/editor/markdown") return editorMarkdownModule;
+    if (specifier === "@the-editor/editor/markdownLinks") return editorMarkdownLinksModule;
+    if (specifier === "@the-editor/editor/markdownView") return editorMarkdownViewModule;
     if (!specifier.startsWith(".") && !specifier.startsWith("/")) {
       throw new Error(
         `unsupported ui module import ${specifier} from ${importerPath}; `

@@ -30,7 +30,14 @@ export function defaultGutters(): EditorModule {
           return [];
         }
         if (base.inFlight || base.text === null) return [];
-        const hunks = diffLines(base.text, ctx.text);
+        const key = `${root}\0${relPath}`;
+        const cached = vcsDiffCache.get(key);
+        const hunks = cached && cached.baseText === base.text && cached.currentText === ctx.text
+          ? cached.hunks
+          : diffLines(base.text, ctx.text);
+        if (!cached || cached.baseText !== base.text || cached.currentText !== ctx.text) {
+          vcsDiffCache.set(key, { baseText: base.text, currentText: ctx.text, hunks });
+        }
         return gutterLinesForHunks(ctx.frame, hunks);
       },
     });
@@ -75,7 +82,14 @@ interface VcsBaseCacheEntry {
   inFlight: boolean;
 }
 
+interface VcsDiffCacheEntry {
+  baseText: string;
+  currentText: string;
+  hunks: DiffHunk[];
+}
+
 const vcsBaseCache = new Map<string, VcsBaseCacheEntry>();
+const vcsDiffCache = new Map<string, VcsDiffCacheEntry>();
 
 function scheduleVcsBaseLoad(editor: Parameters<EditorModule>[0], root: string, relPath: string): void {
   const key = `${root}\0${relPath}`;
@@ -84,6 +98,7 @@ function scheduleVcsBaseLoad(editor: Parameters<EditorModule>[0], root: string, 
   vcsBaseCache.set(key, { text: current?.text ?? null, inFlight: true });
   void loadVcsBase(root, relPath).then((text) => {
     vcsBaseCache.set(key, { text, inFlight: false });
+    vcsDiffCache.delete(key);
     editor.workbench.invalidate("tools");
   }).catch(() => {
     vcsBaseCache.set(key, { text: null, inFlight: false });

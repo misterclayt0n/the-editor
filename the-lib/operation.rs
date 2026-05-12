@@ -24,13 +24,13 @@ use crate::{
   },
   indent::IndentStyle,
   match_brackets,
-  object,
   movement::{
     self,
     MotionMode,
     MotionResult,
     VisualGoals,
   },
+  object,
   selection::{
     CursorId,
     CursorRange,
@@ -493,7 +493,9 @@ pub fn execute_operation(
     },
     "expand_selection" => {
       let Some(syntax) = syntax else {
-        return Ok(OperationOutput::atom(OperationAtom::Selection(selection.clone())));
+        return Ok(OperationOutput::atom(OperationAtom::Selection(
+          selection.clone(),
+        )));
       };
       Ok(OperationOutput::atom(OperationAtom::Selection(
         object::expand_selection(syntax, text, selection.clone()),
@@ -501,7 +503,9 @@ pub fn execute_operation(
     },
     "shrink_selection" => {
       let Some(syntax) = syntax else {
-        return Ok(OperationOutput::atom(OperationAtom::Selection(selection.clone())));
+        return Ok(OperationOutput::atom(OperationAtom::Selection(
+          selection.clone(),
+        )));
       };
       Ok(OperationOutput::atom(OperationAtom::Selection(
         object::shrink_selection(syntax, text, selection.clone()),
@@ -509,7 +513,9 @@ pub fn execute_operation(
     },
     "select_all_children" => {
       let Some(syntax) = syntax else {
-        return Ok(OperationOutput::atom(OperationAtom::Selection(selection.clone())));
+        return Ok(OperationOutput::atom(OperationAtom::Selection(
+          selection.clone(),
+        )));
       };
       Ok(OperationOutput::atom(OperationAtom::Selection(
         object::select_all_children(syntax, text, selection.clone()),
@@ -517,7 +523,9 @@ pub fn execute_operation(
     },
     "select_all_siblings" => {
       let Some(syntax) = syntax else {
-        return Ok(OperationOutput::atom(OperationAtom::Selection(selection.clone())));
+        return Ok(OperationOutput::atom(OperationAtom::Selection(
+          selection.clone(),
+        )));
       };
       Ok(OperationOutput::atom(OperationAtom::Selection(
         object::select_all_siblings(syntax, text, selection.clone()),
@@ -525,7 +533,9 @@ pub fn execute_operation(
     },
     "select_prev_sibling" => {
       let Some(syntax) = syntax else {
-        return Ok(OperationOutput::atom(OperationAtom::Selection(selection.clone())));
+        return Ok(OperationOutput::atom(OperationAtom::Selection(
+          selection.clone(),
+        )));
       };
       Ok(OperationOutput::atom(OperationAtom::Selection(
         object::select_prev_sibling(syntax, text, selection.clone()),
@@ -533,7 +543,9 @@ pub fn execute_operation(
     },
     "select_next_sibling" => {
       let Some(syntax) = syntax else {
-        return Ok(OperationOutput::atom(OperationAtom::Selection(selection.clone())));
+        return Ok(OperationOutput::atom(OperationAtom::Selection(
+          selection.clone(),
+        )));
       };
       Ok(OperationOutput::atom(OperationAtom::Selection(
         object::select_next_sibling(syntax, text, selection.clone()),
@@ -541,34 +553,66 @@ pub fn execute_operation(
     },
     "move_parent_node_end" => {
       let Some(syntax) = syntax else {
-        return Ok(OperationOutput::atom(OperationAtom::Selection(selection.clone())));
+        return Ok(OperationOutput::atom(OperationAtom::Selection(
+          selection.clone(),
+        )));
       };
       Ok(OperationOutput::atom(OperationAtom::Selection(
-        object::move_parent_edge(syntax, text, selection.clone(), movement::Direction::Forward, MotionMode::Move),
+        object::move_parent_edge(
+          syntax,
+          text,
+          selection.clone(),
+          movement::Direction::Forward,
+          MotionMode::Move,
+        ),
       )))
     },
     "move_parent_node_start" => {
       let Some(syntax) = syntax else {
-        return Ok(OperationOutput::atom(OperationAtom::Selection(selection.clone())));
+        return Ok(OperationOutput::atom(OperationAtom::Selection(
+          selection.clone(),
+        )));
       };
       Ok(OperationOutput::atom(OperationAtom::Selection(
-        object::move_parent_edge(syntax, text, selection.clone(), movement::Direction::Backward, MotionMode::Move),
+        object::move_parent_edge(
+          syntax,
+          text,
+          selection.clone(),
+          movement::Direction::Backward,
+          MotionMode::Move,
+        ),
       )))
     },
     "extend_parent_node_end" => {
       let Some(syntax) = syntax else {
-        return Ok(OperationOutput::atom(OperationAtom::Selection(selection.clone())));
+        return Ok(OperationOutput::atom(OperationAtom::Selection(
+          selection.clone(),
+        )));
       };
       Ok(OperationOutput::atom(OperationAtom::Selection(
-        object::move_parent_edge(syntax, text, selection.clone(), movement::Direction::Forward, MotionMode::Extend),
+        object::move_parent_edge(
+          syntax,
+          text,
+          selection.clone(),
+          movement::Direction::Forward,
+          MotionMode::Extend,
+        ),
       )))
     },
     "extend_parent_node_start" => {
       let Some(syntax) = syntax else {
-        return Ok(OperationOutput::atom(OperationAtom::Selection(selection.clone())));
+        return Ok(OperationOutput::atom(OperationAtom::Selection(
+          selection.clone(),
+        )));
       };
       Ok(OperationOutput::atom(OperationAtom::Selection(
-        object::move_parent_edge(syntax, text, selection.clone(), movement::Direction::Backward, MotionMode::Extend),
+        object::move_parent_edge(
+          syntax,
+          text,
+          selection.clone(),
+          movement::Direction::Backward,
+          MotionMode::Extend,
+        ),
       )))
     },
 
@@ -809,8 +853,16 @@ fn comment_tokens_for_operation(
     return (None, Vec::new());
   };
   (
-    language.config().comment_tokens.as_ref().and_then(|tokens| tokens.first().cloned()),
-    language.config().block_comment_tokens.clone().unwrap_or_default(),
+    language
+      .config()
+      .comment_tokens
+      .as_ref()
+      .and_then(|tokens| tokens.first().cloned()),
+    language
+      .config()
+      .block_comment_tokens
+      .clone()
+      .unwrap_or_default(),
   )
 }
 

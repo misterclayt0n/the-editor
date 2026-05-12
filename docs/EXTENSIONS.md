@@ -229,6 +229,7 @@ Only one implementation is active for a given role at a time.
 Examples:
 
 - `commandPalette`
+- `completionMenu`
 - `statusline`
 - `tabstrip`
 - `notifications`
@@ -491,6 +492,65 @@ The palette implementation should own:
 - overall UX personality
 
 The host should not hardcode the palette's visual design.
+
+## Example: completionMenu role
+
+The host should know how to:
+
+- open it
+- close it
+- keep focus in the editor when it is an editor-attached overlay
+- provide the active completion session snapshot
+- route selection/accept/cancel commands through stable runtime commands
+
+The completion implementation should own:
+
+- rendering
+- layout
+- docs pane behavior
+- row styling
+- source badges/icons
+- all visual personality
+
+The completion data model itself should stay outside the role, so users can swap the UI without rewriting the source fanout logic.
+
+## Diagnostics are data first, not a role
+
+Diagnostics should not be modeled as one giant special UI role.
+They are canonical editor state that many projections consume.
+
+The host/runtime side should own a diagnostics store with collection-style writes such as:
+
+- `editor.diagnostics.createCollection(...)`
+- `collection.set(uri, diagnostics)`
+- `collection.replace(...)`
+- `collection.clear()`
+
+Extensions should be able to read diagnostics at will through selectors such as:
+
+- `editor.diagnostics.all()`
+- `editor.diagnostics.forPath(path)`
+- `editor.diagnostics.forLine(...)`
+- `editor.diagnostics.atPosition(...)`
+- `editor.diagnostics.summary()`
+
+This keeps the seam deep:
+
+- **sources write diagnostics**
+- **presentations read diagnostics**
+
+That means the same diagnostics can be projected through existing extension seams instead of inventing a monolithic diagnostics UI contract:
+
+- `decorations` for underlines / inline projections
+- `gutters` for line markers
+- `hover` for current-position fallback details
+- `statusline` for counts / summaries
+- `tools` for diagnostic panels
+- `pickers` / palette providers for navigation
+- file tree or tab UI contributions for badges / rollups
+
+LSP diagnostics are just one adapter.
+A first-party LSP module may mirror runtime LSP diagnostics into `editor.diagnostics`, but user extensions should be equally able to publish diagnostics from any source.
 
 ## Example: statusline role
 
@@ -982,8 +1042,10 @@ Current host-owned seams include:
 - role registry
 - tool registry
 - interaction profile registry
+- completion source/presentation registries
 - dock roots (`leftSidebar`, `rightSidebar`, `bottomPanel`, overlays)
 - editor split tree with groups, tabs, and pane placement intents
+- editor-attached overlays that keep focus/key routing in the editor while rendering swappable UI like hover and completion menus
 
 Current public workbench direction is:
 

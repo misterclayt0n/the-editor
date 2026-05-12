@@ -1,18 +1,26 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
-import type { RenderFrame, Viewport } from "@the-editor/contracts/runtime";
-import type { BufferDecoration, DiagnosticEntry, NotificationEntry } from "@the-editor/editor";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode, type RefObject } from "react";
+import type { RenderFrame, SurfaceId, Viewport } from "@the-editor/contracts/runtime";
+import type { BufferDecoration, DiagnosticRecord, HealthDiagnosticEntry, NotificationEntry } from "@the-editor/editor";
 import {
   SurfaceViewportController,
   type SurfaceViewportControllerState,
 } from "@the-editor/editor/surfaceViewportController";
 import type { CanvasTextSurfaceStyleOptions } from "@the-editor/editor/textSurfaceCanvas";
+import { surfaceCursorAnchors, type SurfaceCursorAnchor } from "@the-editor/editor/cursorAnchors";
 import { resolveThemeStyleLoose, type ResolvedThemeDefinition } from "@the-editor/editor/themes";
 import type { EditorUiModule, UiSessionClient, WorkbenchSnapshot } from "@the-editor/editor/ui";
+import type { CompletionSessionState } from "./completion.js";
 import type { FileTreeToolState } from "./fileTree.js";
+import type { SignatureHelpRoleState } from "./signatureHelp.js";
+import { diagnosticLocationLabel, diagnosticPrimaryLine } from "./diagnosticsShared.js";
 import { DefaultFileTree } from "./fileTreeUi.js";
+import { MarkdownView } from "@the-editor/editor/markdownView";
 import { DefaultWorkbenchTabstrip } from "./workbenchTabstrip.js";
 import "./commandPalette.css";
+import "./completion.css";
 import "./fileTree.css";
+import "./hover.css";
+import "./markdown.css";
 import "./inputPrompt.css";
 import "./picker.css";
 import "./workbenchUi.css";
@@ -47,6 +55,19 @@ interface InputPromptSessionViewState {
   error?: string;
 }
 
+interface HoverViewState {
+  visible: boolean;
+  markdown?: string;
+  source?: string;
+  surfaceId?: number;
+}
+
+interface CompletionViewState {
+  visible: boolean;
+  sessionId?: string;
+  surfaceId?: number;
+}
+
 interface PickerItemView {
   id: string;
   title: string;
@@ -78,6 +99,8 @@ interface PickerPreviewViewState {
   binary?: boolean;
   rows?: PickerPreviewViewRowState[];
   syntax?: PickerPreviewViewSyntaxSpan[];
+  activeLine?: number;
+  annotation?: { line: number; severity?: "error" | "warning" | "info" | "hint"; message: string };
   path?: string;
   frame?: RenderFrame;
   viewport?: Viewport;
@@ -106,8 +129,9 @@ interface StatuslineViewState {
   mode?: string;
   activePath?: string;
   activeRoleImplementation?: string;
-  diagnosticsCount?: number;
+  diagnosticsSummary?: string;
   selectedCommandPalette?: string;
+  lspStatus?: string;
 }
 
 interface NotificationsViewState {
@@ -148,6 +172,33 @@ const uiModule: EditorUiModule = (host) => {
     render({ state, sessions, workbench }) {
       if (!state?.visible || !state.sessionId) return null;
       return <PickerOverlay sessionId={state.sessionId} sessions={sessions} workbench={workbench} />;
+    },
+  });
+
+  host.roles.register<HoverViewState>({
+    role: "hover",
+    implementationId: "default.hover",
+    render({ state, workbench }) {
+      if (!state?.visible || !state.markdown?.trim()) return null;
+      return <HoverOverlay markdown={state.markdown} source={state.source} surfaceId={state.surfaceId} workbench={workbench} />;
+    },
+  });
+
+  host.roles.register<CompletionViewState>({
+    role: "completionMenu",
+    implementationId: "default.completionMenu",
+    render({ state, sessions, workbench, commands }) {
+      if (!state?.visible || !state.sessionId) return null;
+      return <CompletionOverlay sessionId={state.sessionId} surfaceId={state.surfaceId} sessions={sessions} workbench={workbench} dispatch={commands.dispatch} />;
+    },
+  });
+
+  host.roles.register<SignatureHelpRoleState>({
+    role: "signatureHelp",
+    implementationId: "default.signatureHelp",
+    render({ state, workbench }) {
+      if (!state?.visible || !state.items?.length) return null;
+      return <SignatureHelpOverlay state={state} workbench={workbench} />;
     },
   });
 
@@ -193,9 +244,10 @@ const uiModule: EditorUiModule = (host) => {
   host.tools.register({
     typeId: inspectorToolTypeId,
     render({ commands, workbench }) {
-      return <WorkbenchInspector diagnostics={workbench.diagnostics ?? []} dispatch={commands.dispatch} workbench={workbench} />;
+      return <WorkbenchInspector diagnostics={workbench.diagnostics ?? []} healthDiagnostics={workbench.healthDiagnostics ?? []} dispatch={commands.dispatch} workbench={workbench} />;
     },
   });
+
 };
 
 export default uiModule;
@@ -206,6 +258,442 @@ function useUiSession<TState>(sessions: UiSessionClient, sessionId: string): TSt
     () => sessions.get<TState>(sessionId)?.state,
     () => sessions.get<TState>(sessionId)?.state,
   );
+}
+
+function HoverCard({
+  markdown,
+  source,
+  workbench,
+  className,
+  style,
+  role,
+  cardRef,
+}: {
+  markdown: string;
+  source?: string;
+  workbench: WorkbenchSnapshot;
+  className?: string;
+  style?: CSSProperties;
+  role?: string;
+  cardRef?: RefObject<HTMLDivElement | null>;
+}) {
+  return (
+    <div
+      ref={cardRef}
+      className={["defaultHoverOverlay", className].filter(Boolean).join(" ")}
+      style={style}
+      role={role}
+    >
+      {source ? <div className="defaultHoverSource">{source}</div> : null}
+      <MarkdownView
+        className="editorMarkdown defaultHoverMarkdown"
+        markdown={markdown}
+        theme={workbench.theme?.active}
+        cwd={workbench.workingDirectory?.current}
+        onOpenFileLink={(target) => {
+          void dispatchCommand("file.open", { path: target.path, line: target.line, column: target.column });
+        }}
+        onOpenExternalLink={(href) => {
+          void window.theEditor.openExternal(href);
+        }}
+      />
+    </div>
+  );
+}
+
+function HoverOverlay({
+  markdown,
+  source,
+  surfaceId,
+  workbench,
+}: {
+  markdown: string;
+  source?: string;
+  surfaceId?: number;
+  workbench: WorkbenchSnapshot;
+}) {
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const anchor = useSurfaceCursorAnchor(surfaceId ?? activeSurfaceIdFromWorkbench(workbench));
+  const [position, setPosition] = useState<{ left: number; top: number } | undefined>(undefined);
+
+  useLayoutEffect(() => {
+    const element = overlayRef.current;
+    if (!element) return;
+    const margin = 12;
+    const rect = element.getBoundingClientRect();
+    const nextPosition = !anchor
+      ? {
+        left: clamp((window.innerWidth - rect.width) / 2, margin, Math.max(margin, window.innerWidth - rect.width - margin)),
+        top: clamp(window.innerHeight * 0.28, margin, Math.max(margin, window.innerHeight - rect.height - margin)),
+      }
+      : (() => {
+        const preferBelow = anchor.bottom + 10 + rect.height <= window.innerHeight - margin;
+        const top = preferBelow
+          ? anchor.bottom + 10
+          : Math.max(margin, anchor.top - rect.height - 10);
+        const left = clamp(anchor.left - 28, margin, Math.max(margin, window.innerWidth - rect.width - margin));
+        return { left, top };
+      })();
+    setPosition((current) => current && current.left === nextPosition.left && current.top === nextPosition.top ? current : nextPosition);
+  }, [anchor, markdown]);
+
+  return <HoverCard markdown={markdown} source={source} workbench={workbench} cardRef={overlayRef} style={position} role="tooltip" />;
+}
+
+function SignatureHelpOverlay({
+  state,
+  workbench,
+}: {
+  state: SignatureHelpRoleState;
+  workbench: WorkbenchSnapshot;
+}) {
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const anchor = useSurfaceCursorAnchor(state.surfaceId ?? activeSurfaceIdFromWorkbench(workbench));
+  const [position, setPosition] = useState<{ left: number; top: number } | undefined>(undefined);
+  const activeSignature = Math.max(0, Math.min(state.activeSignature ?? 0, Math.max(0, (state.items?.length ?? 1) - 1)));
+  const item = state.items?.[activeSignature];
+
+  useLayoutEffect(() => {
+    const element = overlayRef.current;
+    if (!element) return;
+    const margin = 12;
+    const rect = element.getBoundingClientRect();
+    const nextPosition = !anchor
+      ? {
+        left: clamp((window.innerWidth - rect.width) / 2, margin, Math.max(margin, window.innerWidth - rect.width - margin)),
+        top: clamp(window.innerHeight * 0.32, margin, Math.max(margin, window.innerHeight - rect.height - margin)),
+      }
+      : (() => {
+        const left = clamp(anchor.left - 18, margin, Math.max(margin, window.innerWidth - rect.width - margin));
+        const reserved = document.querySelector(".completionMenuOverlay")?.getBoundingClientRect();
+        const below = anchor.bottom + 10;
+        const above = anchor.top - rect.height - 10;
+        const candidates = [
+          below + rect.height <= window.innerHeight - margin ? below : undefined,
+          above >= margin ? above : undefined,
+          clamp(below, margin, Math.max(margin, window.innerHeight - rect.height - margin)),
+          clamp(above, margin, Math.max(margin, window.innerHeight - rect.height - margin)),
+        ].filter((value): value is number => value !== undefined);
+        const top = candidates.find((candidate) => !reserved || !rectsOverlap({ left, top: candidate, right: left + rect.width, bottom: candidate + rect.height }, reserved)) ?? candidates[0] ?? margin;
+        return { left, top };
+      })();
+    setPosition((current) => current && current.left === nextPosition.left && current.top === nextPosition.top ? current : nextPosition);
+  }, [anchor, activeSignature, item?.documentation, item?.label]);
+
+  if (!item) return null;
+
+  return (
+    <div ref={overlayRef} className="defaultHoverOverlay signatureHelpOverlay" style={position} role="tooltip">
+      {state.items && state.items.length > 1 ? <div className="signatureHelpCounter">({activeSignature + 1}/{state.items.length})</div> : null}
+      <div className="signatureHelpSignature">
+        <code className="signatureHelpCode"><SignatureHelpLabel label={item.label} activeRange={item.activeParameterRange} /></code>
+      </div>
+      {item.documentation?.trim() ? (
+        <>
+          <div className="signatureHelpDivider" />
+          <MarkdownView
+            className="editorMarkdown signatureHelpMarkdown"
+            markdown={item.documentation}
+            theme={workbench.theme?.active}
+            cwd={workbench.workingDirectory?.current}
+            onOpenFileLink={(target) => {
+              void dispatchCommand("file.open", { path: target.path, line: target.line, column: target.column });
+            }}
+            onOpenExternalLink={(href) => {
+              void window.theEditor.openExternal(href);
+            }}
+          />
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function SignatureHelpLabel({
+  label,
+  activeRange,
+}: {
+  label: string;
+  activeRange?: { start: number; end: number };
+}) {
+  if (!activeRange || activeRange.start < 0 || activeRange.end <= activeRange.start || activeRange.end > label.length) {
+    return <>{label}</>;
+  }
+  return (
+    <>
+      {label.slice(0, activeRange.start)}
+      <span className="signatureHelpActiveParameter">{label.slice(activeRange.start, activeRange.end)}</span>
+      {label.slice(activeRange.end)}
+    </>
+  );
+}
+
+function CompletionOverlay({
+  sessionId,
+  surfaceId,
+  sessions,
+  workbench,
+  dispatch,
+}: {
+  sessionId: string;
+  surfaceId?: number;
+  sessions: UiSessionClient;
+  workbench: WorkbenchSnapshot;
+  dispatch(dispatch: { id: string; args?: unknown }): Promise<unknown>;
+}) {
+  const state = useUiSession<CompletionSessionState>(sessions, sessionId);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const itemsRef = useRef<HTMLDivElement>(null);
+  const anchor = useSurfaceCursorAnchor(surfaceId ?? activeSurfaceIdFromWorkbench(workbench));
+  const [position, setPosition] = useState<{ left: number; top: number; direction: "right" | "left" | "stacked" } | undefined>(undefined);
+  const selectedItem = state?.items[state.selectedIndex];
+  const showDocs = Boolean(state?.showDocumentation && state.documentationMarkdown?.trim());
+
+  useLayoutEffect(() => {
+    if (!state) return;
+    scrollActiveItemIntoView(itemsRef.current, '.completionMenuItem[data-active="true"]');
+  }, [state?.items, state?.selectedIndex]);
+
+  useLayoutEffect(() => {
+    const element = overlayRef.current;
+    if (!element) return;
+    const margin = 12;
+    const rect = element.getBoundingClientRect();
+    const docsWidth = showDocs ? 260 : 0;
+    const listWidth = Math.min(rect.width, showDocs ? rect.width - docsWidth - 10 : rect.width);
+    const nextPosition = !anchor
+      ? {
+        left: clamp((window.innerWidth - rect.width) / 2, margin, Math.max(margin, window.innerWidth - rect.width - margin)),
+        top: clamp(window.innerHeight * 0.34, margin, Math.max(margin, window.innerHeight - rect.height - margin)),
+        direction: "right" as const,
+      }
+      : (() => {
+        const reserved = document.querySelector(".signatureHelpOverlay")?.getBoundingClientRect();
+        const below = anchor.bottom + 8;
+        const above = anchor.top - rect.height - 8;
+        const rightSpace = window.innerWidth - margin - (anchor.left + listWidth);
+        const leftSpace = anchor.left - margin;
+        const direction = !showDocs
+          ? "right"
+          : rightSpace >= docsWidth + 10
+            ? "right"
+            : leftSpace >= docsWidth + 10
+              ? "left"
+              : "stacked";
+        const left = direction === "left"
+          ? clamp(anchor.left - docsWidth - 10, margin, Math.max(margin, window.innerWidth - rect.width - margin))
+          : clamp(anchor.left - 18, margin, Math.max(margin, window.innerWidth - rect.width - margin));
+        const candidates = [
+          below + rect.height <= window.innerHeight - margin ? below : undefined,
+          above >= margin ? above : undefined,
+          clamp(below, margin, Math.max(margin, window.innerHeight - rect.height - margin)),
+          clamp(above, margin, Math.max(margin, window.innerHeight - rect.height - margin)),
+        ].filter((value): value is number => value !== undefined);
+        const top = candidates.find((candidate) => !reserved || !rectsOverlap({ left, top: candidate, right: left + rect.width, bottom: candidate + rect.height }, reserved)) ?? candidates[0] ?? margin;
+        return { left, top, direction };
+      })();
+    setPosition((current) => current
+      && current.left === nextPosition.left
+      && current.top === nextPosition.top
+      && current.direction === nextPosition.direction
+      ? current
+      : nextPosition);
+  }, [anchor, state?.items, state?.selectedIndex, state?.documentationMarkdown, showDocs]);
+
+  if (!state) return null;
+
+  return (
+    <div
+      ref={overlayRef}
+      className="completionMenuOverlay"
+      data-direction={position?.direction ?? "right"}
+      style={position ? { left: position.left, top: position.top } : undefined}
+      role="listbox"
+      aria-label="Completions"
+      onMouseDown={(event) => event.preventDefault()}
+    >
+      {showDocs && position?.direction === "left" ? (
+        <HoverCard
+          className="completionMenuHoverCard"
+          markdown={state.documentationMarkdown!}
+          workbench={workbench}
+        />
+      ) : null}
+      <div className="completionMenuSurface">
+        <div ref={itemsRef} className="completionMenuItems">
+          {state.items.length ? state.items.map((item, index) => {
+            const isActive = index === state.selectedIndex;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                className="completionMenuItem"
+                data-active={isActive ? "true" : undefined}
+                onMouseMove={() => {
+                  if (isActive) return;
+                  void dispatch({ id: "completion.selectIndex", args: { index } });
+                }}
+                onClick={() => {
+                  void dispatch({ id: "completion.selectIndex", args: { index } }).then(() => dispatch({ id: "completion.accept" }));
+                }}
+              >
+                <div className="completionMenuItemMain">
+                  <div className="completionMenuItemLabelRow">
+                    {item.kind ? <CompletionKindIcon kind={item.kind} /> : item.badge ? <span className="completionMenuItemBadge">{item.badge}</span> : null}
+                    <span className="completionMenuItemLabel" data-deprecated={item.deprecated ? "true" : undefined}>{renderHighlightedText(item.label, item.labelHighlights)}</span>
+                    {item.labelDetail ? <span className="completionMenuItemLabelDetail">{item.labelDetail}</span> : null}
+                  </div>
+                  {item.labelDescription ? <div className="completionMenuItemDescription">{item.labelDescription}</div> : null}
+                </div>
+                <div className="completionMenuItemMeta">
+                  {item.detail ? <div className="completionMenuItemDetail">{renderHighlightedText(item.detail, item.detailHighlights)}</div> : null}
+                  {item.source ? <div className="completionMenuItemSource">{item.source}</div> : null}
+                </div>
+              </button>
+            );
+          }) : <div className="completionMenuEmpty">{state.emptyText ?? "No completions"}</div>}
+        </div>
+        {state.loading ? <div className="completionMenuStatus">loading…</div> : null}
+      </div>
+      {showDocs && position?.direction !== "left" ? (
+        <HoverCard
+          className="completionMenuHoverCard"
+          markdown={state.documentationMarkdown!}
+          workbench={workbench}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function CompletionKindIcon({ kind }: { kind: string }) {
+  const glyph = completionKindGlyph(kind);
+  return (
+    <span className="completionMenuItemIcon" data-group={completionKindGroup(kind)} aria-hidden="true">
+      {glyph}
+    </span>
+  );
+}
+
+function completionKindGlyph(kind: string): string {
+  switch (kind) {
+    case "function":
+    case "method":
+    case "constructor":
+      return "ƒ";
+    case "class":
+    case "interface":
+    case "struct":
+    case "typeParameter":
+      return "◇";
+    case "enum":
+    case "enumMember":
+      return "≡";
+    case "variable":
+    case "field":
+    case "property":
+    case "value":
+    case "constant":
+      return "●";
+    case "module":
+      return "▣";
+    case "file":
+      return "▤";
+    case "folder":
+      return "▢";
+    case "keyword":
+      return "⌘";
+    case "snippet":
+      return "⋯";
+    case "color":
+      return "◼";
+    case "operator":
+      return "±";
+    case "text":
+      return "¶";
+    default:
+      return "•";
+  }
+}
+
+function completionKindGroup(kind: string): string {
+  switch (kind) {
+    case "function":
+    case "method":
+    case "constructor":
+    case "operator":
+      return "callable";
+    case "class":
+    case "interface":
+    case "struct":
+    case "enum":
+    case "enumMember":
+    case "typeParameter":
+      return "type";
+    case "variable":
+    case "field":
+    case "property":
+    case "value":
+    case "constant":
+      return "value";
+    case "module":
+    case "file":
+    case "folder":
+      return "namespace";
+    case "keyword":
+    case "snippet":
+    case "text":
+    case "color":
+      return "utility";
+    default:
+      return "default";
+  }
+}
+
+function renderHighlightedText(value: string, highlights: readonly number[]): ReactNode {
+  if (!highlights.length) return value;
+  const highlightSet = new Set(highlights);
+  const nodes: ReactNode[] = [];
+  let start = 0;
+  let active = highlightSet.has(0);
+  for (let index = 1; index <= value.length; index += 1) {
+    const nextActive = highlightSet.has(index);
+    if (index < value.length && nextActive === active) continue;
+    const chunk = value.slice(start, index);
+    nodes.push(active ? <mark key={`${start}:${index}`}>{chunk}</mark> : <Fragment key={`${start}:${index}`}>{chunk}</Fragment>);
+    start = index;
+    active = nextActive;
+  }
+  return nodes;
+}
+
+function useSurfaceCursorAnchor(surfaceId: number | undefined): SurfaceCursorAnchor | undefined {
+  return useSyncExternalStore(
+    (listener) => surfaceCursorAnchors.subscribe(listener),
+    () => surfaceId ? surfaceCursorAnchors.anchorForSurface(surfaceId as SurfaceId) : undefined,
+    () => surfaceId ? surfaceCursorAnchors.anchorForSurface(surfaceId as SurfaceId) : undefined,
+  );
+}
+
+function activeSurfaceIdFromWorkbench(workbench: WorkbenchSnapshot): number | undefined {
+  const activePaneId = workbench.editorLayout?.activePaneId;
+  const pane = activePaneId ? workbench.editorLayout?.panes.find((entry) => entry.id === activePaneId) : undefined;
+  return pane?.kind === "surface" ? pane.surfaceId : undefined;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function rectsOverlap(
+  left: { left: number; top: number; right: number; bottom: number },
+  right: { left: number; top: number; right: number; bottom: number },
+  gap = 8,
+): boolean {
+  return left.left < right.right + gap
+    && left.right + gap > right.left
+    && left.top < right.bottom + gap
+    && left.bottom + gap > right.top;
 }
 
 function CommandPaletteOverlay({
@@ -449,14 +937,19 @@ function PickerOverlay({
                       <div className="pickerPreviewEmpty">Binary file</div>
                     ) : state.preview.rows?.length ? (
                       <div className="pickerPreviewCode">
-                        {state.preview.rows.map((row, rowIndex) => (
-                          <div key={`${row.lineNumber ?? rowIndex}:${rowIndex}`} className="pickerPreviewCodeRow">
-                            <div className="pickerPreviewLineNumber">{row.lineNumber ?? ""}</div>
-                            <div className="pickerPreviewLineText">
-                              {renderPreviewLine(row.text, previewSyntax.get(rowIndex) ?? [], previewTheme, syntaxLegend)}
+                        {state.preview.rows.map((row, rowIndex) => {
+                          const active = row.lineNumber != null && row.lineNumber === state.preview?.activeLine;
+                          const annotation = row.lineNumber != null && row.lineNumber === state.preview?.annotation?.line ? state.preview.annotation : undefined;
+                          return (
+                            <div key={`${row.lineNumber ?? rowIndex}:${rowIndex}`} className="pickerPreviewCodeRow" data-active={active ? "true" : undefined}>
+                              <div className="pickerPreviewLineNumber">{row.lineNumber ?? ""}</div>
+                              <div className="pickerPreviewLineText">
+                                {renderPreviewLine(row.text, previewSyntax.get(rowIndex) ?? [], previewTheme, syntaxLegend)}
+                                {annotation ? <div className="pickerPreviewAnnotation" data-severity={annotation.severity ?? "error"}>{annotation.message}</div> : null}
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     ) : (
                       <pre className="pickerPreviewText">{state.preview.text || ""}</pre>
@@ -546,23 +1039,26 @@ function PickerSurfacePreview({
       return;
     }
     controller.setSource({
-      key: `${sessionId}:${preview.path}`,
+      key: `${sessionId}:${preview.path}:${preview.viewport?.firstRow ?? 0}:${(preview as { activeLine?: number }).activeLine ?? ""}`,
       readFrame: async ({ viewport, metrics }) => {
+        const requestViewport = preview.viewport ? { ...viewport, firstRow: preview.viewport.firstRow } : viewport;
         const result = await sessions.dispatch(sessionId, "readPreviewFrame", {
           path: preview.path,
-          viewport,
+          viewport: requestViewport,
           metrics,
         });
         if (!isSurfaceFrameResult(result)) throw new Error("invalid surface preview frame result");
         return result;
       },
     });
-  }, [controller, preview.path, sessionId, sessions]);
+  }, [controller, preview, sessionId, sessions]);
 
   useEffect(() => {
     const element = selectionRef.current;
     const frame = controllerState.frame;
     const selectionBackground = resolveThemeStyleLoose(theme.active ?? { styles: {} }, "ui.selection")?.bg ?? "#264f78";
+    const activeLineBackground = resolveThemeStyleLoose(theme.active ?? { styles: {} }, "ui.cursorline.primary", ["ui.cursorline"])?.bg ?? "rgba(120,120,120,0.18)";
+    const activeLine = (preview as { activeLine?: number }).activeLine;
     if (!element || !frame) {
       controller.setDecorations([]);
       return;
@@ -571,7 +1067,10 @@ function PickerSurfacePreview({
     const syncSelection = () => {
       const selection = document.getSelection();
       const offsets = readElementSelectionOffsets(element, selection);
-      controller.setDecorations(buildPreviewSelectionDecorations(frame.rows, rowOffsets, offsets, selectionBackground));
+      controller.setDecorations([
+        ...buildPreviewActiveLineDecorations(frame.rows, activeLine, activeLineBackground),
+        ...buildPreviewSelectionDecorations(frame.rows, rowOffsets, offsets, selectionBackground),
+      ]);
     };
 
     syncSelection();
@@ -580,7 +1079,7 @@ function PickerSurfacePreview({
       document.removeEventListener("selectionchange", syncSelection);
       controller.setDecorations([]);
     };
-  }, [controller, controllerState.frame, rowOffsets, theme.active]);
+  }, [controller, controllerState.frame, preview, rowOffsets, theme.active]);
 
   return (
     <>
@@ -634,6 +1133,24 @@ function readElementSelectionOffsets(element: HTMLElement, selection: Selection 
   const start = startRange.toString().length;
   const end = endRange.toString().length;
   return end > start ? { start, end } : undefined;
+}
+
+function buildPreviewActiveLineDecorations(
+  rows: readonly RenderFrame["rows"],
+  activeLine: number | undefined,
+  background: string,
+): BufferDecoration[] {
+  if (activeLine == null) return [];
+  const row = rows.find((candidate) => candidate.docLine != null && candidate.docLine + 1 === activeLine);
+  if (!row) return [];
+  return [{
+    kind: "range",
+    id: `preview-active-line:${activeLine}`,
+    surfaceRow: row.surfaceRow,
+    startCol: 0,
+    endCol: Math.max(1, row.text.length),
+    background,
+  }];
 }
 
 function buildPreviewSelectionDecorations(
@@ -879,18 +1396,20 @@ function Statusline({ state }: { state: StatuslineViewState | undefined }) {
     <div className={`statusline mode-${mode}`}>
       <div className="statuslineSegment mode">{mode.toUpperCase()}</div>
       <div className="statuslineSegment path">{state?.activePath ?? "[scratch]"}</div>
-      <div className="statuslineSegment meta">palette: {state?.selectedCommandPalette ?? state?.activeRoleImplementation ?? "default"}</div>
-      <div className="statuslineSegment diagnostics">diagnostics: {state?.diagnosticsCount ?? 0}</div>
+      {state?.lspStatus ? <div className="statuslineSegment meta">{state.lspStatus}</div> : null}
+      {state?.diagnosticsSummary ? <div className="statuslineSegment diagnostics">{state.diagnosticsSummary}</div> : null}
     </div>
   );
 }
 
 function WorkbenchInspector({
   diagnostics,
+  healthDiagnostics,
   dispatch,
   workbench,
 }: {
-  diagnostics: DiagnosticEntry[];
+  diagnostics: DiagnosticRecord[];
+  healthDiagnostics: HealthDiagnosticEntry[];
   dispatch: (dispatch: { id: string; args?: unknown }) => Promise<unknown>;
   workbench: WorkbenchSnapshot;
 }) {
@@ -980,12 +1499,22 @@ function WorkbenchInspector({
 
         <section className="inspectorSection diagnostics">
           <h3>Diagnostics</h3>
-          {diagnostics.length ? diagnostics.map((diagnostic) => (
+          {diagnostics.length ? diagnostics.slice(0, 24).map((diagnostic) => (
+            <div key={diagnostic.id} className={`diagnosticRow ${diagnostic.severity}`}>
+              <div className="diagnosticMessage">{diagnosticPrimaryLine(diagnostic)}</div>
+              <div className="diagnosticDetails">{diagnosticLocationLabel(diagnostic)}</div>
+            </div>
+          )) : <div className="inspectorSubtle">No problems.</div>}
+        </section>
+
+        <section className="inspectorSection diagnostics">
+          <h3>Health</h3>
+          {healthDiagnostics.length ? healthDiagnostics.map((diagnostic) => (
             <div key={diagnostic.id} className={`diagnosticRow ${diagnostic.severity}`}>
               <div className="diagnosticMessage">{diagnostic.message}</div>
               {diagnostic.details ? <div className="diagnosticDetails">{diagnostic.details}</div> : null}
             </div>
-          )) : <div className="inspectorSubtle">No diagnostics.</div>}
+          )) : <div className="inspectorSubtle">No health diagnostics.</div>}
         </section>
       </div>
     </section>

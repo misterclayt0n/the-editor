@@ -1,0 +1,258 @@
+.completionMenuOverlay {
+  position: fixed;
+  z-index: 32;
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.completionMenuOverlay[data-direction="left"] {
+  flex-direction: row;
+}
+
+.completionMenuOverlay[data-direction="stacked"] {
+  flex-direction: column;
+}
+
+.completionMenuSurface {
+  --completionBg: var(--theme-ui-popup-bg, var(--theme-ui-menu-bg, var(--theme-background, #141415)));
+  --completionFg: var(--theme-ui-popup-fg, var(--theme-ui-menu-fg, var(--theme-ui-text-fg, var(--theme-foreground, #d7d7d7))));
+  --completionMuted: var(--theme-ui-text-inactive-fg, #84848a);
+  --completionBorder: var(--theme-ui-popup-border-fg, var(--theme-ui-background-separator-fg, rgba(255, 255, 255, 0.08)));
+  --completionAccent: var(--theme-palette-accent, #009fff);
+  --completionHoverBg: color-mix(in lab, var(--completionAccent) 10%, var(--completionBg));
+  --completionSelectedBg: var(--theme-ui-menu-selected-bg, color-mix(in lab, var(--completionAccent) 9%, var(--completionBg)));
+  --completionSelectedFg: var(--theme-ui-menu-selected-fg, var(--completionFg));
+  --completionShadow: color-mix(in srgb, var(--completionBorder) 30%, transparent);
+  width: min(320px, calc(100vw - 24px));
+  max-height: min(236px, calc(100vh - 24px));
+  overflow: hidden;
+  border: 1px solid var(--completionBorder);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--completionBg) 97%, transparent);
+  color: var(--completionFg);
+  box-shadow:
+    0 10px 28px -18px var(--completionShadow),
+    0 1px 2px color-mix(in srgb, var(--completionBorder) 22%, transparent);
+  backdrop-filter: blur(12px);
+}
+
+.completionMenuItems {
+  min-height: 0;
+  max-height: min(212px, calc(100vh - 48px));
+  overflow: auto;
+  padding: 4px;
+  scrollbar-gutter: stable both-edges;
+  scrollbar-color: color-mix(in lab, var(--completionFg) 32%, var(--completionBg)) transparent;
+  scrollbar-width: thin;
+}
+
+.completionMenuItems::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.completionMenuItems::-webkit-scrollbar-thumb {
+  background: color-mix(in lab, var(--completionFg) 32%, var(--completionBg));
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+.completionMenuItems::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.completionMenuItem {
+  -webkit-tap-highlight-color: transparent;
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 10rem);
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  padding: 5px 8px;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  position: relative;
+  scroll-margin-block: 4px;
+  transition: background-color 120ms ease, color 120ms ease;
+  user-select: none;
+}
+
+.completionMenuItem:hover {
+  background: var(--completionHoverBg);
+}
+
+.completionMenuItem[data-active="true"] {
+  background: var(--completionSelectedBg);
+  color: var(--completionSelectedFg);
+}
+
+.completionMenuItem[data-active="true"]::after {
+  border: 1px solid color-mix(in lab, var(--completionAccent) 70%, var(--completionBorder));
+  border-radius: 9px;
+  content: "";
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+}
+
+.completionMenuItemMain,
+.completionMenuItemMeta {
+  min-width: 0;
+}
+
+.completionMenuItemLabelRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.completionMenuItemIcon {
+  flex: none;
+  width: 0.95rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--completionMuted);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.completionMenuItemIcon[data-group="callable"] {
+  color: var(--theme-palette-blue, var(--theme-palette-accent, var(--completionFg)));
+}
+
+.completionMenuItemIcon[data-group="type"] {
+  color: var(--theme-palette-purple, var(--theme-palette-accent, var(--completionFg)));
+}
+
+.completionMenuItemIcon[data-group="value"] {
+  color: var(--theme-palette-orange, var(--theme-palette-yellow, var(--theme-palette-accent, var(--completionFg))));
+}
+
+.completionMenuItemIcon[data-group="namespace"] {
+  color: var(--theme-palette-yellow, var(--theme-palette-accent, var(--completionFg)));
+}
+
+.completionMenuItemIcon[data-group="utility"] {
+  color: var(--theme-palette-green, var(--theme-palette-accent, var(--completionFg)));
+}
+
+.completionMenuItem[data-active="true"] .completionMenuItemIcon {
+  opacity: 0.95;
+}
+
+.completionMenuItemBadge {
+  flex: none;
+  min-width: 1.9rem;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: color-mix(in lab, var(--completionBorder) 38%, transparent);
+  color: var(--completionMuted);
+  font-size: 9px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  text-align: center;
+}
+
+.completionMenuItem[data-active="true"] .completionMenuItemBadge {
+  color: color-mix(in lab, var(--completionSelectedFg) 70%, var(--completionSelectedBg));
+}
+
+.completionMenuItemLabel {
+  min-width: 0;
+  flex: 1 1 auto;
+  font-weight: 600;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.completionMenuItemLabel[data-deprecated="true"] {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+.completionMenuItemLabelDetail,
+.completionMenuItemDescription,
+.completionMenuItemSource,
+.completionMenuItemDetail {
+  font-size: 11px;
+  color: var(--completionMuted);
+}
+
+.completionMenuItemLabelDetail,
+.completionMenuItemDetail {
+  white-space: nowrap;
+}
+
+.completionMenuItemDetail {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.completionMenuItemMeta {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  justify-content: flex-end;
+  overflow: hidden;
+}
+
+.completionMenuItemSource {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--completionBorder) 82%, transparent);
+  background: color-mix(in srgb, var(--completionBorder) 16%, transparent);
+  color: color-mix(in srgb, var(--completionMuted) 92%, var(--completionFg));
+  white-space: nowrap;
+  max-width: 3.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.completionMenuItem[data-active="true"] .completionMenuItemSource {
+  border-color: color-mix(in srgb, var(--completionSelectedFg) 18%, var(--completionBorder));
+  background: color-mix(in srgb, var(--completionSelectedFg) 10%, transparent);
+  color: color-mix(in srgb, var(--completionSelectedFg) 78%, var(--completionFg));
+}
+
+.completionMenuItem[data-active="true"] .completionMenuItemDetail,
+.completionMenuItem[data-active="true"] .completionMenuItemLabelDetail,
+.completionMenuItem[data-active="true"] .completionMenuItemDescription {
+  color: color-mix(in lab, var(--completionSelectedFg) 72%, var(--completionSelectedBg));
+}
+
+.completionMenuItem mark {
+  color: inherit;
+  background: transparent;
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+  text-decoration-color: color-mix(in lab, currentColor 64%, transparent);
+}
+
+.completionMenuStatus,
+.completionMenuEmpty {
+  padding: 6px 10px 8px;
+  color: var(--completionMuted);
+  font-size: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--completionBorder) 78%, transparent);
+}
+
+.completionMenuItemDescription,
+.completionMenuItemLabelDetail {
+  display: none;
+}

@@ -1,10 +1,17 @@
 import type {
   CellGridMetrics,
   ClipboardKind,
+  CursorSemantics,
   DocumentId,
   DocumentOpened,
   OkResult,
   RenderFrame,
+  JsonValue,
+  LspDiagnosticEntry,
+  LspLogEntry,
+  LspServerConfig,
+  LspServerId,
+  LspServerStatus,
   RuntimeApi,
   SurfaceCreated,
   SurfaceEdit,
@@ -75,16 +82,22 @@ export class RuntimeNativeClient implements RuntimeApi {
       this.session.setSurfaceSoftWrap(params.surfaceId, params.softWrap);
       return { ok: true };
     },
+    setCursorSemantics: async (params: { surfaceId: SurfaceId; semantics: CursorSemantics }): Promise<OkResult> => {
+      this.session.setSurfaceCursorSemantics(params.surfaceId, params.semantics);
+      return { ok: true };
+    },
     applyOperation: async (params: { surfaceId: SurfaceId; operation: SurfaceOperation }): Promise<OkResult> => {
       this.session.applySurfaceOperation(params.surfaceId, params.operation);
       return { ok: true };
     },
     readState: async (params: { surfaceId: SurfaceId }): Promise<SurfaceState> => ({
       text: this.session.readSurfaceText(params.surfaceId),
+      revision: this.session.readSurfaceRevision(params.surfaceId),
       lineEnding: this.session.readSurfaceLineEnding(params.surfaceId),
       lineCount: this.session.readSurfaceLineCount(params.surfaceId),
       selection: this.session.readSurfaceSelection(params.surfaceId),
       activeCursorId: this.session.readSurfaceActiveCursor(params.surfaceId),
+      cursorSemantics: this.session.readSurfaceCursorSemantics(params.surfaceId) as CursorSemantics,
       viewport: this.session.readSurfaceViewport(params.surfaceId),
     }),
     setActiveCursor: async (params: { surfaceId: SurfaceId; cursorId: number | null }): Promise<OkResult> => {
@@ -95,6 +108,9 @@ export class RuntimeNativeClient implements RuntimeApi {
       this.session.applySurfaceEdit(params.surfaceId, params.edit);
       return { ok: true };
     },
+    completeWords: async (params: { surfaceId: SurfaceId; cursorOffset: number; query: string; limit?: number }): Promise<Array<{ label: string }>> => (
+      JSON.parse(this.session.completeSurfaceWordsJson(params.surfaceId, params.cursorOffset, params.query, params.limit ?? null)) as Array<{ label: string }>
+    ),
     commitUndoCheckpoint: async (params: { surfaceId: SurfaceId }): Promise<OkResult> => {
       this.session.commitSurfaceUndoCheckpoint(params.surfaceId);
       return { ok: true };
@@ -147,6 +163,7 @@ export class RuntimeNativeClient implements RuntimeApi {
       this.session.recordSearchSelection(params.indexId, params.query, params.path);
       return { ok: true } as const;
     },
+    previewPathCacheKey: async (params: { path: string }): Promise<string> => this.session.previewPathCacheKey(params.path),
     readTextPreview: async (params: Parameters<RuntimeApi["search"]["readTextPreview"]>[0]) => JSON.parse(this.session.readTextPreviewJson(
       params.path,
       params.maxBytes ?? null,
@@ -176,12 +193,54 @@ export class RuntimeNativeClient implements RuntimeApi {
     },
   };
 
+  readonly lsp = {
+    registerServer: async (params: LspServerConfig): Promise<OkResult> => {
+      this.nativeLsp().lspRegisterServer(JSON.stringify(toNativeLspServerConfig(params)));
+      return { ok: true };
+    },
+    configuredServers: async (): Promise<LspServerConfig[]> => JSON.parse(this.nativeLsp().lspConfiguredServersJson()) as LspServerConfig[],
+    startServer: async (params: { id: string; rootUri?: string }): Promise<{ serverId: LspServerId }> => ({
+      serverId: this.nativeLsp().lspStartServer(params.id, params.rootUri ?? null) as LspServerId,
+    }),
+    shutdownServer: async (params: { serverId: LspServerId }): Promise<OkResult> => {
+      this.nativeLsp().lspShutdownServer(params.serverId);
+      return { ok: true };
+    },
+    status: async (): Promise<LspServerStatus[]> => JSON.parse(this.nativeLsp().lspStatusJson()) as LspServerStatus[],
+    diagnostics: async (): Promise<LspDiagnosticEntry[]> => JSON.parse(this.nativeLsp().lspDiagnosticsJson()) as LspDiagnosticEntry[],
+    logs: async (params: { serverId: LspServerId }): Promise<LspLogEntry[]> => JSON.parse(this.nativeLsp().lspLogsJson(params.serverId)) as LspLogEntry[],
+    request: async (params: { serverId: LspServerId; method: string; params?: JsonValue; timeoutMs?: number }): Promise<JsonValue> => (
+      JSON.parse(this.nativeLsp().lspRequestJson(params.serverId, params.method, JSON.stringify(params.params ?? null), params.timeoutMs ?? null)) as JsonValue
+    ),
+    notify: async (params: { serverId: LspServerId; method: string; params?: JsonValue }): Promise<OkResult> => {
+      this.nativeLsp().lspNotifyJson(params.serverId, params.method, JSON.stringify(params.params ?? null));
+      return { ok: true };
+    },
+  };
+
   readonly resources = {
     save: async (params: { surfaceId: SurfaceId }): Promise<OkResult> => {
       this.session.saveSurfaceDocument(params.surfaceId);
       return { ok: true };
     },
   };
+
+  private nativeLsp(): NativeRuntimeSession & {
+    lspRegisterServer(configJson: string): void;
+    lspConfiguredServersJson(): string;
+    lspStartServer(id: string, rootUri: string | null): number;
+    lspShutdownServer(serverId: number): void;
+    lspStatusJson(): string;
+    lspDiagnosticsJson(): string;
+    lspLogsJson(serverId: number): string;
+    lspRequestJson(serverId: number, method: string, paramsJson: string, timeoutMs: number | null): string;
+    lspNotifyJson(serverId: number, method: string, paramsJson: string): void;
+    previewPathCacheKey(path: string): string;
+    readSurfaceRevision(surfaceId: number): number;
+    completeSurfaceWordsJson(surfaceId: number, cursorOffset: number, query: string, limit: number | null): string;
+  } {
+    return this.session as ReturnType<RuntimeNativeClient["nativeLsp"]>;
+  }
 
   private readonly session: NativeRuntimeSession;
 
@@ -213,6 +272,8 @@ export class RuntimeNativeClient implements RuntimeApi {
         return this.surfaces.setMetrics(params as Parameters<RuntimeApi["surfaces"]["setMetrics"]>[0]);
       case "surfaces.setSoftWrap":
         return this.surfaces.setSoftWrap(params as Parameters<RuntimeApi["surfaces"]["setSoftWrap"]>[0]);
+      case "surfaces.setCursorSemantics":
+        return this.surfaces.setCursorSemantics(params as Parameters<RuntimeApi["surfaces"]["setCursorSemantics"]>[0]);
       case "surfaces.applyOperation":
         return this.surfaces.applyOperation(params as Parameters<RuntimeApi["surfaces"]["applyOperation"]>[0]);
       case "surfaces.readState":
@@ -259,6 +320,24 @@ export class RuntimeNativeClient implements RuntimeApi {
         return this.clipboard.read(params as Parameters<RuntimeApi["clipboard"]["read"]>[0]);
       case "clipboard.write":
         return this.clipboard.write(params as Parameters<RuntimeApi["clipboard"]["write"]>[0]);
+      case "lsp.registerServer":
+        return this.lsp.registerServer(params as Parameters<RuntimeApi["lsp"]["registerServer"]>[0]);
+      case "lsp.configuredServers":
+        return this.lsp.configuredServers();
+      case "lsp.startServer":
+        return this.lsp.startServer(params as Parameters<RuntimeApi["lsp"]["startServer"]>[0]);
+      case "lsp.shutdownServer":
+        return this.lsp.shutdownServer(params as Parameters<RuntimeApi["lsp"]["shutdownServer"]>[0]);
+      case "lsp.status":
+        return this.lsp.status();
+      case "lsp.diagnostics":
+        return this.lsp.diagnostics();
+      case "lsp.logs":
+        return this.lsp.logs(params as Parameters<RuntimeApi["lsp"]["logs"]>[0]);
+      case "lsp.request":
+        return this.lsp.request(params as Parameters<RuntimeApi["lsp"]["request"]>[0]);
+      case "lsp.notify":
+        return this.lsp.notify(params as Parameters<RuntimeApi["lsp"]["notify"]>[0]);
       case "resources.save":
         return this.resources.save(params as Parameters<RuntimeApi["resources"]["save"]>[0]);
       default:
@@ -267,6 +346,18 @@ export class RuntimeNativeClient implements RuntimeApi {
   }
 
   dispose(): void {}
+}
+
+function toNativeLspServerConfig(config: LspServerConfig): Record<string, unknown> {
+  return {
+    id: config.id,
+    command: config.command,
+    args: config.args ?? [],
+    env: config.env ?? {},
+    languages: config.languages ?? [],
+    file_types: config.fileTypes ?? [],
+    initialization_options: config.initializationOptions ?? null,
+  };
 }
 
 export function createRuntimeClient(options?: RuntimeNativeClientOptions): RuntimeNativeClient {

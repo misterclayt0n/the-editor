@@ -1,4 +1,4 @@
-import type { EditorModule, KeyInput, ToolSnapshot, WorkbenchItemDescriptor, WorkbenchPaneDescriptor } from "@the-editor/editor";
+import type { EditorModule, KeyInput } from "@the-editor/editor";
 import { commandId, matchesCommandPaletteItem, toDisposable, type CommandPaletteItem } from "@the-editor/editor";
 import type {
   WorkbenchSessionState,
@@ -9,6 +9,7 @@ import type {
 import { defaultViewport } from "./scratch.js";
 import {
   activeSurfacePane,
+  buildWorkbenchSessionState,
   getDefaultState,
   handleKeyInput,
   refreshActiveSurface,
@@ -156,6 +157,11 @@ export function defaultWorkbench(): EditorModule {
       id: "default.workbench.surfaceConfigure",
       async handler(request: WorkbenchSurfaceConfigureRequest) {
         const state = getDefaultState(editor);
+        if (editor.overlays.isOpen("hover")) {
+          editor.setStateSlot("default.hover.state", { visible: false });
+          editor.overlays.close("hover", { restoreFocus: false });
+          editor.workbench.invalidate("roles");
+        }
         const pane = request.paneId ? surfacePaneState(editor, request.paneId) : activeSurfacePane(editor);
         if (!pane) throw new Error("no active surface");
         if (request.metrics) {
@@ -182,34 +188,7 @@ export function defaultWorkbench(): EditorModule {
     const sessionState = editor.hooks.tap("workbench.sessionState", {
       id: "default.workbench.sessionState",
       async handler(): Promise<WorkbenchSessionState> {
-        const state = getDefaultState(editor);
-        await refreshActiveSurface(editor);
-        const tools = editor.tools.snapshotAll();
-        const toolById = new Map(tools.map((tool) => [tool.id, tool] as const));
-        return {
-          mode: state.mode,
-          activeDocumentId: state.activeDocumentId,
-          activeSurfaceId: state.activeSurfaceId,
-          activePath: state.activePath,
-          softWrap: state.softWrap,
-          frame: state.lastFrame,
-          roles: editor.roles.snapshotAll(),
-          tools,
-          decorations: state.decorations,
-          gutters: state.gutters,
-          diagnostics: editor.diagnostics.all(),
-          focus: editor.focus.current(),
-          theme: editor.themes.snapshot(),
-          syntaxLegend: state.syntaxLegend,
-          sessions: editor.sessions.snapshotAll(),
-          notifications: editor.notifications.snapshot(),
-          workingDirectory: editor.cwd.snapshot(),
-          selectionPickerActive: Boolean(editor.getStateSlot("default.editing.selectionPicker")),
-          editorLayout: editor.workbench.snapshotEditorLayout({
-            mapItem: (item) => decorateItemSnapshot(item, toolById),
-            mapPane: (pane) => decoratePaneSnapshot(pane, state, toolById),
-          }),
-        };
+        return buildWorkbenchSessionState(editor);
       },
     });
 
@@ -268,49 +247,3 @@ export function defaultWorkbench(): EditorModule {
   };
 }
 
-function decorateItemSnapshot(
-  item: WorkbenchItemDescriptor,
-  toolById: Map<string, ToolSnapshot>,
-): WorkbenchItemDescriptor {
-  if (item.kind !== "tool") return item;
-  const tool = toolById.get(item.toolId);
-  return {
-    ...item,
-    title: tool?.title ?? item.title,
-    packageId: tool?.packageId ?? item.packageId,
-    input: tool?.input ?? item.input,
-    state: tool?.state,
-  };
-}
-
-function decoratePaneSnapshot(
-  pane: WorkbenchPaneDescriptor,
-  state: ReturnType<typeof getDefaultState>,
-  toolById: Map<string, ToolSnapshot>,
-): WorkbenchPaneDescriptor {
-  if (pane.kind === "surface") {
-    const surface = state.surfacePanes.get(pane.id);
-    return {
-      ...pane,
-      state: surface
-        ? {
-          frame: surface.frame,
-          lineCount: surface.lineCount,
-          gutters: surface.gutters,
-          viewport: surface.viewport,
-          metrics: surface.metrics,
-          path: surface.path,
-          title: surface.title,
-        }
-        : undefined,
-    };
-  }
-
-  const tool = toolById.get(pane.toolId);
-  return {
-    ...pane,
-    packageId: tool?.packageId ?? pane.packageId,
-    input: tool?.input ?? pane.input,
-    state: tool ? { tool } : undefined,
-  };
-}

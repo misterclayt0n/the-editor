@@ -203,7 +203,9 @@ impl Surface {
     if self.render.text_format().soft_wrap {
       viewport.first_col = 0;
     }
-    viewport.first_row = viewport.first_row.min(self.max_scroll_row(document, viewport));
+    viewport.first_row = viewport
+      .first_row
+      .min(self.max_scroll_row(document, viewport));
     self.set_viewport(viewport);
   }
 
@@ -1027,7 +1029,7 @@ mod tests {
           crate::transaction::ReplacementOverlapPolicy::Reject,
         )
         .unwrap(),
-        selection: Selection::single(0, 5),
+        selection:   Selection::single(0, 5),
       })
       .unwrap();
     surface.commit_undo_checkpoint().unwrap();
@@ -1056,7 +1058,10 @@ mod tests {
     let document = Document::new(Rope::from("abc\n"));
     let mut surface = Surface::new(&document, render_surface(), viewport()).unwrap();
     surface
-      .apply_selection(&document, Selection::new(smallvec::smallvec![Range::point(4)]).unwrap())
+      .apply_selection(
+        &document,
+        Selection::new(smallvec::smallvec![Range::point(4)]).unwrap(),
+      )
       .unwrap();
 
     let frame = surface.render(&document, None);

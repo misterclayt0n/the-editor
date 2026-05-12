@@ -1,9 +1,10 @@
 import { parentPort, workerData } from "node:worker_threads";
 import type { KeyInput } from "@the-editor/editor";
 import { createEditorHost, createRuntimeClient } from "@the-editor/editor";
-import { bootWorkbench, configureWorkbenchSurface, getWorkbenchSessionState, handleWorkbenchKeyInput } from "@the-editor/editor/workbench";
+import { bootWorkbench, configureWorkbenchSurface, getWorkbenchSessionState, handleWorkbenchKeyInput, type WorkbenchSessionState } from "@the-editor/editor/workbench";
 import { ElectronPackageDiscovery } from "./packageDiscovery.js";
 import { createPolicyPackageTargetAdapters } from "./packageTargetAdapters.js";
+import { PolicyTransactionController } from "./transactions.js";
 
 if (!parentPort) throw new Error("policy worker requires parentPort");
 
@@ -22,10 +23,18 @@ editor.hooks.tap("packages.discover", {
   },
 });
 
-let sessionPostScheduled = false;
-editor.workbench.subscribe(() => {
-  scheduleSessionStatePost();
+const transactions = new PolicyTransactionController({
+  editor,
+  buildState: () => getWorkbenchSessionState(editor),
+  publish: (payload) => {
+    parentPort?.postMessage(payload);
+  },
+  toPayload: (state) => buildSessionPayload(state),
+  onError: (error) => {
+    parentPort?.postMessage({ type: "policy.error", ...serializeError(error) });
+  },
 });
+
 editor.sessions.subscribe((event) => {
   if (event.type === "updated") {
     parentPort?.postMessage({ type: "default.sessionUpdated", session: event.session });
@@ -48,7 +57,7 @@ async function boot(): Promise<void> {
     await editor.packages.discover();
     await editor.packages.loadAll();
     await bootWorkbench(editor);
-    await postSessionState();
+    await transactions.publishNow();
     parentPort?.postMessage({ type: "policy.ready" });
   } catch (error) {
     parentPort?.postMessage({ type: "policy.error", ...serializeError(error) });
@@ -60,37 +69,45 @@ async function handlePolicyRequest(request: PolicyRequest): Promise<void> {
     let result: unknown;
     switch (request.method) {
       case "default.createScratch": {
-        await editor.commands.dispatch({ id: "scratch.create", args: request.params });
-        result = await postSessionState();
+        result = (await transactions.run(async () => {
+          await editor.commands.dispatch({ id: "scratch.create", args: request.params });
+        })).payload;
         break;
       }
       case "file.open": {
-        await editor.commands.dispatch({ id: "file.open", args: request.params });
-        result = await postSessionState();
+        result = (await transactions.run(async () => {
+          await editor.commands.dispatch({ id: "file.open", args: request.params });
+        })).payload;
         break;
       }
       case "view.toggleSoftWrap": {
-        await editor.commands.dispatch({ id: "view.toggleSoftWrap" });
-        result = await postSessionState();
+        result = (await transactions.run(async () => {
+          await editor.commands.dispatch({ id: "view.toggleSoftWrap" });
+        })).payload;
         break;
       }
       case "input.keyDown": {
         const input = request.params as KeyInput;
-        const handled = await handleWorkbenchKeyInput(editor, input);
-        if (!handled) throw new Error("no workbench key input handler");
-        result = await postSessionState();
+        const transaction = await transactions.run(async () => {
+          const handled = await handleWorkbenchKeyInput(editor, input);
+          if (!handled) throw new Error("no workbench key input handler");
+        });
+        result = transaction.payload;
         break;
       }
       case "surface.configure": {
-        const handled = await configureWorkbenchSurface(editor, request.params as SurfaceConfigureParams);
-        if (!handled) throw new Error("no workbench surface configure handler");
-        result = await postSessionState();
+        const transaction = await transactions.run(async () => {
+          const handled = await configureWorkbenchSurface(editor, request.params as SurfaceConfigureParams);
+          if (!handled) throw new Error("no workbench surface configure handler");
+        });
+        result = transaction.payload;
         break;
       }
       case "command.dispatch": {
         const params = request.params as { id: string; args?: unknown };
-        await editor.commands.dispatch({ id: params.id, args: params.args });
-        result = await postSessionState();
+        result = (await transactions.run(async () => {
+          await editor.commands.dispatch({ id: params.id, args: params.args });
+        })).payload;
         break;
       }
       case "session.dispatch": {
@@ -107,20 +124,8 @@ async function handlePolicyRequest(request: PolicyRequest): Promise<void> {
   }
 }
 
-function scheduleSessionStatePost(): void {
-  if (sessionPostScheduled) return;
-  sessionPostScheduled = true;
-  queueMicrotask(() => {
-    sessionPostScheduled = false;
-    void postSessionState().catch((error) => {
-      parentPort?.postMessage({ type: "policy.error", ...serializeError(error) });
-    });
-  });
-}
-
-async function postSessionState() {
-  const state = await getWorkbenchSessionState(editor);
-  const payload = {
+function buildSessionPayload(state: WorkbenchSessionState) {
+  return {
     type: "default.sessionChanged",
     mode: state.mode,
     activeDocumentId: state.activeDocumentId,
@@ -144,8 +149,6 @@ async function postSessionState() {
     selectionPickerActive: state.selectionPickerActive ?? false,
     editorLayout: state.editorLayout,
   };
-  parentPort?.postMessage(payload);
-  return payload;
 }
 
 interface PolicyRequest {

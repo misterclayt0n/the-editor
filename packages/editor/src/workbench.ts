@@ -1,7 +1,8 @@
 import type { CellGridMetrics, DocumentId, RenderFrame, SurfaceId, Viewport } from "@the-editor/contracts/runtime";
 import type { BufferDecoration } from "./decorations.js";
-import type { DiagnosticEntry } from "./diagnostics.js";
+import type { DiagnosticRecord } from "./diagnostics.js";
 import type { EditorHost } from "./editorHost.js";
+import type { HealthDiagnosticEntry } from "./health.js";
 import type { FocusTarget } from "./focus.js";
 import type { GutterSnapshot } from "./gutters.js";
 import type { NotificationEntry } from "./notifications.js";
@@ -192,7 +193,8 @@ export interface WorkbenchSessionState {
   tools?: ToolSnapshot[];
   decorations?: BufferDecoration[];
   gutters?: GutterSnapshot[];
-  diagnostics?: DiagnosticEntry[];
+  diagnostics?: DiagnosticRecord[];
+  healthDiagnostics?: HealthDiagnosticEntry[];
   focus?: FocusTarget;
   theme?: ThemeSnapshot;
   syntaxLegend?: Record<number, string>;

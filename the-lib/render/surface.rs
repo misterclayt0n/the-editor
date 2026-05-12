@@ -135,7 +135,12 @@ impl CellGridRenderSurface {
     RenderFrame {
       surface_id: self.id,
       rows:       layout.build_rows(viewport),
-      selections: LayerProjector::project_selections(&layout, self.selection.as_ref(), active_cursor, viewport),
+      selections: LayerProjector::project_selections(
+        &layout,
+        self.selection.as_ref(),
+        active_cursor,
+        viewport,
+      ),
       cursors:    LayerProjector::project_cursors(
         text,
         &layout,

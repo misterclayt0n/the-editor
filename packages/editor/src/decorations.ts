@@ -3,6 +3,11 @@ import { contributionKind } from "./contributions.js";
 import type { EditorHost } from "./editorHost.js";
 import { toDisposable, type Disposable } from "./disposable.js";
 
+export interface DecorationStroke {
+  color: string;
+  style?: "solid" | "dotted" | "dashed" | "double" | "curl";
+}
+
 export interface RangeDecoration {
   kind: "range";
   id: string;
@@ -10,7 +15,9 @@ export interface RangeDecoration {
   startCol: number;
   endCol: number;
   background?: string;
-  underline?: string;
+  underline?: string | DecorationStroke;
+  strike?: string | DecorationStroke;
+  opacity?: number;
 }
 
 export interface InlineTextDecoration {
@@ -32,6 +39,7 @@ export interface DecorationProviderContext {
   activeSurfaceId?: SurfaceId;
   activePath?: string;
   frame?: RenderFrame;
+  text?: string;
 }
 
 export interface DecorationProvider {

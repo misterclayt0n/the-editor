@@ -15,6 +15,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@pierre/diffs": "^1.1.0-beta.16",
     "@pierre/trees": "1.0.0-beta.3",
     "@the-editor/contracts": "workspace:*",
     "@the-editor/default": "workspace:*",
@@ -23,6 +24,8 @@
     "electron": "latest",
     "react": "latest",
     "react-dom": "latest",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "vite": "latest"
   },
   "devDependencies": {

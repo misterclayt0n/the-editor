@@ -1,7 +1,8 @@
 import { contributionKind, moduleId, type ModuleId } from "./contributions.js";
 import type { BufferDecoration } from "./decorations.js";
-import type { DiagnosticEntry } from "./diagnostics.js";
+import type { DiagnosticRecord } from "./diagnostics.js";
 import { toDisposable, type Disposable } from "./disposable.js";
+import type { HealthDiagnosticEntry } from "./health.js";
 import type { FocusTarget } from "./focus.js";
 import type { GutterSnapshot } from "./gutters.js";
 import type { CommandDispatch } from "./commands.js";
@@ -20,9 +21,12 @@ export interface UiCommandDispatcher {
 }
 
 export interface WorkbenchSnapshot {
+  mode?: string;
+  activePath?: string;
   roles: Record<string, RoleSnapshot>;
   packages: PackageSnapshot[];
-  diagnostics?: DiagnosticEntry[];
+  diagnostics?: DiagnosticRecord[];
+  healthDiagnostics?: HealthDiagnosticEntry[];
   interaction?: InteractionSnapshot;
   tools?: ToolSnapshot[];
   decorations?: BufferDecoration[];

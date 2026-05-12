@@ -2,6 +2,7 @@ import { Component, useEffect, useMemo, useRef, useState, type CSSProperties, ty
 import { createRoot } from "react-dom/client";
 import type { CellGridMetrics, RenderFrame, Viewport } from "@the-editor/contracts/runtime";
 import type { BufferDecoration, GutterSnapshot, InteractiveSessionSnapshot, ThemeSnapshot, ToolSnapshot } from "@the-editor/editor";
+import { surfaceCursorAnchors } from "@the-editor/editor/cursorAnchors";
 import type {
   WorkbenchEditorLayoutNodeSnapshot,
   WorkbenchEditorLayoutSnapshot,
@@ -181,6 +182,9 @@ function App() {
       <div className="workbenchOverlayRoot">
         <UiErrorBoundary name="overlayModal">{overlayModal}</UiErrorBoundary>
         <UiErrorBoundary name="overlayFloating">{overlayFloating}</UiErrorBoundary>
+        <UiErrorBoundary name="hover">{uiRuntime.renderRole("hover")}</UiErrorBoundary>
+        <UiErrorBoundary name="signatureHelp">{uiRuntime.renderRole("signatureHelp")}</UiErrorBoundary>
+        <UiErrorBoundary name="completionMenu">{uiRuntime.renderRole("completionMenu")}</UiErrorBoundary>
         <UiErrorBoundary name="notifications">{uiRuntime.renderRole("notifications")}</UiErrorBoundary>
         <UiErrorBoundary name="picker">{uiRuntime.renderRole("picker")}</UiErrorBoundary>
         <UiErrorBoundary name="inputPrompt">{uiRuntime.renderRole("inputPrompt")}</UiErrorBoundary>
@@ -571,6 +575,7 @@ function renderPane(
         theme={workbench.theme}
         syntaxLegend={workbench.syntaxLegend ?? {}}
         selectionPickerActive={active && selectionPickerActive}
+        cursorShape={workbench.mode === "insert" ? "bar" : "block"}
       />
     );
   }
@@ -584,6 +589,7 @@ function SurfaceEditorPane({
   theme,
   syntaxLegend,
   selectionPickerActive,
+  cursorShape,
 }: {
   pane: Extract<WorkbenchPaneDescriptor, { kind: "surface" }>;
   active: boolean;
@@ -591,16 +597,19 @@ function SurfaceEditorPane({
   theme: ThemeSnapshot | undefined;
   syntaxLegend: Record<number, string>;
   selectionPickerActive: boolean;
+  cursorShape: "bar" | "block";
 }) {
+  const paneState = pane.state as SurfacePaneSnapshotState | undefined;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lastConfigRef = useRef<string>("");
+  const latestConfigMetricsRef = useRef<CellGridMetrics | undefined>(paneState?.metrics);
   const latestFrameRef = useRef<RenderFrame | undefined>(undefined);
   const latestDecorationsRef = useRef<BufferDecoration[]>([]);
   const latestGuttersRef = useRef<GutterSnapshot[]>([]);
   const latestThemeRef = useRef<ThemeSnapshot | undefined>(undefined);
   const latestSyntaxLegendRef = useRef<Record<number, string>>({});
   const latestSelectionPickerActiveRef = useRef(false);
-  const paneState = pane.state as SurfacePaneSnapshotState | undefined;
+  const latestCursorShapeRef = useRef<"bar" | "block">("block");
 
   latestFrameRef.current = paneState?.frame;
   latestDecorationsRef.current = decorations;
@@ -608,6 +617,7 @@ function SurfaceEditorPane({
   latestThemeRef.current = theme;
   latestSyntaxLegendRef.current = syntaxLegend;
   latestSelectionPickerActiveRef.current = selectionPickerActive;
+  latestCursorShapeRef.current = cursorShape;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -620,6 +630,15 @@ function SurfaceEditorPane({
     const configure = () => {
       raf = 0;
       const config = configureCanvasTextSurface(canvas, EDITOR_SURFACE_STYLE);
+      latestConfigMetricsRef.current = config.metrics;
+      surfaceCursorAnchors.set({
+        surfaceId: pane.surfaceId,
+        canvas,
+        frame: latestFrameRef.current,
+        gutters: latestGuttersRef.current,
+        metrics: config.metrics,
+        styleOptions: EDITOR_SURFACE_STYLE,
+      });
       const serialized = JSON.stringify(config);
       if (latestFrameRef.current) {
         paintCanvasTextSurface(
@@ -628,7 +647,11 @@ function SurfaceEditorPane({
           latestDecorationsRef.current,
           latestThemeRef.current,
           latestSyntaxLegendRef.current,
-          { selectionPickerActive: latestSelectionPickerActiveRef.current, gutters: latestGuttersRef.current }, 
+          {
+            selectionPickerActive: latestSelectionPickerActiveRef.current,
+            gutters: latestGuttersRef.current,
+            cursorShape: latestCursorShapeRef.current,
+          }, 
           EDITOR_SURFACE_STYLE,
         );
       } else {
@@ -657,8 +680,22 @@ function SurfaceEditorPane({
       disposed = true;
       if (raf) window.cancelAnimationFrame(raf);
       observer?.disconnect();
+      surfaceCursorAnchors.delete(pane.surfaceId);
     };
-  }, [pane.id]);
+  }, [pane.id, pane.surfaceId]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    surfaceCursorAnchors.set({
+      surfaceId: pane.surfaceId,
+      canvas,
+      frame: paneState?.frame,
+      gutters: paneState?.gutters ?? [],
+      metrics: paneState?.metrics ?? latestConfigMetricsRef.current,
+      styleOptions: EDITOR_SURFACE_STYLE,
+    });
+  }, [pane.surfaceId, paneState?.frame, paneState?.gutters, paneState?.metrics]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -667,8 +704,16 @@ function SurfaceEditorPane({
       clearCanvasTextSurface(canvas, theme, EDITOR_SURFACE_STYLE);
       return;
     }
-    paintCanvasTextSurface(canvas, paneState.frame, decorations, theme, syntaxLegend, { selectionPickerActive, gutters: paneState.gutters ?? [] }, EDITOR_SURFACE_STYLE);
-  }, [decorations, paneState?.frame, paneState?.gutters, selectionPickerActive, syntaxLegend, theme]);
+    paintCanvasTextSurface(
+      canvas,
+      paneState.frame,
+      decorations,
+      theme,
+      syntaxLegend,
+      { selectionPickerActive, gutters: paneState.gutters ?? [], cursorShape },
+      EDITOR_SURFACE_STYLE,
+    );
+  }, [cursorShape, decorations, pane.id, pane.path, paneState?.frame, paneState?.gutters, selectionPickerActive, syntaxLegend, theme]);
 
   return (
     <div className="editorSurfacePane" data-active={active ? "true" : undefined} onMouseDown={() => focusPane(pane.id)}>

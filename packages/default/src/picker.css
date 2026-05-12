@@ -373,6 +373,29 @@
   padding: 12px 0;
 }
 
+.pickerPreviewCodeRow[data-active="true"] {
+  background: color-mix(in lab, var(--pickerAccent) 10%, transparent);
+}
+
+.pickerPreviewAnnotation {
+  margin-top: 3px;
+  color: var(--pickerMuted);
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.pickerPreviewAnnotation::before {
+  content: "●";
+  margin-right: 8px;
+}
+
+.pickerPreviewAnnotation[data-severity="error"]::before { color: var(--theme-palette-red, #ff5f5f); }
+.pickerPreviewAnnotation[data-severity="warning"]::before { color: var(--theme-palette-yellow, #d7ba7d); }
+.pickerPreviewAnnotation[data-severity="info"]::before { color: var(--theme-palette-blue, #4fc1ff); }
+.pickerPreviewAnnotation[data-severity="hint"]::before { color: var(--theme-palette-green, #89d185); }
+
 .pickerPreviewCodeRow {
   align-items: baseline;
   display: grid;

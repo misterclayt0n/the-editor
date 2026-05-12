@@ -31,6 +31,9 @@ export class FocusRegistry {
       if (state.history.length > historyLimit) state.history.splice(0, state.history.length - historyLimit);
     }
     state.current = this.isValid(normalized) ? normalized : { kind: "editor" };
+    if (state.current.kind !== "editor") {
+      this.editor.overlays.closeAttachedToEditor({ restoreFocus: false });
+    }
     return state.current;
   }
 
@@ -82,7 +85,7 @@ export class FocusRegistry {
       }
       case "editor":
       default:
-        return dedupeScopes([editorMode, "global"]);
+        return dedupeScopes([...this.editor.overlays.attachedScopes(), editorMode, "global"]);
     }
   }
 

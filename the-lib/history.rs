@@ -243,10 +243,10 @@ impl History {
     }
     let current = &self.revisions[self.current];
     Some(HistoryJump {
-      source: RevisionId(self.current),
-      target: RevisionId(current.parent),
+      source:       RevisionId(self.current),
+      target:       RevisionId(current.parent),
       transactions: vec![current.inversion.clone()],
-      selection: current.selection_before.clone(),
+      selection:    current.selection_before.clone(),
     })
   }
 
@@ -366,9 +366,11 @@ impl History {
       .collect();
 
     let selection = if down.is_empty() {
-      self.revisions[*up.last().expect("backward jump must undo at least one revision")]
-        .selection_before
-        .clone()
+      self.revisions[*up
+        .last()
+        .expect("backward jump must undo at least one revision")]
+      .selection_before
+      .clone()
     } else {
       self.revisions[target].selection_after.clone()
     };
@@ -542,7 +544,13 @@ mod test {
     let tx = Transaction::insert_at(doc.len_chars(), 5, "!").unwrap();
     tx.apply(&mut doc).unwrap();
     let rev1 = history
-      .commit_at_timestamp(&before, tx, root_selection.clone(), after_selection.clone(), t1)
+      .commit_at_timestamp(
+        &before,
+        tx,
+        root_selection.clone(),
+        after_selection.clone(),
+        t1,
+      )
       .unwrap();
 
     assert_eq!(rev1, RevisionId::new(1));

@@ -11,6 +11,7 @@ use the_lib::{
   operation::Edit,
   render::{
     CellGridMetrics,
+    CursorSemantics,
     Viewport,
   },
   selection::{
@@ -28,6 +29,8 @@ use the_lib::{
 };
 use the_runtime::{
   DocumentHandle,
+  LspServerConfig,
+  LspServerHandle,
   OperationSpec,
   RuntimeSession,
   SearchIndexHandle,
@@ -108,6 +111,93 @@ impl NativeRuntimeSession {
   }
 
   #[napi]
+  pub fn lsp_register_server(&self, config_json: String) -> Result<()> {
+    let config: LspServerConfig =
+      serde_json::from_str(&config_json).map_err(|err| Error::from_reason(err.to_string()))?;
+    let mut runtime = self.lock()?;
+    runtime.lsp_register_server(config);
+    Ok(())
+  }
+
+  #[napi]
+  pub fn lsp_configured_servers_json(&self) -> Result<String> {
+    let runtime = self.lock()?;
+    serde_json::to_string(&runtime.lsp_configured_servers())
+      .map_err(|err| Error::from_reason(err.to_string()))
+  }
+
+  #[napi]
+  pub fn lsp_start_server(&self, id: String, root_uri: Option<String>) -> Result<u32> {
+    let mut runtime = self.lock()?;
+    let handle = runtime
+      .lsp_start_server(&id, root_uri)
+      .map_err(runtime_error)?;
+    Ok(handle.get() as u32)
+  }
+
+  #[napi]
+  pub fn lsp_shutdown_server(&self, server_id: u32) -> Result<()> {
+    let mut runtime = self.lock()?;
+    runtime
+      .lsp_shutdown_server(lsp_server_handle(server_id)?)
+      .map_err(runtime_error)
+  }
+
+  #[napi]
+  pub fn lsp_status_json(&self) -> Result<String> {
+    let mut runtime = self.lock()?;
+    serde_json::to_string(&runtime.lsp_status()).map_err(|err| Error::from_reason(err.to_string()))
+  }
+
+  #[napi]
+  pub fn lsp_diagnostics_json(&self) -> Result<String> {
+    let mut runtime = self.lock()?;
+    serde_json::to_string(&runtime.lsp_diagnostics())
+      .map_err(|err| Error::from_reason(err.to_string()))
+  }
+
+  #[napi]
+  pub fn lsp_logs_json(&self, server_id: u32) -> Result<String> {
+    let mut runtime = self.lock()?;
+    let logs = runtime
+      .lsp_logs(lsp_server_handle(server_id)?)
+      .map_err(runtime_error)?;
+    serde_json::to_string(&logs).map_err(|err| Error::from_reason(err.to_string()))
+  }
+
+  #[napi]
+  pub fn lsp_request_json(
+    &self,
+    server_id: u32,
+    method: String,
+    params_json: String,
+    timeout_ms: Option<u32>,
+  ) -> Result<String> {
+    let params =
+      serde_json::from_str(&params_json).map_err(|err| Error::from_reason(err.to_string()))?;
+    let mut runtime = self.lock()?;
+    let result = runtime
+      .lsp_request(
+        lsp_server_handle(server_id)?,
+        &method,
+        params,
+        timeout_ms.unwrap_or(10_000) as u64,
+      )
+      .map_err(runtime_error)?;
+    serde_json::to_string(&result).map_err(|err| Error::from_reason(err.to_string()))
+  }
+
+  #[napi]
+  pub fn lsp_notify_json(&self, server_id: u32, method: String, params_json: String) -> Result<()> {
+    let params =
+      serde_json::from_str(&params_json).map_err(|err| Error::from_reason(err.to_string()))?;
+    let mut runtime = self.lock()?;
+    runtime
+      .lsp_notify(lsp_server_handle(server_id)?, &method, params)
+      .map_err(runtime_error)
+  }
+
+  #[napi]
   pub fn create_scratch(&self, text: String) -> Result<u32> {
     let mut runtime = self.lock()?;
     let document = runtime
@@ -183,6 +273,23 @@ impl NativeRuntimeSession {
   }
 
   #[napi]
+  pub fn set_surface_cursor_semantics(&self, surface_id: u32, semantics: String) -> Result<()> {
+    let mut runtime = self.lock()?;
+    let semantics = match semantics.as_str() {
+      "InsertionPoint" => CursorSemantics::InsertionPoint,
+      "Cell" => CursorSemantics::Cell,
+      other => {
+        return Err(Error::from_reason(format!(
+          "unknown cursor semantics: {other}"
+        )));
+      },
+    };
+    runtime
+      .set_surface_cursor_semantics(surface_handle(surface_id)?, semantics)
+      .map_err(runtime_error)
+  }
+
+  #[napi]
   pub fn apply_surface_operation(
     &self,
     surface_id: u32,
@@ -203,6 +310,20 @@ impl NativeRuntimeSession {
       .and_then(|document| runtime.document(document))
       .ok_or_else(|| Error::from_reason(format!("unknown surface {surface_id}")))?;
     Ok(document.text().to_string())
+  }
+
+  #[napi]
+  pub fn read_surface_revision(&self, surface_id: u32) -> Result<u32> {
+    let runtime = self.lock()?;
+    let document = runtime
+      .document_for_surface(surface_handle(surface_id)?)
+      .ok_or_else(|| Error::from_reason(format!("unknown surface {surface_id}")))?;
+    Ok(
+      runtime
+        .document(document)
+        .ok_or_else(|| Error::from_reason(format!("unknown document {}", document.get())))?
+        .revision() as u32,
+    )
   }
 
   #[napi]
@@ -249,6 +370,46 @@ impl NativeRuntimeSession {
   }
 
   #[napi]
+  pub fn complete_surface_words_json(
+    &self,
+    surface_id: u32,
+    cursor_offset: u32,
+    query: String,
+    limit: Option<u32>,
+  ) -> Result<String> {
+    let runtime = self.lock()?;
+    let surface = surface_handle(surface_id)?;
+    let document = runtime
+      .document_for_surface(surface)
+      .ok_or_else(|| Error::from_reason(format!("unknown surface {surface_id}")))?;
+    let text = runtime
+      .document(document)
+      .ok_or_else(|| Error::from_reason(format!("unknown document {}", document.get())))?
+      .text()
+      .to_string();
+    let cursor = cursor_offset as usize;
+    let query_lower = query.to_lowercase();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut words = Vec::<serde_json::Value>::new();
+    for (start, word) in indexed_words(&text) {
+      if start <= cursor && cursor <= start + word.len() {
+        continue;
+      }
+      if !query_lower.is_empty() && !word.to_lowercase().contains(&query_lower) {
+        continue;
+      }
+      if !seen.insert(word.to_string()) {
+        continue;
+      }
+      words.push(serde_json::json!({ "label": word }));
+      if words.len() >= limit.unwrap_or(100) as usize {
+        break;
+      }
+    }
+    serde_json::to_string(&words).map_err(|err| Error::from_reason(err.to_string()))
+  }
+
+  #[napi]
   pub fn read_surface_active_cursor(&self, surface_id: u32) -> Result<Option<u32>> {
     let runtime = self.lock()?;
     Ok(
@@ -261,6 +422,22 @@ impl NativeRuntimeSession {
   }
 
   #[napi]
+  pub fn read_surface_cursor_semantics(&self, surface_id: u32) -> Result<String> {
+    let runtime = self.lock()?;
+    let semantics = runtime
+      .surface(surface_handle(surface_id)?)
+      .ok_or_else(|| Error::from_reason(format!("unknown surface {surface_id}")))?
+      .cursor_semantics();
+    Ok(
+      match semantics {
+        CursorSemantics::InsertionPoint => "InsertionPoint",
+        CursorSemantics::Cell => "Cell",
+      }
+      .to_string(),
+    )
+  }
+
+  #[napi]
   pub fn read_surface_viewport(&self, surface_id: u32) -> Result<JsViewport> {
     let runtime = self.lock()?;
     let viewport = runtime
@@ -268,9 +445,9 @@ impl NativeRuntimeSession {
       .ok_or_else(|| Error::from_reason(format!("unknown surface {surface_id}")))?
       .viewport();
     Ok(JsViewport {
-      first_row: viewport.first_row as u32,
-      row_count: viewport.row_count as u32,
-      first_col: viewport.first_col as u32,
+      first_row:  viewport.first_row as u32,
+      row_count:  viewport.row_count as u32,
+      first_col:  viewport.first_col as u32,
       wrap_width: viewport.wrap_width as u32,
     })
   }
@@ -414,7 +591,9 @@ impl NativeRuntimeSession {
   #[napi]
   pub fn ensure_search_index_json(&self, root_path: String) -> Result<String> {
     let mut runtime = self.lock()?;
-    let ready = runtime.ensure_search_index(root_path.as_ref()).map_err(runtime_error)?;
+    let ready = runtime
+      .ensure_search_index(root_path.as_ref())
+      .map_err(runtime_error)?;
     serde_json::to_string(&ready).map_err(|err| Error::from_reason(err.to_string()))
   }
 
@@ -536,6 +715,14 @@ impl NativeRuntimeSession {
   }
 
   #[napi]
+  pub fn preview_path_cache_key(&self, path: String) -> Result<String> {
+    let runtime = self.lock()?;
+    runtime
+      .preview_path_cache_key(path.as_ref())
+      .map_err(runtime_error)
+  }
+
+  #[napi]
   pub fn read_text_preview_json(
     &self,
     path: String,
@@ -563,6 +750,30 @@ impl NativeRuntimeSession {
       .lock()
       .map_err(|_| Error::from_reason("runtime session lock poisoned"))
   }
+}
+
+fn indexed_words(text: &str) -> Vec<(usize, &str)> {
+  let mut words = Vec::new();
+  let mut start = None;
+  for (index, ch) in text.char_indices() {
+    let is_word = ch == '_' || ch == '$' || ch.is_ascii_alphanumeric();
+    match (start, is_word) {
+      (None, true) => start = Some(index),
+      (Some(word_start), false) => {
+        if index > word_start + 1 {
+          words.push((word_start, &text[word_start..index]));
+        }
+        start = None;
+      },
+      _ => {},
+    }
+  }
+  if let Some(word_start) = start
+    && text.len() > word_start + 1
+  {
+    words.push((word_start, &text[word_start..]));
+  }
+  words
 }
 
 fn document_handle(id: u32) -> Result<DocumentHandle> {
@@ -663,6 +874,13 @@ fn register_name(name: &str) -> Result<char> {
       ))
     },
   }
+}
+
+fn lsp_server_handle(id: u32) -> Result<LspServerHandle> {
+  if id == 0 {
+    return Err(Error::from_reason("lsp server handle must be non-zero"));
+  }
+  Ok(LspServerHandle::from_raw(id as u64))
 }
 
 fn clipboard_type(kind: &str) -> Result<the_lib::clipboard::ClipboardType> {

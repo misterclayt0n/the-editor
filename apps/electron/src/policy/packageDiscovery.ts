@@ -30,12 +30,12 @@ export class ElectronPackageDiscovery {
   ) {}
 
   async sync(editor: EditorHost): Promise<void> {
-    editor.diagnostics.clearPrefix("packages:discover:");
+    editor.health.clearPrefix("packages:discover:");
 
     const result = discoverEditorPackages(this.rootDir, typeof this.cwd === "function" ? this.cwd() : this.cwd);
     const nextIds = new Set<string>();
     for (const diagnostic of result.diagnostics) {
-      editor.diagnostics.report(diagnostic);
+      editor.health.report(diagnostic);
     }
 
     for (const manifest of result.manifests) {

@@ -30,9 +30,7 @@ use thiserror::Error;
 
 use crate::resource::normalize_file_path;
 
-#[derive(
-  Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize)]
 pub struct SearchIndexHandle(NonZeroU64);
 
 impl SearchIndexHandle {
@@ -201,18 +199,18 @@ pub struct MixedSearchResult {
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GrepSearchResult {
-  pub index_id:            u64,
-  pub root_path:           String,
-  pub query:               String,
-  pub total_files:         usize,
+  pub index_id:             u64,
+  pub root_path:            String,
+  pub query:                String,
+  pub total_files:          usize,
   pub total_files_searched: usize,
-  pub files_with_matches:  usize,
-  pub next_offset:         usize,
+  pub files_with_matches:   usize,
+  pub next_offset:          usize,
   pub regex_fallback_error: Option<String>,
-  pub scanning:            bool,
-  pub watcher_ready:       bool,
-  pub warmup_complete:     bool,
-  pub items:               Vec<GrepSearchItem>,
+  pub scanning:             bool,
+  pub watcher_ready:        bool,
+  pub warmup_complete:      bool,
+  pub items:                Vec<GrepSearchItem>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -304,7 +302,9 @@ impl SearchManager {
   pub fn status(&self, index: SearchIndexHandle) -> Result<SearchIndexStatus, SearchError> {
     let index = self.index(index)?;
     let picker_guard = index.shared_picker.read()?;
-    let picker = picker_guard.as_ref().ok_or(SearchError::UnknownIndex(index.handle))?;
+    let picker = picker_guard
+      .as_ref()
+      .ok_or(SearchError::UnknownIndex(index.handle))?;
     let progress = picker.get_scan_progress();
     Ok(SearchIndexStatus {
       index_id:        index.handle.get(),
@@ -334,7 +334,9 @@ impl SearchManager {
   ) -> Result<FileSearchResult, SearchError> {
     let index = self.index(index)?;
     let picker_guard = index.shared_picker.read()?;
-    let picker = picker_guard.as_ref().ok_or(SearchError::UnknownIndex(index.handle))?;
+    let picker = picker_guard
+      .as_ref()
+      .ok_or(SearchError::UnknownIndex(index.handle))?;
     let query_tracker = index.shared_query_tracker.read()?;
     let parser = QueryParser::new(FileSearchConfig);
     let parsed = parser.parse(query);
@@ -358,7 +360,15 @@ impl SearchManager {
         .items
         .into_iter()
         .zip(results.scores)
-        .map(|(item, score)| file_search_item(&picker, item, score.total, score.match_type, score.exact_match))
+        .map(|(item, score)| {
+          file_search_item(
+            &picker,
+            item,
+            score.total,
+            score.match_type,
+            score.exact_match,
+          )
+        })
         .collect(),
     })
   }
@@ -373,7 +383,9 @@ impl SearchManager {
   ) -> Result<DirSearchResult, SearchError> {
     let index = self.index(index)?;
     let picker_guard = index.shared_picker.read()?;
-    let picker = picker_guard.as_ref().ok_or(SearchError::UnknownIndex(index.handle))?;
+    let picker = picker_guard
+      .as_ref()
+      .ok_or(SearchError::UnknownIndex(index.handle))?;
     let parser = QueryParser::new(FileSearchConfig);
     let parsed = parser.parse(query);
     let results = picker.fuzzy_search_directories(
@@ -395,7 +407,15 @@ impl SearchManager {
         .items
         .into_iter()
         .zip(results.scores)
-        .map(|(item, score)| dir_search_item(&picker, item, score.total, score.match_type, score.exact_match))
+        .map(|(item, score)| {
+          dir_search_item(
+            &picker,
+            item,
+            score.total,
+            score.match_type,
+            score.exact_match,
+          )
+        })
         .collect(),
     })
   }
@@ -410,7 +430,9 @@ impl SearchManager {
   ) -> Result<MixedSearchResult, SearchError> {
     let index = self.index(index)?;
     let picker_guard = index.shared_picker.read()?;
-    let picker = picker_guard.as_ref().ok_or(SearchError::UnknownIndex(index.handle))?;
+    let picker = picker_guard
+      .as_ref()
+      .ok_or(SearchError::UnknownIndex(index.handle))?;
     let query_tracker = index.shared_query_tracker.read()?;
     let parser = QueryParser::new(FileSearchConfig);
     let parsed = parser.parse(query);
@@ -435,7 +457,15 @@ impl SearchManager {
         .items
         .into_iter()
         .zip(results.scores)
-        .map(|(item, score)| mixed_search_item(&picker, item, score.total, score.match_type, score.exact_match))
+        .map(|(item, score)| {
+          mixed_search_item(
+            &picker,
+            item,
+            score.total,
+            score.match_type,
+            score.exact_match,
+          )
+        })
         .collect(),
     })
   }
@@ -452,7 +482,9 @@ impl SearchManager {
   ) -> Result<GrepSearchResult, SearchError> {
     let index = self.index(index)?;
     let picker_guard = index.shared_picker.read()?;
-    let picker = picker_guard.as_ref().ok_or(SearchError::UnknownIndex(index.handle))?;
+    let picker = picker_guard
+      .as_ref()
+      .ok_or(SearchError::UnknownIndex(index.handle))?;
     let parser = QueryParser::new(GrepConfig);
     let parsed = parser.parse(query);
     let results = picker.grep(&parsed, &GrepSearchOptions {
@@ -471,16 +503,16 @@ impl SearchManager {
         let file = results.files.get(matched.file_index)?;
         let path = file.absolute_path(picker, picker.base_path());
         Some(GrepSearchItem {
-          kind: "grep",
-          path: path.to_string_lossy().into_owned(),
+          kind:          "grep",
+          path:          path.to_string_lossy().into_owned(),
           relative_path: file.relative_path(picker),
-          file_name: file.file_name(picker),
-          parent_path: file.dir_str(picker),
-          line: matched.line_number,
-          column: matched.col,
-          text: matched.line_content,
-          score: i32::from(matched.fuzzy_score.unwrap_or(0)),
-          spans: matched
+          file_name:     file.file_name(picker),
+          parent_path:   file.dir_str(picker),
+          line:          matched.line_number,
+          column:        matched.col,
+          text:          matched.line_content,
+          score:         i32::from(matched.fuzzy_score.unwrap_or(0)),
+          spans:         matched
             .match_byte_offsets
             .into_iter()
             .map(|(start, end)| GrepSearchSpan { start, end })
@@ -543,14 +575,14 @@ impl SearchManager {
     let binary = bytes.contains(&0);
     if binary {
       return Ok(TextPreviewResult {
-        path: normalized.to_string_lossy().into_owned(),
-        text: String::new(),
+        path:       normalized.to_string_lossy().into_owned(),
+        text:       String::new(),
         start_line: 0,
-        end_line: 0,
-        truncated: false,
-        binary: true,
-        rows: None,
-        syntax: None,
+        end_line:   0,
+        truncated:  false,
+        binary:     true,
+        rows:       None,
+        syntax:     None,
       });
     }
 
@@ -599,7 +631,10 @@ impl SearchManager {
   }
 
   fn index(&self, handle: SearchIndexHandle) -> Result<&SearchIndex, SearchError> {
-    self.indices.get(&handle).ok_or(SearchError::UnknownIndex(handle))
+    self
+      .indices
+      .get(&handle)
+      .ok_or(SearchError::UnknownIndex(handle))
   }
 }
 
@@ -619,12 +654,12 @@ fn fuzzy_search_options<'a>(
   limit: usize,
 ) -> FuzzySearchOptions<'a> {
   FuzzySearchOptions {
-    max_threads: 0,
-    current_file: current_path,
-    project_path: Some(root_path),
+    max_threads:                  0,
+    current_file:                 current_path,
+    project_path:                 Some(root_path),
     combo_boost_score_multiplier: 12,
-    min_combo_count: 2,
-    pagination: PaginationArgs {
+    min_combo_count:              2,
+    pagination:                   PaginationArgs {
       offset,
       limit: limit.max(1),
     },
@@ -678,22 +713,32 @@ fn mixed_search_item(
   exact_match: bool,
 ) -> MixedSearchItem {
   match item {
-    MixedItemRef::File(file) => MixedSearchItem::File {
-      path: file.absolute_path(picker, picker.base_path()).to_string_lossy().into_owned(),
-      relative_path: file.relative_path(picker),
-      file_name: file.file_name(picker),
-      parent_path: file.dir_str(picker),
-      score,
-      match_type: match_type.to_string(),
-      exact_match,
+    MixedItemRef::File(file) => {
+      MixedSearchItem::File {
+        path: file
+          .absolute_path(picker, picker.base_path())
+          .to_string_lossy()
+          .into_owned(),
+        relative_path: file.relative_path(picker),
+        file_name: file.file_name(picker),
+        parent_path: file.dir_str(picker),
+        score,
+        match_type: match_type.to_string(),
+        exact_match,
+      }
     },
-    MixedItemRef::Dir(dir) => MixedSearchItem::Dir {
-      path: dir.absolute_path(picker, picker.base_path()).to_string_lossy().into_owned(),
-      relative_path: dir.relative_path(picker),
-      name: dir.dir_name(picker),
-      score,
-      match_type: match_type.to_string(),
-      exact_match,
+    MixedItemRef::Dir(dir) => {
+      MixedSearchItem::Dir {
+        path: dir
+          .absolute_path(picker, picker.base_path())
+          .to_string_lossy()
+          .into_owned(),
+        relative_path: dir.relative_path(picker),
+        name: dir.dir_name(picker),
+        score,
+        match_type: match_type.to_string(),
+        exact_match,
+      }
     },
   }
 }
@@ -708,4 +753,3 @@ fn truncate_string_at_char_boundary(text: &mut String, max_bytes: usize) {
   }
   text.truncate(boundary);
 }
-

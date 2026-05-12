@@ -259,14 +259,14 @@ impl<'a> VisibleLayoutBuilder<'a> {
         let row_end_col_abs = current.as_ref().map(|row| row.row_end_col_abs).unwrap_or(0);
         units.push(VisibleUnit {
           surface_row_abs: current_surface_row_abs,
-          char_start: grapheme.char_idx,
-          char_end: grapheme.char_idx + grapheme.doc_chars(),
-          byte_start: self.text.char_to_byte(grapheme.char_idx),
-          byte_end: self
+          char_start:      grapheme.char_idx,
+          char_end:        grapheme.char_idx + grapheme.doc_chars(),
+          byte_start:      self.text.char_to_byte(grapheme.char_idx),
+          byte_end:        self
             .text
             .char_to_byte(grapheme.char_idx + grapheme.doc_chars()),
-          start_col_abs: row_end_col_abs,
-          end_col_abs: row_end_col_abs + 1,
+          start_col_abs:   row_end_col_abs,
+          end_col_abs:     row_end_col_abs + 1,
         });
         cursor_positions.push(CursorPosition {
           char_idx:        grapheme.char_idx,

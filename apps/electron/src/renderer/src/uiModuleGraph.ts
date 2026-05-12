@@ -3,12 +3,19 @@ import ts from "typescript";
 export const UI_SOURCE_ALLOWED_SPECIFIERS = new Set([
   "react",
   "react/jsx-runtime",
+  "react-markdown",
+  "remark-gfm",
+  "@pierre/diffs",
   "@pierre/trees/react",
   "@the-editor/contracts/runtime",
   "@the-editor/editor/ui",
   "@the-editor/editor/themes",
   "@the-editor/editor/textSurfaceCanvas",
   "@the-editor/editor/surfaceViewportController",
+  "@the-editor/editor/cursorAnchors",
+  "@the-editor/editor/markdown",
+  "@the-editor/editor/markdownLinks",
+  "@the-editor/editor/markdownView",
 ]);
 
 export function validateUiModuleImportGraph(

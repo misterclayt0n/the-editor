@@ -404,8 +404,17 @@
   color: var(--theme-diagnostic-error-fg, #fca5a5);
 }
 
-.diagnosticRow.warn .diagnosticMessage {
+.diagnosticRow.warn .diagnosticMessage,
+.diagnosticRow.warning .diagnosticMessage {
   color: var(--theme-diagnostic-warning-fg, #f4bf75);
+}
+
+.diagnosticRow.info .diagnosticMessage {
+  color: var(--theme-diagnostic-info-fg, #93c5fd);
+}
+
+.diagnosticRow.hint .diagnosticMessage {
+  color: var(--theme-diagnostic-hint-fg, #7dd3fc);
 }
 
 .diagnosticMessage {
@@ -472,3 +481,4 @@
   margin-top: 6px;
   white-space: pre-wrap;
 }
+

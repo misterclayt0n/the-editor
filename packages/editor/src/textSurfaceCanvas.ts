@@ -217,14 +217,37 @@ function paintGutters(
           ctx.fillStyle = line.background;
           ctx.fillRect(x, y, laneWidth, metrics.rowHeight);
         }
-        if (!line.text) continue;
+        const endRow = line.surfaceRowEnd ?? line.surfaceRow;
+        const height = Math.max(metrics.rowHeight, (endRow - line.surfaceRow + 1) * metrics.rowHeight);
+        if (line.kind === "bar") {
+          ctx.save();
+          ctx.globalAlpha = line.opacity ?? 0.9;
+          ctx.fillStyle = line.color ?? line.foreground ?? theme.gutterForeground;
+          const barWidth = Math.min(3, Math.max(2, contentWidth || laneWidth));
+          ctx.fillRect(contentX, y + 2, barWidth, Math.max(2, height - 4));
+          ctx.restore();
+          continue;
+        }
+        if (line.kind === "marker") {
+          ctx.save();
+          ctx.globalAlpha = line.opacity ?? 0.9;
+          ctx.fillStyle = line.color ?? line.foreground ?? theme.gutterForeground;
+          const radius = Math.min(4, metrics.rowHeight / 4);
+          ctx.beginPath();
+          ctx.arc(contentX + contentWidth / 2, y + metrics.rowHeight / 2, radius, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+          continue;
+        }
+        const text = line.text ?? line.icon;
+        if (!text) continue;
         ctx.save();
         ctx.globalAlpha = line.opacity ?? 0.6;
-        ctx.fillStyle = line.foreground ?? theme.gutterForeground;
+        ctx.fillStyle = line.foreground ?? line.color ?? theme.gutterForeground;
         const align = line.align ?? "right";
         ctx.textAlign = align;
         const textX = align === "left" ? contentX : align === "center" ? contentX + contentWidth / 2 : contentX + contentWidth;
-        ctx.fillText(line.text, textX, y + metrics.baselineOffset);
+        ctx.fillText(text, textX, y + metrics.baselineOffset);
         ctx.restore();
       }
     }

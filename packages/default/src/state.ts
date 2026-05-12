@@ -97,7 +97,8 @@ export async function refreshActiveSurface(editor: EditorHost, viewport?: Viewpo
 
   for (const pane of state.surfacePanes.values()) {
     pane.frame = await editor.runtime.surfaces.renderFrame({ surfaceId: pane.surfaceId });
-    pane.lineCount = (await editor.runtime.surfaces.lineCount({ surfaceId: pane.surfaceId })).lineCount;
+    const surfaceState = await editor.runtime.surfaces.readState({ surfaceId: pane.surfaceId });
+    pane.lineCount = surfaceState.lineCount;
     pane.gutters = await editor.gutters?.collect({
       mode: state.mode,
       activeDocumentId: pane.documentId,
@@ -105,6 +106,7 @@ export async function refreshActiveSurface(editor: EditorHost, viewport?: Viewpo
       activePath: pane.path,
       frame: pane.frame,
       lineCount: pane.lineCount,
+      text: surfaceState.text,
     }) ?? [];
   }
 

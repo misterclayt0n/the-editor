@@ -16,15 +16,29 @@ export interface GutterLaneSpec {
   paddingRightPx?: number;
 }
 
+export type GutterItemKind = "text" | "bar" | "marker" | "icon";
+
+export interface GutterCommandAction {
+  id: string;
+  args?: unknown;
+}
+
 export interface GutterLine {
   id: string;
   surfaceRow: number;
+  surfaceRowEnd?: number;
+  kind?: GutterItemKind;
   text?: string;
+  icon?: string;
   title?: string;
   align?: GutterTextAlign;
   foreground?: string;
   background?: string;
+  color?: string;
   opacity?: number;
+  priority?: number;
+  onClick?: GutterCommandAction;
+  contextMenu?: GutterCommandAction;
 }
 
 export interface GutterProviderContext {
@@ -35,6 +49,7 @@ export interface GutterProviderContext {
   activePath?: string;
   frame?: RenderFrame;
   lineCount?: number;
+  text?: string;
 }
 
 export interface GutterProvider {
@@ -104,7 +119,7 @@ export class GutterRegistry {
           if (gutters[index]?.lane.id === lane.id) gutters.splice(index, 1);
         }
       }
-      const lines = await provider.provide(ctx);
+      const lines = (await provider.provide(ctx)).sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
       gutters.push({
         providerId: provider.id,
         lane: resizeLaneForLines(lane, lines),

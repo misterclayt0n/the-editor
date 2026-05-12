@@ -1,4 +1,4 @@
-import { Component, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
+import { Component, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import type { CellGridMetrics, RenderFrame, Viewport } from "@the-editor/contracts/runtime";
 import type { BufferDecoration, GutterSnapshot, InteractiveSessionSnapshot, ThemeSnapshot, ToolSnapshot } from "@the-editor/editor";
@@ -17,14 +17,17 @@ import "./style.css";
 const uiRuntime = new RendererPackageRuntime();
 const EDITOR_SURFACE_STYLE: CanvasTextSurfaceStyleOptions = {
   paddingPx: 8,
+  gutterReservePx: 88,
 };
 
 interface SurfacePaneSnapshotState {
   frame?: RenderFrame;
+  lineCount?: number;
   viewport?: Viewport;
   metrics?: CellGridMetrics;
   path?: string;
   title?: string;
+  gutters?: GutterSnapshot[];
 }
 
 interface ToolPaneSnapshotState {
@@ -48,6 +51,8 @@ function App() {
     editorLayout: undefined,
   });
   const [selectionPickerActive, setSelectionPickerActive] = useState(false);
+  const [leftSidebarVisible, setLeftSidebarVisible] = useState(true);
+  const [leftSidebarWidth, setLeftSidebarWidth] = useState(320);
   const [, setUiRevision] = useState(0);
 
   useEffect(() => uiRuntime.subscribe(() => {
@@ -105,7 +110,7 @@ function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (isEditableTarget(event.target)) return;
+      if (isEditableKeyEvent(event)) return;
       if (event.metaKey) return;
       const input = toKeyInput(event);
       if (!input) return;
@@ -120,6 +125,12 @@ function App() {
   }, []);
 
   const leftSidebar = uiRuntime.renderToolRoot("leftSidebar");
+  const leftSidebarToggle = (
+    <SidebarToggleButton
+      expanded={leftSidebarVisible}
+      onToggle={() => setLeftSidebarVisible((visible) => !visible)}
+    />
+  );
   const rightSidebar = uiRuntime.renderToolRoot("rightSidebar");
   const bottomPanel = uiRuntime.renderToolRoot("bottomPanel");
   const overlayModal = uiRuntime.renderToolRoot("overlayModal");
@@ -129,9 +140,20 @@ function App() {
     <main className="workbench">
       <section className="workbenchMainRow">
         {leftSidebar ? (
-          <aside className="workbenchSidebar left">
-            <WorkbenchSidebarChrome workbench={workbench} />
+          <aside
+            className="workbenchSidebar left"
+            data-visible={leftSidebarVisible ? "true" : "false"}
+            style={{ "--workbench-left-sidebar-width": `${leftSidebarWidth}px` } as CSSProperties}
+          >
+            <WorkbenchSidebarChrome workbench={workbench} trailingAccessory={leftSidebarToggle} />
             <div className="workbenchSidebarContent">{leftSidebar}</div>
+            <div
+              className="workbenchSidebarResizeHandle"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize file tree"
+              onPointerDown={(event) => startSidebarResize(event, leftSidebarWidth, setLeftSidebarWidth)}
+            />
           </aside>
         ) : null}
         <section className="workbenchCenterColumn">
@@ -140,7 +162,10 @@ function App() {
               layout={workbench.editorLayout}
               workbench={workbench}
               selectionPickerActive={selectionPickerActive}
-              showLeadingWindowChrome={!leftSidebar}
+              showLeadingWindowChrome={!leftSidebarVisible}
+              leadingAccessory={!leftSidebarVisible ? (
+                <WorkbenchLeadingChrome workbench={workbench} trailingAccessory={leftSidebarToggle} />
+              ) : undefined}
             />
           </div>
           {bottomPanel ? <section className="workbenchBottomPanel">{bottomPanel}</section> : null}
@@ -165,16 +190,47 @@ function App() {
   );
 }
 
-function WorkbenchSidebarChrome(_props: { workbench: WorkbenchSnapshot }) {
+function WorkbenchSidebarChrome({ workbench, trailingAccessory }: { workbench: WorkbenchSnapshot; trailingAccessory?: ReactNode }) {
   return (
     <div className="workbenchSidebarChrome" data-leading="true">
-      <div className="workbenchSidebarChromePrimary" />
-      <div className="workbenchSidebarChromeGlyphs" aria-hidden="true">
-        <SidebarSearchGlyph />
-        <SidebarAddFileGlyph />
-        <SidebarAddFolderGlyph />
+      <div className="workbenchChromeLeadingAccessory">
+        <WorkbenchLeadingChrome workbench={workbench} trailingAccessory={trailingAccessory} />
+      </div>
+      <div className="workbenchSidebarChromeGlyphs">
+        <button className="workbenchSidebarGlyphButton" title="Search files" onClick={() => dispatchCommand("fileTree.search")}><SidebarSearchGlyph /></button>
+        <button className="workbenchSidebarGlyphButton" title="New file" onClick={() => dispatchCommand("fileTree.newFile")}><SidebarAddFileGlyph /></button>
+        <button className="workbenchSidebarGlyphButton" title="New folder" onClick={() => dispatchCommand("fileTree.newFolder")}><SidebarAddFolderGlyph /></button>
       </div>
     </div>
+  );
+}
+
+function WorkbenchLeadingChrome({ workbench, trailingAccessory }: { workbench: WorkbenchSnapshot; trailingAccessory?: ReactNode }) {
+  return (
+    <div className="workbenchLeadingChrome">
+      <div className="workbenchSidebarTitle">{basename(workbench.workingDirectory?.current) || "the-editor"}</div>
+      {trailingAccessory ? <div className="workbenchChromeTrailingAccessory">{trailingAccessory}</div> : null}
+    </div>
+  );
+}
+
+function SidebarToggleButton({ expanded, onToggle }: { expanded: boolean; onToggle(): void }) {
+  return (
+    <button
+      type="button"
+      className="workbenchSidebarToggleButton"
+      title={expanded ? "Hide file tree" : "Show file tree"}
+      aria-label={expanded ? "Hide file tree" : "Show file tree"}
+      aria-pressed={expanded}
+      onMouseDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onToggle();
+      }}
+    >
+      <span />
+    </button>
   );
 }
 
@@ -218,11 +274,13 @@ function EditorLayoutRoot({
   workbench,
   selectionPickerActive,
   showLeadingWindowChrome,
+  leadingAccessory,
 }: {
   layout: WorkbenchEditorLayoutSnapshot | undefined;
   workbench: WorkbenchSnapshot;
   selectionPickerActive: boolean;
   showLeadingWindowChrome?: boolean;
+  leadingAccessory?: ReactNode;
 }) {
   const items = useMemo(
     () => new Map((layout?.items ?? []).map((item) => [item.id, item] as const)),
@@ -251,6 +309,7 @@ function EditorLayoutRoot({
       workbench={workbench}
       selectionPickerActive={selectionPickerActive}
       leadingGroupId={showLeadingWindowChrome ? findLeadingGroupId(layout.root) : undefined}
+      leadingAccessory={leadingAccessory}
     />
   );
 }
@@ -264,6 +323,7 @@ function EditorLayoutNodeView({
   workbench,
   selectionPickerActive,
   leadingGroupId,
+  leadingAccessory,
 }: {
   node: WorkbenchEditorLayoutNodeSnapshot;
   layout: WorkbenchEditorLayoutSnapshot;
@@ -273,6 +333,7 @@ function EditorLayoutNodeView({
   workbench: WorkbenchSnapshot;
   selectionPickerActive: boolean;
   leadingGroupId?: string;
+  leadingAccessory?: ReactNode;
 }) {
   if (node.kind === "group") {
     const group = groups.get(node.groupId);
@@ -286,6 +347,7 @@ function EditorLayoutNodeView({
         workbench={workbench}
         selectionPickerActive={selectionPickerActive}
         showWindowChrome={group.id === leadingGroupId}
+        leadingAccessory={group.id === leadingGroupId ? leadingAccessory : undefined}
       />
     );
   }
@@ -300,6 +362,7 @@ function EditorLayoutNodeView({
       workbench={workbench}
       selectionPickerActive={selectionPickerActive}
       leadingGroupId={leadingGroupId}
+      leadingAccessory={leadingAccessory}
     />
   );
 }
@@ -313,6 +376,7 @@ function EditorSplitView({
   workbench,
   selectionPickerActive,
   leadingGroupId,
+  leadingAccessory,
 }: {
   node: WorkbenchSplitNodeSnapshot;
   layout: WorkbenchEditorLayoutSnapshot;
@@ -322,6 +386,7 @@ function EditorSplitView({
   workbench: WorkbenchSnapshot;
   selectionPickerActive: boolean;
   leadingGroupId?: string;
+  leadingAccessory?: ReactNode;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
@@ -380,6 +445,7 @@ function EditorSplitView({
               workbench={workbench}
               selectionPickerActive={selectionPickerActive}
               leadingGroupId={leadingGroupId}
+              leadingAccessory={leadingAccessory}
             />
           </div>
         </FragmentWithDivider>
@@ -396,6 +462,7 @@ function EditorGroupView({
   workbench,
   selectionPickerActive,
   showWindowChrome,
+  leadingAccessory,
 }: {
   group: WorkbenchGroupSnapshot;
   layout: WorkbenchEditorLayoutSnapshot;
@@ -404,6 +471,7 @@ function EditorGroupView({
   workbench: WorkbenchSnapshot;
   selectionPickerActive: boolean;
   showWindowChrome?: boolean;
+  leadingAccessory?: ReactNode;
 }) {
   const [dropDirection, setDropDirection] = useState<"left" | "right" | "up" | "down" | null>(null);
   const activePaneId = group.activePaneId;
@@ -442,12 +510,13 @@ function EditorGroupView({
       }}
     >
       <header className="editorGroupHeader">
+        {leadingAccessory ? <div className="workbenchChromeLeadingAccessory">{leadingAccessory}</div> : null}
         {uiRuntime.renderWorkbenchTabstrip({
           group,
           items: tabItems,
           panes: tabs,
           activePaneId,
-          showWindowControls: showWindowChrome,
+          showWindowControls: showWindowChrome && !leadingAccessory,
         })}
       </header>
       <div className="editorGroupBody" onMouseDown={() => focusGroup(group.id)}>
@@ -499,7 +568,6 @@ function renderPane(
         pane={pane}
         active={active}
         decorations={active ? workbench.decorations ?? [] : []}
-        gutters={active ? workbench.gutters ?? [] : []}
         theme={workbench.theme}
         syntaxLegend={workbench.syntaxLegend ?? {}}
         selectionPickerActive={active && selectionPickerActive}
@@ -513,7 +581,6 @@ function SurfaceEditorPane({
   pane,
   active,
   decorations,
-  gutters,
   theme,
   syntaxLegend,
   selectionPickerActive,
@@ -521,7 +588,6 @@ function SurfaceEditorPane({
   pane: Extract<WorkbenchPaneDescriptor, { kind: "surface" }>;
   active: boolean;
   decorations: BufferDecoration[];
-  gutters: GutterSnapshot[];
   theme: ThemeSnapshot | undefined;
   syntaxLegend: Record<number, string>;
   selectionPickerActive: boolean;
@@ -538,7 +604,7 @@ function SurfaceEditorPane({
 
   latestFrameRef.current = paneState?.frame;
   latestDecorationsRef.current = decorations;
-  latestGuttersRef.current = gutters;
+  latestGuttersRef.current = paneState?.gutters ?? [];
   latestThemeRef.current = theme;
   latestSyntaxLegendRef.current = syntaxLegend;
   latestSelectionPickerActiveRef.current = selectionPickerActive;
@@ -601,8 +667,8 @@ function SurfaceEditorPane({
       clearCanvasTextSurface(canvas, theme, EDITOR_SURFACE_STYLE);
       return;
     }
-    paintCanvasTextSurface(canvas, paneState.frame, decorations, theme, syntaxLegend, { selectionPickerActive, gutters }, EDITOR_SURFACE_STYLE);
-  }, [decorations, gutters, paneState?.frame, selectionPickerActive, syntaxLegend, theme]);
+    paintCanvasTextSurface(canvas, paneState.frame, decorations, theme, syntaxLegend, { selectionPickerActive, gutters: paneState.gutters ?? [] }, EDITOR_SURFACE_STYLE);
+  }, [decorations, paneState?.frame, paneState?.gutters, selectionPickerActive, syntaxLegend, theme]);
 
   return (
     <div className="editorSurfacePane" data-active={active ? "true" : undefined} onMouseDown={() => focusPane(pane.id)}>
@@ -640,6 +706,37 @@ function FragmentWithDivider({ children, divider }: { children: ReactNode; divid
       {divider}
     </>
   );
+}
+
+function startSidebarResize(
+  event: React.PointerEvent<HTMLDivElement>,
+  initialWidth: number,
+  setWidth: (width: number) => void,
+): void {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const handle = event.currentTarget;
+  handle.setPointerCapture(event.pointerId);
+  const startX = event.clientX;
+  document.body.classList.add("isResizingSidebar");
+  document.documentElement.style.cursor = "col-resize";
+
+  const move = (moveEvent: PointerEvent) => {
+    setWidth(clamp(initialWidth + moveEvent.clientX - startX, 240, 520));
+  };
+  const finish = (finishEvent: PointerEvent) => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", finish);
+    window.removeEventListener("pointercancel", finish);
+    document.body.classList.remove("isResizingSidebar");
+    document.documentElement.style.removeProperty("cursor");
+    if (handle.hasPointerCapture(finishEvent.pointerId)) handle.releasePointerCapture(finishEvent.pointerId);
+  };
+
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", finish);
+  window.addEventListener("pointercancel", finish);
 }
 
 function startSplitResize(
@@ -788,6 +885,17 @@ function namedKey(key: string): string | undefined {
   }
 }
 
+function basename(path: string | undefined): string {
+  if (!path) return "";
+  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+}
+
+function dispatchCommand(id: string, args?: unknown): void {
+  void window.theEditor.policyRequest("command.dispatch", { id, args }).catch((error) => {
+    console.error(error);
+  });
+}
+
 function focusPane(paneId: string): void {
   void window.theEditor.policyRequest("command.dispatch", { id: "workbench.focusPane", args: { paneId } }).catch((error) => {
     console.error(error);
@@ -830,10 +938,19 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+function isEditableKeyEvent(event: KeyboardEvent): boolean {
+  for (const target of event.composedPath()) {
+    if (isEditableTarget(target)) return true;
+  }
+  return isEditableTarget(event.target);
+}
+
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (target instanceof HTMLInputElement) return true;
   if (target instanceof HTMLTextAreaElement) return true;
+  const tagName = target.tagName.toLowerCase();
+  if (tagName === "input" || tagName === "textarea" || tagName === "select") return true;
   return target.isContentEditable;
 }
 

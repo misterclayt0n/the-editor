@@ -1,0 +1,39 @@
+.defaultFileTree {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.defaultFileTreeContextMenu {
+  background: color-mix(in srgb, var(--theme-ui-menu-bg, #141414) 96%, black);
+  border: 1px solid color-mix(in srgb, var(--theme-ui-text-inactive-fg, #888) 18%, transparent);
+  border-radius: 8px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.42);
+  color: var(--theme-ui-menu-fg, #d8d8d8);
+  display: flex;
+  flex-direction: column;
+  min-width: 150px;
+  padding: 5px;
+}
+
+.defaultFileTreeContextMenu button {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.defaultFileTreeContextMenu button:hover {
+  background: var(--theme-ui-menu-selected-bg, #2a2a2a);
+  color: var(--theme-ui-menu-selected-fg, #fff);
+}
+
+.defaultFileTreeContextMenu button.danger:hover {
+  background: color-mix(in srgb, var(--theme-diagnostic-error-fg, #f87171) 20%, transparent);
+}

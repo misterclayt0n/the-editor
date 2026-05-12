@@ -317,6 +317,18 @@
   width: 100%;
 }
 
+.pickerPreviewLoading {
+  align-items: center;
+  color: var(--pickerMuted);
+  display: flex;
+  font-size: 13px;
+  inset: 0;
+  justify-content: center;
+  pointer-events: none;
+  position: absolute;
+  z-index: 3;
+}
+
 .pickerPreviewSelectableText {
   caret-color: transparent;
   color: transparent;

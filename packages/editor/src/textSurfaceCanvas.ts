@@ -14,6 +14,7 @@ export interface CanvasTextSurfaceStyleOptions {
   fontSizePx?: number;
   lineHeightPx?: number;
   fontFamily?: string;
+  gutterReservePx?: number;
 }
 
 export interface CanvasTextSurfacePaintOptions {
@@ -39,6 +40,7 @@ const DEFAULT_TEXT_SURFACE_STYLE = {
   fontSizePx: 15,
   lineHeightPx: 22,
   fontFamily: "Iosevka, Menlo, Monaco, Consolas, 'SF Mono', ui-monospace, monospace",
+  gutterReservePx: 56,
 } satisfies Required<CanvasTextSurfaceStyleOptions>;
 const SEGMENTER = typeof Intl !== "undefined" && "Segmenter" in Intl
   ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
@@ -76,7 +78,7 @@ export function configureCanvasTextSurface(
   const ctx = canvas.getContext("2d");
   const style = resolveTextSurfaceStyle(styleOptions);
   const cellWidthPx = ctx ? measureCellWidth(ctx, style) : 8;
-  const contentWidth = Math.max(1, cssWidth - style.paddingPx * 2 - 56);
+  const contentWidth = Math.max(1, cssWidth - style.paddingPx * 2 - (style.gutterReservePx ?? 56));
   const contentHeight = Math.max(1, cssHeight - style.paddingPx * 2);
 
   return {
@@ -481,6 +483,7 @@ function resolveTextSurfaceStyle(styleOptions: CanvasTextSurfaceStyleOptions): R
     fontSizePx: styleOptions.fontSizePx ?? DEFAULT_TEXT_SURFACE_STYLE.fontSizePx,
     lineHeightPx: styleOptions.lineHeightPx ?? DEFAULT_TEXT_SURFACE_STYLE.lineHeightPx,
     fontFamily: styleOptions.fontFamily ?? DEFAULT_TEXT_SURFACE_STYLE.fontFamily,
+    gutterReservePx: styleOptions.gutterReservePx ?? DEFAULT_TEXT_SURFACE_STYLE.gutterReservePx,
   };
 }
 
@@ -510,7 +513,7 @@ function gutterLaneGroups(gutters: GutterSnapshot[]): GutterSnapshot[][] {
 
 function gutterLaneGroupWidthPx(lane: GutterSnapshot[], cellWidth: number): number {
   const spec = lane[0]!.lane;
-  const contentWidth = Math.max(...lane.map((gutter) => gutter.lane.widthPx ?? (gutter.lane.widthCells ?? 1) * cellWidth));
+  const contentWidth = Math.max(0, ...lane.map((gutter) => gutter.lane.widthPx ?? (gutter.lane.widthCells ?? 1) * cellWidth));
   return Math.ceil(contentWidth + spec.paddingLeftPx + spec.paddingRightPx);
 }
 

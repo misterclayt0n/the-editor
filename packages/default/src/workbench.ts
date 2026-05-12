@@ -295,6 +295,8 @@ function decoratePaneSnapshot(
       state: surface
         ? {
           frame: surface.frame,
+          lineCount: surface.lineCount,
+          gutters: surface.gutters,
           viewport: surface.viewport,
           metrics: surface.metrics,
           path: surface.path,

@@ -2,6 +2,7 @@ import type { KeyInput } from "@the-editor/editor";
 import { defaultCommandPalette } from "./commandPalette.js";
 import { defaultEditing } from "./editing.js";
 import { defaultGutters } from "./gutters.js";
+import { defaultFileTree } from "./fileTree.js";
 import { defaultInputPrompt } from "./inputPrompt.js";
 import { defaultKeymaps } from "./keymaps.js";
 import { defaultPicker } from "./picker.js";
@@ -16,6 +17,7 @@ export {
   defaultCommandPalette,
   defaultEditing,
   defaultGutters,
+  defaultFileTree,
   defaultInputPrompt,
   defaultKeymaps,
   defaultPicker,

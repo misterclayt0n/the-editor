@@ -8,8 +8,11 @@ import {
 import type { CanvasTextSurfaceStyleOptions } from "@the-editor/editor/textSurfaceCanvas";
 import { resolveThemeStyleLoose, type ResolvedThemeDefinition } from "@the-editor/editor/themes";
 import type { EditorUiModule, UiSessionClient, WorkbenchSnapshot } from "@the-editor/editor/ui";
+import type { FileTreeToolState } from "./fileTree.js";
+import { DefaultFileTree } from "./fileTreeUi.js";
 import { DefaultWorkbenchTabstrip } from "./workbenchTabstrip.js";
 import "./commandPalette.css";
+import "./fileTree.css";
 import "./inputPrompt.css";
 import "./picker.css";
 import "./workbenchUi.css";
@@ -117,6 +120,7 @@ const PICKER_PREVIEW_SURFACE_STYLE: CanvasTextSurfaceStyleOptions = {
   paddingPx: 12,
   fontSizePx: 13,
   lineHeightPx: 19,
+  gutterReservePx: 88,
 };
 
 const uiModule: EditorUiModule = (host) => {
@@ -176,6 +180,13 @@ const uiModule: EditorUiModule = (host) => {
           groupId={group.id}
         />
       );
+    },
+  });
+
+  host.tools.register<FileTreeToolState>({
+    typeId: "default.fileTree",
+    render({ state, commands }) {
+      return <DefaultFileTree state={state} commands={commands} contributions={host.fileTrees.all()} />;
     },
   });
 
@@ -584,6 +595,9 @@ function PickerSurfacePreview({
         </div>
         <div className="pickerPreviewCanvasViewport">
           <canvas ref={canvasRef} className="pickerPreviewCanvas" />
+          {controllerState.status === "loading" && !controllerState.frame ? (
+            <div className="pickerPreviewLoading">Loading preview…</div>
+          ) : null}
           {selectablePreviewText ? (
             <pre
               ref={selectionRef}

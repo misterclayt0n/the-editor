@@ -34,6 +34,7 @@ export interface GutterProviderContext {
   activeSurfaceId?: SurfaceId;
   activePath?: string;
   frame?: RenderFrame;
+  lineCount?: number;
 }
 
 export interface GutterProvider {
@@ -103,10 +104,11 @@ export class GutterRegistry {
           if (gutters[index]?.lane.id === lane.id) gutters.splice(index, 1);
         }
       }
+      const lines = await provider.provide(ctx);
       gutters.push({
         providerId: provider.id,
-        lane,
-        lines: await provider.provide(ctx),
+        lane: resizeLaneForLines(lane, lines),
+        lines,
       });
     }
     return gutters;
@@ -122,5 +124,14 @@ function normalizeLane(laneId: string, spec: GutterLaneSpec | undefined, fallbac
     widthPx: spec?.widthPx,
     paddingLeftPx: spec?.paddingLeftPx ?? 0,
     paddingRightPx: spec?.paddingRightPx ?? 0,
+  };
+}
+
+function resizeLaneForLines(lane: GutterLaneSnapshot, lines: readonly GutterLine[]): GutterLaneSnapshot {
+  if (lane.widthPx !== undefined) return lane;
+  const maxTextCells = lines.reduce((max, line) => Math.max(max, line.text?.length ?? 0), 0);
+  return {
+    ...lane,
+    widthCells: Math.max(lane.widthCells ?? 0, maxTextCells),
   };
 }

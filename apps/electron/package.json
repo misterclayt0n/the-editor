@@ -15,14 +15,15 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@pierre/trees": "1.0.0-beta.3",
     "@the-editor/contracts": "workspace:*",
     "@the-editor/default": "workspace:*",
     "@the-editor/editor": "workspace:*",
     "@vitejs/plugin-react": "latest",
     "electron": "latest",
-    "vite": "latest",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "vite": "latest"
   },
   "devDependencies": {
     "@types/node": "catalog:",

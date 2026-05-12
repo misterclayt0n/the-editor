@@ -38,11 +38,12 @@ body {
   --workbench-tab-badge-fg: var(--theme-ui-text-inactive-fg);
   --workbench-tab-badge-active-bg: color-mix(in srgb, var(--theme-ui-menu-selected-fg) 14%, transparent);
   --workbench-tab-close-hover-bg: color-mix(in srgb, var(--theme-ui-menu-selected-fg) 10%, transparent);
-  --native-traffic-light-inset: 90px;
+  --native-traffic-light-inset: 82px;
   --native-titlebar-height: 52px;
 }
 
-body.isResizingSplits {
+body.isResizingSplits,
+body.isResizingSidebar {
   user-select: none;
 }
 
@@ -73,10 +74,25 @@ body.isResizingSplits {
   min-height: 0;
   min-width: 0;
   overflow: hidden;
+  position: relative;
+}
+
+.workbenchSidebar.left {
+  flex-basis: var(--workbench-left-sidebar-width, 320px);
 }
 
 .workbenchSidebar.right {
   flex-basis: clamp(240px, 20vw, 360px);
+}
+
+.workbenchSidebar.left[data-visible="false"] {
+  flex-basis: 0;
+  min-width: 0;
+  visibility: hidden;
+}
+
+.workbenchSidebar.left[data-visible="false"] > * {
+  visibility: hidden;
 }
 
 .workbenchSidebarChrome {
@@ -91,9 +107,76 @@ body.isResizingSplits {
   padding: 0 14px;
 }
 
+.workbenchChromeLeadingAccessory {
+  -webkit-app-region: no-drag;
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 auto;
+  margin-left: var(--native-traffic-light-inset);
+  margin-right: 12px;
+}
+
+.workbenchLeadingChrome {
+  -webkit-app-region: drag;
+  align-items: center;
+  color: var(--workbench-sidebar-fg);
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 10px;
+}
+
+.workbenchChromeTrailingAccessory {
+  -webkit-app-region: no-drag;
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 auto;
+  margin-left: 10px;
+}
+
+.workbenchSidebarToggleButton {
+  -webkit-app-region: no-drag;
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: var(--workbench-sidebar-fg-muted);
+  cursor: pointer;
+  display: inline-flex;
+  height: 22px;
+  justify-content: center;
+  padding: 0;
+  width: 22px;
+}
+
+.workbenchSidebarToggleButton span {
+  border: 1.5px solid currentColor;
+  border-radius: 3px;
+  display: block;
+  height: 13px;
+  position: relative;
+  width: 15px;
+}
+
+.workbenchSidebarToggleButton span::before {
+  background: currentColor;
+  bottom: 1px;
+  content: "";
+  left: 4px;
+  position: absolute;
+  top: 1px;
+  width: 1.5px;
+}
+
+.workbenchSidebarToggleButton:hover {
+  background: var(--workbench-tab-hover-bg);
+  color: var(--theme-ui-text-fg);
+}
+
 .workbenchSidebarChromePrimary {
   align-items: center;
   display: flex;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -113,7 +196,34 @@ body.isResizingSplits {
   align-items: center;
   color: var(--workbench-sidebar-fg-muted);
   display: inline-flex;
-  gap: 12px;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.workbenchSidebarGlyphButton {
+  -webkit-app-region: no-drag;
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  height: 22px;
+  justify-content: center;
+  padding: 0;
+  width: 22px;
+}
+
+.workbenchSidebarGlyphButton:hover:not(:disabled) {
+  background: var(--workbench-tab-hover-bg);
+  color: var(--theme-ui-text-fg);
+}
+
+.workbenchSidebarGlyphButton:disabled {
+  cursor: default;
+  opacity: 0.35;
 }
 
 .workbenchSidebarGlyph {
@@ -135,6 +245,32 @@ body.isResizingSplits {
   overflow: hidden;
 }
 
+.workbenchSidebarResizeHandle {
+  bottom: 0;
+  cursor: col-resize;
+  position: absolute;
+  right: -3px;
+  top: 0;
+  width: 6px;
+  z-index: 20;
+}
+
+.workbenchSidebarResizeHandle::before {
+  background: transparent;
+  bottom: 0;
+  content: "";
+  left: 2px;
+  position: absolute;
+  top: 0;
+  transition: background-color 120ms ease;
+  width: 1px;
+}
+
+.workbenchSidebarResizeHandle:hover::before,
+body.isResizingSidebar .workbenchSidebarResizeHandle::before {
+  background: var(--theme-ui-selection-bg);
+}
+
 .workbenchCenterColumn {
   display: flex;
   flex: 1 1 auto;
@@ -152,8 +288,7 @@ body.isResizingSplits {
   width: 100%;
 }
 
-.workbenchTopTabsBar[data-leading="true"],
-.workbenchSidebarChrome[data-leading="true"] {
+.workbenchTopTabsBar[data-leading="true"] {
   padding-left: var(--native-traffic-light-inset);
 }
 

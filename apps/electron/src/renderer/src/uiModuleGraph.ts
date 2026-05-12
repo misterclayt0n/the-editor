@@ -3,6 +3,7 @@ import ts from "typescript";
 export const UI_SOURCE_ALLOWED_SPECIFIERS = new Set([
   "react",
   "react/jsx-runtime",
+  "@pierre/trees/react",
   "@the-editor/contracts/runtime",
   "@the-editor/editor/ui",
   "@the-editor/editor/themes",

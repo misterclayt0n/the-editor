@@ -12,6 +12,8 @@ export interface SurfacePaneViewState {
   viewport: Viewport;
   metrics?: CellGridMetrics;
   frame?: RenderFrame;
+  lineCount?: number;
+  gutters?: GutterSnapshot[];
 }
 
 export interface DefaultEditorState {
@@ -95,6 +97,15 @@ export async function refreshActiveSurface(editor: EditorHost, viewport?: Viewpo
 
   for (const pane of state.surfacePanes.values()) {
     pane.frame = await editor.runtime.surfaces.renderFrame({ surfaceId: pane.surfaceId });
+    pane.lineCount = (await editor.runtime.surfaces.lineCount({ surfaceId: pane.surfaceId })).lineCount;
+    pane.gutters = await editor.gutters?.collect({
+      mode: state.mode,
+      activeDocumentId: pane.documentId,
+      activeSurfaceId: pane.surfaceId,
+      activePath: pane.path,
+      frame: pane.frame,
+      lineCount: pane.lineCount,
+    }) ?? [];
   }
 
   state.lastFrame = state.activePaneId ? state.surfacePanes.get(state.activePaneId)?.frame : undefined;
@@ -108,9 +119,10 @@ export async function refreshActiveSurface(editor: EditorHost, viewport?: Viewpo
     activeSurfaceId: state.activeSurfaceId,
     activePath: state.activePath,
     frame: state.lastFrame,
+    lineCount: state.activePaneId ? state.surfacePanes.get(state.activePaneId)?.lineCount : undefined,
   };
   state.decorations = await editor.decorations.collect(surfaceContext);
-  state.gutters = await editor.gutters?.collect(surfaceContext) ?? [];
+  state.gutters = state.activePaneId ? state.surfacePanes.get(state.activePaneId)?.gutters ?? [] : [];
   return state;
 }
 

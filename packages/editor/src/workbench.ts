@@ -489,6 +489,17 @@ export class WorkbenchController {
     if (!targetGroupId) return undefined;
 
     const sourceGroup = this.groupForPane(pane.id);
+    if (sourceGroup?.id === targetGroupId && pane.kind === "surface" && groupHasSurfaceItem(state, sourceGroup, pane.itemId)) {
+      return this.focusPane(pane.id);
+    }
+    if (placement.kind === "tab" && groupHasSurfaceItem(state, state.groups.get(targetGroupId), pane.itemId)) {
+      this.removePane(pane.id);
+      this.removeOrphanedItem(pane.itemId);
+      this.syncFocusToActivePane();
+      state.root = collapseSplitTree(pruneEmptyGroups(state.root, state.groups));
+      this.invalidate("layout", "focus", "tabs");
+      return pane;
+    }
     if (placement.kind === "split" && sourceGroup?.id === targetGroupId && sourceGroup.paneIds.length <= 1) {
       return undefined;
     }
@@ -908,6 +919,18 @@ function paneWithItem(pane: WorkbenchPaneDescriptor, item: WorkbenchItemDescript
     };
   }
   return pane;
+}
+
+function groupHasSurfaceItem(
+  state: WorkbenchLayoutState,
+  group: WorkbenchGroupState | undefined,
+  itemId: WorkbenchItemId,
+): boolean {
+  if (!group) return false;
+  return group.paneIds.some((paneId) => {
+    const pane = state.panes.get(paneId);
+    return pane?.kind === "surface" && pane.itemId === itemId;
+  });
 }
 
 function directionAxis(direction: WorkbenchSplitDirection): WorkbenchSplitAxis {

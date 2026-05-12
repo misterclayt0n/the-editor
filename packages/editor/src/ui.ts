@@ -100,6 +100,17 @@ interface RegisteredWorkbenchTabstripView extends WorkbenchTabstripViewRegistrat
   moduleId: ModuleId;
 }
 
+export interface FileTreeUiContribution {
+  id: string;
+  options?: Record<string, unknown>;
+  renderContextMenu?: (item: unknown, context: unknown) => unknown;
+  renderRowDecoration?: (context: unknown) => unknown;
+}
+
+interface RegisteredFileTreeUiContribution extends FileTreeUiContribution {
+  moduleId: ModuleId;
+}
+
 export type EditorUiModule = (host: UiHost) => void | Disposable | Promise<void | Disposable>;
 
 export class RoleViewRegistry {
@@ -252,6 +263,25 @@ export class WorkbenchTabstripRegistry {
   }
 }
 
+export class FileTreeUiRegistry {
+  private readonly entries = new Map<string, RegisteredFileTreeUiContribution>();
+
+  constructor(private readonly host: UiHost) {}
+
+  register(contribution: FileTreeUiContribution, moduleId = this.host.currentModuleId()): Disposable {
+    const entry: RegisteredFileTreeUiContribution = { ...contribution, moduleId };
+    this.entries.set(contribution.id, entry);
+    const unregister = toDisposable(() => {
+      if (this.entries.get(contribution.id) === entry) this.entries.delete(contribution.id);
+    });
+    return this.host.addContribution({ moduleId, kind: contributionKind("fileTreeUi"), localId: contribution.id, disposable: unregister });
+  }
+
+  all(): readonly FileTreeUiContribution[] {
+    return [...this.entries.values()];
+  }
+}
+
 const emptyUiSessionClient: UiSessionClient = {
   all: () => [],
   get: () => undefined,
@@ -263,6 +293,7 @@ export class UiHost {
   readonly roles = new RoleViewRegistry(this);
   readonly tools = new ToolViewRegistry(this);
   readonly tabstrips = new WorkbenchTabstripRegistry(this);
+  readonly fileTrees = new FileTreeUiRegistry(this);
 
   private readonly moduleStack: ModuleId[] = [];
   private readonly contributions = new Map<string, Disposable>();

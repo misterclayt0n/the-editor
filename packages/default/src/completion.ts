@@ -213,7 +213,7 @@ export function defaultCompletion(): EditorModule {
       handler: async ({ dispatch }: { dispatch: { id: string; args?: unknown } }) => {
         if (dispatch.id.startsWith("completion.") || completionPreservingCommands.has(dispatch.id as ReturnType<typeof commandId>)) return;
         const active = completionController(editor).active;
-        const inInsertMode = getDefaultState(editor).mode === "insert" && editor.focus.current().kind === "editor";
+        const inInsertMode = getDefaultState(editor).mode === "insert" && editor.input.current().kind === "editor";
 
         if (active) {
           if (insertMutationCommands.has(dispatch.id as ReturnType<typeof commandId>) && inInsertMode) {

@@ -139,7 +139,7 @@ describe("extension registries", () => {
     });
 
     const tool = editor.tools.open("demo.tool");
-    expect(editor.focus.current()).toEqual({ kind: "tool", toolId: tool.id });
+    expect(editor.input.current()).toEqual({ kind: "tool", toolId: tool.id });
     expect(editor.tools.snapshotAll()).toEqual([
       {
         ...tool,
@@ -175,7 +175,7 @@ describe("extension registries", () => {
       placement: { kind: "split", direction: "right" },
     });
 
-    expect(editor.focus.current()).toEqual({ kind: "tool", toolId: tool.id });
+    expect(editor.input.current()).toEqual({ kind: "tool", toolId: tool.id });
     expect(editor.workbench.snapshotEditorLayout()).toMatchObject({
       root: {
         kind: "split",
@@ -227,7 +227,7 @@ describe("extension registries", () => {
 
     await editor.packages.load("demo.tools");
     const tool = editor.tools.open("demo.tools.panel");
-    expect(editor.focus.current()).toEqual({ kind: "tool", toolId: tool.id });
+    expect(editor.input.current()).toEqual({ kind: "tool", toolId: tool.id });
 
     await editor.packages.reload("demo.tools/runtime");
 
@@ -235,7 +235,7 @@ describe("extension registries", () => {
     expect(tools).toHaveLength(1);
     expect(tools[0]?.typeId).toBe("demo.tools.panel");
     expect(tools[0]?.state).toEqual({ loads: 2 });
-    expect(editor.focus.current()).toEqual({ kind: "tool", toolId: tools[0]?.id });
+    expect(editor.input.current()).toEqual({ kind: "tool", toolId: tools[0]?.id });
   });
 
   it("bumps ui target load versions for renderer remounts", async () => {

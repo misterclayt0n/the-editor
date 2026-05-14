@@ -83,7 +83,7 @@ export function defaultSignatureHelp(): EditorModule {
 
         const previousMode = signatureHelpController(editor).beforeDispatchMode;
         const currentMode = getDefaultState(editor).mode;
-        const editorFocused = editor.focus.current().kind === "editor";
+        const editorFocused = editor.input.current().kind === "editor";
         const active = isSignatureHelpOpen(editor);
 
         if (currentMode !== "insert" || !editorFocused) {

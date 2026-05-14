@@ -63,7 +63,7 @@ export class ToolRegistry {
     const unregister = toDisposable(() => {
       const current = this.types.get(id);
       if (current?.id === id) this.types.delete(id);
-      const currentFocus = this.editor.focus.current();
+      const currentFocus = this.editor.input.current();
       const removedFocusedTool = currentFocus.kind === "tool"
         && [...this.instances.values()].some((instance) =>
           instance.typeId === id && currentFocus.toolId === instance.id,
@@ -72,7 +72,7 @@ export class ToolRegistry {
         if (instance.typeId !== id) continue;
         this.instances.delete(instance.id);
       }
-      if (removedFocusedTool) this.editor.focus.restore();
+      if (removedFocusedTool) this.editor.input.restore({ reason: "tool.unregister" });
     });
 
     return this.editor.contributions.add({
@@ -111,7 +111,7 @@ export class ToolRegistry {
     const instance = this.createInstance(type, options);
     this.instances.set(instance.id, instance);
     if (options.focus !== false && instance.root !== "editor") {
-      this.editor.focus.setTool(instance.id);
+      this.editor.input.focusTool(instance.id, { reason: "tool.open" });
     }
     return instance;
   }
@@ -120,7 +120,7 @@ export class ToolRegistry {
     const normalized = toolInstanceId(id);
     const instance = this.instances.get(normalized);
     if (!instance) return;
-    const currentFocus = this.editor.focus.current();
+    const currentFocus = this.editor.input.current();
     if (instance.root === "editor") {
       this.editor.workbench.closePanesForTool(normalized);
       this.instances.delete(normalized);
@@ -128,7 +128,7 @@ export class ToolRegistry {
     }
     this.instances.delete(normalized);
     if (currentFocus.kind === "tool" && currentFocus.toolId === normalized) {
-      this.editor.focus.restore();
+      this.editor.input.restore({ reason: "tool.close" });
     }
   }
 
@@ -140,7 +140,7 @@ export class ToolRegistry {
       this.editor.workbench.focusPane(pane.id);
       return;
     }
-    this.editor.focus.setTool(instance.id);
+    this.editor.input.focusTool(instance.id, { reason: "tool.focus" });
   }
 
   allTypes(): ToolTypeRegistration[] {

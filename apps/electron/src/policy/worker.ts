@@ -137,7 +137,7 @@ function buildSessionPayload(state: WorkbenchSessionState) {
     tools: state.tools ?? [],
     decorations: state.decorations ?? [],
     gutters: state.gutters ?? [],
-    focus: state.focus ?? editor.focus.current(),
+    focus: state.focus ?? editor.input.current(),
     packages: editor.packages.snapshot(),
     diagnostics: state.diagnostics ?? [],
     interaction: editor.interaction.snapshot(),

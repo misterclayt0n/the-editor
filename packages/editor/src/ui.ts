@@ -3,7 +3,7 @@ import type { BufferDecoration } from "./decorations.js";
 import type { DiagnosticRecord } from "./diagnostics.js";
 import { toDisposable, type Disposable } from "./disposable.js";
 import type { HealthDiagnosticEntry } from "./health.js";
-import type { FocusTarget } from "./focus.js";
+import type { FocusTarget } from "./input.js";
 import type { GutterSnapshot } from "./gutters.js";
 import type { CommandDispatch } from "./commands.js";
 import type { InteractionSnapshot } from "./interaction.js";

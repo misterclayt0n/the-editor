@@ -1,5 +1,5 @@
 import type { EditorHost } from "./editorHost.js";
-import type { FocusTarget } from "./focus.js";
+import type { FocusTarget } from "./input.js";
 import { roleId, type RoleId } from "./roles.js";
 
 interface OverlayEntry {
@@ -26,12 +26,12 @@ export class OverlayRegistry {
     const current = state.entries.get(normalizedRole);
     state.entries.set(normalizedRole, {
       role: normalizedRole,
-      restoreTarget: options.restoreTarget ?? current?.restoreTarget ?? this.editor.focus.current(),
+      restoreTarget: options.restoreTarget ?? current?.restoreTarget ?? this.editor.input.current(),
       order: current?.order ?? ++state.nextOrder,
       attachedToEditor: options.attachedToEditor ?? current?.attachedToEditor ?? false,
       scope: options.scope ?? current?.scope,
     });
-    if (options.focus ?? true) this.editor.focus.setRole(normalizedRole);
+    if (options.focus ?? true) this.editor.input.focusRole(normalizedRole, { reason: "overlay.open" });
     this.editor.workbench.invalidate("focus", "roles");
   }
 
@@ -42,7 +42,7 @@ export class OverlayRegistry {
     if (!entry) return;
     state.entries.delete(normalizedRole);
     if (options.restoreFocus ?? true) {
-      this.editor.focus.restoreTarget(entry.restoreTarget, options.fallback ?? { kind: "editor" });
+      this.editor.input.restoreTarget(entry.restoreTarget, { reason: "overlay.close", fallback: options.fallback ?? { kind: "editor" } });
     }
     this.editor.workbench.invalidate("focus", "roles");
   }
@@ -52,7 +52,7 @@ export class OverlayRegistry {
     const entries = [...state.entries.values()].sort((a, b) => b.order - a.order);
     state.entries.clear();
     if ((options.restoreFocus ?? true) && entries[0]) {
-      this.editor.focus.restoreTarget(entries[0].restoreTarget, options.fallback ?? { kind: "editor" });
+      this.editor.input.restoreTarget(entries[0].restoreTarget, { reason: "overlay.closeAll", fallback: options.fallback ?? { kind: "editor" } });
     }
     this.editor.workbench.invalidate("focus", "roles");
   }

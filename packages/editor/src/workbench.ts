@@ -3,7 +3,7 @@ import type { BufferDecoration } from "./decorations.js";
 import type { DiagnosticRecord } from "./diagnostics.js";
 import type { EditorHost } from "./editorHost.js";
 import type { HealthDiagnosticEntry } from "./health.js";
-import type { FocusTarget } from "./focus.js";
+import type { FocusTarget } from "./input.js";
 import type { GutterSnapshot } from "./gutters.js";
 import type { NotificationEntry } from "./notifications.js";
 import type { RoleSnapshot } from "./roles.js";
@@ -458,8 +458,8 @@ export class WorkbenchController {
     state.activeGroupId = group.id;
     state.activePaneId = pane.id;
     state.activeItemId = pane.itemId;
-    if (pane.kind === "tool") this.editor.focus.setTool(pane.toolId);
-    else this.editor.focus.setEditor();
+    if (pane.kind === "tool") this.editor.input.focusTool(pane.toolId, { reason: "workbench.focusPane" });
+    else this.editor.input.focusEditor({ reason: "workbench.focusPane" });
     this.invalidate("layout", "focus", "tabs");
     return pane;
   }
@@ -474,7 +474,7 @@ export class WorkbenchController {
     if (group.activePaneId) {
       this.focusPane(group.activePaneId);
     } else {
-      this.editor.focus.setEditor();
+      this.editor.input.focusEditor({ reason: "workbench.focusGroup" });
       this.invalidate("layout", "focus", "tabs");
     }
     return this.snapshotGroup(group);
@@ -843,11 +843,11 @@ export class WorkbenchController {
   private syncFocusToActivePane(): void {
     const pane = this.activePane();
     if (!pane) {
-      this.editor.focus.setEditor();
+      this.editor.input.focusEditor({ reason: "workbench.syncFocusToActivePane" });
       return;
     }
-    if (pane.kind === "tool") this.editor.focus.setTool(pane.toolId);
-    else this.editor.focus.setEditor();
+    if (pane.kind === "tool") this.editor.input.focusTool(pane.toolId, { reason: "workbench.syncFocusToActivePane" });
+    else this.editor.input.focusEditor({ reason: "workbench.syncFocusToActivePane" });
   }
 
   private snapshotGroup(group: WorkbenchGroupState): WorkbenchGroupSnapshot {

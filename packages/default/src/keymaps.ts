@@ -13,14 +13,14 @@ export function defaultKeymaps(): EditorModule {
         select: { title: "SELECT", cursorShape: "block", scopes: ["editor.select"] },
       },
       reduceUnmatched(ctx, input) {
-        if (ctx.editor.focus.current().kind === "editor" && ctx.state.mode === "insert" && input.text) {
+        if (ctx.editor.input.current().kind === "editor" && ctx.state.mode === "insert" && input.text) {
           return {
             state: ctx.state,
             handled: true,
             effects: [{ kind: "command.dispatch", dispatch: { id: commandId("edit.insertText"), args: { text: input.text } } }],
           };
         }
-        const focus = ctx.editor.focus.current();
+        const focus = ctx.editor.input.current();
         if (focus.kind === "role" && focus.role === "commandPalette" && input.text) {
           return {
             state: ctx.state,

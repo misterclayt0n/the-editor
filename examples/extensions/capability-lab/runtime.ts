@@ -163,7 +163,7 @@ const capabilityLabRuntime: EditorModule = (editor) => {
     category: "Extensions",
     hidden: true,
     run() {
-      editor.focus.setEditor();
+      editor.input.focusEditor({ reason: "capabilityLab.focusEditor" });
       setLastEvent(editor, "focused editor");
       editor.workbench.invalidate("focus", "tools", "roles");
     },
@@ -422,7 +422,7 @@ function getCapabilityState(editor: EditorHost): CapabilityLabState {
 
 function snapshotCapabilityToolState(editor: EditorHost, toolId: string) {
   const state = getCapabilityState(editor);
-  const focus = editor.focus.current();
+  const focus = editor.input.current();
   return {
     counter: state.counter,
     ghostTextEnabled: state.ghostTextEnabled,
@@ -447,7 +447,7 @@ function setLastEvent(editor: EditorHost, lastEvent: string): void {
 }
 
 function describeFocus(editor: EditorHost): string {
-  const focus = editor.focus.current();
+  const focus = editor.input.current();
   if (focus.kind === "editor") return "editor";
   if (focus.kind === "role") return `role:${focus.role}`;
   return `tool:${focus.toolId}`;

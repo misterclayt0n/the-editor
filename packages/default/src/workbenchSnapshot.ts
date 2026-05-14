@@ -171,7 +171,7 @@ export async function snapshotWorkbenchSession(editor: EditorHost): Promise<Work
     gutters: state.gutters,
     diagnostics: editor.diagnostics.all(),
     healthDiagnostics: editor.health.all(),
-    focus: editor.focus.current(),
+    focus: editor.input.current(),
     theme: editor.themes.snapshot(),
     syntaxLegend: state.syntaxLegend,
     sessions: editor.sessions.snapshotAll(),

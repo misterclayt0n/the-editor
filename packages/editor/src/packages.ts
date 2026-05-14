@@ -129,7 +129,7 @@ export class PackageRegistry {
       throw new Error(`package ${pkg.manifest.id} has no ${target} target`);
     }
 
-    const capturedFocus = this.editor.focus.current();
+    const capturedFocus = this.editor.input.current();
     const capturedTools = targets.includes("runtime")
       ? this.editor.tools.capturePackageInstances(String(pkg.manifest.id))
       : [];
@@ -165,14 +165,14 @@ export class PackageRegistry {
           && tool.persistenceKey === capturedFocusedTool.persistenceKey
           && tool.title === capturedFocusedTool.title,
         );
-        if (restoredTool) this.editor.focus.setTool(restoredTool.id);
-        else this.editor.focus.restoreTarget(capturedFocus);
+        if (restoredTool) this.editor.input.focusTool(restoredTool.id, { reason: "package.reload.restoreTool" });
+        else this.editor.input.restoreTarget(capturedFocus, { reason: "package.reload.restoreFocus" });
       } else {
-        this.editor.focus.restoreTarget(capturedFocus);
+        this.editor.input.restoreTarget(capturedFocus, { reason: "package.reload.restoreFocus" });
       }
       this.editor.workbench.invalidate("roles", "tools", "focus", "decorations", "gutters", "theme");
     } catch (error) {
-      this.editor.focus.restoreTarget(capturedFocus);
+      this.editor.input.restoreTarget(capturedFocus, { reason: "package.reload.errorRestoreFocus" });
       this.editor.workbench.invalidate("roles", "tools", "focus", "decorations", "gutters", "theme");
       throw error;
     }

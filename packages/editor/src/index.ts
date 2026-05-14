@@ -5,7 +5,7 @@ export * from "./decorations.js";
 export * from "./diagnostics.js";
 export * from "./disposable.js";
 export * from "./editorHost.js";
-export * from "./focus.js";
+export * from "./input.js";
 export * from "./gutters.js";
 export * from "./health.js";
 export * from "./hooks.js";

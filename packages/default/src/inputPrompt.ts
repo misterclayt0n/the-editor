@@ -263,7 +263,7 @@ async function closeInputPrompt(editor: Parameters<EditorModule>[0], restoreSele
   inputPromptState(editor).activeSessionId = undefined;
   editor.sessions.dispose(sessionId);
   editor.overlays.close(inputPromptRoleId, { restoreFocus: true });
-  editor.focus.setEditor();
+  editor.input.focusEditor({ reason: "inputPrompt.close" });
   await refreshActiveSurface(editor);
   editor.workbench.invalidate("frame", "roles", "focus");
 }

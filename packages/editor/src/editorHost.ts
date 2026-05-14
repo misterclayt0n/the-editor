@@ -6,7 +6,7 @@ import { DecorationRegistry } from "./decorations.js";
 import { DiagnosticStore } from "./diagnostics.js";
 import { DisposableStore } from "./disposable.js";
 import { HealthDiagnosticRegistry } from "./health.js";
-import { FocusRegistry } from "./focus.js";
+import { InputRouter } from "./input.js";
 import { GutterRegistry } from "./gutters.js";
 import { Hooks } from "./hooks.js";
 import { InteractionRegistry } from "./interaction.js";
@@ -54,7 +54,7 @@ export class EditorHost {
   readonly decorations = new DecorationRegistry(this);
   readonly gutters = new GutterRegistry(this);
   readonly lsp = new LspRegistry(this);
-  readonly focus = new FocusRegistry(this);
+  readonly input = new InputRouter(this);
   readonly themes = new ThemeRegistry(this);
   readonly sessions = new InteractiveSessionRegistry(this);
   readonly cwd: WorkingDirectoryRegistry;

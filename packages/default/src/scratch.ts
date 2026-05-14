@@ -70,7 +70,7 @@ export function defaultScratch(): EditorModule {
           metrics,
         });
         setEditorMode(editor, "normal");
-        editor.focus.setEditor();
+        editor.input.focusEditor({ reason: "scratch.fileSurface" });
         await refreshActiveSurface(editor, viewport);
         editor.workbench.invalidate("frame", "focus", "layout", "tabs");
         return state;
@@ -90,7 +90,7 @@ export function defaultScratch(): EditorModule {
         if (existingPane) {
           editor.workbench.focusPane(existingPane.id);
           setEditorMode(editor, "normal");
-          editor.focus.setEditor();
+          editor.input.focusEditor({ reason: "scratch.fileSurface" });
           const existingViewport = args.line ? viewportForLocation(viewport, args.line) : undefined;
           if (args.line) {
             const paneState = getDefaultState(editor).surfacePanes.get(existingPane.id);
@@ -143,7 +143,7 @@ export function defaultScratch(): EditorModule {
           metrics,
         });
         setEditorMode(editor, "normal");
-        editor.focus.setEditor();
+        editor.input.focusEditor({ reason: "scratch.fileSurface" });
         const nextViewport = args.line ? viewportForLocation(viewport, args.line) : viewport;
         if (args.line) {
           const paneState = getDefaultState(editor).surfacePanes.get(pane.id);

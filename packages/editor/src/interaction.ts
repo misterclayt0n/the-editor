@@ -2,7 +2,7 @@ import type { SurfaceId, SurfaceOperation } from "@the-editor/contracts/runtime"
 import { commandId, type CommandDispatch } from "./commands.js";
 import { contributionKind } from "./contributions.js";
 import type { EditorHost } from "./editorHost.js";
-import type { FocusTarget } from "./focus.js";
+import type { FocusTarget } from "./input.js";
 import type { KeyInput, KeymapPendingState, KeymapResolution } from "./keymaps.js";
 import { toDisposable, type Disposable } from "./disposable.js";
 
@@ -192,7 +192,7 @@ export class InteractionRegistry {
           this.setProfileMode(effect.mode);
           break;
         case "focus.set":
-          this.editor.focus.set(effect.target);
+          this.editor.input.focus(effect.target, { reason: "interaction.effect" });
           this.clearPending();
           break;
         case "command.dispatch":
@@ -287,7 +287,7 @@ export class InteractionRegistry {
   }
 
   private clearPendingIfFocusChanged(): void {
-    const signature = JSON.stringify({ focus: this.editor.focus.current(), active: this.editor.workbench.activePane()?.id });
+    const signature = JSON.stringify({ focus: this.editor.input.current(), active: this.editor.workbench.activePane()?.id });
     if (!this.lastFocusSignature) {
       this.lastFocusSignature = signature;
       return;
@@ -316,7 +316,7 @@ export function keymapProfile<TState extends { mode: string }>(options: {
       return { ...(options.initialState?.() ?? {}), mode: options.initialMode } as TState;
     },
     scopes(ctx) {
-      return ctx.editor.focus.scopes(ctx.state.mode);
+      return ctx.editor.input.scopes(ctx.state.mode);
     },
     async reduceInput(ctx, input) {
       const resolution = ctx.editor.interaction.resolveKeymap(this.scopes(ctx), input);

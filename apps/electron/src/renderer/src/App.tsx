@@ -224,12 +224,16 @@ function WorkbenchSidebarChrome({ workbench, trailingAccessory }: { workbench: W
         <WorkbenchLeadingChrome workbench={workbench} trailingAccessory={trailingAccessory} />
       </div>
       <div className="workbenchSidebarChromeGlyphs">
-        <button className="workbenchSidebarGlyphButton" title="Search files" onClick={() => dispatchCommand("fileTree.search")}><SidebarSearchGlyph /></button>
-        <button className="workbenchSidebarGlyphButton" title="New file" onClick={() => dispatchCommand("fileTree.newFile")}><SidebarAddFileGlyph /></button>
-        <button className="workbenchSidebarGlyphButton" title="New folder" onClick={() => dispatchCommand("fileTree.newFolder")}><SidebarAddFolderGlyph /></button>
+        <button className="workbenchSidebarGlyphButton" title="Search files" onClick={() => dispatchFileTreeAction("openSearch")}><SidebarSearchGlyph /></button>
+        <button className="workbenchSidebarGlyphButton" title="New file" onClick={() => dispatchFileTreeAction("newFile")}><SidebarAddFileGlyph /></button>
+        <button className="workbenchSidebarGlyphButton" title="New folder" onClick={() => dispatchFileTreeAction("newFolder")}><SidebarAddFolderGlyph /></button>
       </div>
     </div>
   );
+}
+
+function dispatchFileTreeAction(kind: "openSearch" | "newFile" | "newFolder"): void {
+  window.dispatchEvent(new CustomEvent("the-editor:file-tree-action", { detail: { kind } }));
 }
 
 function WorkbenchLeadingChrome({ workbench, trailingAccessory }: { workbench: WorkbenchSnapshot; trailingAccessory?: ReactNode }) {

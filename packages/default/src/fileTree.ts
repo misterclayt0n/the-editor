@@ -11,12 +11,7 @@ export interface FileTreeToolState {
   gitStatus: FileTreeGitStatusEntry[];
   loading: boolean;
   treeRevision: number;
-  action?: FileTreeUiAction;
 }
-
-export type FileTreeUiAction =
-  | { id: number; kind: "openSearch" }
-  | { id: number; kind: "createEntry"; entryKind: "file" | "folder" };
 
 export interface FileTreeGitStatusEntry {
   path: string;
@@ -33,8 +28,6 @@ interface FileTreeState {
   gitStatus: FileTreeGitStatusEntry[];
   loading: boolean;
   treeRevision: number;
-  nextActionId: number;
-  action?: FileTreeUiAction;
   loadPromise?: Promise<void>;
 }
 
@@ -57,7 +50,6 @@ export function defaultFileTree(): EditorModule {
           gitStatus: state.gitStatus,
           loading: state.loading,
           treeRevision: state.treeRevision,
-          action: state.action,
         } satisfies FileTreeToolState;
       },
     });
@@ -85,54 +77,6 @@ export function defaultFileTree(): EditorModule {
         }
         ensureFileTreeLoaded(editor);
         editor.workbench.openTool(fileTreeToolTypeId, { placement: { kind: "dock", root: "leftSidebar" }, focus: false });
-      },
-    });
-
-    editor.commands.register<void, void>({
-      id: commandId("fileTree.search"),
-      title: "File Tree: Search",
-      category: "Workbench",
-      run() {
-        const state = fileTreeState(editor);
-        state.action = { id: state.nextActionId++, kind: "openSearch" };
-        ensureFileTreeLoaded(editor);
-        editor.workbench.openTool(fileTreeToolTypeId, { placement: { kind: "dock", root: "leftSidebar" }, focus: false });
-        editor.workbench.invalidate("tools");
-      },
-    });
-
-    editor.commands.register<void, void>({
-      id: commandId("fileTree.newFile"),
-      title: "File Tree: New File",
-      category: "Workbench",
-      run() {
-        const state = fileTreeState(editor);
-        state.action = { id: state.nextActionId++, kind: "createEntry", entryKind: "file" };
-        editor.workbench.openTool(fileTreeToolTypeId, { placement: { kind: "dock", root: "leftSidebar" }, focus: false });
-        editor.workbench.invalidate("tools");
-      },
-    });
-
-    editor.commands.register<void, void>({
-      id: commandId("fileTree.newFolder"),
-      title: "File Tree: New Folder",
-      category: "Workbench",
-      run() {
-        const state = fileTreeState(editor);
-        state.action = { id: state.nextActionId++, kind: "createEntry", entryKind: "folder" };
-        editor.workbench.openTool(fileTreeToolTypeId, { placement: { kind: "dock", root: "leftSidebar" }, focus: false });
-        editor.workbench.invalidate("tools");
-      },
-    });
-
-    editor.commands.register<{ id: number }, void>({
-      id: commandId("fileTree.consumeAction"),
-      title: "File Tree: Consume UI Action",
-      category: "Workbench",
-      hidden: true,
-      run(_ctx, args) {
-        const state = fileTreeState(editor);
-        if (state.action?.id === args.id) state.action = undefined;
       },
     });
 
@@ -171,12 +115,16 @@ export function defaultFileTree(): EditorModule {
       async run(_ctx, args) {
         const state = fileTreeState(editor);
         const absolute = join(state.rootPath, args.path);
-        if (args.kind === "folder") await mkdir(absolute, { recursive: true });
-        else {
-          await mkdir(dirname(absolute), { recursive: true });
-          await writeFile(absolute, "", { flag: "wx" });
+        try {
+          if (args.kind === "folder") await mkdir(absolute, { recursive: true });
+          else {
+            await mkdir(dirname(absolute), { recursive: true });
+            await writeFile(absolute, "", { flag: "wx" });
+          }
+        } catch (error) {
+          editor.notifications.error("fileTree", `failed to create ${args.path}: ${error instanceof Error ? error.message : String(error)}`);
+          refreshFileTree(editor);
         }
-        refreshFileTree(editor);
       },
     });
 
@@ -187,9 +135,13 @@ export function defaultFileTree(): EditorModule {
       hidden: true,
       async run(_ctx, args) {
         const state = fileTreeState(editor);
-        await mkdir(dirname(join(state.rootPath, args.destinationPath)), { recursive: true });
-        await rename(join(state.rootPath, args.sourcePath), join(state.rootPath, args.destinationPath));
-        refreshFileTree(editor);
+        try {
+          await mkdir(dirname(join(state.rootPath, args.destinationPath)), { recursive: true });
+          await rename(join(state.rootPath, args.sourcePath), join(state.rootPath, args.destinationPath));
+        } catch (error) {
+          editor.notifications.error("fileTree", `failed to rename ${args.sourcePath}: ${error instanceof Error ? error.message : String(error)}`);
+          refreshFileTree(editor);
+        }
       },
     });
 
@@ -199,8 +151,12 @@ export function defaultFileTree(): EditorModule {
       category: "Workbench",
       hidden: true,
       async run(_ctx, args) {
-        await rm(join(fileTreeState(editor).rootPath, args.path), { force: true, recursive: Boolean(args.recursive) });
-        refreshFileTree(editor);
+        try {
+          await rm(join(fileTreeState(editor).rootPath, args.path), { force: true, recursive: Boolean(args.recursive) });
+        } catch (error) {
+          editor.notifications.error("fileTree", `failed to delete ${args.path}: ${error instanceof Error ? error.message : String(error)}`);
+          refreshFileTree(editor);
+        }
       },
     });
 
@@ -246,13 +202,12 @@ export function defaultFileTree(): EditorModule {
 
 function fileTreeState(editor: Parameters<EditorModule>[0]): FileTreeState {
   const cwd = editor.cwd.current();
-  const state = editor.stores.host(defineHostStore<FileTreeState>({ id: fileTreeStateSlot, init: () => ({ rootPath: cwd, paths: [], gitStatus: [], loading: false, treeRevision: 0, nextActionId: 1 }) }));
+  const state = editor.stores.host(defineHostStore<FileTreeState>({ id: fileTreeStateSlot, init: () => ({ rootPath: cwd, paths: [], gitStatus: [], loading: false, treeRevision: 0 }) }));
   if (state.rootPath !== cwd) {
     state.rootPath = cwd;
     state.paths = [];
     state.gitStatus = [];
     state.treeRevision += 1;
-    state.action = undefined;
     state.loadPromise = undefined;
   }
   return state;

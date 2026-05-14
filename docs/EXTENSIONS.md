@@ -839,6 +839,24 @@ This is how “make it look and feel like X” becomes real without rewriting ev
 
 ## State model
 
+Extensions and first-party modules must not use a raw string-keyed host state bag. The host exposes typed state stores through `editor.stores`.
+
+Store access is token-based, not string-based:
+
+```ts
+const local = editor.stores.module(myLocalStore);
+const persisted = editor.stores.persisted(myPersistedStore);
+```
+
+The store token declares the ID, kind, initializer, and lifecycle metadata. Raw calls like `stateSlot("some.key")` are intentionally not part of the architecture.
+
+Store kinds:
+
+- **host stores** — canonical host shell state owned by `packages/editor`
+- **module stores** — volatile module-local state disposed on module unload/reload
+- **persisted stores** — module-owned state with explicit versioning and serialization
+- **session stores** — state tied to an interactive session ID
+
 ## Host-owned canonical state
 
 Examples:
@@ -864,19 +882,25 @@ Examples:
 - Doom game session state
 - local canvas state
 
+Module-owned local state should use module stores. The module's current provenance is part of the storage key, so reload can dispose stale volatile state predictably.
+
 ## Persisted module state
 
-Provide a namespaced storage API.
+Persisted module state should use persisted store tokens.
 
 Example:
 
-```txt
-storage.get("@acme/doom", "save")
-storage.set("@acme/doom", "save", data)
+```ts
+const doomSaveStore = definePersistedStore<DoomSaveState>({
+  id: "@acme/doom.save",
+  version: 1,
+  init: () => ({ level: 1 }),
+  serialize: (state) => state,
+  deserialize: (raw) => parseDoomSave(raw),
+});
 ```
 
-The host should own persistence mechanics.
-Modules should own their schema and semantics.
+The host owns persistence mechanics. Modules own their schema, versioning, serialization, and semantics.
 
 ---
 

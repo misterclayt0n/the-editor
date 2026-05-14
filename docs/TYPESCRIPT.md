@@ -843,6 +843,74 @@ This enables:
 
 ---
 
+## State stores
+
+Raw string-keyed state slots are not part of the architecture. `EditorHost` must not expose `stateSlot`, `getStateSlot`, `setStateSlot`, or similar global mutable bags.
+
+All TypeScript state should live in typed store tokens accessed through `editor.stores`.
+
+Preferred store definition shape:
+
+```ts
+const workbenchLayoutStore = defineHostStore<WorkbenchLayoutState>({
+  id: "workbench.layout",
+  init: () => ({ ... }),
+});
+
+const hoverStore = defineModuleStore<HoverState>({
+  id: "default.hover",
+  init: () => ({ visible: false }),
+});
+
+const fileTreeStore = definePersistedStore<FileTreePersistedState>({
+  id: "default.fileTree",
+  version: 1,
+  init: () => ({ expanded: [] }),
+  serialize: (state) => state,
+  deserialize: (raw) => raw,
+});
+```
+
+Access is by token only:
+
+```ts
+const layout = editor.stores.host(workbenchLayoutStore);
+const hover = editor.stores.module(hoverStore);
+const fileTree = editor.stores.persisted(fileTreeStore);
+```
+
+No raw string access is allowed. Store IDs are declarative metadata, not lookup parameters passed by callers.
+
+Store kinds:
+
+1. **Host stores** — canonical editor/product shell state owned by `packages/editor`, such as input routing, workbench layout, role selections, tools, packages, and interaction state.
+2. **Module stores** — volatile module-owned state. The owner is the current module/provenance. It is disposed when that module unloads.
+3. **Persisted stores** — namespaced module-owned state with explicit versioning, serialization, deserialization, and migration. Persistence mechanics are host-owned; schema semantics are module-owned.
+4. **Session stores** — state tied to an interactive session ID and disposed with that session.
+
+Store tokens should carry enough metadata for diagnostics and reload behavior:
+
+```ts
+interface StoreToken<T> {
+  id: string;
+  kind: "host" | "module" | "persisted" | "session";
+  init(): T;
+  label?: string;
+}
+```
+
+Persisted stores additionally need `version`, `serialize`, `deserialize`, and later `migrate`.
+
+Lifecycle rules:
+
+- host stores survive module reloads and are disposed only with the editor host
+- module stores are scoped by module ID and reload generation
+- persisted stores survive reloads and process restarts if backed by persistence
+- session stores are scoped by session ID
+- unloading a module disposes its volatile module stores and contributions together
+
+The deletion test is strict: if a store does not need lifecycle/provenance/schema metadata, it probably belongs inside a deeper host module implementation, not in a generic public state bag.
+
 ## Hot reload
 
 Hot reload should be dispose-and-reactivate per module.

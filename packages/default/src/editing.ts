@@ -2332,6 +2332,8 @@ async function applyOperation(
   operation: SurfaceOperation,
   checkpoint = true,
 ): Promise<void> {
+  const surfaceId = getDefaultState(editor).activeSurfaceId;
+  if (!surfaceId) return;
   if (getDefaultState(editor).mode === "insert" && INSERT_MODE_COLLAPSE_SELECTION_OPERATIONS.has(operation.name)) {
     await collapseInsertModeSelections(editor);
   }
@@ -2339,11 +2341,11 @@ async function applyOperation(
     await saveSelection(editor);
   }
   await editor.runtime.surfaces.applyOperation({
-    surfaceId: activeSurfaceId(editor),
+    surfaceId,
     operation,
   });
   if (checkpoint && getDefaultState(editor).mode !== "insert" && CHECKPOINT_AFTER_OPERATION.has(operation.name)) {
-    await editor.runtime.surfaces.commitUndoCheckpoint({ surfaceId: activeSurfaceId(editor) });
+    await editor.runtime.surfaces.commitUndoCheckpoint({ surfaceId });
   }
 }
 

@@ -445,7 +445,7 @@ function CompletionOverlay({
   const overlayRef = useRef<HTMLDivElement>(null);
   const itemsRef = useRef<HTMLDivElement>(null);
   const anchor = useSurfaceCursorAnchor(surfaceId ?? activeSurfaceIdFromWorkbench(workbench));
-  const [position, setPosition] = useState<{ left: number; top: number; direction: "right" | "left" | "stacked" } | undefined>(undefined);
+  const [position, setPosition] = useState<{ left: number; top: number; direction: "right" | "left" | "stacked"; docsTop?: number } | undefined>(undefined);
   const selectedItem = state?.items[state.selectedIndex];
   const showDocs = Boolean(state?.showDocumentation && state.documentationMarkdown?.trim());
 
@@ -459,8 +459,10 @@ function CompletionOverlay({
     if (!element) return;
     const margin = 12;
     const rect = element.getBoundingClientRect();
+    const surfaceRect = element.querySelector(".completionMenuSurface")?.getBoundingClientRect() ?? rect;
+    const docsRect = element.querySelector(".completionMenuHoverCard")?.getBoundingClientRect();
     const docsWidth = showDocs ? 260 : 0;
-    const listWidth = Math.min(rect.width, showDocs ? rect.width - docsWidth - 10 : rect.width);
+    const listWidth = Math.min(surfaceRect.width, 320);
     const nextPosition = !anchor
       ? {
         left: clamp((window.innerWidth - rect.width) / 2, margin, Math.max(margin, window.innerWidth - rect.width - margin)),
@@ -469,8 +471,9 @@ function CompletionOverlay({
       }
       : (() => {
         const reserved = document.querySelector(".signatureHelpOverlay")?.getBoundingClientRect();
+        const menuHeight = surfaceRect.height;
         const below = anchor.bottom + 8;
-        const above = anchor.top - rect.height - 8;
+        const above = anchor.top - menuHeight - 8;
         const rightSpace = window.innerWidth - margin - (anchor.left + listWidth);
         const leftSpace = anchor.left - margin;
         const direction = !showDocs
@@ -480,22 +483,27 @@ function CompletionOverlay({
             : leftSpace >= docsWidth + 10
               ? "left"
               : "stacked";
+        const totalWidth = direction === "stacked" ? listWidth : listWidth + (showDocs ? docsWidth + 8 : 0);
         const left = direction === "left"
-          ? clamp(anchor.left - docsWidth - 10, margin, Math.max(margin, window.innerWidth - rect.width - margin))
-          : clamp(anchor.left - 18, margin, Math.max(margin, window.innerWidth - rect.width - margin));
+          ? clamp(anchor.left - totalWidth + listWidth, margin, Math.max(margin, window.innerWidth - totalWidth - margin))
+          : clamp(anchor.left - 18, margin, Math.max(margin, window.innerWidth - totalWidth - margin));
         const candidates = [
-          below + rect.height <= window.innerHeight - margin ? below : undefined,
+          below + menuHeight <= window.innerHeight - margin ? below : undefined,
           above >= margin ? above : undefined,
-          clamp(below, margin, Math.max(margin, window.innerHeight - rect.height - margin)),
-          clamp(above, margin, Math.max(margin, window.innerHeight - rect.height - margin)),
+          clamp(below, margin, Math.max(margin, window.innerHeight - menuHeight - margin)),
+          clamp(above, margin, Math.max(margin, window.innerHeight - menuHeight - margin)),
         ].filter((value): value is number => value !== undefined);
-        const top = candidates.find((candidate) => !reserved || !rectsOverlap({ left, top: candidate, right: left + rect.width, bottom: candidate + rect.height }, reserved)) ?? candidates[0] ?? margin;
-        return { left, top, direction };
+        const top = candidates.find((candidate) => !reserved || !rectsOverlap({ left, top: candidate, right: left + listWidth, bottom: candidate + menuHeight }, reserved)) ?? candidates[0] ?? margin;
+        const docsTop = showDocs && docsRect
+          ? clamp(anchor.top, margin - top, Math.max(margin - top, window.innerHeight - docsRect.height - margin - top))
+          : undefined;
+        return { left, top, direction, docsTop };
       })();
     setPosition((current) => current
       && current.left === nextPosition.left
       && current.top === nextPosition.top
       && current.direction === nextPosition.direction
+      && current.docsTop === nextPosition.docsTop
       ? current
       : nextPosition);
   }, [anchor, state?.items, state?.selectedIndex, state?.documentationMarkdown, showDocs]);
@@ -517,6 +525,7 @@ function CompletionOverlay({
           className="completionMenuHoverCard"
           markdown={state.documentationMarkdown!}
           workbench={workbench}
+          style={position?.docsTop !== undefined ? { marginTop: position.docsTop } : undefined}
         />
       ) : null}
       <div className="completionMenuSurface">
@@ -560,6 +569,7 @@ function CompletionOverlay({
           className="completionMenuHoverCard"
           markdown={state.documentationMarkdown!}
           workbench={workbench}
+          style={position?.docsTop !== undefined ? { marginTop: position.docsTop } : undefined}
         />
       ) : null}
     </div>

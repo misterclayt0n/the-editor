@@ -1,13 +1,31 @@
 import type { EditorHost, EditorModule } from "@the-editor/editor";
 import { commandId } from "@the-editor/editor";
+import type { SurfaceSelectionRange, SurfaceState } from "@the-editor/contracts/runtime";
 import type { WorkbenchPaneDescriptor, WorkbenchPaneId } from "@the-editor/editor/workbench";
 import { defaultViewport } from "./scratch.js";
 import { activeSurfacePane, getDefaultState, refreshActiveSurface, removeSurfacePaneState, upsertSurfacePaneState } from "./state.js";
 
 type Direction = "left" | "right" | "up" | "down";
+type BufferNavState = { history: string[]; modified?: string };
+const bufferNavSlot = "default.window.bufferNav";
 
 export function defaultWindowCommands(): EditorModule {
   return (editor) => {
+    editor.hooks.tap("window.bufferHistory", {
+      id: "default.window.bufferHistory",
+      handler() { recordActiveBuffer(editor); return false; },
+    });
+    editor.hooks.tap("workbench.keyInput", {
+      id: "default.window.modifiedBufferHistory",
+      handler() { if (getDefaultState(editor).mode === "insert") recordModifiedBuffer(editor); return false; },
+    });
+    register(editor, "goto_window_top", () => gotoWindow(editor, "top"));
+    register(editor, "goto_window_center", () => gotoWindow(editor, "center"));
+    register(editor, "goto_window_bottom", () => gotoWindow(editor, "bottom"));
+    register(editor, "goto_last_accessed_file", () => gotoLastAccessedFile(editor));
+    register(editor, "goto_last_modified_file", () => gotoLastModifiedFile(editor));
+    register(editor, "goto_next_buffer", () => gotoBuffer(editor, "next"));
+    register(editor, "goto_previous_buffer", () => gotoBuffer(editor, "prev"));
     register(editor, "rotate_view", () => rotateView(editor));
     register(editor, "hsplit", () => editor.commands.dispatch({ id: commandId("workbench.hsplit") }));
     register(editor, "vsplit", () => editor.commands.dispatch({ id: commandId("workbench.vsplit") }));
@@ -31,6 +49,45 @@ export function defaultWindowCommands(): EditorModule {
 
 function register(editor: EditorHost, id: string, run: () => Promise<unknown> | unknown): void {
   editor.commands.register({ id: commandId(id), title: id, category: "Window", async run() { await run(); } });
+}
+
+async function gotoWindow(editor: EditorHost, align: "top" | "center" | "bottom"): Promise<void> {
+  const pane = activeSurfacePane(editor);
+  if (!pane?.surfaceId) return;
+  const state = await editor.runtime.surfaces.readState({ surfaceId: pane.surfaceId });
+  const height = pane.viewport.rowCount || state.viewport.rowCount || 0;
+  if (!height) return;
+  const row = align === "top" ? 0 : align === "center" ? Math.floor((height - 1) / 2) : height - 1;
+  const targetLine = (pane.viewport.firstRow ?? state.viewport.firstRow ?? 0) + row;
+  const target = byteOffsetAtLine(state.text, targetLine);
+  const extend = getDefaultState(editor).mode === "select";
+  const selection = state.selection.map((range) => putCursor(range, state, target, extend));
+  await editor.runtime.surfaces.applyEdit({ surfaceId: pane.surfaceId, edit: { selection } });
+  await refreshActiveSurface(editor);
+  editor.workbench.invalidate("frame");
+}
+
+async function gotoBuffer(editor: EditorHost, direction: "next" | "prev"): Promise<void> {
+  recordActiveBuffer(editor);
+  const layout = editor.workbench.snapshotEditorLayout();
+  const panes = layout.panes.filter((pane) => pane.kind === "surface");
+  if (panes.length < 2 || !layout.activePaneId) return;
+  const index = panes.findIndex((pane) => pane.id === layout.activePaneId);
+  const next = panes[(index + (direction === "next" ? 1 : -1) + panes.length) % panes.length];
+  if (next) await focusPane(editor, next.id);
+}
+
+async function gotoLastAccessedFile(editor: EditorHost): Promise<void> {
+  recordActiveBuffer(editor);
+  const state = bufferNavState(editor);
+  const current = getDefaultState(editor).activePath;
+  const target = [...state.history].reverse().find((path) => path && path !== current);
+  if (target) await editor.commands.dispatch({ id: commandId("file.open"), args: { path: target } });
+}
+
+async function gotoLastModifiedFile(editor: EditorHost): Promise<void> {
+  const target = bufferNavState(editor).modified;
+  if (target) await editor.commands.dispatch({ id: commandId("file.open"), args: { path: target } });
 }
 
 async function rotateView(editor: EditorHost): Promise<void> {
@@ -119,6 +176,37 @@ async function focusPane(editor: EditorHost, paneId: WorkbenchPaneId): Promise<v
 async function afterLayoutChange(editor: EditorHost): Promise<void> {
   await refreshActiveSurface(editor);
   editor.workbench.invalidate("frame", "focus", "layout", "tabs", "tools");
+}
+
+function bufferNavState(editor: EditorHost): BufferNavState {
+  return editor.stateSlot(bufferNavSlot, () => ({ history: [] }));
+}
+
+function recordActiveBuffer(editor: EditorHost): void {
+  const path = getDefaultState(editor).activePath;
+  if (!path) return;
+  const state = bufferNavState(editor);
+  if (state.history.at(-1) !== path) state.history.push(path);
+  if (state.history.length > 64) state.history.splice(0, state.history.length - 64);
+}
+
+function recordModifiedBuffer(editor: EditorHost): void {
+  const path = getDefaultState(editor).activePath;
+  if (path) bufferNavState(editor).modified = path;
+}
+
+function putCursor(range: SurfaceSelectionRange, state: SurfaceState, target: number, extend: boolean): SurfaceSelectionRange {
+  const head = Math.max(0, Math.min(target, new TextEncoder().encode(state.text).length));
+  return extend ? { ...range, head } : { ...range, anchor: head, head };
+}
+
+function byteOffsetAtLine(text: string, line: number): number {
+  if (line <= 0) return 0;
+  let current = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) === 10 && ++current === line) return new TextEncoder().encode(text.slice(0, i + 1)).length;
+  }
+  return new TextEncoder().encode(text).length;
 }
 
 function neighborPane(editor: EditorHost, direction: Direction): WorkbenchPaneDescriptor | undefined {

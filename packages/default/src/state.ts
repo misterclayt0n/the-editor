@@ -1,4 +1,4 @@
-import { commandId, type EditorHost, type KeyInput } from "@the-editor/editor";
+import { type EditorHost, type KeyInput } from "@the-editor/editor";
 import type { Viewport } from "@the-editor/contracts/runtime";
 import {
   activeWorkbenchSurfacePane,
@@ -22,6 +22,7 @@ export function getDefaultState(editor: EditorHost): DefaultEditorState {
 }
 
 export function setEditorMode(editor: EditorHost, mode: EditorMode): DefaultEditorState {
+  editor.interaction.setMode(mode);
   return setWorkbenchEditorMode(editor, mode);
 }
 
@@ -60,36 +61,7 @@ export async function handleKeyInput(editor: EditorHost, input: KeyInput): Promi
     editor.overlays.close("hover", { restoreFocus: false });
     editor.workbench.invalidate("roles");
   }
-  const scopes = editor.focus.scopes(state.mode);
-  const result = await editor.keymaps.pressScopes(scopes, input);
-  const focus = editor.focus.current();
-  const paletteFocused = focus.kind === "role" && focus.role === "commandPalette";
-  const editorFocused = focus.kind === "editor";
-
-  if (result.kind === "matched") {
-    for (const dispatch of result.dispatches) {
-      await editor.commands.dispatch(dispatch);
-    }
-    await refreshActiveSurface(editor);
-    return state;
-  }
-
-  if (paletteFocused && input.text) {
-    await editor.commands.dispatch({
-      id: commandId("command_palette.appendText"),
-      args: { text: input.text },
-    });
-    await refreshActiveSurface(editor);
-    return state;
-  }
-
-  if (editorFocused && state.mode === "insert" && input.text) {
-    await editor.commands.dispatch({
-      id: commandId("edit.insertText"),
-      args: { text: input.text },
-    });
-    await refreshActiveSurface(editor);
-  }
-
+  await editor.interaction.handleInput(input);
+  await refreshActiveSurface(editor);
   return state;
 }

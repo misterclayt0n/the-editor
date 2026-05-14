@@ -487,10 +487,14 @@ Renderer owns browser specifics:
 
 Policy worker owns:
 
-- keymap resolution
-- modes
+- the host-owned interaction session for the editor window
+- active interaction profile selection
+- pending input state, including keymap prefixes and profile operators
+- key routing through the host focus/scope stack
 - command dispatch
 - product behavior
+
+Modes are not a generic workbench field. A mode is profile-owned state exposed through the interaction snapshot for UI/status/scope purposes.
 
 Rust owns:
 
@@ -516,8 +520,8 @@ Example:
 
 ```ts
 // policy worker
-const command = await editor.keymaps.resolve(input, context);
-await editor.commands.dispatch(command);
+const transition = await editor.interaction.handleInput(input);
+await editor.interaction.applyEffects(transition.effects);
 ```
 
 ```ts
@@ -537,14 +541,16 @@ await editor.runtime.surfaces.applyOperation({
 });
 ```
 
-Multi-step workflows remain in TypeScript:
+Multi-step workflows remain in TypeScript, but they should be owned by the active interaction profile and lowered through structured interaction effects instead of ad hoc command chains:
 
 ```ts
-await editor.runtime.surfaces.applyOperation({
-  surfaceId,
-  operation: { name: "open_below" },
-});
-await editor.commands.dispatch({ id: commandId("insert_mode") });
+return {
+  state: { ...state, mode: "insert" },
+  effects: [
+    { kind: "surface.operation", surfaceId, operation: { name: "open_below" } },
+    { kind: "interaction.mode", mode: "insert" },
+  ],
+};
 ```
 
 Clipboard/register flavored variants are also TypeScript workflows:
@@ -555,6 +561,75 @@ await pasteAfter(surfaceId, values);
 ```
 
 The important rule is that TypeScript resolves the source/target policy while Rust owns the actual semantic paste planning.
+
+### Interaction session model
+
+There is one host-owned interaction session per editor window.
+
+It owns all pending input state:
+
+- keymap prefixes such as `g`, `space`, and `C-w`
+- sticky/keymap node state
+- pending profile operators such as `f<char>`, `r<char>`, surround operations, text objects, and register choice
+- repeatable motion/operator memory when it is window-scoped
+
+The keymap registry is a contribution registry and resolver. It must not own mutable pending input state. Pending input belongs to the interaction session.
+
+The interaction session clears pending input on focus or active-surface changes unless a future profile explicitly introduces a narrower preserved state. V1 should not preserve pending input across focus/surface changes.
+
+Surface-specific interaction memory is allowed only when the profile has a concrete surface-local concept, such as per-surface last motion or jump-list metadata. Document text, selection truth, visual goals, and history remain Rust-owned through `Document`/`Surface`.
+
+### Interaction profile seam
+
+An interaction profile owns its reducer/state/snapshot. The host owns routing and effect execution.
+
+Preferred shape:
+
+```ts
+interface InteractionProfile<TState = unknown> {
+  id: string;
+  initialState(ctx: InteractionContext): TState;
+  scopes(ctx: InteractionContext, state: TState): string[];
+  reduceInput(ctx: InteractionContext, state: TState, input: KeyInput): Promise<InteractionTransition<TState>>;
+  snapshot(ctx: InteractionContext, state: TState): InteractionProfileSnapshot;
+}
+```
+
+The profile reducer may be imperative internally, but it must return structured state transitions and effects. It should not directly mutate workbench, focus, runtime, or command state.
+
+Core editor behavior should use typed interaction effects, not stringly command dispatch:
+
+```ts
+type InteractionEffect =
+  | { kind: "surface.operation"; surfaceId: SurfaceId; operation: SurfaceOperation }
+  | { kind: "surface.insertText"; surfaceId: SurfaceId; text: string }
+  | { kind: "interaction.mode"; mode: string }
+  | { kind: "focus.set"; target: FocusTarget }
+  | { kind: "command.dispatch"; dispatch: CommandDispatch };
+```
+
+Use typed effects for core editor semantics. Use command dispatch for product/extension actions such as palette, file picker, splits, save, reload, and extension commands.
+
+The profile snapshot is the only public source for mode-like UI state:
+
+```ts
+interface InteractionProfileSnapshot {
+  mode?: {
+    id: string;
+    title?: string;
+    cursorShape?: "block" | "bar" | "underline";
+    scopes: string[];
+  };
+  pending?: {
+    kind: string;
+    label?: string;
+    keys?: string[];
+    nextKeys?: string[];
+  };
+}
+```
+
+Renderer code must consume cursor shape/mode/pending information from the interaction snapshot, not from default-distribution workbench state.
 
 ---
 

@@ -722,17 +722,27 @@ This should be deterministic and inspectable.
 
 ## Profiles should own
 
-- keymaps
-- mode definitions
-- pending-key behavior
+- keymaps as data/resolution inputs
+- profile reducer/state/snapshot
+- mode definitions and mode transitions
+- all pending input behavior, including keymap prefixes and profile operators
 - workflow composition from stable primitives
 - profile-specific editor UX rules
+
+There is one host-owned interaction session per editor window. The active profile owns the meaning of its state, but the host owns the session runner, routing, and effect execution.
+
+Pending input is not split across registries. A keymap prefix like `g`, a sticky node like `space`, and an operator like `f<char>` are all interaction-session state. The keymap registry is a contribution registry/resolver and must not own mutable pending keys.
+
+Pending input clears on focus or active-surface changes in v1. Profiles may keep explicit surface-specific substate only for real surface-local concepts such as last motion or jump-list metadata.
+
+Modes are profile-owned. The host exposes mode-like data only through the interaction snapshot, for example cursor shape, mode title, and mode scopes. The workbench should not keep a separate canonical mode field.
 
 ## Profiles should not own, for now
 
 - replacement of the primitive editor engine semantics
 - a separate document model
-- direct control of focus/layout shell truth
+- direct mutation of focus/layout shell truth
+- direct runtime/workbench mutation outside structured host-executed effects
 
 ---
 
@@ -744,6 +754,9 @@ This must include:
 
 - active root tracking
 - active scope stack
+- active interaction session for the editor window
+- active profile selection
+- pending-input cancellation on focus/surface changes
 - overlay precedence
 - focus restoration after close/reload
 - escape/back/cancel handling
@@ -769,6 +782,8 @@ This gives enough structure for:
 - dialog confirm/cancel
 - tool-local controls
 - global escape hatches
+
+Profiles may contribute scopes through their snapshot/reducer state, but the host decides the final scope stack from focus, overlays, tools, and the active profile. Profiles do not directly control global focus.
 
 ---
 

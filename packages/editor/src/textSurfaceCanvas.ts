@@ -17,7 +17,7 @@ export interface CanvasTextSurfaceStyleOptions {
   gutterReservePx?: number;
 }
 
-export type CanvasCursorShape = "bar" | "block";
+export type CanvasCursorShape = "bar" | "block" | "underline";
 
 export interface CanvasTextSurfacePaintOptions {
   selectionPickerActive?: boolean;
@@ -370,6 +370,7 @@ function paintCursors(
     if (selectionPickerActive && !cursor.active) ctx.globalAlpha = 0.25;
     const shape = cursorShape ?? (cursor.semantics === "InsertionPoint" ? "bar" : "block");
     if (shape === "bar") paintBarCursor(ctx, cursor, metrics, theme);
+    else if (shape === "underline") paintUnderlineCursor(ctx, cursor, metrics, theme);
     else paintBlockCursor(ctx, cursor, rows.get(cursor.surfaceRow), metrics, theme);
     ctx.restore();
   }
@@ -379,6 +380,12 @@ function paintBarCursor(ctx: CanvasRenderingContext2D, cursor: CursorPlacement, 
   const width = 2;
   ctx.fillStyle = theme.cursorBackground;
   ctx.fillRect(Math.round(xForCol(cursor.col, metrics)), yForRow(cursor.surfaceRow, metrics), width, metrics.rowHeight);
+}
+
+function paintUnderlineCursor(ctx: CanvasRenderingContext2D, cursor: CursorPlacement, metrics: RendererMetrics, theme: TextSurfaceTheme): void {
+  const height = 2;
+  ctx.fillStyle = theme.cursorBackground;
+  ctx.fillRect(xForCol(cursor.col, metrics), yForRow(cursor.surfaceRow, metrics) + metrics.rowHeight - height, metrics.cellWidth, height);
 }
 
 function paintBlockCursor(

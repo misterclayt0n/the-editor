@@ -575,7 +575,7 @@ function renderPane(
         theme={workbench.theme}
         syntaxLegend={workbench.syntaxLegend ?? {}}
         selectionPickerActive={active && selectionPickerActive}
-        cursorShape={workbench.mode === "insert" ? "bar" : "block"}
+        cursorShape={workbench.interaction?.mode?.cursorShape ?? "block"}
       />
     );
   }
@@ -597,7 +597,7 @@ function SurfaceEditorPane({
   theme: ThemeSnapshot | undefined;
   syntaxLegend: Record<number, string>;
   selectionPickerActive: boolean;
-  cursorShape: "bar" | "block";
+  cursorShape: "bar" | "block" | "underline";
 }) {
   const paneState = pane.state as SurfacePaneSnapshotState | undefined;
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -609,7 +609,7 @@ function SurfaceEditorPane({
   const latestThemeRef = useRef<ThemeSnapshot | undefined>(undefined);
   const latestSyntaxLegendRef = useRef<Record<number, string>>({});
   const latestSelectionPickerActiveRef = useRef(false);
-  const latestCursorShapeRef = useRef<"bar" | "block">("block");
+  const latestCursorShapeRef = useRef<"bar" | "block" | "underline">("block");
 
   latestFrameRef.current = paneState?.frame;
   latestDecorationsRef.current = decorations;

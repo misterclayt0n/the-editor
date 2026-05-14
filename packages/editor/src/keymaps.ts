@@ -41,11 +41,16 @@ export interface KeymapPendingState {
   nextKeys: readonly string[];
 }
 
-export type KeymapPressResult =
+export type KeymapResolution =
   | { kind: "matched"; dispatches: CommandDispatch[] }
   | { kind: "pending"; pending: KeymapPendingState }
   | { kind: "not-found" }
   | { kind: "cancelled"; keys: readonly string[] };
+
+export interface KeymapResolveState {
+  scope: string;
+  keys: readonly string[];
+}
 
 interface KeymapRegistrationEntry extends KeymapRegistration {
   order: number;
@@ -94,9 +99,6 @@ export class KeymapRegistry {
   private nextOrder = 0;
   private readonly registrations = new Map<string, KeymapRegistrationEntry>();
   private readonly roots = new Map<string, KeyTrieNode>();
-  private pendingKeys: string[] = [];
-  private stickyNode: KeyTrieNode | undefined;
-  private activeScope: string | undefined;
 
   constructor(private readonly editor: EditorHost) {}
 
@@ -122,90 +124,52 @@ export class KeymapRegistry {
     });
   }
 
-  reset(): void {
-    this.pendingKeys = [];
-    this.stickyNode = undefined;
-    this.activeScope = undefined;
-  }
-
-  pending(): KeymapPendingState | undefined {
-    if (!this.pendingKeys.length) return undefined;
-    const node = this.stickyNode ?? (this.activeScope ? this.roots.get(this.activeScope) : undefined);
-    if (!node || !this.activeScope) return undefined;
-    const current = searchNode(node, this.pendingKeys);
+  pending(state: KeymapResolveState): KeymapPendingState | undefined {
+    if (!state.keys.length) return undefined;
+    const root = this.roots.get(state.scope);
+    if (!root) return undefined;
+    const current = searchNode(root, state.keys);
     if (!current || current.kind !== "node") return undefined;
-    return pendingState(this.activeScope, this.pendingKeys, current.node);
+    return pendingState(state.scope, state.keys, current.node);
   }
 
-  async press(scope: string, input: KeyInput): Promise<KeymapPressResult> {
-    const hookResult = await this.editor.hooks.first<{ scope: string; input: KeyInput }, KeymapPressResult>(
-      "keymaps.press",
-      { scope, input },
-    );
-    if (hookResult) return hookResult;
-
-    if (scope !== this.activeScope) {
-      this.pendingKeys = [];
-      this.stickyNode = undefined;
-      this.activeScope = scope;
-    }
-
+  resolve(scope: string, input: KeyInput, state?: KeymapResolveState): KeymapResolution {
     const key = normalizeKeyInput(input);
     if (!key) return { kind: "not-found" };
 
-    if (key === "esc") {
-      if (this.pendingKeys.length) {
-        const cancelled = [...this.pendingKeys];
-        this.pendingKeys = [];
-        this.stickyNode = undefined;
-        return { kind: "cancelled", keys: cancelled };
-      }
-      this.stickyNode = undefined;
+    if (state?.keys.length && state.scope !== scope) {
+      return { kind: "cancelled", keys: state.keys };
     }
 
-    const root = this.stickyNode ?? this.roots.get(scope);
+    if (key === "esc" && state?.keys.length) {
+      return { kind: "cancelled", keys: state.keys };
+    }
+
+    const root = this.roots.get(scope);
     if (!root) return { kind: "not-found" };
 
-    const first = this.pendingKeys[0] ?? key;
-    const firstMatch = root.map.get(first);
-    if (!firstMatch) return { kind: "not-found" };
-    if (firstMatch.kind === "dispatches") return finishMatched(this, firstMatch.dispatches);
-
-    this.pendingKeys.push(key);
-    const match = searchNode(firstMatch.node, this.pendingKeys.slice(1));
-    if (!match) {
-      const cancelled = [...this.pendingKeys];
-      this.pendingKeys = [];
-      return { kind: "cancelled", keys: cancelled };
-    }
-
-    if (match.kind === "dispatches") return finishMatched(this, match.dispatches);
-
-    if (match.node.sticky) {
-      this.pendingKeys = [];
-      this.stickyNode = match.node;
-    }
+    const keys = [...(state?.keys ?? []), key];
+    const match = searchNode(root, keys);
+    if (!match) return state?.keys.length ? { kind: "cancelled", keys } : { kind: "not-found" };
+    if (match.kind === "dispatches") return { kind: "matched", dispatches: match.dispatches.map((dispatch) => ({ ...dispatch })) };
 
     return {
       kind: "pending",
-      pending: pendingState(scope, this.pendingKeys, match.node),
+      pending: pendingState(scope, keys, match.node),
     };
   }
 
-  async pressScopes(scopes: readonly string[], input: KeyInput): Promise<KeymapPressResult> {
+  resolveScopes(scopes: readonly string[], input: KeyInput, state?: KeymapResolveState): KeymapResolution {
     const filtered = scopes.filter((scope) => scope.trim().length > 0);
     if (!filtered.length) return { kind: "not-found" };
 
-    if (this.pendingKeys.length && this.activeScope && filtered.includes(this.activeScope)) {
-      return this.press(this.activeScope, input);
-    }
-
-    if (this.pendingKeys.length && this.activeScope && !filtered.includes(this.activeScope)) {
-      this.reset();
+    if (state?.keys.length) {
+      if (filtered.includes(state.scope)) return this.resolve(state.scope, input, state);
+      return { kind: "cancelled", keys: state.keys };
     }
 
     for (const scope of filtered) {
-      const result = await this.press(scope, input);
+      const result = this.resolve(scope, input);
       if (result.kind === "not-found") continue;
       return result;
     }
@@ -394,10 +358,3 @@ function pendingState(scope: string, keys: readonly string[], node: KeyTrieNode)
   };
 }
 
-function finishMatched(registry: KeymapRegistry, dispatches: CommandDispatch[]): KeymapPressResult {
-  registry.reset();
-  return {
-    kind: "matched",
-    dispatches: dispatches.map((dispatch) => ({ ...dispatch })),
-  };
-}

@@ -1,12 +1,36 @@
-import { dispatch, keymap, type EditorModule, type KeymapNodeSpec } from "@the-editor/editor";
+import { commandId, dispatch, keymap, keymapProfile, type EditorModule, type KeymapNodeSpec } from "@the-editor/editor";
 
 export function defaultKeymaps(): EditorModule {
   return (editor) => {
-    editor.interaction.registerProfile({
+    editor.interaction.registerProfile(keymapProfile({
       id: "default.helix",
       title: "Default Helix",
       description: "First-party Helix-shaped interaction profile",
-    });
+      initialMode: "normal",
+      modeSnapshots: {
+        normal: { title: "NORMAL", cursorShape: "block", scopes: ["editor.normal"] },
+        insert: { title: "INSERT", cursorShape: "bar", scopes: ["editor.insert"] },
+        select: { title: "SELECT", cursorShape: "block", scopes: ["editor.select"] },
+      },
+      reduceUnmatched(ctx, input) {
+        if (ctx.editor.focus.current().kind === "editor" && ctx.state.mode === "insert" && input.text) {
+          return {
+            state: ctx.state,
+            handled: true,
+            effects: [{ kind: "command.dispatch", dispatch: { id: commandId("edit.insertText"), args: { text: input.text } } }],
+          };
+        }
+        const focus = ctx.editor.focus.current();
+        if (focus.kind === "role" && focus.role === "commandPalette" && input.text) {
+          return {
+            state: ctx.state,
+            handled: true,
+            effects: [{ kind: "command.dispatch", dispatch: { id: commandId("command_palette.appendText"), args: { text: input.text } } }],
+          };
+        }
+        return { state: ctx.state, handled: false };
+      },
+    }));
     editor.interaction.useProfile("default.helix");
 
     const normalTree = keymap("Normal mode", {

@@ -89,16 +89,33 @@ interface RuntimeCompletionContext extends CompletionContext {
   cursorHead: number;
   selection: SurfaceSelectionRange[];
   revision: number;
+  completionRequestSequence?: number;
+}
+
+interface LineOffsetCache {
+  text: string;
+  starts: number[];
 }
 
 const completionImplementationId = roleImplementationId("default.completionMenu");
 const completionControllerSlot = "default.completion.controller";
 const codeActionStateSlot = "default.lsp.codeActions.state";
 const codeActionCompletionSourceId = "default.lsp.codeActions";
+const maxCompletionItems = 400;
+const completionDiagnosticsEnabled = true;
 const completionPreservingCommands = new Set([
   commandId("lsp_code_actions"),
   commandId("code_action"),
 ]);
+
+function elapsed(start: number): number {
+  return Math.round((performance.now() - start) * 10) / 10;
+}
+
+function completionDiag(phase: string, data: Record<string, unknown>): void {
+  if (!completionDiagnosticsEnabled) return;
+  console.info("[completion]", phase, data);
+}
 
 const insertMutationCommands = new Set([
   commandId("edit.insertText"),
@@ -214,10 +231,19 @@ export function defaultCompletion(): EditorModule {
         if (dispatch.id.startsWith("completion.") || completionPreservingCommands.has(dispatch.id as ReturnType<typeof commandId>)) return;
         const active = completionController(editor).active;
         const inInsertMode = getDefaultState(editor).mode === "insert" && editor.input.current().kind === "editor";
+        if (insertMutationCommands.has(dispatch.id as ReturnType<typeof commandId>) || active) {
+          completionDiag("after dispatch", { id: dispatch.id, active: Boolean(active), inInsertMode });
+        }
 
         if (active) {
           if (insertMutationCommands.has(dispatch.id as ReturnType<typeof commandId>) && inInsertMode) {
-            scheduleCompletion(editor, triggerForDispatch(dispatch));
+            if (updateActiveCompletionFromDispatch(editor, active, dispatch)) return;
+            const trigger = triggerForDispatch(dispatch);
+            if (!shouldScheduleCompletionTrigger(editor, trigger)) {
+              hideCompletion(editor, { restoreFocus: false });
+              return;
+            }
+            scheduleCompletion(editor, trigger);
             return;
           }
           hideCompletion(editor, { restoreFocus: false });
@@ -225,7 +251,8 @@ export function defaultCompletion(): EditorModule {
         }
 
         if (insertMutationCommands.has(dispatch.id as ReturnType<typeof commandId>) && inInsertMode) {
-          scheduleCompletion(editor, triggerForDispatch(dispatch));
+          const trigger = triggerForDispatch(dispatch);
+          if (shouldScheduleCompletionTrigger(editor, trigger)) scheduleCompletion(editor, trigger);
         }
       },
     });
@@ -247,6 +274,7 @@ function completionController(editor: EditorHost): CompletionControllerState {
 function scheduleCompletion(editor: EditorHost, trigger: CompletionContext["trigger"], delayMs = 40): void {
   const controller = completionController(editor);
   if (controller.timer) clearTimeout(controller.timer);
+  completionDiag("schedule", { trigger: trigger.kind, character: trigger.character, delayMs });
   controller.timer = setTimeout(() => {
     controller.timer = undefined;
     void showOrRefreshCompletion(editor, trigger);
@@ -254,16 +282,21 @@ function scheduleCompletion(editor: EditorHost, trigger: CompletionContext["trig
 }
 
 async function showOrRefreshCompletion(editor: EditorHost, trigger: CompletionContext["trigger"]): Promise<void> {
+  const start = performance.now();
+  completionDiag("show start", { trigger: trigger.kind, character: trigger.character });
   const controller = completionController(editor);
   if (controller.timer) {
     clearTimeout(controller.timer);
     controller.timer = undefined;
   }
 
+  const contextStart = performance.now();
   const context = await readCompletionContext(editor, trigger);
+  completionDiag("context", { ms: elapsed(contextStart), textLength: context?.text.length ?? 0, query: context?.query, trigger: trigger.kind });
   const active = controller.active;
   if (!context || !shouldOpenCompletion(context, trigger, Boolean(active))) {
     hideCompletion(editor, { restoreFocus: false });
+    completionDiag("show end", { ms: elapsed(start), reason: "no-context-or-closed" });
     return;
   }
 
@@ -300,6 +333,7 @@ async function showOrRefreshCompletion(editor: EditorHost, trigger: CompletionCo
     nextActive.loading = false;
     if (!nextActive.items.length && trigger.kind !== "manual") {
       hideCompletion(editor, { restoreFocus: false });
+      completionDiag("show end", { ms: elapsed(start), reason: "filtered-empty" });
       return;
     }
     publishCompletionSession(nextActive, {
@@ -307,6 +341,7 @@ async function showOrRefreshCompletion(editor: EditorHost, trigger: CompletionCo
       emptyText: nextActive.items.length ? undefined : "No completions",
     });
     void resolveSelectedCompletion(editor, nextActive);
+    completionDiag("show end", { ms: elapsed(start), reason: "filtered", items: nextActive.items.length });
     return;
   }
 
@@ -328,10 +363,12 @@ async function showOrRefreshCompletion(editor: EditorHost, trigger: CompletionCo
     emptyText: nextActive.items.length ? undefined : "Loading…",
   });
 
-  const requestContext = nextActive.isIncomplete && (trigger.kind === "input" || trigger.kind === "delete" || trigger.kind === "retrigger")
-    ? { ...context, trigger: { kind: "incomplete" as const, character: trigger.character } }
-    : context;
-  const results = await collectCompletionItems(editor, requestContext);
+  const requestContext: RuntimeCompletionContext = nextActive.isIncomplete && (trigger.kind === "input" || trigger.kind === "delete" || trigger.kind === "retrigger")
+    ? { ...context, trigger: { kind: "incomplete" as const, character: trigger.character }, completionRequestSequence: requestSequence }
+    : { ...context, completionRequestSequence: requestSequence };
+  const collectStart = performance.now();
+  const results = await collectCompletionItems(editor, requestContext, requestSequence);
+  completionDiag("collect", { ms: elapsed(collectStart), items: results.items.length, sequence: requestSequence });
   if (completionController(editor).active !== nextActive || nextActive.requestSequence !== requestSequence) return;
   const latestContext = await readCompletionContext(editor, { kind: "retrigger" });
   if (!latestContext || latestContext.surfaceId !== nextActive.surfaceId || latestContext.revision !== requestRevision) return;
@@ -340,12 +377,15 @@ async function showOrRefreshCompletion(editor: EditorHost, trigger: CompletionCo
   nextActive.isIncomplete = results.isIncomplete;
   nextActive.providerContexts = results.providerContexts;
   nextActive.allItems = results.items;
+  const rankStart = performance.now();
   nextActive.items = rankCompletionItems(context.query, nextActive.allItems);
+  completionDiag("rank", { ms: elapsed(rankStart), input: nextActive.allItems.length, output: nextActive.items.length, sequence: requestSequence });
   nextActive.loading = false;
   nextActive.selectedIndex = clampIndex(nextActive.items, previousSelection, nextActive.selectedIndex);
 
   if (!nextActive.items.length && trigger.kind !== "manual") {
     hideCompletion(editor, { restoreFocus: false });
+    completionDiag("show end", { ms: elapsed(start), reason: "empty" });
     return;
   }
 
@@ -354,6 +394,7 @@ async function showOrRefreshCompletion(editor: EditorHost, trigger: CompletionCo
     loading: false,
   });
   void resolveSelectedCompletion(editor, nextActive);
+  completionDiag("show end", { ms: elapsed(start), reason: "published", items: nextActive.items.length });
 }
 
 function createCompletionSession(editor: EditorHost, context: RuntimeCompletionContext): ActiveCompletionState {
@@ -395,11 +436,14 @@ function createCompletionSession(editor: EditorHost, context: RuntimeCompletionC
 }
 
 function publishCompletionSession(active: ActiveCompletionState, overrides: Partial<CompletionSessionState> = {}): void {
-  const selected = active.items[active.selectedIndex];
+  const start = performance.now();
+  const visibleItems = active.items.slice(0, maxCompletionItems);
+  if (active.selectedIndex >= visibleItems.length) active.selectedIndex = Math.max(0, visibleItems.length - 1);
+  const selected = visibleItems[active.selectedIndex];
   active.session.setState({
     query: active.query,
     selectedIndex: active.selectedIndex,
-    items: active.items.map((entry) => entry.view),
+    items: visibleItems.map((entry) => entry.view),
     loading: active.loading,
     emptyText: overrides.emptyText,
     documentationMarkdown: overrides.documentationMarkdown ?? buildCompletionDocumentationMarkdown(selected?.item),
@@ -407,6 +451,7 @@ function publishCompletionSession(active: ActiveCompletionState, overrides: Part
     dynamicWidth: overrides.dynamicWidth ?? active.display.dynamicWidth ?? false,
     showDocumentation: overrides.showDocumentation ?? active.display.showDocumentation ?? true,
   });
+  completionDiag("publish", { ms: elapsed(start), totalItems: active.items.length, visibleItems: visibleItems.length });
 }
 
 async function moveCompletionSelection(editor: EditorHost, delta: number): Promise<void> {
@@ -426,6 +471,7 @@ async function selectCompletionIndex(editor: EditorHost, index: number): Promise
 }
 
 async function resolveSelectedCompletion(editor: EditorHost, active: ActiveCompletionState): Promise<void> {
+  const start = performance.now();
   const entry = active.items[active.selectedIndex];
   if (!entry) return;
   if (active.resolvingItemId === entry.item.id) return;
@@ -445,6 +491,7 @@ async function resolveSelectedCompletion(editor: EditorHost, active: ActiveCompl
 
   try {
     const resolved = await resolveCompletionItem(editor, entry, context);
+    completionDiag("resolve selected", { ms: elapsed(start), sourceId: entry.sourceId, label: entry.item.label });
     if (!resolved) return;
     if (completionController(editor).active !== active || active.requestSequence !== requestSequence) return;
     updateResolvedCompletionEntry(active, entry.item.id, resolved);
@@ -464,7 +511,17 @@ async function resolveCompletionItem(
   context: RuntimeCompletionContext,
 ): Promise<CompletionItem | undefined> {
   const source = editor.completion.source(entry.sourceId);
-  if (!source?.resolve) return undefined;
+  if (!source?.resolve) {
+    const materialized = materializeLazyLspCompletionItem(entry.item, context.text);
+    if (!materialized) return undefined;
+    if (!source) return { ...entry.item, ...materialized };
+    return editor.completion.present({ ...entry.item, ...materialized }, source, {
+      editor,
+      path: context.path,
+      languageId: context.languageId,
+      query: context.query,
+    });
+  }
   const resolved = await source.resolve(entry.item, context);
   if (!resolved) return undefined;
   return editor.completion.present({ ...entry.item, ...resolved }, source, {
@@ -545,7 +602,7 @@ function codeActionCompletionActive(editor: EditorHost): boolean {
   return Boolean(editor.stores.get(defineHostStore<{ active?: unknown } | undefined>({ id: codeActionStateSlot, init: () => undefined }))?.active);
 }
 
-async function collectCompletionItems(editor: EditorHost, context: RuntimeCompletionContext): Promise<{
+async function collectCompletionItems(editor: EditorHost, context: RuntimeCompletionContext, requestSequence: number): Promise<{
   items: ActiveCompletionEntry[];
   display: CompletionDisplayOptions;
   isIncomplete: boolean;
@@ -563,23 +620,31 @@ async function collectCompletionItems(editor: EditorHost, context: RuntimeComple
     ? editor.completion.sources().filter((source) => source.id === codeActionCompletionSourceId)
     : editor.completion.sources();
   const responses = await Promise.all(sources.map(async (source, providerIndex) => {
+    const start = performance.now();
     try {
       if (!(source.shouldTrigger?.(context) ?? true)) return undefined;
       const response = await source.provide(context);
+      completionDiag("provider", { sourceId: source.id, ms: elapsed(start), items: response?.items.length ?? 0, sequence: requestSequence });
       return response ? { source, response, providerIndex } : undefined;
-    } catch {
+    } catch (error) {
+      completionDiag("provider error", { sourceId: source.id, ms: elapsed(start), error: error instanceof Error ? error.message : String(error), sequence: requestSequence });
       return undefined;
     }
   }));
 
   for (const result of responses) {
     if (!result) continue;
+    if (completionController(editor).active?.requestSequence !== requestSequence) {
+      completionDiag("collect stale before normalize", { sequence: requestSequence });
+      break;
+    }
     const { source, response, providerIndex } = result;
     const providerIncomplete = Boolean(response.isIncomplete);
     display.dynamicWidth = display.dynamicWidth || Boolean(response.display?.dynamicWidth);
     display.showDocumentation = display.showDocumentation || Boolean(response.display?.showDocumentation);
     isIncomplete = isIncomplete || providerIncomplete;
     providerContexts.set(source.id, { isIncomplete: providerIncomplete, priority: source.priority ?? 0 });
+    const normalizeStart = performance.now();
     for (const item of response.items) {
       const normalized = editor.completion.present({ ...item, sourceId: source.id }, source, {
         editor,
@@ -598,6 +663,7 @@ async function collectCompletionItems(editor: EditorHost, context: RuntimeComple
         matchScore: 0,
       });
     }
+    completionDiag("normalize", { sourceId: source.id, ms: elapsed(normalizeStart), items: response.items.length, sequence: requestSequence });
   }
 
   return { items, display, isIncomplete, providerContexts };
@@ -885,12 +951,7 @@ function bufferWordCompletionSource(): CompletionSource {
     async provide(ctx): Promise<CompletionResult | null> {
       const query = ctx.query.trim();
       if (!query && ctx.trigger.kind !== "manual") return null;
-      const words = await ctx.editor.runtime.surfaces.completeWords({
-        surfaceId: ctx.surfaceId as SurfaceId,
-        cursorOffset: ctx.cursorOffset,
-        query,
-        limit: 100,
-      });
+      const words = completeBufferWords(ctx.text, ctx.cursorOffset, query, 100);
       return {
         items: words.map(({ label }) => ({
           id: `word:${label}`,
@@ -904,6 +965,35 @@ function bufferWordCompletionSource(): CompletionSource {
       };
     },
   };
+}
+
+function completeBufferWords(text: string, cursorOffset: number, query: string, limit: number): Array<{ label: string }> {
+  const start = performance.now();
+  const maxChars = 160_000;
+  const cursorIndex = stringIndexAtUtf8ByteOffset(text, cursorOffset);
+  const windowStart = Math.max(0, cursorIndex - Math.floor(maxChars / 2));
+  const windowEnd = Math.min(text.length, windowStart + maxChars);
+  const queryLower = query.toLowerCase();
+  const seen = new Set<string>();
+  const words: Array<{ label: string }> = [];
+  const matcher = /[A-Za-z0-9_$]{2,}/g;
+  matcher.lastIndex = windowStart;
+
+  while (words.length < limit) {
+    const match = matcher.exec(text);
+    if (!match || match.index >= windowEnd) break;
+    const label = match[0] ?? "";
+    const startIndex = match.index;
+    const endIndex = startIndex + label.length;
+    if (startIndex <= cursorIndex && cursorIndex <= endIndex) continue;
+    if (queryLower && !label.toLowerCase().includes(queryLower)) continue;
+    if (seen.has(label)) continue;
+    seen.add(label);
+    words.push({ label });
+  }
+
+  completionDiag("buffer words", { ms: elapsed(start), textLength: text.length, scanned: windowEnd - windowStart, items: words.length });
+  return words;
 }
 
 function lspCompletionSource(editor: EditorHost): CompletionSource {
@@ -932,6 +1022,7 @@ function lspCompletionSource(editor: EditorHost): CompletionSource {
       const position = positionAtByteOffset(ctx.text, ctx.cursorOffset);
       const uri = fileUri(ctx.path);
       const responses = await Promise.all(running.map(async (server) => {
+        const start = performance.now();
         try {
           const response = await editor.lsp.request({
             serverId: server.handle,
@@ -943,8 +1034,18 @@ function lspCompletionSource(editor: EditorHost): CompletionSource {
               context: lspCompletionRequestContext(ctx.trigger),
             },
           });
-          return normalizeLspCompletionResponse(response, ctx.text, server.id, server.handle);
-        } catch {
+          const requestMs = elapsed(start);
+          const requestSequence = (ctx as RuntimeCompletionContext).completionRequestSequence;
+          if (completionController(editor).active?.requestSequence !== requestSequence) {
+            completionDiag("lsp stale before normalize", { serverId: server.id, requestMs, sequence: requestSequence });
+            return { items: [], isIncomplete: false };
+          }
+          const normalizeStart = performance.now();
+          const normalized = normalizeLspCompletionResponse(response, ctx.text, server.id, server.handle);
+          completionDiag("lsp response", { serverId: server.id, requestMs, normalizeMs: elapsed(normalizeStart), items: normalized.items.length, isIncomplete: normalized.isIncomplete });
+          return normalized;
+        } catch (error) {
+          completionDiag("lsp error", { serverId: server.id, ms: elapsed(start), error: error instanceof Error ? error.message : String(error) });
           return undefined;
         }
       }));
@@ -993,10 +1094,11 @@ function normalizeLspCompletionResponse(
   serverId: string,
   serverHandle: number,
 ): { items: CompletionItem[]; isIncomplete: boolean } {
+  const lineOffsets = createLineOffsetCache(text);
   if (Array.isArray(value)) {
     return {
       items: value
-        .map((entry, index) => normalizeLspCompletionItem(entry, text, serverId, serverHandle, index))
+        .map((entry, index) => normalizeLspCompletionItem(entry, text, serverId, serverHandle, index, undefined, lineOffsets, false))
         .filter((entry): entry is CompletionItem => Boolean(entry)),
       isIncomplete: false,
     };
@@ -1006,7 +1108,7 @@ function normalizeLspCompletionResponse(
   const defaults = lspCompletionItemDefaults(asRecord(value.itemDefaults));
   return {
     items: rawItems
-      .map((entry, index) => normalizeLspCompletionItem(entry, text, serverId, serverHandle, index, defaults))
+      .map((entry, index) => normalizeLspCompletionItem(entry, text, serverId, serverHandle, index, defaults, lineOffsets, false))
       .filter((entry): entry is CompletionItem => Boolean(entry)),
     isIncomplete: Boolean(value.isIncomplete),
   };
@@ -1030,7 +1132,7 @@ function lspCompletionItemDefaults(value: Record<string, any> | undefined): LspC
 }
 
 function normalizeResolvedLspCompletionItem(value: JsonValue, text: string, original: CompletionItem, serverHandle: number): Partial<CompletionItem> | undefined {
-  const resolved = normalizeLspCompletionItem(value, text, String((original.payload as { serverId?: string } | undefined)?.serverId ?? "lsp"), serverHandle, 0);
+  const resolved = normalizeLspCompletionItem(value, text, String((original.payload as { serverId?: string } | undefined)?.serverId ?? "lsp"), serverHandle, 0, undefined, createLineOffsetCache(text), true);
   if (!resolved) return undefined;
   return {
     detail: resolved.detail,
@@ -1050,14 +1152,16 @@ function normalizeLspCompletionItem(
   serverHandle: number,
   index: number,
   defaults?: LspCompletionItemDefaults,
+  lineOffsets = createLineOffsetCache(text),
+  includeExpensiveFields = true,
 ): CompletionItem | undefined {
   const object = asRecord(value);
   if (!object || typeof object.label !== "string") return undefined;
-  const textEdit = lspCompletionEdit(object, defaults, text);
+  const textEdit = includeExpensiveFields ? lspCompletionEdit(object, defaults, text, lineOffsets) : undefined;
   const rawAdditionalTextEdits = Array.isArray(object.additionalTextEdits) ? object.additionalTextEdits : undefined;
-  const additionalTextEdits = rawAdditionalTextEdits
-    ?.map((edit: JsonValue) => lspTextEditToCompletionEdit(edit, text))
-    .filter((edit): edit is { start: number; end: number; text: string } => Boolean(edit));
+  const additionalTextEdits = includeExpensiveFields ? rawAdditionalTextEdits
+    ?.map((edit: JsonValue) => lspTextEditToCompletionEdit(edit, text, lineOffsets))
+    .filter((edit): edit is { start: number; end: number; text: string } => Boolean(edit)) : undefined;
   const labelDetails = asRecord(object.labelDetails);
   const rawForResolve = defaults?.data !== undefined && object.data === undefined
     ? { ...object, data: defaults.data }
@@ -1068,7 +1172,7 @@ function normalizeLspCompletionItem(
     filterText: typeof object.filterText === "string" ? object.filterText : object.label,
     sortText: typeof object.sortText === "string" ? object.sortText : object.label,
     detail: typeof object.detail === "string" ? object.detail : undefined,
-    documentation: lspDocumentationToMarkdown(object.documentation),
+    documentation: includeExpensiveFields ? lspDocumentationToMarkdown(object.documentation) : undefined,
     kind: completionKindName(object.kind),
     labelDetail: typeof labelDetails?.detail === "string" ? labelDetails.detail : undefined,
     labelDescription: typeof labelDetails?.description === "string" ? labelDetails.description : undefined,
@@ -1090,12 +1194,19 @@ function normalizeLspCompletionItem(
   };
 }
 
+function materializeLazyLspCompletionItem(item: CompletionItem, text: string): Partial<CompletionItem> | undefined {
+  const payload = item.payload as { raw?: JsonValue; serverId?: string; serverHandle?: number } | undefined;
+  if (!payload?.raw || !payload.serverHandle) return undefined;
+  return normalizeResolvedLspCompletionItem(payload.raw, text, item, payload.serverHandle);
+}
+
 function lspCompletionEdit(
   object: Record<string, any>,
   defaults: LspCompletionItemDefaults | undefined,
   text: string,
+  lineOffsets = createLineOffsetCache(text),
 ): { start: number; end: number; text: string } | undefined {
-  const explicit = lspTextEditToCompletionEdit(object.textEdit, text);
+  const explicit = lspTextEditToCompletionEdit(object.textEdit, text, lineOffsets);
   if (explicit) return explicit;
   const newText = typeof object.textEditText === "string"
     ? object.textEditText
@@ -1105,58 +1216,64 @@ function lspCompletionEdit(
         ? object.label
         : undefined;
   if (!defaults?.editRange || typeof newText !== "string") return undefined;
-  return lspDefaultEditRangeToCompletionEdit(defaults.editRange, newText, text);
+  return lspDefaultEditRangeToCompletionEdit(defaults.editRange, newText, text, lineOffsets);
 }
 
 function lspDefaultEditRangeToCompletionEdit(
   value: JsonValue,
   newText: string,
   text: string,
+  lineOffsets = createLineOffsetCache(text),
 ): { start: number; end: number; text: string } | undefined {
   const object = asRecord(value);
   if (!object) return undefined;
   const replace = asRecord(object.replace);
   if (replace) {
-    const start = lspPositionToByteOffset(text, replace.start);
-    const end = lspPositionToByteOffset(text, replace.end);
+    const start = lspPositionToByteOffset(text, replace.start, lineOffsets);
+    const end = lspPositionToByteOffset(text, replace.end, lineOffsets);
     if (start === undefined || end === undefined) return undefined;
     return { start, end, text: newText };
   }
-  const start = lspPositionToByteOffset(text, object.start);
-  const end = lspPositionToByteOffset(text, object.end);
+  const start = lspPositionToByteOffset(text, object.start, lineOffsets);
+  const end = lspPositionToByteOffset(text, object.end, lineOffsets);
   if (start === undefined || end === undefined) return undefined;
   return { start, end, text: newText };
 }
 
-function lspTextEditToCompletionEdit(value: JsonValue, text: string): { start: number; end: number; text: string } | undefined {
+function lspTextEditToCompletionEdit(value: JsonValue, text: string, lineOffsets = createLineOffsetCache(text)): { start: number; end: number; text: string } | undefined {
   const object = asRecord(value);
   if (!object) return undefined;
   const range = asRecord(object.range);
   if (typeof object.newText === "string" && range) {
-    const start = lspPositionToByteOffset(text, range.start);
-    const end = lspPositionToByteOffset(text, range.end);
+    const start = lspPositionToByteOffset(text, range.start, lineOffsets);
+    const end = lspPositionToByteOffset(text, range.end, lineOffsets);
     if (start === undefined || end === undefined) return undefined;
     return { start, end, text: object.newText };
   }
   const replace = asRecord(object.replace);
   if (typeof object.newText === "string" && replace) {
-    const start = lspPositionToByteOffset(text, replace.start);
-    const end = lspPositionToByteOffset(text, replace.end);
+    const start = lspPositionToByteOffset(text, replace.start, lineOffsets);
+    const end = lspPositionToByteOffset(text, replace.end, lineOffsets);
     if (start === undefined || end === undefined) return undefined;
     return { start, end, text: object.newText };
   }
   return undefined;
 }
 
-function lspPositionToByteOffset(text: string, value: unknown): number | undefined {
+function createLineOffsetCache(text: string): LineOffsetCache {
+  const starts = [0];
+  for (let index = 0; index < text.length; index += 1) {
+    if (text.charCodeAt(index) === 10) starts.push(index + 1);
+  }
+  return { text, starts };
+}
+
+function lspPositionToByteOffset(text: string, value: unknown, lineOffsets = createLineOffsetCache(text)): number | undefined {
   const object = asRecord(value);
   if (!object || typeof object.line !== "number" || typeof object.character !== "number") return undefined;
-  let line = 0;
-  let index = 0;
-  while (line < object.line && index < text.length) {
-    if (text.charCodeAt(index) === 10) line += 1;
-    index += 1;
-  }
+  const lineStart = lineOffsets.starts[object.line];
+  if (lineStart === undefined) return undefined;
+  let index = lineStart;
   let character = object.character;
   while (character > 0 && index < text.length) {
     if (text.charCodeAt(index) === 10) break;
@@ -1204,6 +1321,48 @@ function completionKindName(value: JsonValue | undefined): string | undefined {
     case 25: return "typeParameter";
     default: return undefined;
   }
+}
+
+function updateActiveCompletionFromDispatch(editor: EditorHost, active: ActiveCompletionState, dispatch: { id: string; args?: unknown }): boolean {
+  if (active.isIncomplete || active.providerContexts.has("default.lsp")) return false;
+  if (dispatch.id === commandId("edit.insertText")) {
+    const text = typeof (dispatch.args as { text?: unknown } | undefined)?.text === "string"
+      ? (dispatch.args as { text: string }).text
+      : "";
+    if (text.length !== 1 || !isCompletionQueryCharacter(text)) return false;
+    active.query += text;
+    active.replaceEnd += utf8ByteLength(text);
+  } else if (dispatch.id === commandId("delete_char_backward")) {
+    if (!active.query) return false;
+    const removed = active.query.slice(-1);
+    active.query = active.query.slice(0, -1);
+    active.replaceEnd = Math.max(active.replaceStart, active.replaceEnd - utf8ByteLength(removed));
+    if (!active.query) {
+      hideCompletion(editor, { restoreFocus: false });
+      return true;
+    }
+  } else {
+    return false;
+  }
+
+  const previousSelection = active.items[active.selectedIndex]?.item.id;
+  active.items = rankCompletionItems(active.query, active.allItems);
+  if (!active.items.length) {
+    hideCompletion(editor, { restoreFocus: false });
+    return true;
+  }
+  active.selectedIndex = clampIndex(active.items, previousSelection, active.selectedIndex);
+  publishCompletionSession(active, { loading: false, emptyText: undefined });
+  void resolveSelectedCompletion(editor, active);
+  completionDiag("fast filter", { query: active.query, items: active.items.length });
+  return true;
+}
+
+function shouldScheduleCompletionTrigger(editor: EditorHost, trigger: CompletionContext["trigger"]): boolean {
+  if (trigger.kind !== "triggerCharacter") return true;
+  const pane = activeSurfacePane(editor);
+  if (!pane?.path) return false;
+  return editor.lsp.serverIdsForPath(pane.path).length > 0;
 }
 
 function triggerForDispatch(dispatch: { id: string; args?: unknown }): CompletionContext["trigger"] {

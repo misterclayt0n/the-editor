@@ -117,17 +117,6 @@ function completionDiag(phase: string, data: Record<string, unknown>): void {
   console.info("[completion]", phase, data);
 }
 
-const insertMutationCommands = new Set([
-  commandId("edit.insertText"),
-  commandId("delete_char_backward"),
-  commandId("delete_char_forward"),
-  commandId("delete_word_backward"),
-  commandId("delete_word_forward"),
-  commandId("kill_to_line_start"),
-  commandId("kill_to_line_end"),
-]);
-
-
 export function defaultCompletion(): EditorModule {
   return (editor) => {
     editor.roles.setFallback(completionMenuRoleId, completionImplementationId);
@@ -212,7 +201,6 @@ export function defaultCompletion(): EditorModule {
     });
 
     const sourceDisposables = [
-      editor.completion.registerSource(bufferWordCompletionSource()),
       editor.completion.registerSource(lspCompletionSource(editor)),
       editor.completion.registerPresentation({
         id: "default.completion.badges",
@@ -230,30 +218,7 @@ export function defaultCompletion(): EditorModule {
       handler: async ({ dispatch }: { dispatch: { id: string; args?: unknown } }) => {
         if (dispatch.id.startsWith("completion.") || completionPreservingCommands.has(dispatch.id as ReturnType<typeof commandId>)) return;
         const active = completionController(editor).active;
-        const inInsertMode = getDefaultState(editor).mode === "insert" && editor.input.current().kind === "editor";
-        if (insertMutationCommands.has(dispatch.id as ReturnType<typeof commandId>) || active) {
-          completionDiag("after dispatch", { id: dispatch.id, active: Boolean(active), inInsertMode });
-        }
-
-        if (active) {
-          if (insertMutationCommands.has(dispatch.id as ReturnType<typeof commandId>) && inInsertMode) {
-            if (updateActiveCompletionFromDispatch(editor, active, dispatch)) return;
-            const trigger = triggerForDispatch(dispatch);
-            if (!shouldScheduleCompletionTrigger(editor, trigger)) {
-              hideCompletion(editor, { restoreFocus: false });
-              return;
-            }
-            scheduleCompletion(editor, trigger);
-            return;
-          }
-          hideCompletion(editor, { restoreFocus: false });
-          return;
-        }
-
-        if (insertMutationCommands.has(dispatch.id as ReturnType<typeof commandId>) && inInsertMode) {
-          const trigger = triggerForDispatch(dispatch);
-          if (shouldScheduleCompletionTrigger(editor, trigger)) scheduleCompletion(editor, trigger);
-        }
+        if (active) hideCompletion(editor, { restoreFocus: false });
       },
     });
 
@@ -269,16 +234,6 @@ export function defaultCompletion(): EditorModule {
 
 function completionController(editor: EditorHost): CompletionControllerState {
   return editor.stores.host(defineHostStore({ id: completionControllerSlot, init: () => ({} satisfies CompletionControllerState) }));
-}
-
-function scheduleCompletion(editor: EditorHost, trigger: CompletionContext["trigger"], delayMs = 40): void {
-  const controller = completionController(editor);
-  if (controller.timer) clearTimeout(controller.timer);
-  completionDiag("schedule", { trigger: trigger.kind, character: trigger.character, delayMs });
-  controller.timer = setTimeout(() => {
-    controller.timer = undefined;
-    void showOrRefreshCompletion(editor, trigger);
-  }, delayMs);
 }
 
 async function showOrRefreshCompletion(editor: EditorHost, trigger: CompletionContext["trigger"]): Promise<void> {
@@ -940,62 +895,6 @@ function looksLikeNoiseDetail(detail: string): boolean {
   return /^[A-Za-z_][A-Za-z0-9_\s:*&<>,.?\[\]-]*$/.test(detail);
 }
 
-function bufferWordCompletionSource(): CompletionSource {
-  return {
-    id: "default.bufferWords",
-    title: "words",
-    priority: 10,
-    shouldTrigger(ctx) {
-      return ctx.trigger.kind === "manual" || ctx.query.length >= 2;
-    },
-    async provide(ctx): Promise<CompletionResult | null> {
-      const query = ctx.query.trim();
-      if (!query && ctx.trigger.kind !== "manual") return null;
-      const words = completeBufferWords(ctx.text, ctx.cursorOffset, query, 100);
-      return {
-        items: words.map(({ label }) => ({
-          id: `word:${label}`,
-          label,
-          filterText: label,
-          insertText: label,
-          replace: { start: ctx.replaceStart, end: ctx.replaceEnd },
-          kind: "text",
-          labelDescription: "buffer word",
-        })),
-      };
-    },
-  };
-}
-
-function completeBufferWords(text: string, cursorOffset: number, query: string, limit: number): Array<{ label: string }> {
-  const start = performance.now();
-  const maxChars = 160_000;
-  const cursorIndex = stringIndexAtUtf8ByteOffset(text, cursorOffset);
-  const windowStart = Math.max(0, cursorIndex - Math.floor(maxChars / 2));
-  const windowEnd = Math.min(text.length, windowStart + maxChars);
-  const queryLower = query.toLowerCase();
-  const seen = new Set<string>();
-  const words: Array<{ label: string }> = [];
-  const matcher = /[A-Za-z0-9_$]{2,}/g;
-  matcher.lastIndex = windowStart;
-
-  while (words.length < limit) {
-    const match = matcher.exec(text);
-    if (!match || match.index >= windowEnd) break;
-    const label = match[0] ?? "";
-    const startIndex = match.index;
-    const endIndex = startIndex + label.length;
-    if (startIndex <= cursorIndex && cursorIndex <= endIndex) continue;
-    if (queryLower && !label.toLowerCase().includes(queryLower)) continue;
-    if (seen.has(label)) continue;
-    seen.add(label);
-    words.push({ label });
-  }
-
-  completionDiag("buffer words", { ms: elapsed(start), textLength: text.length, scanned: windowEnd - windowStart, items: words.length });
-  return words;
-}
-
 function lspCompletionSource(editor: EditorHost): CompletionSource {
   return {
     id: "default.lsp",
@@ -1321,64 +1220,6 @@ function completionKindName(value: JsonValue | undefined): string | undefined {
     case 25: return "typeParameter";
     default: return undefined;
   }
-}
-
-function updateActiveCompletionFromDispatch(editor: EditorHost, active: ActiveCompletionState, dispatch: { id: string; args?: unknown }): boolean {
-  if (active.isIncomplete || active.providerContexts.has("default.lsp")) return false;
-  if (dispatch.id === commandId("edit.insertText")) {
-    const text = typeof (dispatch.args as { text?: unknown } | undefined)?.text === "string"
-      ? (dispatch.args as { text: string }).text
-      : "";
-    if (text.length !== 1 || !isCompletionQueryCharacter(text)) return false;
-    active.query += text;
-    active.replaceEnd += utf8ByteLength(text);
-  } else if (dispatch.id === commandId("delete_char_backward")) {
-    if (!active.query) return false;
-    const removed = active.query.slice(-1);
-    active.query = active.query.slice(0, -1);
-    active.replaceEnd = Math.max(active.replaceStart, active.replaceEnd - utf8ByteLength(removed));
-    if (!active.query) {
-      hideCompletion(editor, { restoreFocus: false });
-      return true;
-    }
-  } else {
-    return false;
-  }
-
-  const previousSelection = active.items[active.selectedIndex]?.item.id;
-  active.items = rankCompletionItems(active.query, active.allItems);
-  if (!active.items.length) {
-    hideCompletion(editor, { restoreFocus: false });
-    return true;
-  }
-  active.selectedIndex = clampIndex(active.items, previousSelection, active.selectedIndex);
-  publishCompletionSession(active, { loading: false, emptyText: undefined });
-  void resolveSelectedCompletion(editor, active);
-  completionDiag("fast filter", { query: active.query, items: active.items.length });
-  return true;
-}
-
-function shouldScheduleCompletionTrigger(editor: EditorHost, trigger: CompletionContext["trigger"]): boolean {
-  if (trigger.kind !== "triggerCharacter") return true;
-  const pane = activeSurfacePane(editor);
-  if (!pane?.path) return false;
-  return editor.lsp.serverIdsForPath(pane.path).length > 0;
-}
-
-function triggerForDispatch(dispatch: { id: string; args?: unknown }): CompletionContext["trigger"] {
-  if (dispatch.id === commandId("edit.insertText")) {
-    const text = typeof (dispatch.args as { text?: unknown } | undefined)?.text === "string"
-      ? (dispatch.args as { text: string }).text
-      : "";
-    if (text.length === 1 && !isCompletionQueryCharacter(text)) {
-      return { kind: "triggerCharacter", character: text };
-    }
-    return {
-      kind: text.trim() ? "input" : "retrigger",
-      character: text.length === 1 ? text : undefined,
-    };
-  }
-  return { kind: "delete" };
 }
 
 function positionAtByteOffset(text: string, byteOffset: number): { line: number; character: number } {

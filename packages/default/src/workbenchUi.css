@@ -194,10 +194,14 @@
 }
 
 .workbenchFileTab:hover .workbenchFileTabCloseFade,
-.workbenchFileTab:hover .workbenchFileTabClose,
-.workbenchFileTab:focus-within .workbenchFileTabCloseFade,
-.workbenchFileTab:focus-within .workbenchFileTabClose {
+.workbenchFileTab:hover .workbenchFileTabClose {
   opacity: 1;
+}
+
+.workbenchFileTabButton:focus-visible,
+.workbenchFileTabClose:focus-visible {
+  outline: 1px solid var(--theme-ui-text-focus-fg);
+  outline-offset: -2px;
 }
 
 .workbenchFileTabClose:hover {

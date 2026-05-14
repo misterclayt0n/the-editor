@@ -172,13 +172,17 @@ function DefaultFileTab({
         type="button"
         draggable
         onDragStart={(event) => {
+          event.currentTarget.blur();
           const payload: DraggedWorkbenchPane = { kind: "the-editor/pane", paneId };
           event.dataTransfer.effectAllowed = "move";
           event.dataTransfer.setData("application/x-the-editor-pane", JSON.stringify(payload));
           event.dataTransfer.setData("text/plain", label);
           drag.beginPaneDrag(paneId, groupId);
         }}
-        onDragEnd={() => drag.clear()}
+        onDragEnd={(event) => {
+          event.currentTarget.blur();
+          drag.clear();
+        }}
         onClick={activate}
         title={path}
         className="workbenchFileTabButton"

@@ -258,10 +258,27 @@ const workbenchLayoutStore = defineHostStore<WorkbenchLayoutState>({
   }),
 });
 
+type WorkbenchLayoutIntent =
+  | { kind: "ensureRoot" }
+  | { kind: "openSurface" }
+  | { kind: "replaceActiveSurface" }
+  | { kind: "openTool" }
+  | { kind: "updateItem" }
+  | { kind: "updatePaneTab" }
+  | { kind: "focusPane" }
+  | { kind: "focusGroup" }
+  | { kind: "movePane" }
+  | { kind: "closePane" }
+  | { kind: "closePanesForTool" }
+  | { kind: "resizeSplit" };
+
 export class WorkbenchController {
   private readonly listeners = new Set<(kinds: readonly WorkbenchInvalidationKind[]) => void>();
+  private readonly layout: WorkbenchLayoutModel;
 
-  constructor(private readonly editor: EditorHost) {}
+  constructor(private readonly editor: EditorHost) {
+    this.layout = new WorkbenchLayoutModel(() => this.editor.stores.host(workbenchLayoutStore));
+  }
 
   invalidate(...kinds: WorkbenchInvalidationKind[]): void {
     const nextKinds = [...new Set<WorkbenchInvalidationKind>(kinds.length ? kinds : ["all"])];
@@ -607,20 +624,15 @@ export class WorkbenchController {
     mapItem?: (item: WorkbenchItemDescriptor) => WorkbenchItemDescriptor;
     mapPane?: (pane: WorkbenchPaneDescriptor) => WorkbenchPaneDescriptor;
   }): WorkbenchEditorLayoutSnapshot {
-    const state = this.layoutState();
-    return {
-      root: snapshotNode(state.root),
-      groups: [...state.groups.values()].map((group) => this.snapshotGroup(group)),
-      items: [...state.items.values()].map((item) => options?.mapItem ? options.mapItem({ ...item }) : { ...item }),
-      panes: [...state.panes.values()].map((pane) => options?.mapPane ? options.mapPane({ ...pane }) : { ...pane }),
-      activeGroupId: state.activeGroupId,
-      activePaneId: state.activePaneId,
-      activeItemId: state.activeItemId,
-    };
+    return this.layout.snapshot(options);
   }
 
   private layoutState(): WorkbenchLayoutState {
-    return this.editor.stores.host(workbenchLayoutStore);
+    return this.layout.state();
+  }
+
+  private applyLayout<T>(intent: WorkbenchLayoutIntent, mutate: () => T): T {
+    return this.layout.apply(intent, mutate);
   }
 
   private upsertSurfaceItem(
@@ -855,12 +867,115 @@ export class WorkbenchController {
   }
 
   private snapshotGroup(group: WorkbenchGroupState): WorkbenchGroupSnapshot {
+    return snapshotGroupState(group);
+  }
+}
+
+class WorkbenchLayoutModel {
+  constructor(private readonly getState: () => WorkbenchLayoutState) {}
+
+  state(): WorkbenchLayoutState {
+    return this.getState();
+  }
+
+  apply<T>(intent: WorkbenchLayoutIntent, mutate: () => T): T {
+    const result = mutate();
+    this.repair();
+    this.assertInvariants(intent.kind);
+    return result;
+  }
+
+  snapshot(options?: {
+    mapItem?: (item: WorkbenchItemDescriptor) => WorkbenchItemDescriptor;
+    mapPane?: (pane: WorkbenchPaneDescriptor) => WorkbenchPaneDescriptor;
+  }): WorkbenchEditorLayoutSnapshot {
+    this.repair();
+    this.assertInvariants("snapshot");
+    const state = this.state();
     return {
-      id: group.id,
-      paneIds: [...group.paneIds],
-      activePaneId: group.activePaneId,
+      root: snapshotNode(state.root),
+      groups: [...state.groups.values()].map((group) => snapshotGroupState(group)),
+      items: [...state.items.values()].map((item) => options?.mapItem ? options.mapItem({ ...item }) : { ...item }),
+      panes: [...state.panes.values()].map((pane) => options?.mapPane ? options.mapPane({ ...pane }) : { ...pane }),
+      activeGroupId: state.activeGroupId,
+      activePaneId: state.activePaneId,
+      activeItemId: state.activeItemId,
     };
   }
+
+  assertInvariants(context = "layout"): void {
+    const state = this.state();
+    const treeGroups = new Set<WorkbenchGroupId>();
+    collectTreeGroups(state.root, treeGroups);
+
+    for (const groupId of treeGroups) {
+      if (!state.groups.has(groupId)) throw new Error(`${context}: split tree references missing group ${groupId}`);
+    }
+
+    const paneOwners = new Map<WorkbenchPaneId, WorkbenchGroupId>();
+    for (const group of state.groups.values()) {
+      if (treeGroups.size && !treeGroups.has(group.id)) throw new Error(`${context}: group ${group.id} is not referenced by split tree`);
+      for (const paneId of group.paneIds) {
+        if (!state.panes.has(paneId)) throw new Error(`${context}: group ${group.id} references missing pane ${paneId}`);
+        const previous = paneOwners.get(paneId);
+        if (previous) throw new Error(`${context}: pane ${paneId} belongs to both ${previous} and ${group.id}`);
+        paneOwners.set(paneId, group.id);
+      }
+      if (group.activePaneId && !group.paneIds.includes(group.activePaneId)) {
+        throw new Error(`${context}: group ${group.id} active pane is not in group`);
+      }
+    }
+
+    for (const [paneId, pane] of state.panes.entries()) {
+      if (!paneOwners.has(paneId)) throw new Error(`${context}: pane ${paneId} has no group owner`);
+      if (!state.items.has(pane.itemId)) throw new Error(`${context}: pane ${paneId} references missing item ${pane.itemId}`);
+    }
+
+    if (state.activeGroupId && !state.groups.has(state.activeGroupId)) throw new Error(`${context}: active group is missing`);
+    if (state.activePaneId && !state.panes.has(state.activePaneId)) throw new Error(`${context}: active pane is missing`);
+    if (state.activePaneId) {
+      const owner = paneOwners.get(state.activePaneId);
+      if (!owner) throw new Error(`${context}: active pane has no owner`);
+      if (state.activeGroupId && owner !== state.activeGroupId) throw new Error(`${context}: active group does not own active pane`);
+      const pane = state.panes.get(state.activePaneId)!;
+      if (state.activeItemId !== pane.itemId) throw new Error(`${context}: active item does not match active pane`);
+    }
+
+    assertSplitInvariants(state.root, context);
+  }
+
+  private repair(): void {
+    const state = this.state();
+    state.root = collapseSplitTree(pruneEmptyGroups(state.root, state.groups));
+    if (!state.root && state.groups.size) {
+      const group = [...state.groups.values()][0]!;
+      state.root = { kind: "group", groupId: group.id };
+    }
+    for (const group of state.groups.values()) {
+      group.paneIds = group.paneIds.filter((paneId) => state.panes.has(paneId));
+      if (group.activePaneId && !group.paneIds.includes(group.activePaneId)) group.activePaneId = undefined;
+      group.activePaneId ??= group.paneIds[0];
+    }
+    for (const [itemId] of [...state.items.entries()]) {
+      if (![...state.panes.values()].some((pane) => pane.itemId === itemId)) state.items.delete(itemId);
+    }
+    const activeGroup = state.activeGroupId ? state.groups.get(state.activeGroupId) : undefined;
+    const activePane = state.activePaneId ? state.panes.get(state.activePaneId) : undefined;
+    if (!activeGroup || !activePane || !activeGroup.paneIds.includes(activePane.id)) {
+      const fallbackGroup = [...state.groups.values()].find((group) => group.paneIds.length) ?? [...state.groups.values()][0];
+      state.activeGroupId = fallbackGroup?.id;
+      state.activePaneId = fallbackGroup?.activePaneId;
+    }
+    state.activeItemId = state.activePaneId ? state.panes.get(state.activePaneId)?.itemId : undefined;
+  }
+}
+
+function snapshotGroupState(group: WorkbenchGroupState): WorkbenchGroupSnapshot {
+  return {
+    id: group.id,
+    paneIds: [...group.paneIds],
+    activePaneId: group.activePaneId,
+  };
 }
 
 export async function bootWorkbench(editor: EditorHost): Promise<void> {
@@ -959,6 +1074,25 @@ function firstGroupId(node: WorkbenchEditorLayoutNodeState | null): WorkbenchGro
     if (groupId) return groupId;
   }
   return undefined;
+}
+
+function collectTreeGroups(node: WorkbenchEditorLayoutNodeState | null, out: Set<WorkbenchGroupId>): void {
+  if (!node) return;
+  if (node.kind === "group") {
+    out.add(node.groupId);
+    return;
+  }
+  for (const child of node.children) collectTreeGroups(child, out);
+}
+
+function assertSplitInvariants(node: WorkbenchEditorLayoutNodeState | null, context: string): void {
+  if (!node || node.kind === "group") return;
+  if (node.children.length < 2) throw new Error(`${context}: split ${node.id} has fewer than two children`);
+  if (node.sizes.length !== node.children.length) throw new Error(`${context}: split ${node.id} size/child length mismatch`);
+  for (const size of node.sizes) {
+    if (!Number.isFinite(size) || size <= 0) throw new Error(`${context}: split ${node.id} has invalid size ${size}`);
+  }
+  for (const child of node.children) assertSplitInvariants(child, context);
 }
 
 function snapshotNode(node: WorkbenchEditorLayoutNodeState | null): WorkbenchEditorLayoutNodeSnapshot | null {

@@ -242,7 +242,7 @@ export function defaultCompletion(): EditorModule {
             if (updateActiveCompletionFromDispatch(editor, active, dispatch)) return;
             const trigger = triggerForDispatch(dispatch);
             const queryLength = updateAutomaticWordFromDispatch(editor, dispatch, trigger) || active.query.length;
-            if (shouldScheduleAutomaticCompletionTrigger(editor, trigger, queryLength)) {
+            if (shouldRefreshActiveCompletion(editor, active, trigger, queryLength)) {
               scheduleCompletion(editor, trigger);
               return;
             }
@@ -644,6 +644,12 @@ function updateAutomaticWordFromDispatch(editor: EditorHost, dispatch: { id: str
 
   controller.automaticWord = undefined;
   return 0;
+}
+
+function shouldRefreshActiveCompletion(editor: EditorHost, active: ActiveCompletionState, trigger: CompletionContext["trigger"], queryLength: number): boolean {
+  if (trigger.kind === "input" && isCompletionQueryCharacter(trigger.character ?? "") && (active.loading || active.isIncomplete)) return true;
+  if (trigger.kind === "delete" && (active.loading || active.isIncomplete)) return true;
+  return shouldScheduleAutomaticCompletionTrigger(editor, trigger, queryLength);
 }
 
 function shouldScheduleAutomaticCompletionTrigger(editor: EditorHost, trigger: CompletionContext["trigger"], queryLength: number): boolean {

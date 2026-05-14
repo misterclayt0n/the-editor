@@ -1,8 +1,9 @@
 import { mkdir, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { dirname, join, relative, sep } from "node:path";
+import { basename, dirname, join, relative, sep } from "node:path";
 import { commandId, matchesCommandPaletteItem, toolTypeId, type CommandPaletteItem, type EditorModule, defineHostStore } from "@the-editor/editor";
+import { syncWorkbenchActiveSurface, workbenchSnapshotState } from "./workbenchSnapshot.js";
 
 export interface FileTreeToolState {
   rootPath: string;
@@ -135,8 +136,11 @@ export function defaultFileTree(): EditorModule {
       async run(_ctx, args) {
         const state = fileTreeState(editor);
         try {
-          await mkdir(dirname(join(state.rootPath, args.destinationPath)), { recursive: true });
-          await rename(join(state.rootPath, args.sourcePath), join(state.rootPath, args.destinationPath));
+          const sourceAbsolute = join(state.rootPath, args.sourcePath);
+          const destinationAbsolute = join(state.rootPath, args.destinationPath);
+          await mkdir(dirname(destinationAbsolute), { recursive: true });
+          await rename(sourceAbsolute, destinationAbsolute);
+          await retargetOpenFilePanes(editor, sourceAbsolute, destinationAbsolute);
         } catch (error) {
           editor.notifications.error("fileTree", `failed to rename ${args.sourcePath}: ${error instanceof Error ? error.message : String(error)}`);
           refreshFileTree(editor);
@@ -217,6 +221,32 @@ function ensureFileTreeLoaded(editor: Parameters<EditorModule>[0]): void {
   const state = fileTreeState(editor);
   if (state.paths.length || state.loading) return;
   refreshFileTree(editor);
+}
+
+async function retargetOpenFilePanes(editor: Parameters<EditorModule>[0], sourceAbsolute: string, destinationAbsolute: string): Promise<void> {
+  const state = workbenchSnapshotState(editor);
+  const layout = editor.workbench.snapshotEditorLayout();
+  const sourcePrefix = `${sourceAbsolute}${sep}`;
+  const isAffected = (path: string | undefined): path is string => path === sourceAbsolute || path?.startsWith(sourcePrefix) === true;
+  let changed = false;
+
+  for (const pane of layout.panes) {
+    if (pane.kind !== "surface" || !isAffected(pane.path)) continue;
+    const nextPath = pane.path === sourceAbsolute
+      ? destinationAbsolute
+      : join(destinationAbsolute, relative(sourceAbsolute, pane.path));
+    const title = basename(nextPath);
+
+    editor.workbench.updateItem(pane.itemId, { title, path: nextPath });
+    const paneState = state.surfacePanes.get(pane.id);
+    if (paneState) state.surfacePanes.set(pane.id, { ...paneState, path: nextPath, title });
+    await editor.runtime.surfaces.loadFile({ surfaceId: pane.surfaceId, path: nextPath });
+    changed = true;
+  }
+
+  if (!changed) return;
+  syncWorkbenchActiveSurface(editor, state);
+  editor.workbench.invalidate("frame", "layout", "tabs");
 }
 
 function refreshFileTree(editor: Parameters<EditorModule>[0]): void {

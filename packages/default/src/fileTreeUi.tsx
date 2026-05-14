@@ -21,6 +21,7 @@ export function DefaultFileTree({
   const activePath = state?.activePath && state.rootPath && state.activePath.startsWith(state.rootPath)
     ? normalizePath(state.activePath.slice(state.rootPath.length).replace(/^\/+/, ""))
     : undefined;
+  const rootRef = useRef<HTMLDivElement>(null);
   const latestSelectedRef = useRef<string | undefined>(activePath);
   const draftEntriesRef = useRef(new Map<string, "file" | "folder">());
   const lastResetRef = useRef<{ rootPath: string; treeRevision: number } | undefined>(undefined);
@@ -95,6 +96,16 @@ export function DefaultFileTree({
   const treeRevision = state?.treeRevision ?? 0;
 
   useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const install = () => installPierreOverlayOverflowFix(root);
+    install();
+    const observer = new MutationObserver(install);
+    observer.observe(root, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
     const rootPath = state?.rootPath ?? "";
     const previous = lastResetRef.current;
     if (previous?.rootPath === rootPath && previous.treeRevision === treeRevision) {
@@ -137,6 +148,7 @@ export function DefaultFileTree({
 
   return (
     <div
+      ref={rootRef}
       className="defaultFileTree"
       onKeyDown={(event) => {
         if (event.key !== "Enter") return;
@@ -157,6 +169,26 @@ export function DefaultFileTree({
       />
     </div>
   );
+}
+
+function installPierreOverlayOverflowFix(root: HTMLElement): void {
+  const tree = root.querySelector("file-tree-container") as HTMLElement & { shadowRoot?: ShadowRoot | null } | null;
+  const shadowRoot = tree?.shadowRoot;
+  if (!shadowRoot || shadowRoot.getElementById("the-editor-file-tree-overlay-overflow")) return;
+  const style = document.createElement("style");
+  style.id = "the-editor-file-tree-overlay-overflow";
+  style.textContent = `
+    :host([data-file-tree-virtualized='true']),
+    [data-file-tree-virtualized-wrapper='true'],
+    [data-file-tree-virtualized-root='true'] {
+      overflow: visible !important;
+    }
+
+    [data-type='context-menu-anchor'] {
+      z-index: 1000 !important;
+    }
+  `;
+  shadowRoot.append(style);
 }
 
 function mergedFileTreeOptions(contributions: readonly FileTreeUiContribution[]): Record<string, unknown> {

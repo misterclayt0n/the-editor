@@ -1,7 +1,7 @@
 .defaultFileTree {
   height: 100%;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .defaultFileTreeContextMenu {

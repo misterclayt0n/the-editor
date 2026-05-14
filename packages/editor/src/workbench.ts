@@ -864,7 +864,11 @@ export async function bootWorkbench(editor: EditorHost): Promise<void> {
 }
 
 export async function handleWorkbenchKeyInput(editor: EditorHost, input: WorkbenchKeyInput): Promise<boolean> {
-  return (await editor.hooks.first<WorkbenchKeyInput, boolean>("workbench.keyInput", input)) ?? false;
+  const handled = await editor.hooks.first<WorkbenchKeyInput, boolean>("workbench.keyInput", input);
+  if (handled !== undefined) return handled;
+
+  const transition = await editor.interaction.handleInput(input);
+  return transition.handled ?? Boolean(transition.effects?.length);
 }
 
 export async function configureWorkbenchSurface(editor: EditorHost, request: WorkbenchSurfaceConfigureRequest): Promise<boolean> {

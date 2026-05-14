@@ -3,6 +3,26 @@ const path = require("node:path");
 const { contextBridge, ipcRenderer } = require("electron");
 
 const sourceExtensions = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
+const perfEnabled = readBooleanEnv("THE_EDITOR_PERF");
+const inputPerfEnabled = perfEnabled || readBooleanEnv("THE_EDITOR_INPUT_LOG");
+const perfLogPath = process.env.THE_EDITOR_PERF_LOG || "/tmp/the-editor-perf.log";
+
+ipcRenderer.send("perf:log", { category: "preload", phase: "ready", data: { href: location.href, perf: perfEnabled, path: perfLogPath } });
+
+if (inputPerfEnabled) {
+  window.addEventListener("keydown", (event) => {
+    ipcRenderer.send("perf:log", {
+      category: "preload-input",
+      phase: "keydown",
+      data: {
+        key: event.key,
+        code: event.code,
+        repeat: event.repeat,
+        target: event.target && event.target.constructor ? event.target.constructor.name : undefined,
+      },
+    });
+  }, { capture: true });
+}
 
 contextBridge.exposeInMainWorld("theEditor", {
   openFileDialog() {
@@ -13,6 +33,11 @@ contextBridge.exposeInMainWorld("theEditor", {
   },
   openExternal(url) {
     return ipcRenderer.invoke("app:open-external", url);
+  },
+  perfEnabled,
+  perfLogPath,
+  perfLog(payload) {
+    ipcRenderer.send("perf:log", payload);
   },
   onPolicyEvent(handler) {
     const listener = (_event, payload) => handler(payload);
@@ -27,6 +52,11 @@ contextBridge.exposeInMainWorld("theEditor", {
     return resolveLocalModule(specifier, path.dirname(importerPath));
   },
 });
+
+function readBooleanEnv(name) {
+  const value = process.env[name];
+  return value === "1" || value === "true";
+}
 
 function resolveLocalModule(specifier, baseDir) {
   const absolute = path.resolve(baseDir, specifier);

@@ -86,57 +86,58 @@ export class RuntimeNativeClient implements RuntimeApi {
       this.session.setSurfaceCursorSemantics(params.surfaceId, params.semantics);
       return { ok: true };
     },
-    applyOperation: async (params: { surfaceId: SurfaceId; operation: SurfaceOperation }): Promise<OkResult> => {
-      this.session.applySurfaceOperation(params.surfaceId, params.operation);
-      return { ok: true };
+    applyOperation: async (params: { surfaceId: SurfaceId; operation: SurfaceOperation }): Promise<SurfaceState> => {
+      const span = runtimePerfSpan("runtime", "applySurfaceOperation", { surfaceId: params.surfaceId, operation: params.operation.name }, 4);
+      const state = surfaceStateFromJson(String(this.session.applySurfaceOperation(params.surfaceId, params.operation)));
+      span.end({ textLength: state.text.length, revision: state.revision });
+      return state;
     },
-    readState: async (params: { surfaceId: SurfaceId }): Promise<SurfaceState> => ({
-      text: this.session.readSurfaceText(params.surfaceId),
-      revision: this.session.readSurfaceRevision(params.surfaceId),
-      lineEnding: this.session.readSurfaceLineEnding(params.surfaceId),
-      lineCount: this.session.readSurfaceLineCount(params.surfaceId),
-      selection: this.session.readSurfaceSelection(params.surfaceId),
-      activeCursorId: this.session.readSurfaceActiveCursor(params.surfaceId),
-      cursorSemantics: this.session.readSurfaceCursorSemantics(params.surfaceId) as CursorSemantics,
-      viewport: this.session.readSurfaceViewport(params.surfaceId),
-    }),
-    setActiveCursor: async (params: { surfaceId: SurfaceId; cursorId: number | null }): Promise<OkResult> => {
-      this.session.setSurfaceActiveCursor(params.surfaceId, params.cursorId);
-      return { ok: true };
+    readState: async (params: { surfaceId: SurfaceId }): Promise<SurfaceState> => {
+      const span = runtimePerfSpan("runtime", "readSurfaceState", { surfaceId: params.surfaceId }, 4);
+      const state = {
+        text: this.session.readSurfaceText(params.surfaceId),
+        revision: this.session.readSurfaceRevision(params.surfaceId),
+        lineEnding: this.session.readSurfaceLineEnding(params.surfaceId),
+        lineCount: this.session.readSurfaceLineCount(params.surfaceId),
+        selection: this.session.readSurfaceSelection(params.surfaceId),
+        activeCursorId: this.session.readSurfaceActiveCursor(params.surfaceId),
+        cursorSemantics: this.session.readSurfaceCursorSemantics(params.surfaceId) as CursorSemantics,
+        viewport: this.session.readSurfaceViewport(params.surfaceId),
+      } satisfies SurfaceState;
+      span.end({ textLength: state.text.length, revision: state.revision });
+      return state;
     },
-    applyEdit: async (params: { surfaceId: SurfaceId; edit: SurfaceEdit }): Promise<OkResult> => {
-      this.session.applySurfaceEdit(params.surfaceId, params.edit);
-      return { ok: true };
-    },
-    completeWords: async (params: { surfaceId: SurfaceId; cursorOffset: number; query: string; limit?: number }): Promise<Array<{ label: string }>> => (
-      JSON.parse(this.session.completeSurfaceWordsJson(params.surfaceId, params.cursorOffset, params.query, params.limit ?? null)) as Array<{ label: string }>
+    setActiveCursor: async (params: { surfaceId: SurfaceId; cursorId: number | null }): Promise<SurfaceState> => surfaceStateFromJson(
+      String(this.session.setSurfaceActiveCursor(params.surfaceId, params.cursorId)),
+    ),
+    applyEdit: async (params: { surfaceId: SurfaceId; edit: SurfaceEdit }): Promise<SurfaceState> => surfaceStateFromJson(
+      String(this.session.applySurfaceEdit(params.surfaceId, params.edit)),
     ),
     commitUndoCheckpoint: async (params: { surfaceId: SurfaceId }): Promise<OkResult> => {
       this.session.commitSurfaceUndoCheckpoint(params.surfaceId);
       return { ok: true };
     },
-    undo: async (params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult> => {
-      this.session.undoSurface(params.surfaceId, params.count ?? 1);
-      return { ok: true };
-    },
-    redo: async (params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult> => {
-      this.session.redoSurface(params.surfaceId, params.count ?? 1);
-      return { ok: true };
-    },
-    earlier: async (params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult> => {
-      this.session.earlierSurface(params.surfaceId, params.count ?? 1);
-      return { ok: true };
-    },
-    later: async (params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult> => {
-      this.session.laterSurface(params.surfaceId, params.count ?? 1);
-      return { ok: true };
-    },
+    undo: async (params: { surfaceId: SurfaceId; count?: number }): Promise<SurfaceState> => surfaceStateFromJson(
+      String(this.session.undoSurface(params.surfaceId, params.count ?? 1)),
+    ),
+    redo: async (params: { surfaceId: SurfaceId; count?: number }): Promise<SurfaceState> => surfaceStateFromJson(
+      String(this.session.redoSurface(params.surfaceId, params.count ?? 1)),
+    ),
+    earlier: async (params: { surfaceId: SurfaceId; count?: number }): Promise<SurfaceState> => surfaceStateFromJson(
+      String(this.session.earlierSurface(params.surfaceId, params.count ?? 1)),
+    ),
+    later: async (params: { surfaceId: SurfaceId; count?: number }): Promise<SurfaceState> => surfaceStateFromJson(
+      String(this.session.laterSurface(params.surfaceId, params.count ?? 1)),
+    ),
     renderFrame: async (params: {
       surfaceId: SurfaceId;
       viewport?: Viewport;
     }): Promise<RenderFrame> => {
+      const span = runtimePerfSpan("runtime", "renderFrame", { surfaceId: params.surfaceId }, 4);
       const json = this.session.renderFrameJson(params.surfaceId, params.viewport ?? null);
-      return JSON.parse(json) as RenderFrame;
+      const frame = JSON.parse(json) as RenderFrame;
+      span.end({ rows: frame.rows.length });
+      return frame;
     },
   };
 
@@ -206,12 +207,20 @@ export class RuntimeNativeClient implements RuntimeApi {
       this.nativeLsp().lspShutdownServer(params.serverId);
       return { ok: true };
     },
-    status: async (): Promise<LspServerStatus[]> => JSON.parse(this.nativeLsp().lspStatusJson()) as LspServerStatus[],
+    status: async (): Promise<LspServerStatus[]> => {
+      const span = runtimePerfSpan("lsp", "status.native", {}, 8);
+      const statuses = JSON.parse(String(await this.nativeLsp().lspStatusJsonAsync())) as LspServerStatus[];
+      span.end({ count: statuses.length });
+      return statuses;
+    },
     diagnostics: async (): Promise<LspDiagnosticEntry[]> => JSON.parse(this.nativeLsp().lspDiagnosticsJson()) as LspDiagnosticEntry[],
     logs: async (params: { serverId: LspServerId }): Promise<LspLogEntry[]> => JSON.parse(this.nativeLsp().lspLogsJson(params.serverId)) as LspLogEntry[],
-    request: async (params: { serverId: LspServerId; method: string; params?: JsonValue; timeoutMs?: number }): Promise<JsonValue> => (
-      JSON.parse(this.nativeLsp().lspRequestJson(params.serverId, params.method, JSON.stringify(params.params ?? null), params.timeoutMs ?? null)) as JsonValue
-    ),
+    request: async (params: { serverId: LspServerId; method: string; params?: JsonValue; timeoutMs?: number }): Promise<JsonValue> => {
+      const span = runtimePerfSpan("lsp", "request.native", { serverId: params.serverId, method: params.method, timeoutMs: params.timeoutMs }, 8);
+      const result = JSON.parse(String(await this.nativeLsp().lspRequestJsonAsync(params.serverId, params.method, JSON.stringify(params.params ?? null), params.timeoutMs ?? null))) as JsonValue;
+      span.end();
+      return result;
+    },
     notify: async (params: { serverId: LspServerId; method: string; params?: JsonValue }): Promise<OkResult> => {
       this.nativeLsp().lspNotifyJson(params.serverId, params.method, JSON.stringify(params.params ?? null));
       return { ok: true };
@@ -230,14 +239,13 @@ export class RuntimeNativeClient implements RuntimeApi {
     lspConfiguredServersJson(): string;
     lspStartServer(id: string, rootUri: string | null): number;
     lspShutdownServer(serverId: number): void;
-    lspStatusJson(): string;
+    lspStatusJsonAsync(): Promise<string>;
     lspDiagnosticsJson(): string;
     lspLogsJson(serverId: number): string;
-    lspRequestJson(serverId: number, method: string, paramsJson: string, timeoutMs: number | null): string;
+    lspRequestJsonAsync(serverId: number, method: string, paramsJson: string, timeoutMs: number | null): Promise<string>;
     lspNotifyJson(serverId: number, method: string, paramsJson: string): void;
     previewPathCacheKey(path: string): string;
     readSurfaceRevision(surfaceId: number): number;
-    completeSurfaceWordsJson(surfaceId: number, cursorOffset: number, query: string, limit: number | null): string;
   } {
     return this.session as ReturnType<RuntimeNativeClient["nativeLsp"]>;
   }
@@ -346,6 +354,74 @@ export class RuntimeNativeClient implements RuntimeApi {
   }
 
   dispose(): void {}
+}
+
+function runtimePerfSpan(category: string, phase: string, data: Record<string, unknown> = {}, slowMs = 16) {
+  const start = performance.now();
+  return {
+    end(extra: Record<string, unknown> = {}) {
+      const ms = Math.round((performance.now() - start) * 10) / 10;
+      if (!runtimePerfEnabled()) return;
+      emitRuntimePerfLog(category, phase, { ms, ...data, ...extra });
+    },
+  };
+}
+
+let runtimePerfAnnounced = false;
+
+function runtimePerfEnabled(): boolean {
+  const enabled = readRuntimePerfFlag();
+  if (enabled && !runtimePerfAnnounced) {
+    runtimePerfAnnounced = true;
+    emitRuntimePerfLog("runtime", "diagnostics.enabled", { source: runtimePerfFlagSource() });
+  }
+  return enabled;
+}
+
+function readRuntimePerfFlag(): boolean {
+  const globalValue = (globalThis as { __THE_EDITOR_PERF__?: unknown }).__THE_EDITOR_PERF__;
+  if (globalValue === true || globalValue === "1" || globalValue === "true") return true;
+  if (readRuntimePerfBridge()?.perfEnabled === true) return true;
+  try {
+    const storage = typeof window !== "undefined" ? window.localStorage : undefined;
+    if (storage?.getItem("the-editor.perf") === "1" || storage?.getItem("the-editor.perf") === "true") return true;
+  } catch {
+    // Ignore storage access failures.
+  }
+  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
+  return env?.THE_EDITOR_PERF === "1" || env?.THE_EDITOR_PERF === "true";
+}
+
+function runtimePerfFlagSource(): string {
+  const globalValue = (globalThis as { __THE_EDITOR_PERF__?: unknown }).__THE_EDITOR_PERF__;
+  if (globalValue === true || globalValue === "1" || globalValue === "true") return "globalThis.__THE_EDITOR_PERF__";
+  if (readRuntimePerfBridge()?.perfEnabled === true) return "window.theEditor.perfEnabled";
+  try {
+    const storage = typeof window !== "undefined" ? window.localStorage : undefined;
+    if (storage?.getItem("the-editor.perf") === "1" || storage?.getItem("the-editor.perf") === "true") return "localStorage.the-editor.perf";
+  } catch {
+    // Ignore storage access failures.
+  }
+  return "THE_EDITOR_PERF";
+}
+
+function emitRuntimePerfLog(category: string, phase: string, data: Record<string, unknown>): void {
+  const bridge = readRuntimePerfBridge();
+  if (bridge?.perfLog) {
+    bridge.perfLog({ category, phase, data });
+    return;
+  }
+  console.info(`[perf:${category}] ${phase}`, data);
+}
+
+function readRuntimePerfBridge(): { perfEnabled?: boolean; perfLog?: (payload: { category: string; phase: string; data?: Record<string, unknown> }) => void } | undefined {
+  return typeof window !== "undefined"
+    ? (window as unknown as { theEditor?: { perfEnabled?: boolean; perfLog?: (payload: { category: string; phase: string; data?: Record<string, unknown> }) => void } }).theEditor
+    : undefined;
+}
+
+function surfaceStateFromJson(json: string): SurfaceState {
+  return JSON.parse(json) as SurfaceState;
 }
 
 function toNativeLspServerConfig(config: LspServerConfig): Record<string, unknown> {

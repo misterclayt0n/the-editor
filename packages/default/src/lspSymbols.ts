@@ -1,12 +1,12 @@
-import { commandId, type CompletionItem, type CompletionSource, type EditorHost, type EditorModule, type PickerItem, type PickerPreview, defineHostStore } from "@the-editor/editor";
+import { commandId, type EditorHost, type EditorModule, type PickerItem, type PickerPreview } from "@the-editor/editor";
 import type { JsonValue, SurfaceChange, SurfaceId, SurfaceSelectionRange, SurfaceState } from "@the-editor/contracts/runtime";
 import { ensureLspForPath, fileUri } from "./lsp.js";
 import { activeSurfacePane, getDefaultState, refreshActiveSurface } from "./state.js";
+import { updateSurfaceSnapshot } from "./surfaceSnapshot.js";
 
 const documentSymbolsProviderId = "default.lsp.documentSymbols";
 const workspaceSymbolsProviderId = "default.lsp.workspaceSymbols";
-const codeActionSourceId = "default.lsp.codeActions";
-const codeActionStateSlot = "default.lsp.codeActions.state";
+const codeActionsProviderId = "default.lsp.codeActions";
 
 type LspPosition = { line: number; character: number };
 type LspRange = { start: LspPosition; end: LspPosition };
@@ -14,7 +14,6 @@ type LspLocation = { uri: string; range: LspRange };
 type LspSymbol = { name: string; detail?: string; kind: number; containerName?: string; location?: LspLocation };
 type CodeActionEntry = { id: string; serverHandle: number; title: string; kind?: string; isPreferred?: boolean; raw: JsonValue };
 
-type CodeActionState = { active?: { items: CodeActionEntry[]; surfaceId: SurfaceId; path: string } };
 
 export function defaultLspSymbols(): EditorModule {
   return (editor) => {
@@ -98,7 +97,27 @@ export function defaultLspSymbols(): EditorModule {
       },
     });
 
-    editor.completion.registerSource(codeActionCompletionSource(editor));
+    editor.pickers.registerProvider({
+      id: codeActionsProviderId,
+      title: "Code Actions",
+      placeholder: "Filter code actions",
+      async createSession() {
+        const items = await requestCodeActions(editor);
+        return {
+          search(query: string) {
+            const normalized = query.trim().toLowerCase();
+            const filtered = normalized
+              ? items.filter((action) => [action.title, action.kind].filter(Boolean).join("\n").toLowerCase().includes(normalized))
+              : items;
+            return codeActionPickerPage(filtered);
+          },
+          async accept(item: PickerItem) {
+            const action = item.payload as CodeActionEntry | undefined;
+            if (action) await applyCodeAction(editor, action);
+          },
+        };
+      },
+    });
   };
 }
 
@@ -191,6 +210,7 @@ async function selectReferencesToSymbolUnderCursor(editor: EditorHost): Promise<
   if (!pane?.surfaceId || !pane.path) return;
   await ensureLspForPath(editor, pane.path);
   const state = await editor.runtime.surfaces.readState({ surfaceId: pane.surfaceId });
+  updateSurfaceSnapshot(editor, pane.surfaceId, state);
   const cursor = state.selection.find((range) => range.cursorId === state.activeCursorId) ?? state.selection[0];
   if (!cursor) return;
   const uri = fileUri(pane.path);
@@ -202,8 +222,8 @@ async function selectReferencesToSymbolUnderCursor(editor: EditorHost): Promise<
       const selection = parseDocumentHighlights(response, state.text);
       if (!selection.length) continue;
       await editor.commands.dispatch({ id: commandId("save_selection") });
-      await editor.runtime.surfaces.applyEdit({ surfaceId: pane.surfaceId, edit: { selection } });
-      await editor.runtime.surfaces.setActiveCursor({ surfaceId: pane.surfaceId, cursorId: selection[0]?.cursorId ?? null });
+      updateSurfaceSnapshot(editor, pane.surfaceId, await editor.runtime.surfaces.applyEdit({ surfaceId: pane.surfaceId, edit: { selection } }));
+      updateSurfaceSnapshot(editor, pane.surfaceId, await editor.runtime.surfaces.setActiveCursor({ surfaceId: pane.surfaceId, cursorId: selection[0]?.cursorId ?? null }));
       await refreshActiveSurface(editor);
       editor.workbench.invalidate("frame");
       return;
@@ -214,15 +234,20 @@ async function selectReferencesToSymbolUnderCursor(editor: EditorHost): Promise<
 }
 
 async function showCodeActions(editor: EditorHost): Promise<void> {
+  await editor.commands.dispatch({ id: commandId("picker.open"), args: { providerId: codeActionsProviderId } });
+}
+
+async function requestCodeActions(editor: EditorHost): Promise<CodeActionEntry[]> {
   const pane = activeSurfacePane(editor);
   if (!pane?.surfaceId || !pane.path) {
-    return;
+    return [];
   }
   await ensureLspForPath(editor, pane.path);
   const surface = await editor.runtime.surfaces.readState({ surfaceId: pane.surfaceId });
+  updateSurfaceSnapshot(editor, pane.surfaceId, surface);
   const cursor = surface.selection.find((range) => range.cursorId === surface.activeCursorId) ?? surface.selection[0];
   if (!cursor) {
-    return;
+    return [];
   }
   const range = currentLineRange(surface, cursor);
   const uri = fileUri(pane.path);
@@ -248,37 +273,25 @@ async function showCodeActions(editor: EditorHost): Promise<void> {
     } catch {
     }
   }
-  if (!items.length) {
-    return;
-  }
   items.sort(compareCodeActions);
-  editor.stores.set(defineHostStore({ id: codeActionStateSlot, init: () => undefined }), { active: { items, surfaceId: pane.surfaceId, path: pane.path } } satisfies CodeActionState);
-  await editor.commands.dispatch({ id: commandId("completion.show") });
+  return items;
 }
 
-function codeActionCompletionSource(editor: EditorHost): CompletionSource {
+function codeActionPickerPage(actions: CodeActionEntry[]) {
   return {
-    id: codeActionSourceId,
-    title: "code action",
-    priority: 1000,
-    shouldTrigger(ctx) { return ctx.trigger.kind === "manual" && Boolean(codeActionState(editor).active); },
-    provide(ctx) {
-      const active = codeActionState(editor).active;
-      if (!active) return null;
-      return { items: active.items.map((action) => ({ id: action.id, label: action.title, filterText: `${ctx.query} ${action.title}`, detail: action.kind, kind: "event", payload: action } satisfies CompletionItem)), display: { dynamicWidth: true, showDocumentation: false } };
-    },
-    async accept(item) {
-      const action = item.payload as CodeActionEntry | undefined;
-      codeActionState(editor).active = undefined;
-      if (action) await applyCodeAction(editor, action);
-    },
+    items: actions.map((action) => ({
+      id: action.id,
+      title: action.title,
+      subtitle: action.kind,
+      detail: action.isPreferred ? "preferred" : undefined,
+      keywords: [action.title, action.kind].filter((value): value is string => Boolean(value)),
+      payload: action,
+    } satisfies PickerItem)),
+    totalCount: actions.length,
+    status: { primary: "Code actions", secondary: String(actions.length) },
+    emptyText: "No code actions.",
   };
 }
-
-function codeActionState(editor: EditorHost): CodeActionState {
-  return editor.stores.host(defineHostStore({ id: codeActionStateSlot, init: () => ({} satisfies CodeActionState) }));
-}
-
 
 async function applyCodeAction(editor: EditorHost, entry: CodeActionEntry): Promise<void> {
   let raw = entry.raw;
@@ -337,8 +350,9 @@ async function applyTextEditsToPath(editor: EditorHost, path: string, edits: Jso
   const pane = activeSurfacePane(editor);
   if (!pane?.surfaceId) return;
   const state = await editor.runtime.surfaces.readState({ surfaceId: pane.surfaceId });
+  updateSurfaceSnapshot(editor, pane.surfaceId, state);
   const changes = edits.map((edit) => lspTextEditToSurfaceChange(edit, state.text)).filter((change): change is SurfaceChange => Boolean(change)).sort((a, b) => b.start - a.start || b.end - a.end);
-  if (changes.length) await editor.runtime.surfaces.applyEdit({ surfaceId: pane.surfaceId, edit: { changes } });
+  if (changes.length) updateSurfaceSnapshot(editor, pane.surfaceId, await editor.runtime.surfaces.applyEdit({ surfaceId: pane.surfaceId, edit: { changes } }));
 }
 
 function lspTextEditToSurfaceChange(value: JsonValue, text: string): SurfaceChange | undefined {

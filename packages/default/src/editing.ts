@@ -9,12 +9,15 @@ import type {
 } from "@the-editor/contracts/runtime";
 import {
   commandId,
+  perfTraceLog,
   type CommandDispatch,
   type EditorHost,
   type EditorModule,
   type KeyInput,
   defineHostStore, } from "@the-editor/editor";
+import { perfSpan } from "./perfDiagnostics.js";
 import { getDefaultState, refreshActiveSurface, setEditorMode } from "./state.js";
+import { surfaceSnapshot, updateSurfaceSnapshot } from "./surfaceSnapshot.js";
 
 const RUST_OPERATIONS = [
   "move_char_left",
@@ -1626,17 +1629,25 @@ async function pageCursor(
   });
 }
 
-async function readActiveSurfaceState(editor: EditorHost): Promise<SurfaceState> {
-  return editor.runtime.surfaces.readState({ surfaceId: activeSurfaceId(editor) });
+async function readActiveSurfaceState(editor: EditorHost, options: { preferSnapshot?: boolean } = {}): Promise<SurfaceState> {
+  const surfaceId = activeSurfaceId(editor);
+  const cached = options.preferSnapshot ? surfaceSnapshot(editor, surfaceId) : undefined;
+  if (cached) return cached;
+  const span = perfSpan("editing", "readActiveSurfaceState", { surfaceId, preferSnapshot: Boolean(options.preferSnapshot) }, 8);
+  const state = await editor.runtime.surfaces.readState({ surfaceId });
+  span.end({ textLength: state.text.length, revision: state.revision });
+  updateSurfaceSnapshot(editor, surfaceId, state);
+  return state;
 }
 
 async function applyEdit(editor: EditorHost, edit: SurfaceEdit, checkpoint = false): Promise<void> {
-  await editor.runtime.surfaces.applyEdit({
-    surfaceId: activeSurfaceId(editor),
-    edit,
-  });
+  const surfaceId = activeSurfaceId(editor);
+  perfTraceLog(editor, "runtime", "applyEdit.start", { surfaceId });
+  const state = await editor.runtime.surfaces.applyEdit({ surfaceId, edit });
+  perfTraceLog(editor, "runtime", "applyEdit.end", { surfaceId, revision: state.revision, textLength: state.text.length });
+  updateSurfaceSnapshot(editor, surfaceId, state);
   if (checkpoint && getDefaultState(editor).mode !== "insert") {
-    await editor.runtime.surfaces.commitUndoCheckpoint({ surfaceId: activeSurfaceId(editor) });
+    await editor.runtime.surfaces.commitUndoCheckpoint({ surfaceId });
   }
 }
 
@@ -2334,23 +2345,32 @@ async function applyOperation(
 ): Promise<void> {
   const surfaceId = getDefaultState(editor).activeSurfaceId;
   if (!surfaceId) return;
+  perfTraceLog(editor, "runtime", "applyOperation.start", { surfaceId, operation: operation.name });
+  const span = perfSpan("editing", "applyOperation", { surfaceId, operation: operation.name, mode: getDefaultState(editor).mode }, 8);
   if (getDefaultState(editor).mode === "insert" && INSERT_MODE_COLLAPSE_SELECTION_OPERATIONS.has(operation.name)) {
+    const collapseSpan = perfSpan("editing", "collapseInsertSelections", { surfaceId, operation: operation.name }, 4);
     await collapseInsertModeSelections(editor);
+    collapseSpan.end();
   }
   if (JUMP_SAVING_OPERATIONS.has(operation.name)) {
     await saveSelection(editor);
   }
-  await editor.runtime.surfaces.applyOperation({
+  const runtimeSpan = perfSpan("editing", "runtime.applyOperation", { surfaceId, operation: operation.name }, 4);
+  const state = await editor.runtime.surfaces.applyOperation({
     surfaceId,
     operation,
   });
+  runtimeSpan.end({ textLength: state.text.length, revision: state.revision });
+  updateSurfaceSnapshot(editor, surfaceId, state);
   if (checkpoint && getDefaultState(editor).mode !== "insert" && CHECKPOINT_AFTER_OPERATION.has(operation.name)) {
     await editor.runtime.surfaces.commitUndoCheckpoint({ surfaceId });
   }
+  span.end({ textLength: state.text.length, revision: state.revision });
+  perfTraceLog(editor, "runtime", "applyOperation.end", { surfaceId, operation: operation.name, revision: state.revision, textLength: state.text.length });
 }
 
 async function collapseInsertModeSelections(editor: EditorHost): Promise<void> {
-  const state = await readActiveSurfaceState(editor);
+  const state = await readActiveSurfaceState(editor, { preferSnapshot: true });
   const selection = state.selection.map((range) => ({
     cursorId: range.cursorId,
     anchor: range.head,

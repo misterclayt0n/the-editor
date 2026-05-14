@@ -1,6 +1,7 @@
 import { contributionKind, type ModuleId } from "./contributions.js";
 import type { EditorHost } from "./editorHost.js";
 import { toDisposable, type Disposable } from "./disposable.js";
+import { perfTraceLog } from "./perfTrace.js";
 
 export type CommandId = string & { readonly __brand?: "CommandId" };
 
@@ -57,12 +58,17 @@ export class CommandRegistry {
   }
 
   async dispatch<TResult = unknown>(dispatch: CommandDispatch): Promise<TResult> {
+    const startedAt = performance.now();
+    perfTraceLog(this.editor, "command", "dispatch.start", { command: dispatch.id });
     return this.editor.hooks.around("commands.dispatch", dispatch, async () => {
       const command = this.commands.get(dispatch.id);
       if (!command) throw new Error(`unknown command: ${dispatch.id}`);
       await this.editor.hooks.event("commands.beforeDispatch", dispatch);
+      perfTraceLog(this.editor, "command", "run.start", { command: dispatch.id });
       const result = await command.run({ editor: this.editor }, dispatch.args);
+      perfTraceLog(this.editor, "command", "run.end", { command: dispatch.id, ms: Math.round((performance.now() - startedAt) * 10) / 10 });
       await this.editor.hooks.event("commands.afterDispatch", { dispatch, result });
+      perfTraceLog(this.editor, "command", "dispatch.end", { command: dispatch.id, ms: Math.round((performance.now() - startedAt) * 10) / 10 });
       return result as TResult;
     });
   }

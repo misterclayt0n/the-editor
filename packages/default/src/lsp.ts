@@ -1,5 +1,6 @@
 import { toDisposable, type EditorHost, type EditorModule, type LspServerStatus, defineHostStore } from "@the-editor/editor";
 import { importedLspLanguages, importedLspServers } from "./lsp/generated.js";
+import { perfSpan } from "./perfDiagnostics.js";
 import { getDefaultState } from "./state.js";
 
 export interface LspStatuslineState {
@@ -49,14 +50,18 @@ export function defaultLsp(): EditorModule {
 }
 
 export async function ensureLspForPath(editor: EditorHost, path: string): Promise<void> {
+  const span = perfSpan("lsp", "ensureLspForPath", { path }, 20);
   const serverIds = editor.lsp.serverIdsForPath(path);
   if (!serverIds.length) {
     await updateLspStatusline(editor);
+    span.end({ serverIds: 0 });
     return;
   }
 
   const controller = lspController(editor);
+  const statusSpan = perfSpan("lsp", "status", { reason: "ensureLspForPath", path }, 8);
   let statuses = await editor.lsp.status();
+  statusSpan.end({ count: statuses.length });
 
   for (const serverId of serverIds) {
     if (statuses.some((server) => server.id === serverId && isOperational(server))) continue;
@@ -72,10 +77,13 @@ export async function ensureLspForPath(editor: EditorHost, path: string): Promis
       controller.startFailures.set(`${serverId}\0${path}`, { path, message: normalizeLspError(error) });
     } finally {
       controller.pendingStarts.delete(serverId);
+      const refreshStatusSpan = perfSpan("lsp", "status", { reason: "afterStart", path, serverId }, 8);
       statuses = await editor.lsp.status();
+      refreshStatusSpan.end({ count: statuses.length });
       await updateLspStatusline(editor, statuses);
     }
   }
+  span.end({ serverIds: serverIds.length });
 }
 
 export function currentLspStatusline(editor: EditorHost): LspStatuslineState {
@@ -106,7 +114,9 @@ function lspController(editor: EditorHost): LspControllerState {
 }
 
 async function updateLspStatusline(editor: EditorHost, statuses?: LspServerStatus[]): Promise<void> {
+  const statusSpan = statuses ? undefined : perfSpan("lsp", "status", { reason: "statusline" }, 8);
   const currentStatuses = statuses ?? await editor.lsp.status();
+  statusSpan?.end({ count: currentStatuses.length });
   const cache = editor.stores.host(defineHostStore<LspStatusCacheState>({ id: lspStatusCacheSlot, init: () => ({ statuses: [], updatedAt: 0 }) }));
   cache.statuses = currentStatuses;
   cache.updatedAt = Date.now();

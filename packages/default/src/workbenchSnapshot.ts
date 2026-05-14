@@ -1,7 +1,9 @@
-import { defineHostStore } from "@the-editor/editor";
+import { defineHostStore, perfTraceLog } from "@the-editor/editor";
 import type { CellGridMetrics, DocumentId, RenderFrame, SurfaceId, Viewport } from "@the-editor/contracts/runtime";
 import type { BufferDecoration, EditorHost, GutterSnapshot, RoleSnapshot, WorkbenchPaneId } from "@the-editor/editor";
 import type { WorkbenchSessionState } from "@the-editor/editor/workbench";
+import { perfSpan } from "./perfDiagnostics.js";
+import { surfaceSnapshot, updateSurfaceSnapshot } from "./surfaceSnapshot.js";
 
 export type EditorMode = "normal" | "insert" | "select";
 
@@ -114,6 +116,8 @@ export function removeWorkbenchSurfacePane(editor: EditorHost, paneId: Workbench
 }
 
 export async function refreshWorkbenchSnapshot(editor: EditorHost, viewport?: Viewport): Promise<DefaultEditorState> {
+  perfTraceLog(editor, "frame", "refresh.start");
+  const totalSpan = perfSpan("workbench", "refreshWorkbenchSnapshot", {}, 12);
   const state = workbenchSnapshotState(editor);
   syncWorkbenchActiveSurface(editor, state);
 
@@ -122,9 +126,17 @@ export async function refreshWorkbenchSnapshot(editor: EditorHost, viewport?: Vi
     if (activePane) activePane.viewport = viewport;
   }
 
-  for (const pane of visibleSurfacePanes(editor, state)) {
+  const visiblePanes = visibleSurfacePanes(editor, state);
+  for (const pane of visiblePanes) {
+    const paneSpan = perfSpan("workbench", "refreshPane", { surfaceId: pane.surfaceId, path: pane.path }, 8);
+    const renderSpan = perfSpan("workbench", "renderFrame", { surfaceId: pane.surfaceId }, 4);
     pane.frame = await editor.runtime.surfaces.renderFrame({ surfaceId: pane.surfaceId });
-    const surfaceState = await editor.runtime.surfaces.readState({ surfaceId: pane.surfaceId });
+    renderSpan.end({ rows: pane.frame.rows.length });
+    const cachedSurfaceState = surfaceSnapshot(editor, pane.surfaceId);
+    const readSpan = perfSpan("workbench", "surfaceState", { surfaceId: pane.surfaceId, cacheHit: Boolean(cachedSurfaceState) }, 4);
+    const surfaceState = cachedSurfaceState ?? await editor.runtime.surfaces.readState({ surfaceId: pane.surfaceId });
+    readSpan.end({ textLength: surfaceState.text.length, revision: surfaceState.revision });
+    if (!cachedSurfaceState) updateSurfaceSnapshot(editor, pane.surfaceId, surfaceState);
     pane.lineCount = surfaceState.lineCount;
     const surfaceContext = {
       mode: state.mode,
@@ -135,8 +147,13 @@ export async function refreshWorkbenchSnapshot(editor: EditorHost, viewport?: Vi
       lineCount: pane.lineCount,
       text: surfaceState.text,
     };
+    const guttersSpan = perfSpan("workbench", "gutters.collect", { surfaceId: pane.surfaceId }, 4);
     pane.gutters = await editor.gutters?.collect(surfaceContext) ?? [];
+    guttersSpan.end({ count: pane.gutters.length });
+    const decorationsSpan = perfSpan("workbench", "decorations.collect", { surfaceId: pane.surfaceId }, 4);
     pane.decorations = await editor.decorations.collect(surfaceContext);
+    decorationsSpan.end({ count: pane.decorations.length });
+    paneSpan.end({ rows: pane.frame.rows.length, textLength: surfaceState.text.length });
   }
 
   state.lastFrame = state.activePaneId ? state.surfacePanes.get(state.activePaneId)?.frame : undefined;
@@ -146,6 +163,8 @@ export async function refreshWorkbenchSnapshot(editor: EditorHost, viewport?: Vi
   state.roleStates = editor.roles.snapshotAll();
   state.decorations = state.activePaneId ? state.surfacePanes.get(state.activePaneId)?.decorations ?? [] : [];
   state.gutters = state.activePaneId ? state.surfacePanes.get(state.activePaneId)?.gutters ?? [] : [];
+  totalSpan.end({ panes: visiblePanes.length, activeSurfaceId: state.activeSurfaceId });
+  perfTraceLog(editor, "frame", "refresh.end", { panes: visiblePanes.length, activeSurfaceId: state.activeSurfaceId });
   return state;
 }
 

@@ -411,6 +411,7 @@ Put something in `the-runtime` when it is any of the following:
 
 ### Examples
 - LSP sessions and server lifecycle
+- per-server LSP transport actors and document-to-server mirrors
 - FFF/workspace search integration
 - file watching
 - open/save/reload/persistence
@@ -428,6 +429,8 @@ Putting them in `the-runtime` keeps the architecture honest:
 - impure services remain native and efficient
 - `the-lib` stays minimal and comprehensible
 - TypeScript still gets a powerful platform to compose against
+
+For LSP specifically, the target shape is a native transport/service layer with per-server ownership and a separate document mirror seam, not a shared blocking store that editing and completion must coordinate around manually. See [LSP.md](LSP.md).
 
 ---
 

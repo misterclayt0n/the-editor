@@ -19,6 +19,7 @@ export * from "./notifications.js";
 export * from "./overlays.js";
 export * from "./packages.js";
 export * from "./palette.js";
+export * from "./perfTrace.js";
 export * from "./pickers.js";
 export * from "./roles.js";
 export * from "./runtimeClient.js";

@@ -7,7 +7,10 @@ use std::{
     Path,
     PathBuf,
   },
-  sync::Arc,
+  sync::{
+    Arc,
+    Mutex,
+  },
   time::Duration,
 };
 
@@ -232,7 +235,7 @@ pub struct RuntimeSession {
   registers:          Registers,
   syntax_scheduler:   SyntaxScheduler,
   search:             SearchManager,
-  lsp:                LspStore,
+  lsp:                Arc<Mutex<LspStore>>,
   next_resource_id:   u64,
   next_document_id:   u64,
   next_surface_id:    u64,
@@ -274,7 +277,7 @@ impl RuntimeSession {
       registers: Registers::new(),
       syntax_scheduler: SyntaxScheduler::default(),
       search: SearchManager::default(),
-      lsp: LspStore::default(),
+      lsp: Arc::new(Mutex::new(LspStore::default())),
       next_resource_id: 0,
       next_document_id: 0,
       next_surface_id: 0,
@@ -286,12 +289,22 @@ impl RuntimeSession {
     }
   }
 
+  pub fn lsp_store(&self) -> Arc<Mutex<LspStore>> {
+    self.lsp.clone()
+  }
+
   pub fn lsp_register_server(&mut self, config: LspServerConfig) {
-    self.lsp.register_server(config);
+    if let Ok(mut lsp) = self.lsp.lock() {
+      lsp.register_server(config);
+    }
   }
 
   pub fn lsp_configured_servers(&self) -> Vec<LspServerConfig> {
-    self.lsp.configured_servers()
+    self
+      .lsp
+      .lock()
+      .map(|lsp| lsp.configured_servers())
+      .unwrap_or_default()
   }
 
   pub fn lsp_start_server(
@@ -299,7 +312,11 @@ impl RuntimeSession {
     id: &str,
     root_uri: Option<String>,
   ) -> RuntimeResult<LspServerHandle> {
-    let handle = self.lsp.start_server(id, root_uri)?;
+    let handle = self
+      .lsp
+      .lock()
+      .map_err(|_| LspError::Transport("LSP lock poisoned".into()))?
+      .start_server(id, root_uri)?;
     let documents = self.documents.keys().copied().collect::<Vec<_>>();
     for document in documents {
       self.lsp_open_document(document)?;
@@ -308,19 +325,39 @@ impl RuntimeSession {
   }
 
   pub fn lsp_shutdown_server(&mut self, handle: LspServerHandle) -> RuntimeResult<()> {
-    Ok(self.lsp.shutdown_server(handle)?)
+    Ok(
+      self
+        .lsp
+        .lock()
+        .map_err(|_| LspError::Transport("LSP lock poisoned".into()))?
+        .shutdown_server(handle)?,
+    )
   }
 
   pub fn lsp_status(&mut self) -> Vec<LspServerStatus> {
-    self.lsp.status()
+    self
+      .lsp
+      .lock()
+      .map(|mut lsp| lsp.status())
+      .unwrap_or_default()
   }
 
   pub fn lsp_diagnostics(&mut self) -> Vec<LspDiagnosticEntry> {
-    self.lsp.diagnostics()
+    self
+      .lsp
+      .lock()
+      .map(|mut lsp| lsp.diagnostics())
+      .unwrap_or_default()
   }
 
   pub fn lsp_logs(&mut self, handle: LspServerHandle) -> RuntimeResult<Vec<LspLogEntry>> {
-    Ok(self.lsp.logs(handle)?)
+    Ok(
+      self
+        .lsp
+        .lock()
+        .map_err(|_| LspError::Transport("LSP lock poisoned".into()))?
+        .logs(handle)?,
+    )
   }
 
   pub fn lsp_request(
@@ -333,6 +370,8 @@ impl RuntimeSession {
     Ok(
       self
         .lsp
+        .lock()
+        .map_err(|_| LspError::Transport("LSP lock poisoned".into()))?
         .request(handle, method, params, Duration::from_millis(timeout_ms))?,
     )
   }
@@ -343,7 +382,13 @@ impl RuntimeSession {
     method: &str,
     params: serde_json::Value,
   ) -> RuntimeResult<()> {
-    Ok(self.lsp.notify(handle, method, params)?)
+    Ok(
+      self
+        .lsp
+        .lock()
+        .map_err(|_| LspError::Transport("LSP lock poisoned".into()))?
+        .notify(handle, method, params)?,
+    )
   }
 
   pub fn syntax(&self) -> &RuntimeSyntax {
@@ -1102,6 +1147,8 @@ impl RuntimeSession {
     Ok(
       self
         .lsp
+        .lock()
+        .map_err(|_| LspError::Transport("LSP lock poisoned".into()))?
         .did_open_document(&uri, &language_id, &text, version)?,
     )
   }
@@ -1110,7 +1157,13 @@ impl RuntimeSession {
     let Some((uri, _language_id, text, version)) = self.lsp_document_payload(document) else {
       return Ok(());
     };
-    Ok(self.lsp.did_change_document(&uri, &text, version)?)
+    Ok(
+      self
+        .lsp
+        .lock()
+        .map_err(|_| LspError::Transport("LSP lock poisoned".into()))?
+        .did_change_document(&uri, &text, version)?,
+    )
   }
 
   fn lsp_change_document_incremental(
@@ -1131,6 +1184,8 @@ impl RuntimeSession {
     Ok(
       self
         .lsp
+        .lock()
+        .map_err(|_| LspError::Transport("LSP lock poisoned".into()))?
         .did_change_document_incremental(&uri, old_text, new_text, changeset, version)?,
     )
   }

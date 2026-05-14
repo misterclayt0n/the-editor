@@ -325,12 +325,15 @@ Reason:
 - a slow language server must not block rendering, typing, or cached surface state updates
 
 Required shape:
-- LSP process/session state is protected independently from document/surface state, or owned by a dedicated request channel/task
+- transport is owned by per-server actors or an equivalent owner-task model
+- document-to-server sync is owned by a dedicated document mirror module, not by editing call sites
 - native LSP request waits do not hold the document/surface runtime lock
 - TypeScript-facing LSP requests are stale-safe and should be cancellable where feasible
 - completion request/resolve paths use request ids and ignore stale results
+- request-local `content modified` / cancellation errors do not automatically become server-health failures
 
-Completion-specific LSP policy is defined in [COMPLETION.md](COMPLETION.md).
+The concrete redesign plan lives in [LSP.md](LSP.md).
+Completion-specific policy is defined in [COMPLETION.md](COMPLETION.md).
 
 ### File watching
 File watching belongs in `the-runtime` architecturally, but should be deferred to phase 2.
@@ -348,7 +351,7 @@ Reason:
 - LSP/search/watch-style services wait on external systems
 - external service waits must not block surface/document state, rendering, or typing
 
-A full event bus is not required before there is a concrete need, but LSP already creates the need for lock separation and stale-safe request handling.
+A full event bus is not required before there is a concrete need, but LSP already creates the need for an owner-task seam, a document mirror seam, and stale-safe request handling.
 
 ### Workspace/global-search/git/VCS
 These should come later.

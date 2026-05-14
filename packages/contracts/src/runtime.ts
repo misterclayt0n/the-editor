@@ -328,16 +328,15 @@ export interface RuntimeApi {
     setMetrics(params: { surfaceId: SurfaceId; metrics: CellGridMetrics }): Promise<OkResult>;
     setSoftWrap(params: { surfaceId: SurfaceId; softWrap: boolean }): Promise<OkResult>;
     setCursorSemantics(params: { surfaceId: SurfaceId; semantics: CursorSemantics }): Promise<OkResult>;
-    applyOperation(params: { surfaceId: SurfaceId; operation: SurfaceOperation }): Promise<OkResult>;
+    applyOperation(params: { surfaceId: SurfaceId; operation: SurfaceOperation }): Promise<SurfaceState>;
     readState(params: { surfaceId: SurfaceId }): Promise<SurfaceState>;
-    completeWords(params: { surfaceId: SurfaceId; cursorOffset: number; query: string; limit?: number }): Promise<Array<{ label: string }>>;
-    setActiveCursor(params: { surfaceId: SurfaceId; cursorId: number | null }): Promise<OkResult>;
-    applyEdit(params: { surfaceId: SurfaceId; edit: SurfaceEdit }): Promise<OkResult>;
+    setActiveCursor(params: { surfaceId: SurfaceId; cursorId: number | null }): Promise<SurfaceState>;
+    applyEdit(params: { surfaceId: SurfaceId; edit: SurfaceEdit }): Promise<SurfaceState>;
     commitUndoCheckpoint(params: { surfaceId: SurfaceId }): Promise<OkResult>;
-    undo(params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult>;
-    redo(params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult>;
-    earlier(params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult>;
-    later(params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult>;
+    undo(params: { surfaceId: SurfaceId; count?: number }): Promise<SurfaceState>;
+    redo(params: { surfaceId: SurfaceId; count?: number }): Promise<SurfaceState>;
+    earlier(params: { surfaceId: SurfaceId; count?: number }): Promise<SurfaceState>;
+    later(params: { surfaceId: SurfaceId; count?: number }): Promise<SurfaceState>;
     renderFrame(params: {
       surfaceId: SurfaceId;
       viewport?: Viewport;

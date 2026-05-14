@@ -14,6 +14,7 @@ pub use lsp::{
   LspServerConfig,
   LspServerHandle,
   LspServerStatus,
+  LspStore,
 };
 pub use resource::{
   Resource,

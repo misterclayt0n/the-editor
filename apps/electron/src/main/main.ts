@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import fs from "node:fs";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
 
@@ -6,6 +7,9 @@ const isDev = process.env.THE_EDITOR_DEV_SERVER_URL !== undefined;
 
 let mainWindow: BrowserWindow | undefined;
 let policyWorker: Worker | undefined;
+const perfLogPath = process.env.THE_EDITOR_PERF_LOG || "/tmp/the-editor-perf.log";
+const perfDiagnosticsEnabled = readBooleanEnv("THE_EDITOR_PERF");
+const inputPerfEnabled = perfDiagnosticsEnabled || readBooleanEnv("THE_EDITOR_INPUT_LOG");
 const pendingPolicyRequests = new Map<number, { resolve(value: unknown): void; reject(error: unknown): void }>();
 let nextPolicyRequestId = 1;
 
@@ -29,6 +33,19 @@ async function createWindow(): Promise<void> {
   });
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
     console.error("renderer process gone", details);
+  });
+  mainWindow.webContents.on("before-input-event", (_event, input) => {
+    if (!inputPerfEnabled || input.type !== "keyDown") return;
+    writePerfLog("input", "keyDown", {
+      key: input.key,
+      code: input.code,
+      isAutoRepeat: input.isAutoRepeat,
+      modifiers: input.modifiers,
+    });
+  });
+  mainWindow.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+    if (!message.includes("[perf")) return;
+    writePerfLog("renderer-console", "message", { level, message, line, sourceId });
   });
 
   if (isDev) {
@@ -84,6 +101,17 @@ ipcMain.handle("app:open-external", async (_event, url: unknown) => {
   return true;
 });
 
+ipcMain.on("perf:log", (_event, payload: unknown) => {
+  if (!isObject(payload)) {
+    writePerfLog("renderer", "event", { payload: String(payload) });
+    return;
+  }
+  const category = typeof payload.category === "string" ? payload.category : "renderer";
+  const phase = typeof payload.phase === "string" ? payload.phase : "event";
+  const data = isObject(payload.data) ? payload.data : {};
+  writePerfLog(category, phase, data);
+});
+
 ipcMain.handle("policy:request", async (_event, request: { method: string; params?: unknown }) => {
   if (!policyWorker) throw new Error("policy worker is not running");
   const id = nextPolicyRequestId++;
@@ -94,6 +122,8 @@ ipcMain.handle("policy:request", async (_event, request: { method: string; param
 });
 
 app.whenReady().then(async () => {
+  resetPerfLog();
+  writePerfLog("main", "startup", { path: perfLogPath, pid: process.pid, cwd: process.cwd(), perf: perfDiagnosticsEnabled });
   await createWindow();
   startPolicyWorker();
 });
@@ -129,6 +159,28 @@ function rejectPendingPolicyRequests(error: Error): void {
 function resolveLaunchCwd(): string {
   const initCwd = process.env.INIT_CWD?.trim();
   return initCwd || process.cwd();
+}
+
+function resetPerfLog(): void {
+  try {
+    fs.mkdirSync(path.dirname(perfLogPath), { recursive: true });
+    fs.writeFileSync(perfLogPath, "");
+  } catch (error) {
+    console.error("failed to initialize perf log", { path: perfLogPath, error });
+  }
+}
+
+function writePerfLog(category: string, phase: string, data: Record<string, unknown> = {}): void {
+  const line = `[perf:${category}] ${new Date().toISOString()} ${phase} ${JSON.stringify(data)}`;
+  console.log(line);
+  fs.appendFile(perfLogPath, `${line}\n`, (error) => {
+    if (error) console.error("failed to write perf log", { path: perfLogPath, error });
+  });
+}
+
+function readBooleanEnv(name: string): boolean {
+  const value = process.env[name];
+  return value === "1" || value === "true";
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

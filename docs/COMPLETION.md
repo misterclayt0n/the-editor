@@ -148,7 +148,7 @@ edit command
 
 Completion should not reconstruct authoritative state from dispatch args plus runtime reads.
 
-### Runtime/LSP lock split
+### Runtime/LSP transport split
 
 LSP request/resolve must not hold the same native lock as document/surface state while waiting for a language server.
 
@@ -164,11 +164,13 @@ lock RuntimeSession
 Target implementation:
 
 - surface/document operations are protected independently from LSP request waits
-- LSP process/session state has its own lock or owner channel
+- LSP transport is owned by per-server actors or an equivalent owner-task model
+- document-to-server sync is owned by a document mirror module, not by editing call sites
 - LSP requests are async/cancellable from the TypeScript perspective where feasible
 - stale completion request results are ignored by completion request id/session id
+- request-local `content modified` / cancellation responses are tolerated and do not poison server health
 
-This is required in the same redesign pass as completion. Completion-side caching alone is not enough if LSP can still block rendering/surface reads elsewhere.
+This is required in the same redesign pass as completion. Completion-side caching alone is not enough if LSP can still block rendering/surface reads elsewhere. The concrete runtime plan lives in [LSP.md](LSP.md).
 
 ### Completion controller
 
@@ -283,16 +285,28 @@ No per-key log spam by default.
 
 ---
 
-## Implementation checklist
+## Implementation sequence
 
+### Phase 1 — snapshot and mutation path
 - [ ] Add a host-side surface snapshot module.
 - [ ] Change runtime mutation calls to return surface updates.
 - [ ] Update command/editing paths to write returned updates into the host snapshot.
-- [ ] Split native LSP request waiting away from the document/surface runtime lock.
+
+### Phase 2 — LSP transport prerequisites
+- [ ] Replace shared blocking LSP transport with the actor/owner-task shape defined in [LSP.md](LSP.md).
+- [ ] Move document-to-server sync into a dedicated document mirror module.
+- [ ] Make request-local `content modified` / cancellation responses non-fatal to server health.
+
+### Phase 3 — completion controller split
+- [ ] Replace the default completion mega-module with explicit session/query/adapter/ranker modules.
 - [ ] Replace default completion controller with an explicit LSP-first controller.
 - [ ] Remove automatic/active `readState()` from completion.
 - [ ] Remove generic completion source fanout from default autocomplete.
 - [ ] Move code actions to their own picker/session.
 - [ ] Keep buffer-word completion deleted.
-- [ ] Disable completion logging by default.
+
+### Phase 4 — correctness and observability
+- [ ] Port or reproduce ranking tests for `filterText`, exact match precedence, sortText tie-breaking, and split-word ranking.
 - [ ] Add tests for no-runtime-read autocomplete filtering, no-provider quiet typing, trigger-character gating, stale LSP results, delayed incomplete requery, and manual slow path.
+- [ ] Add end-to-end input-to-frame timing so freezes produce one interaction timeline.
+- [ ] Disable completion logging by default.

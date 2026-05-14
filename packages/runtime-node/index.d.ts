@@ -6,10 +6,10 @@ export declare class NativeRuntimeSession {
   lspConfiguredServersJson(): string
   lspStartServer(id: string, rootUri?: string | undefined | null): number
   lspShutdownServer(serverId: number): void
-  lspStatusJson(): string
+  lspStatusJsonAsync(): Promise<unknown>
   lspDiagnosticsJson(): string
   lspLogsJson(serverId: number): string
-  lspRequestJson(serverId: number, method: string, paramsJson: string, timeoutMs?: number | undefined | null): string
+  lspRequestJsonAsync(serverId: number, method: string, paramsJson: string, timeoutMs?: number | undefined | null): Promise<unknown>
   lspNotifyJson(serverId: number, method: string, paramsJson: string): void
   createScratch(text: string): number
   openFile(path: string): number
@@ -20,23 +20,22 @@ export declare class NativeRuntimeSession {
   setSurfaceMeasurements(surfaceId: number, metrics: JsCellGridMetrics): void
   setSurfaceSoftWrap(surfaceId: number, softWrap: boolean): void
   setSurfaceCursorSemantics(surfaceId: number, semantics: string): void
-  applySurfaceOperation(surfaceId: number, operation: JsSurfaceOperation): void
+  applySurfaceOperation(surfaceId: number, operation: JsSurfaceOperation): string
   readSurfaceText(surfaceId: number): string
   readSurfaceRevision(surfaceId: number): number
   readSurfaceLineEnding(surfaceId: number): string
   readSurfaceLineCount(surfaceId: number): number
   readSurfaceSelection(surfaceId: number): Array<JsSurfaceSelectionRange>
-  completeSurfaceWordsJson(surfaceId: number, cursorOffset: number, query: string, limit?: number | undefined | null): string
   readSurfaceActiveCursor(surfaceId: number): number | null
   readSurfaceCursorSemantics(surfaceId: number): string
   readSurfaceViewport(surfaceId: number): JsViewport
-  setSurfaceActiveCursor(surfaceId: number, cursorId?: number | undefined | null): void
-  applySurfaceEdit(surfaceId: number, edit: JsSurfaceEdit): void
+  setSurfaceActiveCursor(surfaceId: number, cursorId?: number | undefined | null): string
+  applySurfaceEdit(surfaceId: number, edit: JsSurfaceEdit): string
   commitSurfaceUndoCheckpoint(surfaceId: number): void
-  undoSurface(surfaceId: number, count: number): void
-  redoSurface(surfaceId: number, count: number): void
-  earlierSurface(surfaceId: number, count: number): void
-  laterSurface(surfaceId: number, count: number): void
+  undoSurface(surfaceId: number, count: number): string
+  redoSurface(surfaceId: number, count: number): string
+  earlierSurface(surfaceId: number, count: number): string
+  laterSurface(surfaceId: number, count: number): string
   readRegister(name: string): Array<string> | null
   writeRegister(name: string, values: Array<string>): void
   readClipboard(kind: string): string | null

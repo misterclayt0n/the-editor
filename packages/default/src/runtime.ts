@@ -17,6 +17,7 @@ import { defaultScratch } from "./scratch.js";
 import { defaultSave } from "./save.js";
 import { defaultSignatureHelp } from "./signatureHelp.js";
 import { defaultWorkbench } from "./workbench.js";
+import { defaultWindowCommands } from "./windowCommands.js";
 import { defaultWorkbenchControls } from "./workbenchControls.js";
 import { defaultWorkingDirectory } from "./workingDirectory.js";
 
@@ -39,6 +40,7 @@ const runtimeModule: EditorModule = async (editor) => {
   await defaultSignatureHelp()(editor);
   await defaultGutters()(editor);
   await defaultWorkbench()(editor);
+  await defaultWindowCommands()(editor);
   await defaultWorkbenchControls()(editor);
   await defaultFileTree()(editor);
 };

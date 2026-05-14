@@ -184,7 +184,28 @@ export function defaultKeymaps(): EditorModule {
         "C-u": "page_cursor_half_up",
         "C-d": "page_cursor_half_down",
 
-        // "C-w": keymap("Window", { C-w/w, C-s/s, C-v/v, C-t/t, f/F, C-q/q, C-o/o, C-h/h/left, C-j/j/down, C-k/k/up, C-l/l/right, L/K/H/J, n }),
+        "C-w": keymap("Window", {
+          "C-w | w": "rotate_view",
+          "C-s | s": "hsplit",
+          "C-v | v": "vsplit",
+          "C-t | t": "transpose_view",
+          f: "goto_file_hsplit",
+          F: "goto_file_vsplit",
+          "C-q | q": "wclose",
+          "C-o | o": "wonly",
+          "C-h | h | left": "jump_view_left",
+          "C-j | j | down": "jump_view_down",
+          "C-k | k | up": "jump_view_up",
+          "C-l | l | right": "jump_view_right",
+          L: "swap_view_right",
+          K: "swap_view_up",
+          H: "swap_view_left",
+          J: "swap_view_down",
+          n: keymap("New split scratch buffer", {
+            "C-s | s": "hsplit_new",
+            "C-v | v": "vsplit_new",
+          }),
+        }),
 
         "C-c": "toggle_comments",
 

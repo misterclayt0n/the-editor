@@ -20,6 +20,7 @@ import { defaultScratch, defaultViewport, type CreateScratchArgs, type RenderAct
 import { defaultSave } from "./save.js";
 import { defaultSignatureHelp } from "./signatureHelp.js";
 import { getDefaultState, handleKeyInput, refreshActiveSurface, setEditorMode, type DefaultEditorState, type EditorMode } from "./state.js";
+import { defaultWindowCommands } from "./windowCommands.js";
 import { defaultWorkingDirectory, resolveFilePathFromWorkingDirectory } from "./workingDirectory.js";
 
 export {
@@ -42,6 +43,7 @@ export {
   defaultScratch,
   defaultSignatureHelp,
   defaultViewport,
+  defaultWindowCommands,
   defaultWorkingDirectory,
   getDefaultState,
   handleKeyInput,

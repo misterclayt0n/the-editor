@@ -96,7 +96,7 @@
   transition: color 150ms ease, background-color 150ms ease, opacity 120ms ease, transform 120ms ease;
 }
 
-.workbenchFileTab.isDragging {
+.workbenchFileTab[data-dragging="true"] {
   opacity: 0.48;
   transform: scale(0.98);
 }

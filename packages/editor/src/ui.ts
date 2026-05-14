@@ -69,10 +69,28 @@ export interface ToolViewRegistration<TState = unknown> {
   render(ctx: ToolViewContext<TState>): unknown;
 }
 
+export interface WorkbenchPaneDragSnapshot {
+  readonly draggedPaneId?: string;
+  readonly sourceGroupId?: string;
+  readonly currentTarget?:
+    | { kind: "tabstrip"; groupId: string; index: number }
+    | { kind: "split"; groupId: string; direction: "left" | "right" | "up" | "down" };
+}
+
+export interface WorkbenchPaneDragController {
+  beginPaneDrag(paneId: string, sourceGroupId: string): void;
+  updateTarget(target: WorkbenchPaneDragSnapshot["currentTarget"]): void;
+  clear(): void;
+  drop(): Promise<void>;
+  snapshot(): WorkbenchPaneDragSnapshot;
+  subscribe(listener: () => void): () => void;
+}
+
 export interface WorkbenchTabstripViewContext {
   commands: UiCommandDispatcher;
   sessions: UiSessionClient;
   workbench: WorkbenchSnapshot;
+  drag: WorkbenchPaneDragController;
   group: WorkbenchGroupSnapshot;
   items: WorkbenchItemDescriptor[];
   panes: WorkbenchPaneDescriptor[];

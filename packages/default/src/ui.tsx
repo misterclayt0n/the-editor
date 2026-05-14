@@ -221,7 +221,7 @@ const uiModule: EditorUiModule = (host) => {
 
   host.tabstrips.register({
     implementationId: defaultTabstripImplementationId,
-    render({ commands, group, panes, activePaneId, showWindowControls }) {
+    render({ commands, group, panes, activePaneId, showWindowControls, drag }) {
       return (
         <DefaultWorkbenchTabstrip
           dispatch={commands.dispatch}
@@ -229,6 +229,8 @@ const uiModule: EditorUiModule = (host) => {
           activePaneId={activePaneId}
           showWindowControls={showWindowControls}
           groupId={group.id}
+          drag={drag}
+          dragSnapshot={drag.snapshot()}
         />
       );
     },

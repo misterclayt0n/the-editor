@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from "react";
+import type { WorkbenchPaneDragController, WorkbenchPaneDragSnapshot } from "@the-editor/editor/ui";
 import { resolveTabFileIcon, fileIconSpriteMarkup, tabLabel, type ResolvedFileIcon } from "./fileIcons/tabIcons.js";
 
 export interface WorkbenchTabPane {
@@ -20,16 +21,19 @@ export function DefaultWorkbenchTabstrip({
   activePaneId,
   showWindowControls,
   groupId,
+  drag,
+  dragSnapshot,
 }: {
   dispatch: (dispatch: { id: string; args?: unknown }) => Promise<unknown>;
   panes: WorkbenchTabPane[];
   activePaneId?: string;
   showWindowControls?: boolean;
   groupId?: string;
+  drag: WorkbenchPaneDragController;
+  dragSnapshot: WorkbenchPaneDragSnapshot;
 }) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const [scrollState, setScrollState] = useState({ canScrollLeft: false, canScrollRight: false });
-  const [dragState, setDragState] = useState<{ paneId: string; index: number } | null>(null);
   const spriteMarkup = useMemo(() => fileIconSpriteMarkup(), []);
 
   useEffect(() => {
@@ -67,7 +71,7 @@ export function DefaultWorkbenchTabstrip({
     event.stopPropagation();
     event.dataTransfer.dropEffect = "move";
     const index = tabDropIndex(event, panes.length);
-    setDragState({ paneId: readDraggedPane(event)?.paneId ?? "", index });
+    drag.updateTarget({ kind: "tabstrip", groupId: groupId ?? "active", index });
   };
 
   const dropPane = (event: DragEvent<HTMLElement>) => {
@@ -75,12 +79,10 @@ export function DefaultWorkbenchTabstrip({
     if (!dragged) return;
     event.preventDefault();
     event.stopPropagation();
-    const index = dragState?.index ?? tabDropIndex(event, panes.length);
-    setDragState(null);
-    void dispatch({
-      id: "workbench.movePane",
-      args: { paneId: dragged.paneId, placement: { kind: "tab", group: groupId ?? "active", index } },
-    }).catch(console.error);
+    if (!dragSnapshot.currentTarget || dragSnapshot.currentTarget.kind !== "tabstrip") {
+      drag.updateTarget({ kind: "tabstrip", groupId: groupId ?? "active", index: tabDropIndex(event, panes.length) });
+    }
+    void drag.drop().catch(console.error);
   };
 
   return (
@@ -93,7 +95,7 @@ export function DefaultWorkbenchTabstrip({
             className="workbenchFileTabScroller"
             onDragOver={updateDragIndex}
             onDragLeave={(event) => {
-              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragState(null);
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) drag.updateTarget(undefined);
             }}
             onDrop={dropPane}
           >
@@ -105,10 +107,13 @@ export function DefaultWorkbenchTabstrip({
                   key={pane.id}
                   className="workbenchFileTabItem"
                   data-workbench-tab-active={isActive ? "true" : undefined}
-                  data-drop-before={dragState?.index === index ? "true" : undefined}
+                  data-drop-before={dragSnapshot.currentTarget?.kind === "tabstrip" && dragSnapshot.currentTarget.groupId === (groupId ?? "active") && dragSnapshot.currentTarget.index === index ? "true" : undefined}
                 >
                   <DefaultFileTab
                     paneId={pane.id}
+                    groupId={groupId ?? "active"}
+                    drag={drag}
+                    dragging={dragSnapshot.draggedPaneId === pane.id}
                     activate={(event) => {
                       event.currentTarget.blur();
                       void dispatch({ id: "workbench.focusPane", args: { paneId: pane.id } });
@@ -125,7 +130,7 @@ export function DefaultWorkbenchTabstrip({
                 </div>
               );
             })}
-            <div aria-hidden="true" className="workbenchFileTabDropTail" data-drop-before={dragState?.index === panes.length ? "true" : undefined} />
+            <div aria-hidden="true" className="workbenchFileTabDropTail" data-drop-before={dragSnapshot.currentTarget?.kind === "tabstrip" && dragSnapshot.currentTarget.groupId === (groupId ?? "active") && dragSnapshot.currentTarget.index === panes.length ? "true" : undefined} />
           </div>
           <div aria-hidden="true" className={`workbenchFileTabFade left ${scrollState.canScrollLeft ? "isVisible" : ""}`} />
           <div aria-hidden="true" className={`workbenchFileTabFade right ${scrollState.canScrollRight ? "isVisible" : ""}`} />
@@ -138,6 +143,9 @@ export function DefaultWorkbenchTabstrip({
 
 function DefaultFileTab({
   paneId,
+  groupId,
+  drag,
+  dragging,
   activate,
   close,
   icon,
@@ -147,6 +155,9 @@ function DefaultFileTab({
   closeable,
 }: {
   paneId: string;
+  groupId: string;
+  drag: WorkbenchPaneDragController;
+  dragging: boolean;
   activate: (event: MouseEvent<HTMLButtonElement>) => void;
   close: () => void;
   icon: ResolvedFileIcon;
@@ -156,7 +167,7 @@ function DefaultFileTab({
   closeable: boolean;
 }) {
   return (
-    <div className={`workbenchFileTab ${isActive ? "isActive" : "isInactive"}`}>
+    <div className={`workbenchFileTab ${isActive ? "isActive" : "isInactive"}`} data-dragging={dragging ? "true" : undefined}>
       <button
         type="button"
         draggable
@@ -165,11 +176,9 @@ function DefaultFileTab({
           event.dataTransfer.effectAllowed = "move";
           event.dataTransfer.setData("application/x-the-editor-pane", JSON.stringify(payload));
           event.dataTransfer.setData("text/plain", label);
-          event.currentTarget.parentElement?.classList.add("isDragging");
+          drag.beginPaneDrag(paneId, groupId);
         }}
-        onDragEnd={(event) => {
-          event.currentTarget.parentElement?.classList.remove("isDragging");
-        }}
+        onDragEnd={() => drag.clear()}
         onClick={activate}
         title={path}
         className="workbenchFileTabButton"

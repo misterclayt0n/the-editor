@@ -1,4 +1,4 @@
-import { Component, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type ReactNode } from "react";
+import { Component, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type DragEvent, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import type { CellGridMetrics, RenderFrame, Viewport } from "@the-editor/contracts/runtime";
 import type { BufferDecoration, GutterSnapshot, InteractiveSessionSnapshot, ThemeSnapshot, ToolSnapshot } from "@the-editor/editor";
@@ -13,6 +13,7 @@ import type {
 } from "@the-editor/editor/workbench";
 import { clearCanvasTextSurface, configureCanvasTextSurface, loadEditorFont, paintCanvasTextSurface, type CanvasTextSurfaceStyleOptions } from "@the-editor/editor/textSurfaceCanvas";
 import { RendererPackageRuntime, type WorkbenchSnapshot } from "./uiRuntime.js";
+import { WorkbenchDragController, type WorkbenchDragSnapshot } from "./workbenchDrag.js";
 import "./style.css";
 
 const uiRuntime = new RendererPackageRuntime();
@@ -54,10 +55,33 @@ function App() {
   const [leftSidebarVisible, setLeftSidebarVisible] = useState(true);
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(320);
   const [, setUiRevision] = useState(0);
+  const dragController = useMemo(() => new WorkbenchDragController({
+    dispatch: (request) => window.theEditor.policyRequest("command.dispatch", request),
+  }), []);
+  const dragSnapshot = useSyncExternalStore(dragController.subscribe, dragController.snapshot, dragController.snapshot);
 
   useEffect(() => uiRuntime.subscribe(() => {
     setUiRevision((revision) => revision + 1);
   }), []);
+
+  useEffect(() => {
+    const clear = () => dragController.clear();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") clear();
+    };
+    window.addEventListener("dragend", clear);
+    window.addEventListener("drop", clear);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("dragend", clear);
+      window.removeEventListener("drop", clear);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [dragController]);
+
+  useEffect(() => {
+    dragController.clear();
+  }, [dragController, workbench.editorLayout]);
 
   useEffect(() => {
     return window.theEditor.onPolicyEvent((event) => {
@@ -160,6 +184,8 @@ function App() {
               layout={workbench.editorLayout}
               workbench={workbench}
               selectionPickerActive={selectionPickerActive}
+              drag={dragController}
+              dragSnapshot={dragSnapshot}
               showLeadingWindowChrome={!leftSidebarVisible}
               leadingAccessory={!leftSidebarVisible ? (
                 <WorkbenchLeadingChrome workbench={workbench} trailingAccessory={leftSidebarToggle} />
@@ -274,12 +300,16 @@ function EditorLayoutRoot({
   layout,
   workbench,
   selectionPickerActive,
+  drag,
+  dragSnapshot,
   showLeadingWindowChrome,
   leadingAccessory,
 }: {
   layout: WorkbenchEditorLayoutSnapshot | undefined;
   workbench: WorkbenchSnapshot;
   selectionPickerActive: boolean;
+  drag: WorkbenchDragController;
+  dragSnapshot: WorkbenchDragSnapshot;
   showLeadingWindowChrome?: boolean;
   leadingAccessory?: ReactNode;
 }) {
@@ -309,6 +339,8 @@ function EditorLayoutRoot({
       groups={groups}
       workbench={workbench}
       selectionPickerActive={selectionPickerActive}
+      drag={drag}
+      dragSnapshot={dragSnapshot}
       leadingGroupId={showLeadingWindowChrome ? findLeadingGroupId(layout.root) : undefined}
       leadingAccessory={leadingAccessory}
     />
@@ -323,6 +355,8 @@ function EditorLayoutNodeView({
   groups,
   workbench,
   selectionPickerActive,
+  drag,
+  dragSnapshot,
   leadingGroupId,
   leadingAccessory,
 }: {
@@ -333,6 +367,8 @@ function EditorLayoutNodeView({
   groups: Map<string, WorkbenchGroupSnapshot>;
   workbench: WorkbenchSnapshot;
   selectionPickerActive: boolean;
+  drag: WorkbenchDragController;
+  dragSnapshot: WorkbenchDragSnapshot;
   leadingGroupId?: string;
   leadingAccessory?: ReactNode;
 }) {
@@ -347,6 +383,8 @@ function EditorLayoutNodeView({
         panes={panes}
         workbench={workbench}
         selectionPickerActive={selectionPickerActive}
+        drag={drag}
+        dragSnapshot={dragSnapshot}
         showWindowChrome={group.id === leadingGroupId}
         leadingAccessory={group.id === leadingGroupId ? leadingAccessory : undefined}
       />
@@ -362,6 +400,8 @@ function EditorLayoutNodeView({
       groups={groups}
       workbench={workbench}
       selectionPickerActive={selectionPickerActive}
+      drag={drag}
+      dragSnapshot={dragSnapshot}
       leadingGroupId={leadingGroupId}
       leadingAccessory={leadingAccessory}
     />
@@ -376,6 +416,8 @@ function EditorSplitView({
   groups,
   workbench,
   selectionPickerActive,
+  drag,
+  dragSnapshot,
   leadingGroupId,
   leadingAccessory,
 }: {
@@ -386,6 +428,8 @@ function EditorSplitView({
   groups: Map<string, WorkbenchGroupSnapshot>;
   workbench: WorkbenchSnapshot;
   selectionPickerActive: boolean;
+  drag: WorkbenchDragController;
+  dragSnapshot: WorkbenchDragSnapshot;
   leadingGroupId?: string;
   leadingAccessory?: ReactNode;
 }) {
@@ -445,6 +489,8 @@ function EditorSplitView({
               groups={groups}
               workbench={workbench}
               selectionPickerActive={selectionPickerActive}
+              drag={drag}
+              dragSnapshot={dragSnapshot}
               leadingGroupId={leadingGroupId}
               leadingAccessory={leadingAccessory}
             />
@@ -462,6 +508,8 @@ function EditorGroupView({
   panes,
   workbench,
   selectionPickerActive,
+  drag,
+  dragSnapshot,
   showWindowChrome,
   leadingAccessory,
 }: {
@@ -471,10 +519,12 @@ function EditorGroupView({
   panes: Map<string, WorkbenchPaneDescriptor>;
   workbench: WorkbenchSnapshot;
   selectionPickerActive: boolean;
+  drag: WorkbenchDragController;
+  dragSnapshot: WorkbenchDragSnapshot;
   showWindowChrome?: boolean;
   leadingAccessory?: ReactNode;
 }) {
-  const [dropDirection, setDropDirection] = useState<"left" | "right" | "up" | "down" | null>(null);
+  const splitTarget = dragSnapshot.currentTarget?.kind === "split" && dragSnapshot.currentTarget.groupId === group.id ? dragSnapshot.currentTarget : undefined;
   const activePaneId = group.activePaneId;
   const activePane = activePaneId ? panes.get(activePaneId) : undefined;
   const active = layout.activeGroupId === group.id;
@@ -485,7 +535,7 @@ function EditorGroupView({
     <section
       className="editorGroup"
       data-active={active ? "true" : undefined}
-      data-drop-direction={dropDirection ?? undefined}
+      data-drop-direction={splitTarget?.direction ?? undefined}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) focusGroup(group.id);
       }}
@@ -493,21 +543,18 @@ function EditorGroupView({
         if (!hasDraggedWorkbenchPane(event)) return;
         event.preventDefault();
         event.dataTransfer.dropEffect = "move";
-        setDropDirection(groupDropDirection(event));
+        drag.updateTarget({ kind: "split", groupId: group.id, direction: groupDropDirection(event) });
       }}
       onDragLeave={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropDirection(null);
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) drag.updateTarget(undefined);
       }}
       onDrop={(event) => {
         const dragged = readDraggedWorkbenchPane(event);
-        if (!dragged || !dropDirection) return;
+        if (!dragged) return;
         event.preventDefault();
-        const direction = dropDirection;
-        setDropDirection(null);
-        void window.theEditor.policyRequest("command.dispatch", {
-          id: "workbench.movePane",
-          args: { paneId: dragged.paneId, placement: { kind: "split", direction, of: group.id } },
-        }).catch(console.error);
+        event.stopPropagation();
+        drag.updateTarget({ kind: "split", groupId: group.id, direction: groupDropDirection(event) });
+        void drag.drop().catch(console.error);
       }}
     >
       <header className="editorGroupHeader">
@@ -518,6 +565,7 @@ function EditorGroupView({
           panes: tabs,
           activePaneId,
           showWindowControls: showWindowChrome && !leadingAccessory,
+          drag,
         })}
       </header>
       <div className="editorGroupBody" onMouseDown={() => focusGroup(group.id)}>

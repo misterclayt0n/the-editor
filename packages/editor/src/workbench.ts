@@ -514,10 +514,22 @@ export class WorkbenchController {
     if (!targetGroupId) return undefined;
 
     const sourceGroup = this.groupForPane(pane.id);
-    if (sourceGroup?.id === targetGroupId && pane.kind === "surface" && groupHasSurfaceItem(state, sourceGroup, pane.itemId)) {
-      return this.focusPane(pane.id);
+    if (placement.kind === "tab" && sourceGroup?.id === targetGroupId) {
+      const sourceIndex = sourceGroup.paneIds.indexOf(pane.id);
+      if (sourceIndex < 0) return undefined;
+      const requestedIndex = typeof placement.index === "number" ? placement.index : sourceGroup.paneIds.length;
+      const targetIndex = Math.max(0, Math.min(requestedIndex > sourceIndex ? requestedIndex - 1 : requestedIndex, sourceGroup.paneIds.length - 1));
+      sourceGroup.paneIds.splice(sourceIndex, 1);
+      sourceGroup.paneIds.splice(targetIndex, 0, pane.id);
+      sourceGroup.activePaneId = pane.id;
+      state.activeGroupId = sourceGroup.id;
+      state.activePaneId = pane.id;
+      state.activeItemId = pane.itemId;
+      this.focusPane(pane.id);
+      this.invalidate("layout", "focus", "tabs");
+      return pane;
     }
-    if (placement.kind === "tab" && groupHasSurfaceItem(state, state.groups.get(targetGroupId), pane.itemId)) {
+    if (placement.kind === "tab" && sourceGroup?.id !== targetGroupId && groupHasSurfaceItem(state, state.groups.get(targetGroupId), pane.itemId, pane.id)) {
       this.removePane(pane.id);
       this.removeOrphanedItem(pane.itemId);
       this.syncFocusToActivePane();
@@ -1040,9 +1052,11 @@ function groupHasSurfaceItem(
   state: WorkbenchLayoutState,
   group: WorkbenchGroupState | undefined,
   itemId: WorkbenchItemId,
+  exceptPaneId?: WorkbenchPaneId,
 ): boolean {
   if (!group) return false;
   return group.paneIds.some((paneId) => {
+    if (paneId === exceptPaneId) return false;
     const pane = state.panes.get(paneId);
     return pane?.kind === "surface" && pane.itemId === itemId;
   });

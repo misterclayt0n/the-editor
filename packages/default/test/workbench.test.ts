@@ -108,6 +108,71 @@ describe("workbench splits", () => {
     expect(activeSurfacePath(reopened)).toBe(first);
   });
 
+  it("reorders tabs within the same group", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "the-editor-tabs-reorder-"));
+    const first = join(dir, "alpha.txt");
+    const second = join(dir, "beta.txt");
+    await writeFile(first, "alpha\n", "utf8");
+    await writeFile(second, "beta\n", "utf8");
+
+    const editor = createEditorHost({ runtime: createRuntimeClient(), cwd: dir });
+    await defaultScratch()(editor);
+    await defaultWorkbench()(editor);
+    await editor.commands.dispatch({ id: "scratch.create", args: { text: "" } });
+    await editor.commands.dispatch({ id: "file.open", args: { path: first } });
+    await editor.commands.dispatch({ id: "file.open", args: { path: second } });
+
+    let snapshot = await getWorkbenchSessionState(editor);
+    const group = snapshot.editorLayout?.groups[0]!;
+    const firstPaneId = snapshot.editorLayout?.panes.find((pane) => pane.kind === "surface" && pane.path === first)?.id;
+    const secondPaneId = snapshot.editorLayout?.panes.find((pane) => pane.kind === "surface" && pane.path === second)?.id;
+    expect(firstPaneId).toBeTruthy();
+    expect(secondPaneId).toBeTruthy();
+
+    await editor.commands.dispatch({
+      id: "workbench.movePane",
+      args: { paneId: secondPaneId, placement: { kind: "tab", group: group.id, index: 0 } },
+    });
+
+    snapshot = await getWorkbenchSessionState(editor);
+    expect(snapshot.editorLayout?.groups[0]?.paneIds.slice(0, 2)).toEqual([secondPaneId, firstPaneId]);
+    expect(snapshot.editorLayout?.activePaneId).toBe(secondPaneId);
+  });
+
+  it("splits a tab out of a multi-tab group", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "the-editor-tabs-split-"));
+    const first = join(dir, "alpha.txt");
+    const second = join(dir, "beta.txt");
+    await writeFile(first, "alpha\n", "utf8");
+    await writeFile(second, "beta\n", "utf8");
+
+    const editor = createEditorHost({ runtime: createRuntimeClient(), cwd: dir });
+    await defaultScratch()(editor);
+    await defaultWorkbench()(editor);
+    await editor.commands.dispatch({ id: "scratch.create", args: { text: "" } });
+    await editor.commands.dispatch({ id: "file.open", args: { path: first } });
+    await editor.commands.dispatch({ id: "file.open", args: { path: second } });
+
+    let snapshot = await getWorkbenchSessionState(editor);
+    const sourceGroup = snapshot.editorLayout?.groups[0]!;
+    const firstPaneId = snapshot.editorLayout?.panes.find((pane) => pane.kind === "surface" && pane.path === first)?.id;
+    const secondPaneId = snapshot.editorLayout?.panes.find((pane) => pane.kind === "surface" && pane.path === second)?.id;
+    expect(firstPaneId).toBeTruthy();
+    expect(secondPaneId).toBeTruthy();
+
+    await editor.commands.dispatch({
+      id: "workbench.movePane",
+      args: { paneId: secondPaneId, placement: { kind: "split", direction: "right", of: sourceGroup.id } },
+    });
+
+    snapshot = await getWorkbenchSessionState(editor);
+    expect(snapshot.editorLayout?.root).toMatchObject({ kind: "split", axis: "row" });
+    expect(snapshot.editorLayout?.groups).toHaveLength(2);
+    expect(snapshot.editorLayout?.groups.find((group) => group.paneIds.includes(firstPaneId))?.paneIds).toEqual([firstPaneId]);
+    expect(snapshot.editorLayout?.groups.find((group) => group.paneIds.includes(secondPaneId))?.paneIds).toEqual([secondPaneId]);
+    expect(snapshot.editorLayout?.activePaneId).toBe(secondPaneId);
+  });
+
   it("deduplicates same-item surface panes when merging split tabs", async () => {
     const editor = await createWorkbenchEditor();
     await editor.commands.dispatch({ id: "workbench.vsplit" });

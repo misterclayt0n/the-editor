@@ -100,7 +100,6 @@ export function defaultFileTree(): EditorModule {
           const entry = await stat(absolute);
           if (!entry.isFile()) return;
         } catch {
-          refreshFileTree(editor);
           return;
         }
         await editor.commands.dispatch({ id: commandId("file.open"), args: { path: absolute } });
@@ -151,8 +150,9 @@ export function defaultFileTree(): EditorModule {
       category: "Workbench",
       hidden: true,
       async run(_ctx, args) {
+        const absolute = join(fileTreeState(editor).rootPath, args.path);
         try {
-          await rm(join(fileTreeState(editor).rootPath, args.path), { force: true, recursive: Boolean(args.recursive) });
+          await rm(absolute, { force: true, recursive: Boolean(args.recursive) });
         } catch (error) {
           editor.notifications.error("fileTree", `failed to delete ${args.path}: ${error instanceof Error ? error.message : String(error)}`);
           refreshFileTree(editor);

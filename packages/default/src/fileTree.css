@@ -5,35 +5,64 @@
 }
 
 .defaultFileTreeContextMenu {
+  animation: defaultFileTreeContextMenuIn 120ms cubic-bezier(0.16, 1, 0.3, 1);
   background: color-mix(in srgb, var(--theme-ui-menu-bg, #141414) 96%, black);
   border: 1px solid color-mix(in srgb, var(--theme-ui-text-inactive-fg, #888) 18%, transparent);
-  border-radius: 8px;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.42);
+  border-radius: 10px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.46);
   color: var(--theme-ui-menu-fg, #d8d8d8);
   display: flex;
   flex-direction: column;
-  min-width: 150px;
+  min-width: 180px;
+  overflow: hidden;
   padding: 5px;
+  transform-origin: top left;
+  width: 180px;
 }
 
 .defaultFileTreeContextMenu button {
+  align-items: center;
   appearance: none;
   background: transparent;
   border: 0;
-  border-radius: 5px;
+  border-radius: 6px;
   color: inherit;
   cursor: pointer;
+  display: flex;
   font: inherit;
   font-size: 12px;
-  padding: 6px 8px;
+  min-height: 28px;
+  padding: 6px 9px;
   text-align: left;
 }
 
-.defaultFileTreeContextMenu button:hover {
+.defaultFileTreeContextMenu button:hover,
+.defaultFileTreeContextMenu button:focus-visible {
   background: var(--theme-ui-menu-selected-bg, #2a2a2a);
   color: var(--theme-ui-menu-selected-fg, #fff);
+  outline: none;
 }
 
-.defaultFileTreeContextMenu button.danger:hover {
+.defaultFileTreeContextMenu button.danger:hover,
+.defaultFileTreeContextMenu button.danger:focus-visible {
   background: color-mix(in srgb, var(--theme-diagnostic-error-fg, #f87171) 20%, transparent);
+  color: var(--theme-diagnostic-error-fg, #f87171);
+}
+
+.defaultFileTreeContextMenuSeparator {
+  background: color-mix(in srgb, var(--theme-ui-text-inactive-fg, #888) 18%, transparent);
+  height: 1px;
+  margin: 5px 3px;
+}
+
+@keyframes defaultFileTreeContextMenuIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }

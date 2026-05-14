@@ -526,7 +526,9 @@ The completion implementation should own:
 - source badges/icons
 - all visual personality
 
-The completion data model itself should stay outside the role, so users can swap the UI without rewriting the source fanout logic.
+The completion data model itself should stay outside the role, so users can swap the UI without rewriting autocomplete control flow.
+
+Default autocomplete is intentionally not a generic source-fanout feature. It is an explicit, snapshot-driven controller with provider-specific LSP policy. See [COMPLETION.md](COMPLETION.md). Extension completion providers should not be added back until they can satisfy the same snapshot, cancellation, and no-runtime-read-on-typing invariants.
 
 ## Diagnostics are data first, not a role
 
@@ -1101,7 +1103,7 @@ Current host-owned seams include:
 - role registry
 - tool registry
 - interaction profile registry
-- completion source/presentation registries
+- completion presentation registry; the old completion source registry is deprecated for default autocomplete
 - dock roots (`leftSidebar`, `rightSidebar`, `bottomPanel`, overlays)
 - editor split tree with groups, tabs, and pane placement intents
 - editor-attached overlays that keep focus/key routing in the editor while rendering swappable UI like hover and completion menus

@@ -781,6 +781,9 @@ Reasoning:
 - LSP is protocol/session/service orchestration
 - it should remain native for performance and ownership reasons
 - it should not pollute the pure engine with server lifecycle and async protocol state
+- LSP request waits must not block document/surface runtime state behind the same lock
+
+Completion-specific LSP policy is defined in [COMPLETION.md](COMPLETION.md).
 
 ### Git/VCS
 Belongs in `the-runtime`.

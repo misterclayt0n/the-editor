@@ -30,7 +30,8 @@ It is responsible for things like:
 - file open/save lifecycle
 - syntax asset loading
 - clipboard implementation
-- later: LSP, file watching, workspace search, git/VCS, background work
+- LSP session/process ownership
+- later: file watching, workspace search, git/VCS, background work
 
 It is **not** responsible for:
 - pure editor semantics
@@ -316,19 +317,20 @@ This gives a natural place for session-wide yank/put state. The runtime should e
 ## Explicitly deferred from v1
 
 ### LSP
-LSP absolutely belongs in `the-runtime`, but not in v1.
+LSP belongs in `the-runtime` as an impure protocol/session service, but it must not share one blocking critical section with document/surface state.
 
 Reason:
-- it is a large domain
-- it wants a stable runtime backbone first
-- it would distort the crate shape if introduced too early
+- LSP requests can wait on external language-server processes
+- document/surface reads and mutations are editor responsiveness primitives
+- a slow language server must not block rendering, typing, or cached surface state updates
 
-LSP should come after:
-- resource model
-- runtime session
-- document/surface registries
-- open/save lifecycle
-- syntax runtime loading
+Required shape:
+- LSP process/session state is protected independently from document/surface state, or owned by a dedicated request channel/task
+- native LSP request waits do not hold the document/surface runtime lock
+- TypeScript-facing LSP requests are stale-safe and should be cancellable where feasible
+- completion request/resolve paths use request ids and ignore stale results
+
+Completion-specific LSP policy is defined in [COMPLETION.md](COMPLETION.md).
 
 ### File watching
 File watching belongs in `the-runtime` architecturally, but should be deferred to phase 2.
@@ -339,12 +341,14 @@ Reason:
 - better introduced once the base runtime model is solid
 
 ### Async/event bus architecture
-V1 runtime should be allowed to stay mostly synchronous.
+The runtime may keep simple document/surface operations synchronous, but async service waits must not block editor state.
 
 Reason:
-- open/save/syntax loading/clipboard do not require a full async runtime story yet
-- a synchronous first version is smaller and easier to reason about
-- later async services can layer on once there is a real need
+- open/save/syntax loading/clipboard can remain simple
+- LSP/search/watch-style services wait on external systems
+- external service waits must not block surface/document state, rendering, or typing
+
+A full event bus is not required before there is a concrete need, but LSP already creates the need for lock separation and stale-safe request handling.
 
 ### Workspace/global-search/git/VCS
 These should come later.
@@ -596,8 +600,8 @@ Keep it focused on one job:
 4. add open/create/save/save-as lifecycle
 5. add runtime syntax loading + activation
 6. add clipboard provider implementation
-7. later: file watching
-8. later: LSP
+7. split blocking service waits, especially LSP, away from document/surface locks
+8. later: file watching
 9. later: workspace/global-search/git services
 
 ---

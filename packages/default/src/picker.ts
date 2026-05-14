@@ -12,7 +12,7 @@ import {
   type PickerPreview,
   type PickerSession,
   type PickerStatusLine,
-} from "@the-editor/editor";
+  defineHostStore, } from "@the-editor/editor";
 import { getDefaultState } from "./state.js";
 
 interface PickerRoleState {
@@ -230,7 +230,7 @@ export function defaultPicker(): EditorModule {
 }
 
 function pickerState(editor: Parameters<EditorModule>[0]): StoredPickerState {
-  return editor.stateSlot(pickerStateSlot, () => ({} satisfies StoredPickerState));
+  return editor.stores.host(defineHostStore({ id: pickerStateSlot, init: () => ({} satisfies StoredPickerState) }));
 }
 
 function activePicker(editor: Parameters<EditorModule>[0]): ActivePickerHandle | undefined {

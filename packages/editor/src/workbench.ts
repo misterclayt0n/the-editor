@@ -9,6 +9,7 @@ import type { NotificationEntry } from "./notifications.js";
 import type { RoleSnapshot } from "./roles.js";
 import type { InteractiveSessionSnapshot } from "./sessions.js";
 import type { ThemeSnapshot } from "./themes.js";
+import { defineHostStore } from "./stores.js";
 import type { ToolInstance, ToolRootTarget, ToolSnapshot, ToolTypeId } from "./tools.js";
 import type { WorkingDirectorySnapshot } from "./workingDirectory.js";
 
@@ -240,7 +241,22 @@ interface WorkbenchLayoutState {
   activeItemId?: WorkbenchItemId;
 }
 
-const workbenchLayoutSlot = "workbench.layout";
+const workbenchLayoutStore = defineHostStore<WorkbenchLayoutState>({
+  id: "workbench.layout",
+  init: () => ({
+    nextItem: 1,
+    nextPane: 1,
+    nextGroup: 1,
+    nextSplit: 1,
+    root: null,
+    groups: new Map(),
+    items: new Map(),
+    panes: new Map(),
+    activeGroupId: undefined,
+    activePaneId: undefined,
+    activeItemId: undefined,
+  }),
+});
 
 export class WorkbenchController {
   private readonly listeners = new Set<(kinds: readonly WorkbenchInvalidationKind[]) => void>();
@@ -604,19 +620,7 @@ export class WorkbenchController {
   }
 
   private layoutState(): WorkbenchLayoutState {
-    return this.editor.stateSlot(workbenchLayoutSlot, () => ({
-      nextItem: 1,
-      nextPane: 1,
-      nextGroup: 1,
-      nextSplit: 1,
-      root: null,
-      groups: new Map(),
-      items: new Map(),
-      panes: new Map(),
-      activeGroupId: undefined,
-      activePaneId: undefined,
-      activeItemId: undefined,
-    }));
+    return this.editor.stores.host(workbenchLayoutStore);
   }
 
   private upsertSurfaceItem(

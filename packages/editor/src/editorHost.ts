@@ -20,6 +20,7 @@ import { CommandPaletteRegistry } from "./palette.js";
 import { PickerRegistry } from "./pickers.js";
 import { RoleRegistry } from "./roles.js";
 import { InteractiveSessionRegistry } from "./sessions.js";
+import { StoreRegistry } from "./stores.js";
 import { ThemeRegistry } from "./themes.js";
 import { ToolRegistry } from "./tools.js";
 import { WorkingDirectoryRegistry } from "./workingDirectory.js";
@@ -57,11 +58,11 @@ export class EditorHost {
   readonly input = new InputRouter(this);
   readonly themes = new ThemeRegistry(this);
   readonly sessions = new InteractiveSessionRegistry(this);
+  readonly stores = new StoreRegistry(() => this.currentModuleId());
   readonly cwd: WorkingDirectoryRegistry;
   readonly workbench = new WorkbenchController(this);
 
   private readonly disposables = new DisposableStore();
-  private readonly stateSlots = new Map<string, unknown>();
   private moduleStack: ModuleId[] = [];
 
   constructor(options: EditorHostOptions) {
@@ -96,32 +97,12 @@ export class EditorHost {
     }
   }
 
-  stateSlot<T>(key: string, init: () => T): T {
-    if (this.stateSlots.has(key)) return this.stateSlots.get(key) as T;
-    const value = init();
-    this.stateSlots.set(key, value);
-    return value;
-  }
-
-  getStateSlot<T>(key: string): T | undefined {
-    return this.stateSlots.get(key) as T | undefined;
-  }
-
-  setStateSlot<T>(key: string, value: T): T {
-    this.stateSlots.set(key, value);
-    return value;
-  }
-
-  deleteStateSlot(key: string): void {
-    this.stateSlots.delete(key);
-  }
-
   dispose(): void {
     for (const id of this.modules.all().reverse()) {
       this.modules.unload(id);
     }
     this.notifications.dispose();
-    this.stateSlots.clear();
+    this.stores.clear();
     this.disposables.dispose();
   }
 }

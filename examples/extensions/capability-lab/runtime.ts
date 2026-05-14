@@ -1,5 +1,6 @@
 import {
   commandId,
+  defineHostStore,
   dispatch,
   matchesCommandPaletteItem,
   roleImplementationId,
@@ -410,13 +411,16 @@ function closeCapabilityTool(editor: EditorHost): void {
 }
 
 function getCapabilityState(editor: EditorHost): CapabilityLabState {
-  return editor.stateSlot(capabilityStateSlot, () => ({
-    counter: 0,
-    ghostTextEnabled: true,
-    highlightEnabled: true,
-    tickerHandle: undefined,
-    lastEvent: "ready",
-    toolOpenedCount: 0,
+  return editor.stores.host(defineHostStore<CapabilityLabState>({
+    id: capabilityStateSlot,
+    init: () => ({
+      counter: 0,
+      ghostTextEnabled: true,
+      highlightEnabled: true,
+      tickerHandle: undefined,
+      lastEvent: "ready",
+      toolOpenedCount: 0,
+    }),
   }));
 }
 

@@ -1,5 +1,5 @@
 import type { EditorModule, KeyInput } from "@the-editor/editor";
-import { commandId, matchesCommandPaletteItem, toDisposable, type CommandPaletteItem } from "@the-editor/editor";
+import { commandId, matchesCommandPaletteItem, toDisposable, type CommandPaletteItem, defineHostStore } from "@the-editor/editor";
 import type {
   WorkbenchSessionState,
   WorkbenchSurfaceConfigureRequest,
@@ -158,7 +158,7 @@ export function defaultWorkbench(): EditorModule {
       async handler(request: WorkbenchSurfaceConfigureRequest) {
         const state = getDefaultState(editor);
         if (editor.overlays.isOpen("hover")) {
-          editor.setStateSlot("default.hover.state", { visible: false });
+          editor.stores.set(defineHostStore({ id: "default.hover.state", init: () => undefined }), { visible: false });
           editor.overlays.close("hover", { restoreFocus: false });
           editor.workbench.invalidate("roles");
         }

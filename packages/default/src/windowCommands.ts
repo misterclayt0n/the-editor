@@ -1,5 +1,5 @@
 import type { EditorHost, EditorModule } from "@the-editor/editor";
-import { commandId } from "@the-editor/editor";
+import { commandId, defineHostStore } from "@the-editor/editor";
 import type { SurfaceSelectionRange, SurfaceState } from "@the-editor/contracts/runtime";
 import type { WorkbenchPaneDescriptor, WorkbenchPaneId } from "@the-editor/editor/workbench";
 import { defaultViewport } from "./scratch.js";
@@ -179,7 +179,7 @@ async function afterLayoutChange(editor: EditorHost): Promise<void> {
 }
 
 function bufferNavState(editor: EditorHost): BufferNavState {
-  return editor.stateSlot(bufferNavSlot, () => ({ history: [] }));
+  return editor.stores.host(defineHostStore({ id: bufferNavSlot, init: () => ({ history: [] }) }));
 }
 
 function recordActiveBuffer(editor: EditorHost): void {

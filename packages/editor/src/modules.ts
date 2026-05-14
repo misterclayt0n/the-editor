@@ -39,6 +39,7 @@ export class ModuleRegistry {
     this.loaded.delete(normalized);
     loaded.disposable.dispose();
     this.editor.contributions.disposeModule(normalized);
+    this.editor.stores.disposeModule(normalized);
   }
 
   all(): ModuleId[] {

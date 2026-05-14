@@ -1,4 +1,5 @@
 import { contributionKind } from "./contributions.js";
+import { defineHostStore } from "./stores.js";
 import type { EditorHost } from "./editorHost.js";
 import { toDisposable, type Disposable } from "./disposable.js";
 import type { BuiltinThemeStyleKey } from "./themeStyleKeys.js";
@@ -99,7 +100,10 @@ interface RegisteredTheme {
   order: number;
 }
 
-const selectedThemeIdSlot = "editor.themes.selectedId";
+const selectedThemeIdStore = defineHostStore<ThemeId | undefined>({
+  id: "editor.themes.selectedId",
+  init: () => undefined,
+});
 const defaultThemePalette: Record<string, string> = {
   black: "#000000",
   red: "#cd3131",
@@ -151,12 +155,12 @@ export class ThemeRegistry {
   }
 
   activate(id: ThemeId | string): void {
-    this.editor.setStateSlot(selectedThemeIdSlot, themeId(id));
+    this.editor.stores.set(selectedThemeIdStore, themeId(id));
     this.editor.workbench.invalidate("theme");
   }
 
   selectedId(): ThemeId | undefined {
-    return this.editor.getStateSlot<ThemeId>(selectedThemeIdSlot);
+    return this.editor.stores.get(selectedThemeIdStore);
   }
 
   active(): ResolvedThemeDefinition | undefined {

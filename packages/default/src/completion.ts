@@ -11,7 +11,7 @@ import {
   type EditorHost,
   type EditorModule,
   type InteractiveSessionController,
-} from "@the-editor/editor";
+  defineHostStore, } from "@the-editor/editor";
 import { activeSurfacePane, getDefaultState, refreshActiveSurface } from "./state.js";
 import { ensureLspForPath, fileUri, lspLanguageIdForPath } from "./lsp.js";
 
@@ -241,7 +241,7 @@ export function defaultCompletion(): EditorModule {
 }
 
 function completionController(editor: EditorHost): CompletionControllerState {
-  return editor.stateSlot(completionControllerSlot, () => ({} satisfies CompletionControllerState));
+  return editor.stores.host(defineHostStore({ id: completionControllerSlot, init: () => ({} satisfies CompletionControllerState) }));
 }
 
 function scheduleCompletion(editor: EditorHost, trigger: CompletionContext["trigger"], delayMs = 40): void {
@@ -542,7 +542,7 @@ function shouldOpenCompletion(context: RuntimeCompletionContext, trigger: Comple
 }
 
 function codeActionCompletionActive(editor: EditorHost): boolean {
-  return Boolean(editor.getStateSlot<{ active?: unknown }>(codeActionStateSlot)?.active);
+  return Boolean(editor.stores.get(defineHostStore<{ active?: unknown } | undefined>({ id: codeActionStateSlot, init: () => undefined }))?.active);
 }
 
 async function collectCompletionItems(editor: EditorHost, context: RuntimeCompletionContext): Promise<{

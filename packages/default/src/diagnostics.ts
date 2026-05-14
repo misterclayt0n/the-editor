@@ -3,6 +3,7 @@ import {
   commandId,
   compareDiagnosticsByLocation,
   compareDiagnosticsBySeverityAndLocation,
+  defineHostStore,
   resolveThemeStyle,
   resolveThemeStyleLoose,
   type BufferDecoration,
@@ -231,11 +232,14 @@ export function defaultDiagnostics(): EditorModule {
 }
 
 function diagnosticsPresentationState(editor: EditorHost): DiagnosticPresentationState {
-  return editor.stateSlot(diagnosticPresentationSlot, () => ({
-    inlineEnabled: true,
-    underlinesEnabled: true,
-    inlinePaddingCols: 4,
-    inlineMinColumn: 0,
+  return editor.stores.host(defineHostStore<DiagnosticPresentationState>({
+    id: diagnosticPresentationSlot,
+    init: () => ({
+      inlineEnabled: true,
+      underlinesEnabled: true,
+      inlinePaddingCols: 4,
+      inlineMinColumn: 0,
+    }),
   }));
 }
 
@@ -300,11 +304,14 @@ async function syncLspDiagnostics(editor: EditorHost): Promise<void> {
 }
 
 function diagnosticsController(editor: EditorHost): DiagnosticsControllerState {
-  return editor.stateSlot(diagnosticsControllerSlot, () => ({
-    lspCollections: new Map<string, DiagnosticCollection>(),
-    pendingPaths: new Set<string>(),
-    pendingActiveRefresh: false,
-  } satisfies DiagnosticsControllerState));
+  return editor.stores.host(defineHostStore<DiagnosticsControllerState>({
+    id: diagnosticsControllerSlot,
+    init: () => ({
+      lspCollections: new Map<string, DiagnosticCollection>(),
+      pendingPaths: new Set<string>(),
+      pendingActiveRefresh: false,
+    } satisfies DiagnosticsControllerState),
+  }));
 }
 
 function scheduleDiagnosticsRefresh(editor: EditorHost, paths: readonly string[]): void {

@@ -1,6 +1,7 @@
 import type { EditorHost } from "./editorHost.js";
 import type { FocusTarget } from "./input.js";
 import { roleId, type RoleId } from "./roles.js";
+import { defineHostStore } from "./stores.js";
 
 interface OverlayEntry {
   role: RoleId;
@@ -10,7 +11,10 @@ interface OverlayEntry {
   scope?: string;
 }
 
-const overlayStateSlot = "overlays.state";
+const overlayStateStore = defineHostStore<OverlayState>({
+  id: "overlays.state",
+  init: () => ({ nextOrder: 0, entries: new Map() }),
+});
 
 interface OverlayState {
   nextOrder: number;
@@ -101,9 +105,6 @@ export class OverlayRegistry {
   }
 
   private state(): OverlayState {
-    return this.editor.stateSlot(overlayStateSlot, () => ({
-      nextOrder: 0,
-      entries: new Map(),
-    }));
+    return this.editor.stores.host(overlayStateStore);
   }
 }

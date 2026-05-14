@@ -1,4 +1,4 @@
-import { commandId, matchesCommandPaletteItem, roleImplementationId, toolTypeId, type CommandPaletteItem, type EditorModule } from "@the-editor/editor";
+import { commandId, matchesCommandPaletteItem, roleImplementationId, toolTypeId, type CommandPaletteItem, type EditorModule, defineHostStore } from "@the-editor/editor";
 import { currentPathDiagnosticSummary } from "./diagnostics.js";
 import { getDefaultState } from "./state.js";
 
@@ -18,7 +18,7 @@ export function defaultWorkbenchControls(): EditorModule {
       snapshot() {
         const state = getDefaultState(editor);
         const commandPalette = editor.roles.snapshot("commandPalette");
-        const lsp = editor.getStateSlot<{ text?: string }>("default.lsp.statusline");
+        const lsp = editor.stores.get(defineHostStore<{ text?: string } | undefined>({ id: "default.lsp.statusline", init: () => undefined }));
         return {
           mode: state.mode,
           activePath: state.activePath,

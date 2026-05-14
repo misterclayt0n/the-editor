@@ -1,4 +1,4 @@
-import { commandId, type CompletionItem, type CompletionSource, type EditorHost, type EditorModule, type PickerItem, type PickerPreview } from "@the-editor/editor";
+import { commandId, type CompletionItem, type CompletionSource, type EditorHost, type EditorModule, type PickerItem, type PickerPreview, defineHostStore } from "@the-editor/editor";
 import type { JsonValue, SurfaceChange, SurfaceId, SurfaceSelectionRange, SurfaceState } from "@the-editor/contracts/runtime";
 import { ensureLspForPath, fileUri } from "./lsp.js";
 import { activeSurfacePane, getDefaultState, refreshActiveSurface } from "./state.js";
@@ -252,7 +252,7 @@ async function showCodeActions(editor: EditorHost): Promise<void> {
     return;
   }
   items.sort(compareCodeActions);
-  editor.setStateSlot(codeActionStateSlot, { active: { items, surfaceId: pane.surfaceId, path: pane.path } } satisfies CodeActionState);
+  editor.stores.set(defineHostStore({ id: codeActionStateSlot, init: () => undefined }), { active: { items, surfaceId: pane.surfaceId, path: pane.path } } satisfies CodeActionState);
   await editor.commands.dispatch({ id: commandId("completion.show") });
 }
 
@@ -276,7 +276,7 @@ function codeActionCompletionSource(editor: EditorHost): CompletionSource {
 }
 
 function codeActionState(editor: EditorHost): CodeActionState {
-  return editor.stateSlot(codeActionStateSlot, () => ({} satisfies CodeActionState));
+  return editor.stores.host(defineHostStore({ id: codeActionStateSlot, init: () => ({} satisfies CodeActionState) }));
 }
 
 

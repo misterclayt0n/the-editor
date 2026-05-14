@@ -1,4 +1,4 @@
-import { type EditorHost, type KeyInput } from "@the-editor/editor";
+import { type EditorHost, type KeyInput, defineHostStore } from "@the-editor/editor";
 import type { Viewport } from "@the-editor/contracts/runtime";
 import {
   activeWorkbenchSurfacePane,
@@ -57,7 +57,7 @@ export function syncActiveSurfaceFromWorkbench(editor: EditorHost): void {
 export async function handleKeyInput(editor: EditorHost, input: KeyInput): Promise<DefaultEditorState> {
   const state = getDefaultState(editor);
   if (editor.overlays.isOpen("hover")) {
-    editor.setStateSlot("default.hover.state", { visible: false });
+    editor.stores.set(defineHostStore({ id: "default.hover.state", init: () => undefined }), { visible: false });
     editor.overlays.close("hover", { restoreFocus: false });
     editor.workbench.invalidate("roles");
   }

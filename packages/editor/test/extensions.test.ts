@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RuntimeApi } from "@the-editor/contracts/runtime";
-import { commandId, createEditorHost, defineEditorPackage, defineTheme, resolveThemeStyle, roleImplementationId, toolTypeId } from "../src/index.js";
+import { commandId, createEditorHost, defineEditorPackage, defineHostStore, defineModuleStore, defineTheme, resolveThemeStyle, roleImplementationId, toolTypeId } from "../src/index.js";
 
 function createRuntimeStub(): RuntimeApi {
   return {
@@ -263,6 +263,28 @@ describe("extension registries", () => {
 
     await editor.packages.reload("demo.ui/ui");
     expect(editor.packages.snapshot()[0]?.loadVersions).toEqual({ ui: 2 });
+  });
+
+  it("scopes module stores to module unload while host stores survive", async () => {
+    const editor = createEditorHost({ runtime: createRuntimeStub() });
+    const hostStore = defineHostStore({ id: "test.host", init: () => ({ value: 1 }) });
+    const moduleStore = defineModuleStore({ id: "test.module", init: () => ({ value: 1 }) });
+
+    await editor.use({
+      id: "stores.demo",
+      activate(host) {
+        host.stores.host(hostStore).value = 2;
+        host.stores.module(moduleStore).value = 2;
+      },
+    });
+
+    expect(editor.stores.host(hostStore).value).toBe(2);
+    expect(editor.stores.get(moduleStore, { moduleId: "stores.demo" })?.value).toBe(2);
+
+    editor.modules.unload("stores.demo");
+
+    expect(editor.stores.host(hostStore).value).toBe(2);
+    expect(editor.stores.get(moduleStore, { moduleId: "stores.demo" })).toBeUndefined();
   });
 
   it("resolves theme palette entries and dotted fallback styles", async () => {

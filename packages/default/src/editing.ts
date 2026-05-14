@@ -13,7 +13,7 @@ import {
   type EditorHost,
   type EditorModule,
   type KeyInput,
-} from "@the-editor/editor";
+  defineHostStore, } from "@the-editor/editor";
 import { getDefaultState, refreshActiveSurface, setEditorMode } from "./state.js";
 
 const RUST_OPERATIONS = [
@@ -862,12 +862,12 @@ function registerOperation(
 }
 
 function setPendingInput(editor: EditorHost, pending: PendingInputState | undefined): void {
-  editor.setStateSlot(pendingInputSlot, pending);
+  editor.stores.set(defineHostStore({ id: pendingInputSlot, init: () => undefined }), pending);
 }
 
 function takePendingInput(editor: EditorHost): PendingInputState | undefined {
-  const pending = editor.getStateSlot<PendingInputState | undefined>(pendingInputSlot);
-  editor.deleteStateSlot(pendingInputSlot);
+  const pending = editor.stores.get(defineHostStore<PendingInputState | undefined>({ id: pendingInputSlot, init: () => undefined as PendingInputState | undefined }));
+  editor.stores.delete(defineHostStore({ id: pendingInputSlot, init: () => undefined }));
   return pending;
 }
 
@@ -876,11 +876,11 @@ function isFindCharMotionState(motion: LastMotionState): motion is FindCharMotio
 }
 
 function setLastMotion(editor: EditorHost, motion: LastMotionState | undefined): void {
-  editor.setStateSlot(lastMotionSlot, motion);
+  editor.stores.set(defineHostStore({ id: lastMotionSlot, init: () => undefined }), motion);
 }
 
 function getLastMotion(editor: EditorHost): LastMotionState | undefined {
-  return editor.getStateSlot<LastMotionState | undefined>(lastMotionSlot);
+  return editor.stores.get(defineHostStore<LastMotionState | undefined>({ id: lastMotionSlot, init: () => undefined as LastMotionState | undefined }));
 }
 
 async function handlePendingInput(
@@ -1192,7 +1192,7 @@ async function openSelectionPicker(editor: EditorHost, mode: SelectionPickerMode
 
   const candidates = state.selection.map((range) => range.cursorId);
   const index = 0;
-  editor.setStateSlot(selectionPickerSlot, {
+  editor.stores.set(defineHostStore<SelectionPickerState | undefined>({ id: selectionPickerSlot, init: () => undefined }), {
     mode,
     candidates,
     index,
@@ -1205,11 +1205,11 @@ async function openSelectionPicker(editor: EditorHost, mode: SelectionPickerMode
 }
 
 function selectionPickerState(editor: EditorHost): SelectionPickerState | undefined {
-  return editor.getStateSlot<SelectionPickerState | undefined>(selectionPickerSlot);
+  return editor.stores.get(defineHostStore<SelectionPickerState | undefined>({ id: selectionPickerSlot, init: () => undefined as SelectionPickerState | undefined }));
 }
 
 function clearSelectionPicker(editor: EditorHost): void {
-  editor.deleteStateSlot(selectionPickerSlot);
+  editor.stores.delete(defineHostStore({ id: selectionPickerSlot, init: () => undefined }));
 }
 
 async function handleSelectionPickerInput(
@@ -1407,7 +1407,7 @@ async function replaceWithRegister(editor: EditorHost, name: string): Promise<vo
 }
 
 function jumpListState(editor: EditorHost): JumpListState {
-  return editor.stateSlot(jumpListSlot, () => ({ backward: [], forward: [] }));
+  return editor.stores.host(defineHostStore({ id: jumpListSlot, init: () => ({ backward: [], forward: [] }) }));
 }
 
 function cloneJumpEntry(entry: JumpListEntry): JumpListEntry {
@@ -1495,7 +1495,7 @@ function currentRegisterState(editor: EditorHost, next?: string): string | undef
 }
 
 function objectSelectionHistory(editor: EditorHost): SurfaceSelectionRange[][] {
-  return editor.stateSlot(objectSelectionHistorySlot, () => []);
+  return editor.stores.host(defineHostStore({ id: objectSelectionHistorySlot, init: () => [] }));
 }
 
 function cloneSelection(selection: readonly SurfaceSelectionRange[]): SurfaceSelectionRange[] {
@@ -2293,12 +2293,12 @@ function appendModeSelectionRange(
 }
 
 function appendRestoreCursorPending(editor: EditorHost): boolean {
-  return editor.getStateSlot<boolean | undefined>(appendRestoreCursorPendingSlot) ?? false;
+  return editor.stores.get(defineHostStore<boolean | undefined>({ id: appendRestoreCursorPendingSlot, init: () => undefined as boolean | undefined })) ?? false;
 }
 
 function setAppendRestoreCursorPending(editor: EditorHost, pending: boolean): void {
-  if (pending) editor.setStateSlot(appendRestoreCursorPendingSlot, true);
-  else editor.deleteStateSlot(appendRestoreCursorPendingSlot);
+  if (pending) editor.stores.set(defineHostStore({ id: appendRestoreCursorPendingSlot, init: () => undefined }), true);
+  else editor.stores.delete(defineHostStore({ id: appendRestoreCursorPendingSlot, init: () => undefined }));
 }
 
 async function syncActiveSurfaceCursorSemantics(editor: EditorHost, semantics: CursorSemantics): Promise<void> {

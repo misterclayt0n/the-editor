@@ -1,4 +1,4 @@
-import { toDisposable, type EditorHost, type EditorModule, type LspServerStatus } from "@the-editor/editor";
+import { toDisposable, type EditorHost, type EditorModule, type LspServerStatus, defineHostStore } from "@the-editor/editor";
 import { importedLspLanguages, importedLspServers } from "./lsp/generated.js";
 import { getDefaultState } from "./state.js";
 
@@ -73,7 +73,7 @@ export async function ensureLspForPath(editor: EditorHost, path: string): Promis
 }
 
 export function currentLspStatusline(editor: EditorHost): LspStatuslineState {
-  return editor.stateSlot<LspStatuslineState>(lspStatuslineSlot, () => ({ phase: "off" }));
+  return editor.stores.host(defineHostStore<LspStatuslineState>({ id: lspStatuslineSlot, init: () => ({ phase: "off" }) }));
 }
 
 export function fileUri(path: string): string {
@@ -85,10 +85,13 @@ export function lspLanguageIdForPath(editor: EditorHost, path: string): string {
 }
 
 function lspController(editor: EditorHost): LspControllerState {
-  return editor.stateSlot<LspControllerState>(lspControllerSlot, () => ({
-    spinnerIndex: 0,
-    pendingStarts: new Map(),
-    startFailures: new Map(),
+  return editor.stores.host(defineHostStore<LspControllerState>({
+    id: lspControllerSlot,
+    init: () => ({
+      spinnerIndex: 0,
+      pendingStarts: new Map(),
+      startFailures: new Map(),
+    }),
   }));
 }
 
@@ -96,7 +99,7 @@ async function updateLspStatusline(editor: EditorHost, statuses?: LspServerStatu
   const next = buildLspStatusline(editor, statuses ?? await editor.lsp.status());
   const previous = currentLspStatusline(editor);
   if (previous.phase === next.phase && previous.text === next.text) return;
-  editor.setStateSlot(lspStatuslineSlot, next);
+  editor.stores.set(defineHostStore({ id: lspStatuslineSlot, init: () => undefined }), next);
   editor.workbench.invalidate("roles");
 }
 

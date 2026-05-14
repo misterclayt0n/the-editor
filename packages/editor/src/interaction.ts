@@ -5,6 +5,7 @@ import type { EditorHost } from "./editorHost.js";
 import type { FocusTarget } from "./input.js";
 import type { KeyInput, KeymapPendingState, KeymapResolution } from "./keymaps.js";
 import { toDisposable, type Disposable } from "./disposable.js";
+import { defineHostStore } from "./stores.js";
 
 export type InteractionProfileId = string & { readonly __brand?: "InteractionProfileId" };
 export type InteractionOverlayId = string & { readonly __brand?: "InteractionOverlayId" };
@@ -76,7 +77,10 @@ interface ProfileEntry<TState = unknown> {
   state?: TState;
 }
 
-const keymapPendingSlot = "interaction.keymapPending";
+const keymapPendingStore = defineHostStore<InteractionKeymapPendingState | undefined>({
+  id: "interaction.keymapPending",
+  init: () => undefined,
+});
 
 export interface InteractionKeymapPendingState {
   scope: string;
@@ -215,17 +219,17 @@ export class InteractionRegistry {
   }
 
   keymapPending(): InteractionKeymapPendingState | undefined {
-    return this.editor.getStateSlot<InteractionKeymapPendingState>(keymapPendingSlot);
+    return this.editor.stores.get(keymapPendingStore);
   }
 
   setKeymapPending(pending: InteractionKeymapPendingState | undefined): void {
-    if (pending) this.editor.setStateSlot(keymapPendingSlot, { scope: pending.scope, keys: [...pending.keys] });
-    else this.editor.deleteStateSlot(keymapPendingSlot);
+    if (pending) this.editor.stores.set(keymapPendingStore, { scope: pending.scope, keys: [...pending.keys] });
+    else this.editor.stores.delete(keymapPendingStore);
     this.editor.workbench.invalidate("interaction");
   }
 
   clearPending(): void {
-    this.editor.deleteStateSlot(keymapPendingSlot);
+    this.editor.stores.delete(keymapPendingStore);
   }
 
   resolveKeymap(scopes: readonly string[], input: KeyInput): KeymapResolution {

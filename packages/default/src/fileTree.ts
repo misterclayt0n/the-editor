@@ -2,7 +2,7 @@ import { mkdir, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { dirname, join, relative, sep } from "node:path";
-import { commandId, matchesCommandPaletteItem, toolTypeId, type CommandPaletteItem, type EditorModule } from "@the-editor/editor";
+import { commandId, matchesCommandPaletteItem, toolTypeId, type CommandPaletteItem, type EditorModule, defineHostStore } from "@the-editor/editor";
 
 export interface FileTreeToolState {
   rootPath: string;
@@ -233,7 +233,7 @@ export function defaultFileTree(): EditorModule {
 
 function fileTreeState(editor: Parameters<EditorModule>[0]): FileTreeState {
   const cwd = editor.cwd.current();
-  const state = editor.stateSlot<FileTreeState>(fileTreeStateSlot, () => ({ rootPath: cwd, paths: [], gitStatus: [], loading: false, searchRevision: 0, createFileRevision: 0, createFolderRevision: 0 }));
+  const state = editor.stores.host(defineHostStore<FileTreeState>({ id: fileTreeStateSlot, init: () => ({ rootPath: cwd, paths: [], gitStatus: [], loading: false, searchRevision: 0, createFileRevision: 0, createFolderRevision: 0 }) }));
   if (state.rootPath !== cwd) {
     state.rootPath = cwd;
     state.paths = [];

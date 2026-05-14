@@ -1,5 +1,5 @@
 import type { CursorSemantics, JsonValue, SurfaceId, SurfaceSelectionRange } from "@the-editor/contracts/runtime";
-import { commandId, type EditorHost, type EditorModule, type LspServerStatus } from "@the-editor/editor";
+import { commandId, type EditorHost, type EditorModule, type LspServerStatus, defineHostStore } from "@the-editor/editor";
 import { ensureLspForPath, fileUri } from "./lsp.js";
 import { activeSurfacePane, getDefaultState } from "./state.js";
 
@@ -142,7 +142,7 @@ export function defaultSignatureHelp(): EditorModule {
         hideSignatureHelp(editor, { restoreFocus: true });
       },
       snapshot() {
-        return editor.stateSlot<SignatureHelpRoleState>(signatureHelpStateSlot, () => ({ visible: false }));
+        return editor.stores.host(defineHostStore<SignatureHelpRoleState>({ id: signatureHelpStateSlot, init: () => ({ visible: false }) }));
       },
     });
 
@@ -180,10 +180,10 @@ export function hideSignatureHelp(editor: EditorHost, options: { restoreFocus?: 
     controller.timer = undefined;
   }
   bumpSignatureHelpRequestSequence(editor);
-  const state = editor.stateSlot<SignatureHelpRoleState>(signatureHelpStateSlot, () => ({ visible: false }));
+  const state = editor.stores.host(defineHostStore<SignatureHelpRoleState>({ id: signatureHelpStateSlot, init: () => ({ visible: false }) }));
   const visible = state.visible || editor.overlays.isOpen(signatureHelpRoleId);
   if (!visible) return;
-  editor.setStateSlot(signatureHelpStateSlot, { visible: false } satisfies SignatureHelpRoleState);
+  editor.stores.set(defineHostStore({ id: signatureHelpStateSlot, init: () => undefined }), { visible: false } satisfies SignatureHelpRoleState);
   editor.overlays.close(signatureHelpRoleId, { restoreFocus: options.restoreFocus ?? false });
   editor.workbench.invalidate("roles");
 }
@@ -193,7 +193,7 @@ export function isSignatureHelpOpen(editor: EditorHost): boolean {
 }
 
 function signatureHelpController(editor: EditorHost): SignatureHelpControllerState {
-  return editor.stateSlot(signatureHelpControllerSlot, () => ({} satisfies SignatureHelpControllerState));
+  return editor.stores.host(defineHostStore({ id: signatureHelpControllerSlot, init: () => ({} satisfies SignatureHelpControllerState) }));
 }
 
 function scheduleSignatureHelp(editor: EditorHost, trigger: SignatureHelpTrigger, delayMs: number): void {
@@ -226,7 +226,7 @@ async function showOrRefreshSignatureHelp(editor: EditorHost, trigger: Signature
     return;
   }
 
-  editor.setStateSlot(signatureHelpStateSlot, { visible: true, ...signatureHelp } satisfies SignatureHelpRoleState);
+  editor.stores.set(defineHostStore({ id: signatureHelpStateSlot, init: () => undefined }), { visible: true, ...signatureHelp } satisfies SignatureHelpRoleState);
   editor.overlays.open(signatureHelpRoleId, { focus: false, attachedToEditor: true });
   editor.workbench.invalidate("roles");
 }
@@ -291,7 +291,7 @@ async function resolveSignatureHelp(
 }
 
 function currentActiveSignatureHelp(editor: EditorHost): SignatureHelpRoleState | undefined {
-  const state = editor.getStateSlot<SignatureHelpRoleState | undefined>(signatureHelpStateSlot);
+  const state = editor.stores.get(defineHostStore<SignatureHelpRoleState | undefined>({ id: signatureHelpStateSlot, init: () => undefined as SignatureHelpRoleState | undefined }));
   return state?.visible ? state : undefined;
 }
 
@@ -329,12 +329,12 @@ function buildSignatureHelpParams(
 }
 
 function currentSignatureHelpRequestSequence(editor: EditorHost): number {
-  return editor.stateSlot<number>(signatureHelpRequestSequenceSlot, () => 0);
+  return editor.stores.host(defineHostStore<number>({ id: signatureHelpRequestSequenceSlot, init: () => 0 }));
 }
 
 function bumpSignatureHelpRequestSequence(editor: EditorHost): number {
   const next = currentSignatureHelpRequestSequence(editor) + 1;
-  editor.setStateSlot(signatureHelpRequestSequenceSlot, next);
+  editor.stores.set(defineHostStore({ id: signatureHelpRequestSequenceSlot, init: () => undefined }), next);
   return next;
 }
 

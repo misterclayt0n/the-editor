@@ -7,7 +7,7 @@ import {
   type EditorModule,
   type InteractiveSessionController,
   type InteractiveSessionId,
-} from "@the-editor/editor";
+  defineHostStore, } from "@the-editor/editor";
 import { ensureLspForPath, fileUri } from "./lsp.js";
 import { activeSurfacePane, getDefaultState, refreshActiveSurface } from "./state.js";
 
@@ -188,7 +188,7 @@ export function defaultInputPrompt(): EditorModule {
 }
 
 function inputPromptState(editor: Parameters<EditorModule>[0]): StoredInputPromptState {
-  return editor.stateSlot(inputPromptStateSlot, () => ({} satisfies StoredInputPromptState));
+  return editor.stores.host(defineHostStore({ id: inputPromptStateSlot, init: () => ({} satisfies StoredInputPromptState) }));
 }
 
 function activeInputPromptSessionId(editor: Parameters<EditorModule>[0]): InteractiveSessionId | undefined {

@@ -1,4 +1,4 @@
-import { commandId, type EditorHost, type EditorModule, type LspServerStatus } from "@the-editor/editor";
+import { commandId, type EditorHost, type EditorModule, type LspServerStatus, defineHostStore } from "@the-editor/editor";
 import type { CursorSemantics, JsonValue, SurfaceId, SurfaceSelectionRange } from "@the-editor/contracts/runtime";
 import { diagnosticMarkdownForPathPosition } from "./diagnostics.js";
 import { ensureLspForPath, fileUri } from "./lsp.js";
@@ -41,7 +41,7 @@ export function defaultHover(): EditorModule {
         dismissHover(editor, { restoreFocus: true });
       },
       snapshot() {
-        return editor.stateSlot<HoverRoleState>(hoverStateSlot, () => ({ visible: false }));
+        return editor.stores.host(defineHostStore<HoverRoleState>({ id: hoverStateSlot, init: () => ({ visible: false }) }));
       },
     });
 
@@ -63,7 +63,7 @@ export function defaultHover(): EditorModule {
           return;
         }
 
-        editor.setStateSlot(hoverStateSlot, { visible: true, ...hover } satisfies HoverRoleState);
+        editor.stores.set(defineHostStore({ id: hoverStateSlot, init: () => undefined }), { visible: true, ...hover } satisfies HoverRoleState);
         editor.overlays.open(hoverRoleId, { focus: false, attachedToEditor: true });
         editor.workbench.invalidate("roles");
       },
@@ -87,10 +87,10 @@ export function defaultHover(): EditorModule {
 
 export function dismissHover(editor: EditorHost, options: { restoreFocus?: boolean } = {}): void {
   bumpHoverRequestSequence(editor);
-  const state = editor.stateSlot<HoverRoleState>(hoverStateSlot, () => ({ visible: false }));
+  const state = editor.stores.host(defineHostStore<HoverRoleState>({ id: hoverStateSlot, init: () => ({ visible: false }) }));
   const visible = state.visible || editor.overlays.isOpen(hoverRoleId);
   if (!visible) return;
-  editor.setStateSlot(hoverStateSlot, { visible: false } satisfies HoverRoleState);
+  editor.stores.set(defineHostStore({ id: hoverStateSlot, init: () => undefined }), { visible: false } satisfies HoverRoleState);
   editor.overlays.close(hoverRoleId, { restoreFocus: options.restoreFocus ?? false });
   editor.workbench.invalidate("roles");
 }
@@ -173,12 +173,12 @@ async function resolveHover(editor: EditorHost, request: HoverRequestContext): P
 }
 
 function currentHoverRequestSequence(editor: EditorHost): number {
-  return editor.stateSlot<number>(hoverRequestSequenceSlot, () => 0);
+  return editor.stores.host(defineHostStore<number>({ id: hoverRequestSequenceSlot, init: () => 0 }));
 }
 
 function bumpHoverRequestSequence(editor: EditorHost): number {
   const next = currentHoverRequestSequence(editor) + 1;
-  editor.setStateSlot(hoverRequestSequenceSlot, next);
+  editor.stores.set(defineHostStore({ id: hoverRequestSequenceSlot, init: () => undefined }), next);
   return next;
 }
 

@@ -10,7 +10,7 @@ import {
   type EditorModule,
   type InteractiveSessionController,
   type InteractiveSessionId,
-} from "@the-editor/editor";
+  defineHostStore, } from "@the-editor/editor";
 
 interface CommandPaletteSessionState {
   query: string;
@@ -315,7 +315,7 @@ export function defaultCommandPalette(): EditorModule {
 }
 
 function paletteState(editor: Parameters<EditorModule>[0]): CommandPaletteStoredState {
-  return editor.stateSlot(commandPaletteStateSlot, () => ({} satisfies CommandPaletteStoredState));
+  return editor.stores.host(defineHostStore({ id: commandPaletteStateSlot, init: () => ({} satisfies CommandPaletteStoredState) }));
 }
 
 function activeSessionId(editor: Parameters<EditorModule>[0]): InteractiveSessionId | undefined {

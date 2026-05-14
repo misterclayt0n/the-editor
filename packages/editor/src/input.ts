@@ -1,6 +1,7 @@
 import type { KeyInput } from "./keymaps.js";
 import type { EditorHost } from "./editorHost.js";
 import { roleId, type RoleId } from "./roles.js";
+import { defineHostStore } from "./stores.js";
 import { toolInstanceId, type ToolInstanceId } from "./tools.js";
 
 export type FocusTarget =
@@ -32,7 +33,10 @@ interface InputRouterState {
   history: FocusTarget[];
 }
 
-const inputRouterStateSlot = "input.router.state";
+const inputRouterStateStore = defineHostStore<InputRouterState>({
+  id: "input.router.state",
+  init: () => ({ focus: { kind: "editor" }, history: [] }),
+});
 const historyLimit = 16;
 
 export class InputRouter {
@@ -131,10 +135,7 @@ export class InputRouter {
   }
 
   private state(): InputRouterState {
-    return this.editor.stateSlot(inputRouterStateSlot, () => ({
-      focus: { kind: "editor" } as FocusTarget,
-      history: [],
-    }));
+    return this.editor.stores.host(inputRouterStateStore);
   }
 
   private repairCurrentFocus(): FocusTarget {

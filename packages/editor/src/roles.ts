@@ -1,6 +1,7 @@
 import { contributionKind, type ModuleId } from "./contributions.js";
 import type { EditorHost } from "./editorHost.js";
 import { toDisposable, type Disposable } from "./disposable.js";
+import { defineHostStore } from "./stores.js";
 
 export type RoleId = string & { readonly __brand?: "RoleId" };
 export type RoleImplementationId = string & { readonly __brand?: "RoleImplementationId" };
@@ -45,9 +46,18 @@ export interface RoleSnapshot {
   available: RoleImplementationSnapshot[];
 }
 
-const roleSelectionsSlot = "roles.selections";
-const roleFallbackImplementationsSlot = "roles.fallbackImplementations";
-const roleFallbackReasonsSlot = "roles.fallbackReasons";
+const roleSelectionsStore = defineHostStore<Map<RoleId, RoleImplementationId>>({
+  id: "roles.selections",
+  init: () => new Map(),
+});
+const roleFallbackImplementationsStore = defineHostStore<Map<RoleId, RoleImplementationId>>({
+  id: "roles.fallbackImplementations",
+  init: () => new Map(),
+});
+const roleFallbackReasonsStore = defineHostStore<Map<RoleId, string>>({
+  id: "roles.fallbackReasons",
+  init: () => new Map(),
+});
 
 export class RoleRegistry {
   private nextOrder = 0;
@@ -285,15 +295,15 @@ export class RoleRegistry {
   }
 
   private selections(): Map<RoleId, RoleImplementationId> {
-    return this.editor.stateSlot(roleSelectionsSlot, () => new Map<RoleId, RoleImplementationId>());
+    return this.editor.stores.host(roleSelectionsStore);
   }
 
   private fallbackImplementations(): Map<RoleId, RoleImplementationId> {
-    return this.editor.stateSlot(roleFallbackImplementationsSlot, () => new Map<RoleId, RoleImplementationId>());
+    return this.editor.stores.host(roleFallbackImplementationsStore);
   }
 
   private fallbackReasons(): Map<RoleId, string> {
-    return this.editor.stateSlot(roleFallbackReasonsSlot, () => new Map<RoleId, string>());
+    return this.editor.stores.host(roleFallbackReasonsStore);
   }
 }
 

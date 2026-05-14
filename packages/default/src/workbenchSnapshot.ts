@@ -1,3 +1,4 @@
+import { defineHostStore } from "@the-editor/editor";
 import type { CellGridMetrics, DocumentId, RenderFrame, SurfaceId, Viewport } from "@the-editor/contracts/runtime";
 import type { BufferDecoration, EditorHost, GutterSnapshot, RoleSnapshot, WorkbenchPaneId } from "@the-editor/editor";
 import type { WorkbenchSessionState } from "@the-editor/editor/workbench";
@@ -36,10 +37,9 @@ export interface DefaultEditorState {
   surfacePanes: Map<WorkbenchPaneId, SurfacePaneViewState>;
 }
 
-const defaultEditorStateSlot = "default.editor.state";
-
-export function workbenchSnapshotState(editor: EditorHost): DefaultEditorState {
-  return editor.stateSlot(defaultEditorStateSlot, () => ({
+const defaultEditorStateStore = defineHostStore<DefaultEditorState>({
+  id: "default.editor.state",
+  init: () => ({
     mode: "normal",
     activeDocumentId: undefined,
     activeSurfaceId: undefined,
@@ -56,7 +56,11 @@ export function workbenchSnapshotState(editor: EditorHost): DefaultEditorState {
     surfaceMetrics: undefined,
     currentRegister: undefined,
     surfacePanes: new Map(),
-  }));
+  }),
+});
+
+export function workbenchSnapshotState(editor: EditorHost): DefaultEditorState {
+  return editor.stores.host(defaultEditorStateStore);
 }
 
 export function setWorkbenchEditorMode(editor: EditorHost, mode: EditorMode): DefaultEditorState {
@@ -177,7 +181,7 @@ export async function snapshotWorkbenchSession(editor: EditorHost): Promise<Work
     sessions: editor.sessions.snapshotAll(),
     notifications: editor.notifications.snapshot(),
     workingDirectory: editor.cwd.snapshot(),
-    selectionPickerActive: Boolean(editor.getStateSlot("default.editing.selectionPicker")),
+    selectionPickerActive: Boolean(editor.stores.get(defineHostStore({ id: "default.editing.selectionPicker", init: () => undefined }))),
     editorLayout: editor.workbench.snapshotEditorLayout({
       mapItem: (item) => decorateItemSnapshot(item, toolById),
       mapPane: (pane) => decoratePaneSnapshot(pane, state, toolById),

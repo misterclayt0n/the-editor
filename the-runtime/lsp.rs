@@ -96,6 +96,8 @@ pub struct LspServerStatus {
   pub id:                            String,
   pub state:                         String,
   pub message:                       Option<String>,
+  #[serde(default, rename = "completionProvider")]
+  pub completion_provider:           bool,
   #[serde(default, rename = "completionTriggerCharacters")]
   pub completion_trigger_characters: Vec<String>,
 }
@@ -142,6 +144,7 @@ struct LspServerProcess {
   open_documents:                HashMap<String, i64>,
   diagnostics:                   HashMap<String, (Option<i64>, Vec<Value>)>,
   text_sync:                     TextDocumentSyncKind,
+  completion_provider:           bool,
   completion_trigger_characters: Vec<String>,
 }
 
@@ -233,6 +236,7 @@ impl LspStore {
       open_documents: HashMap::new(),
       diagnostics: HashMap::new(),
       text_sync: TextDocumentSyncKind::Full,
+      completion_provider: false,
       completion_trigger_characters: Vec::new(),
     };
     let init = json!({
@@ -294,6 +298,7 @@ impl LspStore {
     match server.request("initialize", init, Duration::from_secs(20)) {
       Ok(result) => {
         server.text_sync = parse_text_document_sync_kind(&result);
+        server.completion_provider = has_completion_provider(&result);
         server.completion_trigger_characters = parse_completion_trigger_characters(&result);
         server.notify("initialized", json!({}))?;
         server.initialized = true;
@@ -452,6 +457,7 @@ impl LspStore {
           id:                            server.config.id.clone(),
           state:                         server.state.clone(),
           message:                       server.message.clone(),
+          completion_provider:           server.completion_provider,
           completion_trigger_characters: server.completion_trigger_characters.clone(),
         }
       })
@@ -641,6 +647,13 @@ fn parse_text_document_sync_kind(initialize_result: &Value) -> TextDocumentSyncK
     2 => TextDocumentSyncKind::Incremental,
     _ => TextDocumentSyncKind::Full,
   }
+}
+
+fn has_completion_provider(initialize_result: &Value) -> bool {
+  initialize_result
+    .get("capabilities")
+    .and_then(|capabilities| capabilities.get("completionProvider"))
+    .is_some_and(|provider| !provider.is_null())
 }
 
 fn parse_completion_trigger_characters(initialize_result: &Value) -> Vec<String> {

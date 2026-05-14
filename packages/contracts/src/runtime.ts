@@ -291,6 +291,7 @@ export interface LspServerStatus {
   id: string;
   state: string;
   message?: string | null;
+  completionProvider?: boolean;
   completionTriggerCharacters?: string[];
 }
 

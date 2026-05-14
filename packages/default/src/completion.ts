@@ -13,7 +13,7 @@ import {
   type InteractiveSessionController,
   defineHostStore, } from "@the-editor/editor";
 import { activeSurfacePane, getDefaultState, refreshActiveSurface } from "./state.js";
-import { ensureLspForPath, fileUri, lspLanguageIdForPath } from "./lsp.js";
+import { currentLspStatuses, ensureLspForPath, fileUri, lspLanguageIdForPath } from "./lsp.js";
 
 interface CompletionRoleState {
   visible: boolean;
@@ -81,6 +81,11 @@ interface ActiveCompletionState {
 interface CompletionControllerState {
   active?: ActiveCompletionState;
   timer?: ReturnType<typeof setTimeout>;
+  automaticWord?: {
+    surfaceId: SurfaceId;
+    path?: string;
+    query: string;
+  };
 }
 
 interface RuntimeCompletionContext extends CompletionContext {
@@ -108,6 +113,16 @@ const completionPreservingCommands = new Set([
   commandId("code_action"),
 ]);
 
+const insertMutationCommands = new Set([
+  commandId("edit.insertText"),
+  commandId("delete_char_backward"),
+  commandId("delete_char_forward"),
+  commandId("delete_word_backward"),
+  commandId("delete_word_forward"),
+  commandId("kill_to_line_start"),
+  commandId("kill_to_line_end"),
+]);
+
 function elapsed(start: number): number {
   return Math.round((performance.now() - start) * 10) / 10;
 }
@@ -131,7 +146,7 @@ export function defaultCompletion(): EditorModule {
       snapshot() {
         const active = completionController(editor).active;
         return {
-          visible: Boolean(active),
+          visible: Boolean(active) && editor.overlays.isOpen(completionMenuRoleId),
           sessionId: active?.session.id,
           surfaceId: active?.surfaceId,
         } satisfies CompletionRoleState;
@@ -217,8 +232,33 @@ export function defaultCompletion(): EditorModule {
       id: "default.completion.afterDispatch",
       handler: async ({ dispatch }: { dispatch: { id: string; args?: unknown } }) => {
         if (dispatch.id.startsWith("completion.") || completionPreservingCommands.has(dispatch.id as ReturnType<typeof commandId>)) return;
-        const active = completionController(editor).active;
-        if (active) hideCompletion(editor, { restoreFocus: false });
+        const controller = completionController(editor);
+        const active = controller.active;
+        const isInsertMutation = insertMutationCommands.has(dispatch.id as ReturnType<typeof commandId>);
+        const inInsertMode = getDefaultState(editor).mode === "insert" && editor.input.current().kind === "editor";
+
+        if (active) {
+          if (isInsertMutation && inInsertMode) {
+            if (updateActiveCompletionFromDispatch(editor, active, dispatch)) return;
+            const trigger = triggerForDispatch(dispatch);
+            const queryLength = updateAutomaticWordFromDispatch(editor, dispatch, trigger) || active.query.length;
+            if (shouldScheduleAutomaticCompletionTrigger(editor, trigger, queryLength)) {
+              scheduleCompletion(editor, trigger);
+              return;
+            }
+          }
+          hideCompletion(editor, { restoreFocus: false });
+          return;
+        }
+
+        if (isInsertMutation && inInsertMode) {
+          const trigger = triggerForDispatch(dispatch);
+          const queryLength = updateAutomaticWordFromDispatch(editor, dispatch, trigger);
+          if (shouldScheduleAutomaticCompletionTrigger(editor, trigger, queryLength)) scheduleCompletion(editor, trigger);
+          return;
+        }
+
+        controller.automaticWord = undefined;
       },
     });
 
@@ -236,6 +276,16 @@ function completionController(editor: EditorHost): CompletionControllerState {
   return editor.stores.host(defineHostStore({ id: completionControllerSlot, init: () => ({} satisfies CompletionControllerState) }));
 }
 
+function scheduleCompletion(editor: EditorHost, trigger: CompletionContext["trigger"], delayMs = trigger.kind === "triggerCharacter" ? 20 : 160): void {
+  const controller = completionController(editor);
+  if (controller.timer) clearTimeout(controller.timer);
+  completionDiag("schedule", { trigger: trigger.kind, character: trigger.character, delayMs });
+  controller.timer = setTimeout(() => {
+    controller.timer = undefined;
+    void showOrRefreshCompletion(editor, trigger);
+  }, delayMs);
+}
+
 async function showOrRefreshCompletion(editor: EditorHost, trigger: CompletionContext["trigger"]): Promise<void> {
   const start = performance.now();
   completionDiag("show start", { trigger: trigger.kind, character: trigger.character });
@@ -243,6 +293,11 @@ async function showOrRefreshCompletion(editor: EditorHost, trigger: CompletionCo
   if (controller.timer) {
     clearTimeout(controller.timer);
     controller.timer = undefined;
+  }
+
+  if (!controller.active && trigger.kind !== "manual" && !shouldScheduleAutomaticCompletionTrigger(editor, trigger, controller.automaticWord?.query.length ?? 0)) {
+    completionDiag("show end", { ms: elapsed(start), reason: "no-automatic-provider" });
+    return;
   }
 
   const contextStart = performance.now();
@@ -271,18 +326,13 @@ async function showOrRefreshCompletion(editor: EditorHost, trigger: CompletionCo
   nextActive.replaceEnd = context.replaceEnd;
   const previousSelection = nextActive.items[nextActive.selectedIndex]?.item.id;
   if (nextActive.allItems.length) {
-    const previewItems = rankCompletionItems(context.query, nextActive.allItems);
-    if (previewItems.length) {
-      nextActive.items = previewItems;
-      nextActive.selectedIndex = clampIndex(nextActive.items, previousSelection, nextActive.selectedIndex);
-    }
+    nextActive.items = rankCompletionItems(context.query, nextActive.allItems);
+    nextActive.selectedIndex = clampIndex(nextActive.items, previousSelection, nextActive.selectedIndex);
   }
-  const hasLspProvider = nextActive.providerContexts.has("default.lsp");
   const canFilterExistingItems = Boolean(active)
     && nextActive.allItems.length > 0
     && (trigger.kind === "input" || trigger.kind === "delete" || trigger.kind === "retrigger")
-    && !nextActive.isIncomplete
-    && !hasLspProvider;
+    && !nextActive.isIncomplete;
 
   if (canFilterExistingItems) {
     nextActive.loading = false;
@@ -304,19 +354,15 @@ async function showOrRefreshCompletion(editor: EditorHost, trigger: CompletionCo
   nextActive.requestSequence += 1;
   nextActive.requestRevision = context.revision;
   const requestSequence = nextActive.requestSequence;
-  const requestRevision = context.revision;
+  const shouldPublishLoading = trigger.kind === "manual" || editor.overlays.isOpen(completionMenuRoleId) || nextActive.items.length > 0;
 
-  if (!editor.overlays.isOpen(completionMenuRoleId)) {
-    editor.overlays.open(completionMenuRoleId, {
-      focus: false,
-      attachedToEditor: true,
-      scope: `role.${completionMenuRoleId}`,
+  if (shouldPublishLoading) {
+    openCompletionOverlay(editor);
+    publishCompletionSession(nextActive, {
+      loading: nextActive.loading,
+      emptyText: nextActive.items.length ? undefined : "Loading…",
     });
   }
-  publishCompletionSession(nextActive, {
-    loading: nextActive.loading,
-    emptyText: nextActive.items.length ? undefined : "Loading…",
-  });
 
   const requestContext: RuntimeCompletionContext = nextActive.isIncomplete && (trigger.kind === "input" || trigger.kind === "delete" || trigger.kind === "retrigger")
     ? { ...context, trigger: { kind: "incomplete" as const, character: trigger.character }, completionRequestSequence: requestSequence }
@@ -325,8 +371,6 @@ async function showOrRefreshCompletion(editor: EditorHost, trigger: CompletionCo
   const results = await collectCompletionItems(editor, requestContext, requestSequence);
   completionDiag("collect", { ms: elapsed(collectStart), items: results.items.length, sequence: requestSequence });
   if (completionController(editor).active !== nextActive || nextActive.requestSequence !== requestSequence) return;
-  const latestContext = await readCompletionContext(editor, { kind: "retrigger" });
-  if (!latestContext || latestContext.surfaceId !== nextActive.surfaceId || latestContext.revision !== requestRevision) return;
 
   nextActive.display = results.display;
   nextActive.isIncomplete = results.isIncomplete;
@@ -344,12 +388,22 @@ async function showOrRefreshCompletion(editor: EditorHost, trigger: CompletionCo
     return;
   }
 
+  openCompletionOverlay(editor);
   publishCompletionSession(nextActive, {
     emptyText: nextActive.items.length ? undefined : "No completions",
     loading: false,
   });
   void resolveSelectedCompletion(editor, nextActive);
   completionDiag("show end", { ms: elapsed(start), reason: "published", items: nextActive.items.length });
+}
+
+function openCompletionOverlay(editor: EditorHost): void {
+  if (editor.overlays.isOpen(completionMenuRoleId)) return;
+  editor.overlays.open(completionMenuRoleId, {
+    focus: false,
+    attachedToEditor: true,
+    scope: `role.${completionMenuRoleId}`,
+  });
 }
 
 function createCompletionSession(editor: EditorHost, context: RuntimeCompletionContext): ActiveCompletionState {
@@ -399,7 +453,7 @@ function publishCompletionSession(active: ActiveCompletionState, overrides: Part
     query: active.query,
     selectedIndex: active.selectedIndex,
     items: visibleItems.map((entry) => entry.view),
-    loading: active.loading,
+    loading: overrides.loading ?? active.loading,
     emptyText: overrides.emptyText,
     documentationMarkdown: overrides.documentationMarkdown ?? buildCompletionDocumentationMarkdown(selected?.item),
     documentationLoading: overrides.documentationLoading ?? active.resolvingItemId === selected?.item.id,
@@ -539,6 +593,7 @@ export function hideCompletion(editor: EditorHost, options: { restoreFocus?: boo
   }
   const active = controller.active;
   controller.active = undefined;
+  controller.automaticWord = undefined;
   if (active) editor.sessions.dispose(active.session.id);
   editor.overlays.close(completionMenuRoleId, { restoreFocus: options.restoreFocus ?? false });
   editor.workbench.invalidate("roles");
@@ -555,6 +610,114 @@ function shouldOpenCompletion(context: RuntimeCompletionContext, trigger: Comple
 
 function codeActionCompletionActive(editor: EditorHost): boolean {
   return Boolean(editor.stores.get(defineHostStore<{ active?: unknown } | undefined>({ id: codeActionStateSlot, init: () => undefined }))?.active);
+}
+
+function updateAutomaticWordFromDispatch(editor: EditorHost, dispatch: { id: string; args?: unknown }, trigger: CompletionContext["trigger"]): number {
+  const controller = completionController(editor);
+  const pane = activeSurfacePane(editor);
+  if (!pane?.surfaceId) {
+    controller.automaticWord = undefined;
+    return 0;
+  }
+
+  const current = controller.automaticWord;
+  const sameSurface = current?.surfaceId === pane.surfaceId && current.path === pane.path;
+  if (dispatch.id === commandId("edit.insertText")) {
+    const text = trigger.character ?? "";
+    if (text.length !== 1 || !isCompletionQueryCharacter(text)) {
+      controller.automaticWord = undefined;
+      return 0;
+    }
+    controller.automaticWord = {
+      surfaceId: pane.surfaceId as SurfaceId,
+      path: pane.path,
+      query: sameSurface ? `${current.query}${text}` : text,
+    };
+    return controller.automaticWord.query.length;
+  }
+
+  if (dispatch.id === commandId("delete_char_backward") && sameSurface && current.query.length > 0) {
+    const query = current.query.slice(0, -1);
+    controller.automaticWord = query ? { ...current, query } : undefined;
+    return query.length;
+  }
+
+  controller.automaticWord = undefined;
+  return 0;
+}
+
+function shouldScheduleAutomaticCompletionTrigger(editor: EditorHost, trigger: CompletionContext["trigger"], queryLength: number): boolean {
+  if (trigger.kind === "manual") return true;
+  if (codeActionCompletionActive(editor)) return false;
+  const pane = activeSurfacePane(editor);
+  if (!pane?.path) return false;
+  const providers = cachedLspCompletionProvidersForPath(editor, pane.path);
+  if (!providers.length) return false;
+  if (trigger.kind === "triggerCharacter") {
+    const character = trigger.character ?? "";
+    return character.length > 0 && providers.some((status) => (status.completionTriggerCharacters ?? []).includes(character));
+  }
+  if (trigger.kind === "input") return queryLength >= 2 && isCompletionQueryCharacter(trigger.character ?? "");
+  return false;
+}
+
+function cachedLspCompletionProvidersForPath(editor: EditorHost, path: string) {
+  const serverIds = editor.lsp.serverIdsForPath(path);
+  if (!serverIds.length) return [];
+  return currentLspStatuses(editor).filter((status) => serverIds.includes(status.id)
+    && (status.state === "running" || status.state === "initialized")
+    && status.completionProvider !== false);
+}
+
+function updateActiveCompletionFromDispatch(editor: EditorHost, active: ActiveCompletionState, dispatch: { id: string; args?: unknown }): boolean {
+  if (active.isIncomplete || !active.allItems.length) return false;
+  if (dispatch.id === commandId("edit.insertText")) {
+    const text = typeof (dispatch.args as { text?: unknown } | undefined)?.text === "string"
+      ? (dispatch.args as { text: string }).text
+      : "";
+    if (text.length !== 1 || !isCompletionQueryCharacter(text)) return false;
+    active.query += text;
+    active.replaceEnd += utf8ByteLength(text);
+  } else if (dispatch.id === commandId("delete_char_backward")) {
+    if (!active.query) return false;
+    const removed = active.query.slice(-1);
+    active.query = active.query.slice(0, -1);
+    active.replaceEnd = Math.max(active.replaceStart, active.replaceEnd - utf8ByteLength(removed));
+    if (!active.query) {
+      hideCompletion(editor, { restoreFocus: false });
+      return true;
+    }
+  } else {
+    return false;
+  }
+
+  const previousSelection = active.items[active.selectedIndex]?.item.id;
+  active.items = rankCompletionItems(active.query, active.allItems);
+  if (!active.items.length) {
+    hideCompletion(editor, { restoreFocus: false });
+    return true;
+  }
+  active.selectedIndex = clampIndex(active.items, previousSelection, active.selectedIndex);
+  active.loading = false;
+  publishCompletionSession(active, { loading: false, emptyText: undefined });
+  completionDiag("fast filter", { query: active.query, items: active.items.length });
+  return true;
+}
+
+function triggerForDispatch(dispatch: { id: string; args?: unknown }): CompletionContext["trigger"] {
+  if (dispatch.id === commandId("edit.insertText")) {
+    const text = typeof (dispatch.args as { text?: unknown } | undefined)?.text === "string"
+      ? (dispatch.args as { text: string }).text
+      : "";
+    if (text.length === 1 && !isCompletionQueryCharacter(text)) {
+      return { kind: "triggerCharacter", character: text };
+    }
+    return {
+      kind: text.trim() ? "input" : "retrigger",
+      character: text.length === 1 ? text : undefined,
+    };
+  }
+  return { kind: "delete" };
 }
 
 async function collectCompletionItems(editor: EditorHost, context: RuntimeCompletionContext, requestSequence: number): Promise<{
@@ -908,11 +1071,13 @@ function lspCompletionSource(editor: EditorHost): CompletionSource {
     },
     async provide(ctx) {
       if (!ctx.path) return null;
-      await ensureLspForPath(editor, ctx.path);
       const serverIds = editor.lsp.serverIdsForPath(ctx.path);
       if (!serverIds.length) return null;
-      const statuses = await editor.lsp.status();
-      const running = statuses.filter((status) => serverIds.includes(status.id) && (status.state === "running" || status.state === "initialized"));
+      if (ctx.trigger.kind === "manual") await ensureLspForPath(editor, ctx.path);
+      const statuses = ctx.trigger.kind === "manual" ? await editor.lsp.status() : [...currentLspStatuses(editor)];
+      const running = statuses.filter((status) => serverIds.includes(status.id)
+        && (status.state === "running" || status.state === "initialized")
+        && status.completionProvider !== false);
       if (!running.length) return null;
       if (ctx.trigger.kind === "triggerCharacter" && !running.some((status) => (status.completionTriggerCharacters ?? []).includes(ctx.trigger.character ?? ""))) {
         return null;

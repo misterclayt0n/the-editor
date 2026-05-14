@@ -13,7 +13,13 @@ interface LspControllerState {
   startFailures: Map<string, { path: string; message: string }>;
 }
 
+interface LspStatusCacheState {
+  statuses: LspServerStatus[];
+  updatedAt: number;
+}
+
 const lspStatuslineSlot = "default.lsp.statusline";
+const lspStatusCacheSlot = "default.lsp.statuses";
 const lspControllerSlot = "default.lsp.controller";
 const spinnerFrames = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"];
 
@@ -76,6 +82,10 @@ export function currentLspStatusline(editor: EditorHost): LspStatuslineState {
   return editor.stores.host(defineHostStore<LspStatuslineState>({ id: lspStatuslineSlot, init: () => ({ phase: "off" }) }));
 }
 
+export function currentLspStatuses(editor: EditorHost): readonly LspServerStatus[] {
+  return editor.stores.host(defineHostStore<LspStatusCacheState>({ id: lspStatusCacheSlot, init: () => ({ statuses: [], updatedAt: 0 }) })).statuses;
+}
+
 export function fileUri(path: string): string {
   return `file://${path}`;
 }
@@ -96,7 +106,12 @@ function lspController(editor: EditorHost): LspControllerState {
 }
 
 async function updateLspStatusline(editor: EditorHost, statuses?: LspServerStatus[]): Promise<void> {
-  const next = buildLspStatusline(editor, statuses ?? await editor.lsp.status());
+  const currentStatuses = statuses ?? await editor.lsp.status();
+  const cache = editor.stores.host(defineHostStore<LspStatusCacheState>({ id: lspStatusCacheSlot, init: () => ({ statuses: [], updatedAt: 0 }) }));
+  cache.statuses = currentStatuses;
+  cache.updatedAt = Date.now();
+
+  const next = buildLspStatusline(editor, currentStatuses);
   const previous = currentLspStatusline(editor);
   if (previous.phase === next.phase && previous.text === next.text) return;
   editor.stores.set(defineHostStore({ id: lspStatuslineSlot, init: () => undefined }), next);

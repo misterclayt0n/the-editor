@@ -16,6 +16,7 @@ export interface SurfacePaneViewState {
   frame?: RenderFrame;
   lineCount?: number;
   gutters?: GutterSnapshot[];
+  decorations?: BufferDecoration[];
 }
 
 export interface DefaultEditorState {
@@ -125,7 +126,7 @@ export async function refreshWorkbenchSnapshot(editor: EditorHost, viewport?: Vi
     pane.frame = await editor.runtime.surfaces.renderFrame({ surfaceId: pane.surfaceId });
     const surfaceState = await editor.runtime.surfaces.readState({ surfaceId: pane.surfaceId });
     pane.lineCount = surfaceState.lineCount;
-    pane.gutters = await editor.gutters?.collect({
+    const surfaceContext = {
       mode: state.mode,
       activeDocumentId: pane.documentId,
       activeSurfaceId: pane.surfaceId,
@@ -133,7 +134,9 @@ export async function refreshWorkbenchSnapshot(editor: EditorHost, viewport?: Vi
       frame: pane.frame,
       lineCount: pane.lineCount,
       text: surfaceState.text,
-    }) ?? [];
+    };
+    pane.gutters = await editor.gutters?.collect(surfaceContext) ?? [];
+    pane.decorations = await editor.decorations.collect(surfaceContext);
   }
 
   state.lastFrame = state.activePaneId ? state.surfacePanes.get(state.activePaneId)?.frame : undefined;
@@ -141,19 +144,7 @@ export async function refreshWorkbenchSnapshot(editor: EditorHost, viewport?: Vi
     state.syntaxLegend = await editor.runtime.syntax.highlightLegend();
   }
   state.roleStates = editor.roles.snapshotAll();
-  const activeSurfaceText = state.activeSurfaceId
-    ? await editor.runtime.surfaces.readState({ surfaceId: state.activeSurfaceId }).then((surface) => surface.text).catch(() => undefined)
-    : undefined;
-  const surfaceContext = {
-    mode: state.mode,
-    activeDocumentId: state.activeDocumentId,
-    activeSurfaceId: state.activeSurfaceId,
-    activePath: state.activePath,
-    frame: state.lastFrame,
-    text: activeSurfaceText,
-    lineCount: state.activePaneId ? state.surfacePanes.get(state.activePaneId)?.lineCount : undefined,
-  };
-  state.decorations = await editor.decorations.collect(surfaceContext);
+  state.decorations = state.activePaneId ? state.surfacePanes.get(state.activePaneId)?.decorations ?? [] : [];
   state.gutters = state.activePaneId ? state.surfacePanes.get(state.activePaneId)?.gutters ?? [] : [];
   return state;
 }
@@ -163,16 +154,8 @@ export async function snapshotWorkbenchSession(editor: EditorHost): Promise<Work
   const tools = editor.tools.snapshotAll();
   const toolById = new Map(tools.map((tool) => [tool.id, tool] as const));
   return {
-    mode: state.mode,
-    activeDocumentId: state.activeDocumentId,
-    activeSurfaceId: state.activeSurfaceId,
-    activePath: state.activePath,
-    softWrap: state.softWrap,
-    frame: state.lastFrame,
     roles: editor.roles.snapshotAll(),
     tools,
-    decorations: state.decorations,
-    gutters: state.gutters,
     diagnostics: editor.diagnostics.all(),
     healthDiagnostics: editor.health.all(),
     focus: editor.input.current(),
@@ -229,6 +212,7 @@ function decoratePaneSnapshot(pane: Awaited<ReturnType<EditorHost["workbench"]["
           frame: surface.frame,
           lineCount: surface.lineCount,
           gutters: surface.gutters,
+          decorations: surface.decorations,
           viewport: surface.viewport,
           metrics: surface.metrics,
           path: surface.path,

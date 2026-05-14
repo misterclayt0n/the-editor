@@ -29,6 +29,7 @@ interface SurfacePaneSnapshotState {
   path?: string;
   title?: string;
   gutters?: GutterSnapshot[];
+  decorations?: BufferDecoration[];
 }
 
 interface ToolPaneSnapshotState {
@@ -41,8 +42,6 @@ function App() {
     packages: [],
     diagnostics: [],
     tools: [],
-    decorations: [],
-    gutters: [],
     focus: { kind: "editor" },
     theme: { available: [] },
     syntaxLegend: {},
@@ -84,8 +83,6 @@ function App() {
           diagnostics: (Array.isArray(event.diagnostics) ? event.diagnostics : []) as WorkbenchSnapshot["diagnostics"],
           interaction: isObject(event.interaction) ? event.interaction as unknown as WorkbenchSnapshot["interaction"] : undefined,
           tools: (Array.isArray(event.tools) ? event.tools : []) as WorkbenchSnapshot["tools"],
-          decorations: (Array.isArray(event.decorations) ? event.decorations : []) as WorkbenchSnapshot["decorations"],
-          gutters: (Array.isArray(event.gutters) ? event.gutters : []) as WorkbenchSnapshot["gutters"],
           focus: isObject(event.focus) ? event.focus as WorkbenchSnapshot["focus"] : undefined,
           theme: isObject(event.theme) ? event.theme as unknown as ThemeSnapshot : undefined,
           syntaxLegend: isObject(event.syntaxLegend) ? event.syntaxLegend as Record<number, string> : {},
@@ -567,11 +564,12 @@ function renderPane(
   selectionPickerActive: boolean,
 ) {
   if (pane.kind === "surface") {
+    const paneState = pane.state as SurfacePaneSnapshotState | undefined;
     return (
       <SurfaceEditorPane
         pane={pane}
         active={active}
-        decorations={active ? workbench.decorations ?? [] : []}
+        decorations={active ? paneState?.decorations ?? [] : []}
         theme={workbench.theme}
         syntaxLegend={workbench.syntaxLegend ?? {}}
         selectionPickerActive={active && selectionPickerActive}

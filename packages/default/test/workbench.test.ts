@@ -15,6 +15,12 @@ async function createWorkbenchEditor(text = "alpha\nbeta\n") {
   return editor;
 }
 
+function activeSurfacePath(snapshot: Awaited<ReturnType<typeof getWorkbenchSessionState>>): string | undefined {
+  const activePaneId = snapshot.editorLayout?.activePaneId;
+  const pane = snapshot.editorLayout?.panes.find((candidate) => candidate.id === activePaneId);
+  return pane?.kind === "surface" ? pane.path : undefined;
+}
+
 describe("workbench splits", () => {
   it("duplicates the active surface into a right split", async () => {
     const editor = await createWorkbenchEditor();
@@ -31,7 +37,7 @@ describe("workbench splits", () => {
     });
     const surfacePanes = snapshot.editorLayout?.panes.filter((pane) => pane.kind === "surface") ?? [];
     expect(surfacePanes).toHaveLength(2);
-    expect(new Set(surfacePanes.map((pane) => pane.documentId))).toEqual(new Set([snapshot.activeDocumentId]));
+    expect(new Set(surfacePanes.map((pane) => pane.documentId)).size).toBe(1);
     expect(surfacePanes[0]?.surfaceId).not.toBe(surfacePanes[1]?.surfaceId);
     expect(new Set(surfacePanes.map((pane) => pane.itemId)).size).toBe(1);
     expect(snapshot.editorLayout?.items.filter((item) => item.kind === "surface")).toHaveLength(1);
@@ -67,14 +73,14 @@ describe("workbench splits", () => {
     await editor.commands.dispatch({ id: "file.open", args: { path: first } });
     let snapshot = await getWorkbenchSessionState(editor);
     expect(snapshot.editorLayout?.panes.filter((pane) => pane.kind === "surface")).toHaveLength(1);
-    expect(snapshot.activePath).toBe(first);
+    expect(activeSurfacePath(snapshot)).toBe(first);
 
     await editor.commands.dispatch({ id: "file.open", args: { path: second } });
     snapshot = await getWorkbenchSessionState(editor);
     const surfacePanes = snapshot.editorLayout?.panes.filter((pane) => pane.kind === "surface") ?? [];
     expect(surfacePanes).toHaveLength(2);
     expect(surfacePanes.map((pane) => pane.title)).toEqual(["alpha.txt", "beta.txt"]);
-    expect(snapshot.activePath).toBe(second);
+    expect(activeSurfacePath(snapshot)).toBe(second);
   });
 
   it("reveals an already open file instead of opening a duplicate tab", async () => {
@@ -99,7 +105,7 @@ describe("workbench splits", () => {
     const reopened = await getWorkbenchSessionState(editor);
     expect(reopened.editorLayout?.panes.filter((pane) => pane.kind === "surface")).toHaveLength(2);
     expect(reopened.editorLayout?.activePaneId).toBe(firstPaneId);
-    expect(reopened.activePath).toBe(first);
+    expect(activeSurfacePath(reopened)).toBe(first);
   });
 
   it("deduplicates same-item surface panes when merging split tabs", async () => {

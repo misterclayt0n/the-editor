@@ -127,16 +127,8 @@ async function handlePolicyRequest(request: PolicyRequest): Promise<void> {
 function buildSessionPayload(state: WorkbenchSessionState) {
   return {
     type: "default.sessionChanged",
-    mode: state.mode,
-    activeDocumentId: state.activeDocumentId,
-    activeSurfaceId: state.activeSurfaceId,
-    activePath: state.activePath,
-    softWrap: state.softWrap,
-    frame: state.frame,
     roles: state.roles ?? {},
     tools: state.tools ?? [],
-    decorations: state.decorations ?? [],
-    gutters: state.gutters ?? [],
     focus: state.focus ?? editor.input.current(),
     packages: editor.packages.snapshot(),
     diagnostics: state.diagnostics ?? [],

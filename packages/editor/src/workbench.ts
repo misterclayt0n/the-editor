@@ -1,10 +1,8 @@
 import type { CellGridMetrics, DocumentId, RenderFrame, SurfaceId, Viewport } from "@the-editor/contracts/runtime";
-import type { BufferDecoration } from "./decorations.js";
 import type { DiagnosticRecord } from "./diagnostics.js";
 import type { EditorHost } from "./editorHost.js";
 import type { HealthDiagnosticEntry } from "./health.js";
 import type { FocusTarget } from "./input.js";
-import type { GutterSnapshot } from "./gutters.js";
 import type { NotificationEntry } from "./notifications.js";
 import type { RoleSnapshot } from "./roles.js";
 import type { InteractiveSessionSnapshot } from "./sessions.js";
@@ -184,16 +182,8 @@ export interface WorkbenchOpenToolOptions {
 }
 
 export interface WorkbenchSessionState {
-  mode?: string;
-  activeDocumentId?: DocumentId;
-  activeSurfaceId?: SurfaceId;
-  activePath?: string;
-  softWrap?: boolean;
-  frame?: RenderFrame;
   roles?: Record<string, RoleSnapshot>;
   tools?: ToolSnapshot[];
-  decorations?: BufferDecoration[];
-  gutters?: GutterSnapshot[];
   diagnostics?: DiagnosticRecord[];
   healthDiagnostics?: HealthDiagnosticEntry[];
   focus?: FocusTarget;

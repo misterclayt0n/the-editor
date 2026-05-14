@@ -20,8 +20,8 @@ export function defaultWorkbenchControls(): EditorModule {
         const commandPalette = editor.roles.snapshot("commandPalette");
         const lsp = editor.stores.get(defineHostStore<{ text?: string } | undefined>({ id: "default.lsp.statusline", init: () => undefined }));
         return {
-          mode: state.mode,
-          activePath: state.activePath,
+          mode: editor.interaction.snapshot().mode?.id,
+          activePath: state.activePaneId ? state.surfacePanes.get(state.activePaneId)?.path : undefined,
           lspStatus: lsp?.text,
           activeRoleImplementation: commandPalette?.implementationId,
           diagnosticsSummary: currentPathDiagnosticSummary(editor),

@@ -469,9 +469,10 @@ Keyboard, pointer, and composition input flow through explicit ownership seams.
 
 ```txt
 Browser event
-  -> renderer normalizes input
-  -> policy worker resolves keymaps/commands
-  -> command dispatch invokes runtime operation(s) and runtime support APIs
+  -> renderer normalizes browser-specific input
+  -> policy worker InputRouter routes input from host focus/scope state
+  -> active interaction profile reduces routed input to structured effects
+  -> host executes effects through commands/runtime/workbench APIs
   -> Rust mutates Document/Surface or session support state
   -> renderer requests render frame
   -> Canvas painter applies delta
@@ -482,15 +483,16 @@ Renderer owns browser specifics:
 - `KeyboardEvent`
 - IME/composition events
 - pointer events
-- focus
+- DOM focus capture and editable-element exclusion only
 - clipboard/browser integration where necessary
 
 Policy worker owns:
 
+- `InputRouter`, the sole authority for host focus and key routing
 - the host-owned interaction session for the editor window
 - active interaction profile selection
 - pending input state, including keymap prefixes and profile operators
-- key routing through the host focus/scope stack
+- final scope-stack computation from focus, overlays, tools, and profile state
 - command dispatch
 - product behavior
 
@@ -520,8 +522,7 @@ Example:
 
 ```ts
 // policy worker
-const transition = await editor.interaction.handleInput(input);
-await editor.interaction.applyEffects(transition.effects);
+const result = await editor.input.routeKey(input);
 ```
 
 ```ts
@@ -561,6 +562,36 @@ await pasteAfter(surfaceId, values);
 ```
 
 The important rule is that TypeScript resolves the source/target policy while Rust owns the actual semantic paste planning.
+
+### InputRouter model
+
+`packages/editor` owns one `InputRouter` per editor host/window, exposed as `editor.input`.
+
+`InputRouter` replaces any separate focus authority. There should not be a compatibility `editor.focus` facade. Focus is routing state, not a standalone registry.
+
+Preferred interface:
+
+```ts
+editor.input.routeKey(input): Promise<InputRouteResult>
+editor.input.focus(target, { reason, source? }): FocusTarget
+editor.input.restore({ reason, fallback? }): FocusTarget
+editor.input.scopes(): string[]
+editor.input.snapshot(): InputSnapshot
+```
+
+`InputRouter` owns:
+
+- current host focus target
+- focus history/restoration
+- active scope stack
+- overlay precedence in routing
+- pending-input cancellation on focus or active-surface changes
+- escape/back/cancel routing policy
+- validation/repair of stale role/tool targets
+
+Workbench remains the owner of layout activation. For example, `workbench.focusPane(paneId)` updates active group/pane/item, then requests an input focus intent from `InputRouter`. The workbench must not mutate input focus state directly.
+
+Roles, tools, overlays, and workbench modules request focus intents through `InputRouter`; they do not own focus state and do not compute final scopes.
 
 ### Interaction session model
 

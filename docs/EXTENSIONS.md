@@ -748,19 +748,23 @@ Modes are profile-owned. The host exposes mode-like data only through the intera
 
 ## Focus and key routing
 
-The host owns global focus and key routing.
+The host owns global focus and key routing through one `InputRouter` per editor window.
 
-This must include:
+There is no separate compatibility focus registry. Focus is routing state.
+
+`InputRouter` must include:
 
 - active root tracking
+- active focus target
+- focus history/restoration
 - active scope stack
 - active interaction session for the editor window
 - active profile selection
 - pending-input cancellation on focus/surface changes
 - overlay precedence
-- focus restoration after close/reload
 - escape/back/cancel handling
 - module disposal safety
+- stale role/tool focus repair
 
 Recommended scope families:
 
@@ -783,7 +787,9 @@ This gives enough structure for:
 - tool-local controls
 - global escape hatches
 
-Profiles may contribute scopes through their snapshot/reducer state, but the host decides the final scope stack from focus, overlays, tools, and the active profile. Profiles do not directly control global focus.
+Profiles may contribute scopes through their snapshot/reducer state, but `InputRouter` decides the final scope stack from focus, overlays, tools, and the active profile. Profiles do not directly control global focus.
+
+Workbench owns layout activation, not input focus. A pane/group focus command updates workbench active pane/group/item first, then sends a focus intent to `InputRouter`. Roles, tools, overlays, and workbench modules request focus intents; they do not mutate focus state themselves.
 
 ---
 

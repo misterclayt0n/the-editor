@@ -450,11 +450,44 @@ surface lifecycle policy
 
 Suggested model:
 
+```txt
+editor split tree
+  -> group leaves
+    -> pane tabs
+      -> workbench items (text surfaces or tool panes)
+```
+
+The split tree must be owned by a deep workbench layout model, not scattered across workbench command handlers.
+
+Preferred module shape:
+
 ```ts
-type LayoutNode =
-  | { kind: "leaf"; leafId: LeafId; surfaceId: SurfaceId }
-  | { kind: "split"; axis: "horizontal" | "vertical"; children: LayoutNode[]; weights: number[] }
-  | { kind: "panel"; panelId: PanelId };
+layout.apply(intent): LayoutChange
+layout.snapshot(): WorkbenchEditorLayoutSnapshot
+layout.assertInvariants(): void
+```
+
+The layout model owns:
+
+- item, pane, group, and split identity allocation
+- editor split tree mutation
+- pane placement intents
+- tab ordering
+- active group / active pane / active item repair
+- empty-group pruning
+- split-tree collapse
+- split size normalization
+- duplicate surface-pane deduplication rules
+- layout invariant checks
+
+`WorkbenchController` should be the host-facing adapter over the layout model. It may translate product operations into layout intents and emit workbench invalidations, but it should not manually repair tree invariants in each command path.
+
+Extensions and default commands use placement intents, not tree surgery:
+
+```ts
+type WorkbenchPanePlacement =
+  | { kind: "tab"; group?: GroupId | "active"; index?: number }
+  | { kind: "split"; direction: "left" | "right" | "up" | "down"; of?: GroupId | PaneId | "active" };
 ```
 
 V1 may render only one active editor area plus optional panels/statusline, but the model should be multi-surface and split-capable from day one.
@@ -462,6 +495,42 @@ V1 may render only one active editor area plus optional panels/statusline, but t
 Splits should work soon after v1 without changing the Rust model.
 
 ---
+
+### Workbench layout mutation model
+
+Layout mutation should be transactional and intent-based.
+
+Examples:
+
+```ts
+layout.apply({ kind: "openPane", pane, placement });
+layout.apply({ kind: "movePane", paneId, placement });
+layout.apply({ kind: "closePane", paneId });
+layout.apply({ kind: "resizeSplit", splitId, sizes });
+layout.apply({ kind: "focusPane", paneId });
+```
+
+Every `apply(...)` call must leave the layout valid or throw before mutating externally-visible state. After every successful mutation, these invariants should hold:
+
+- if `root` is non-null, every group referenced by the tree exists
+- every pane belongs to exactly one group
+- every group referenced by the tree has a valid active pane or no panes
+- active group, active pane, and active item agree
+- split children and split sizes have the same length
+- split sizes are finite, positive, and normalized
+- no empty group remains in the split tree unless it is the single initial group
+- item records without panes are removed unless explicitly retained by a future pinned-item policy
+- duplicate same-item surface panes in one group are resolved by the layout model, not by callers
+
+Snapshot projection is a separate responsibility:
+
+```ts
+layout.snapshot({ mapItem, mapPane })
+```
+
+Snapshots are read models for renderer/policy communication. They must not expose mutable internal maps or require the renderer to understand repair rules. Renderer drag/drop and split resizing should produce intents back to the host; renderer code should not perform semantic layout mutation locally.
+
+Focus remains outside the layout model. The layout model decides active group/pane/item. After a successful focus-affecting layout change, `WorkbenchController` sends the corresponding focus intent to `InputRouter`.
 
 ## Input flow
 

@@ -163,6 +163,20 @@ split nodes
 Extensions request **placement intents** like “open in a right split” or “open as a tab in the active group”.
 They do not perform raw tree surgery.
 
+The host should implement those intents through a deep workbench layout model:
+
+```ts
+layout.apply(intent): LayoutChange
+layout.snapshot(): WorkbenchEditorLayoutSnapshot
+layout.assertInvariants(): void
+```
+
+The layout model, not extension code and not renderer code, owns split-tree mutation, active pane repair, empty-group pruning, split collapse, size normalization, duplicate surface-pane handling, and layout invariant checks.
+
+`WorkbenchController` is the host-facing adapter. It may expose commands and APIs such as `openSurface`, `openTool`, `movePane`, `closePane`, and `resizeSplit`, but those operations should lower into layout intents.
+
+After layout mutation, `WorkbenchController` requests input focus through `InputRouter` when the active pane/group changes. Layout activation and input focus are coordinated but separately owned.
+
 ### 9. Extensions own arbitrary subtrees inside those roots
 
 Once mounted, an extension may render any internal React subtree it wants.

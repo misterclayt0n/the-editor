@@ -7,14 +7,6 @@
   gap: 8px;
 }
 
-.completionMenuOverlay[data-direction="left"] {
-  flex-direction: row;
-}
-
-.completionMenuOverlay[data-direction="stacked"] {
-  flex-direction: column;
-}
-
 .completionMenuSurface {
   --completionBg: var(--theme-ui-popup-bg, var(--theme-ui-menu-bg, var(--theme-background, #141415)));
   --completionFg: var(--theme-ui-popup-fg, var(--theme-ui-menu-fg, var(--theme-ui-text-fg, var(--theme-foreground, #d7d7d7))));

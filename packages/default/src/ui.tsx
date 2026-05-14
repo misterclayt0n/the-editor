@@ -445,9 +445,8 @@ function CompletionOverlay({
   const overlayRef = useRef<HTMLDivElement>(null);
   const itemsRef = useRef<HTMLDivElement>(null);
   const anchor = useSurfaceCursorAnchor(surfaceId ?? activeSurfaceIdFromWorkbench(workbench));
-  const [position, setPosition] = useState<{ left: number; top: number; direction: "right" | "left" | "stacked"; docsTop?: number } | undefined>(undefined);
+  const [position, setPosition] = useState<{ left: number; top: number; direction: "right" } | undefined>(undefined);
   const selectedItem = state?.items[state.selectedIndex];
-  const showDocs = Boolean(state?.showDocumentation && state.documentationMarkdown?.trim());
 
   useLayoutEffect(() => {
     if (!state) return;
@@ -460,8 +459,6 @@ function CompletionOverlay({
     const margin = 12;
     const rect = element.getBoundingClientRect();
     const surfaceRect = element.querySelector(".completionMenuSurface")?.getBoundingClientRect() ?? rect;
-    const docsRect = element.querySelector(".completionMenuHoverCard")?.getBoundingClientRect();
-    const docsWidth = showDocs ? 260 : 0;
     const listWidth = Math.min(surfaceRect.width, 320);
     const nextPosition = !anchor
       ? {
@@ -474,16 +471,8 @@ function CompletionOverlay({
         const menuHeight = surfaceRect.height;
         const below = anchor.bottom + 8;
         const above = anchor.top - menuHeight - 8;
-        const rightSpace = window.innerWidth - margin - (anchor.left + listWidth);
-        const leftSpace = anchor.left - margin;
-        const direction = !showDocs
-          ? "right"
-          : rightSpace >= docsWidth + 10
-            ? "right"
-            : leftSpace >= docsWidth + 10
-              ? "left"
-              : "stacked";
-        const totalWidth = direction === "stacked" ? listWidth : listWidth + (showDocs ? docsWidth + 8 : 0);
+        const direction = "right" as const;
+        const totalWidth = listWidth;
         const left = direction === "left"
           ? clamp(anchor.left - totalWidth + listWidth, margin, Math.max(margin, window.innerWidth - totalWidth - margin))
           : clamp(anchor.left - 18, margin, Math.max(margin, window.innerWidth - totalWidth - margin));
@@ -494,19 +483,15 @@ function CompletionOverlay({
           clamp(above, margin, Math.max(margin, window.innerHeight - menuHeight - margin)),
         ].filter((value): value is number => value !== undefined);
         const top = candidates.find((candidate) => !reserved || !rectsOverlap({ left, top: candidate, right: left + listWidth, bottom: candidate + menuHeight }, reserved)) ?? candidates[0] ?? margin;
-        const docsTop = showDocs && docsRect
-          ? clamp(anchor.top, margin - top, Math.max(margin - top, window.innerHeight - docsRect.height - margin - top))
-          : undefined;
-        return { left, top, direction, docsTop };
+        return { left, top, direction };
       })();
     setPosition((current) => current
       && current.left === nextPosition.left
       && current.top === nextPosition.top
       && current.direction === nextPosition.direction
-      && current.docsTop === nextPosition.docsTop
       ? current
       : nextPosition);
-  }, [anchor, state?.items, state?.selectedIndex, state?.documentationMarkdown, showDocs]);
+  }, [anchor, state?.items, state?.selectedIndex]);
 
   if (!state) return null;
 
@@ -520,14 +505,6 @@ function CompletionOverlay({
       aria-label="Completions"
       onMouseDown={(event) => event.preventDefault()}
     >
-      {showDocs && position?.direction === "left" ? (
-        <HoverCard
-          className="completionMenuHoverCard"
-          markdown={state.documentationMarkdown!}
-          workbench={workbench}
-          style={position?.docsTop !== undefined ? { marginTop: position.docsTop } : undefined}
-        />
-      ) : null}
       <div className="completionMenuSurface">
         <div ref={itemsRef} className="completionMenuItems">
           {state.items.length ? state.items.map((item, index) => {
@@ -564,14 +541,6 @@ function CompletionOverlay({
         </div>
         {state.loading ? <div className="completionMenuStatus">loading…</div> : null}
       </div>
-      {showDocs && position?.direction !== "left" ? (
-        <HoverCard
-          className="completionMenuHoverCard"
-          markdown={state.documentationMarkdown!}
-          workbench={workbench}
-          style={position?.docsTop !== undefined ? { marginTop: position.docsTop } : undefined}
-        />
-      ) : null}
     </div>
   );
 }

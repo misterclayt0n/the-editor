@@ -10,10 +10,13 @@ export interface FileTreeToolState {
   activePath?: string;
   gitStatus: FileTreeGitStatusEntry[];
   loading: boolean;
-  searchRevision: number;
-  createFileRevision: number;
-  createFolderRevision: number;
+  treeRevision: number;
+  action?: FileTreeUiAction;
 }
+
+export type FileTreeUiAction =
+  | { id: number; kind: "openSearch" }
+  | { id: number; kind: "createEntry"; entryKind: "file" | "folder" };
 
 export interface FileTreeGitStatusEntry {
   path: string;
@@ -29,9 +32,9 @@ interface FileTreeState {
   paths: string[];
   gitStatus: FileTreeGitStatusEntry[];
   loading: boolean;
-  searchRevision: number;
-  createFileRevision: number;
-  createFolderRevision: number;
+  treeRevision: number;
+  nextActionId: number;
+  action?: FileTreeUiAction;
   loadPromise?: Promise<void>;
 }
 
@@ -53,9 +56,8 @@ export function defaultFileTree(): EditorModule {
           activePath: activeSurfacePath(editor),
           gitStatus: state.gitStatus,
           loading: state.loading,
-          searchRevision: state.searchRevision,
-          createFileRevision: state.createFileRevision,
-          createFolderRevision: state.createFolderRevision,
+          treeRevision: state.treeRevision,
+          action: state.action,
         } satisfies FileTreeToolState;
       },
     });
@@ -92,7 +94,7 @@ export function defaultFileTree(): EditorModule {
       category: "Workbench",
       run() {
         const state = fileTreeState(editor);
-        state.searchRevision += 1;
+        state.action = { id: state.nextActionId++, kind: "openSearch" };
         ensureFileTreeLoaded(editor);
         editor.workbench.openTool(fileTreeToolTypeId, { placement: { kind: "dock", root: "leftSidebar" }, focus: false });
         editor.workbench.invalidate("tools");
@@ -105,7 +107,7 @@ export function defaultFileTree(): EditorModule {
       category: "Workbench",
       run() {
         const state = fileTreeState(editor);
-        state.createFileRevision += 1;
+        state.action = { id: state.nextActionId++, kind: "createEntry", entryKind: "file" };
         editor.workbench.openTool(fileTreeToolTypeId, { placement: { kind: "dock", root: "leftSidebar" }, focus: false });
         editor.workbench.invalidate("tools");
       },
@@ -117,9 +119,20 @@ export function defaultFileTree(): EditorModule {
       category: "Workbench",
       run() {
         const state = fileTreeState(editor);
-        state.createFolderRevision += 1;
+        state.action = { id: state.nextActionId++, kind: "createEntry", entryKind: "folder" };
         editor.workbench.openTool(fileTreeToolTypeId, { placement: { kind: "dock", root: "leftSidebar" }, focus: false });
         editor.workbench.invalidate("tools");
+      },
+    });
+
+    editor.commands.register<{ id: number }, void>({
+      id: commandId("fileTree.consumeAction"),
+      title: "File Tree: Consume UI Action",
+      category: "Workbench",
+      hidden: true,
+      run(_ctx, args) {
+        const state = fileTreeState(editor);
+        if (state.action?.id === args.id) state.action = undefined;
       },
     });
 
@@ -233,11 +246,13 @@ export function defaultFileTree(): EditorModule {
 
 function fileTreeState(editor: Parameters<EditorModule>[0]): FileTreeState {
   const cwd = editor.cwd.current();
-  const state = editor.stores.host(defineHostStore<FileTreeState>({ id: fileTreeStateSlot, init: () => ({ rootPath: cwd, paths: [], gitStatus: [], loading: false, searchRevision: 0, createFileRevision: 0, createFolderRevision: 0 }) }));
+  const state = editor.stores.host(defineHostStore<FileTreeState>({ id: fileTreeStateSlot, init: () => ({ rootPath: cwd, paths: [], gitStatus: [], loading: false, treeRevision: 0, nextActionId: 1 }) }));
   if (state.rootPath !== cwd) {
     state.rootPath = cwd;
     state.paths = [];
     state.gitStatus = [];
+    state.treeRevision += 1;
+    state.action = undefined;
     state.loadPromise = undefined;
   }
   return state;
@@ -256,6 +271,7 @@ function refreshFileTree(editor: Parameters<EditorModule>[0]): void {
     .then(([paths, gitStatus]) => {
       state.paths = paths;
       state.gitStatus = gitStatus;
+      state.treeRevision += 1;
       state.loading = false;
       editor.workbench.invalidate("tools");
     })

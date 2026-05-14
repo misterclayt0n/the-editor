@@ -18,9 +18,8 @@ export function DefaultFileTree({
     ? normalizePath(state.activePath.slice(state.rootPath.length).replace(/^\/+/, ""))
     : undefined;
   const latestSelectedRef = useRef<string | undefined>(activePath);
-  const openedSearchRevisionRef = useRef(state?.searchRevision ?? 0);
-  const createFileRevisionRef = useRef(state?.createFileRevision ?? 0);
-  const createFolderRevisionRef = useRef(state?.createFolderRevision ?? 0);
+  const handledActionIdRef = useRef<number | undefined>(undefined);
+  const draftEntriesRef = useRef(new Map<string, "file" | "folder">());
   const { model } = useFileTree({
     flattenEmptyDirectories: true,
     initialExpansion: "closed",
@@ -50,6 +49,14 @@ export function DefaultFileTree({
     paths: state?.paths ?? [],
     renaming: {
       onRename(event: FileTreeRenameEvent) {
+        const draftKind = consumeDraftEntry(draftEntriesRef.current, event.sourcePath);
+        if (draftKind) {
+          void commands.dispatch({
+            id: "fileTree.createPath",
+            args: { path: event.destinationPath.replace(/\/$/, ""), kind: draftKind },
+          });
+          return;
+        }
         void commands.dispatch({
           id: "fileTree.renamePath",
           args: { sourcePath: event.sourcePath, destinationPath: event.destinationPath },
@@ -72,24 +79,19 @@ export function DefaultFileTree({
   });
 
   const paths = state?.paths ?? [];
-  const pathsSignature = `${paths.length}:${paths[0] ?? ""}:${paths.at(-1) ?? ""}`;
+  const treeRevision = state?.treeRevision ?? 0;
 
   useEffect(() => {
     const expandedPaths = paths.filter((path) => path.endsWith("/") && model.getItem(path)?.isDirectory() && model.getItem(path)?.isExpanded());
     model.resetPaths(paths, { initialExpandedPaths: expandedPaths });
-  }, [model, pathsSignature]);
+  }, [model, treeRevision]);
 
   useEffect(() => {
     model.setGitStatus(state?.gitStatus ?? []);
   }, [model, state?.gitStatus]);
 
-  useEffect(() => model.onMutation("add", (event) => {
-    const path = event.path.replace(/\/$/, "");
-    const kind = event.path.endsWith("/") ? "folder" : "file";
-    void commands.dispatch({ id: "fileTree.createPath", args: { path, kind } });
-  }), [commands, model]);
-
   useEffect(() => model.onMutation("remove", (event) => {
+    if (consumeDraftEntry(draftEntriesRef.current, event.path)) return;
     void commands.dispatch({
       id: "fileTree.deletePath",
       args: { path: event.path.replace(/\/$/, ""), recursive: event.recursive || event.path.endsWith("/") },
@@ -100,28 +102,16 @@ export function DefaultFileTree({
     latestSelectedRef.current = activePath;
     if (!activePath) return;
     model.getItem(activePath)?.select();
-  }, [activePath, model]);
+  }, [activePath, treeRevision, model]);
 
   useEffect(() => {
-    const revision = state?.searchRevision ?? 0;
-    if (revision <= openedSearchRevisionRef.current) return;
-    openedSearchRevisionRef.current = revision;
-    model.openSearch();
-  }, [model, state?.searchRevision]);
-
-  useEffect(() => {
-    const revision = state?.createFileRevision ?? 0;
-    if (revision <= createFileRevisionRef.current) return;
-    createFileRevisionRef.current = revision;
-    addEntry(model, "", "file");
-  }, [model, state?.createFileRevision]);
-
-  useEffect(() => {
-    const revision = state?.createFolderRevision ?? 0;
-    if (revision <= createFolderRevisionRef.current) return;
-    createFolderRevisionRef.current = revision;
-    addEntry(model, "", "folder");
-  }, [model, state?.createFolderRevision]);
+    const action = state?.action;
+    if (!action || handledActionIdRef.current === action.id) return;
+    handledActionIdRef.current = action.id;
+    if (action.kind === "openSearch") model.openSearch();
+    if (action.kind === "createEntry") createDraftEntry(model, draftEntriesRef.current, "", action.entryKind);
+    void commands.dispatch({ id: "fileTree.consumeAction", args: { id: action.id } });
+  }, [commands, model, state?.action]);
 
   return (
     <div
@@ -139,7 +129,7 @@ export function DefaultFileTree({
       <FileTree
         model={model}
         renderContextMenu={(item, context) => renderContextMenu(contributions, item, context) ?? (
-          <FileTreeContextMenu item={item} context={context} model={model} commands={commands} />
+          <FileTreeContextMenu item={item} context={context} model={model} commands={commands} drafts={draftEntriesRef.current} />
         )}
         style={{ height: "100%" }}
       />
@@ -168,11 +158,13 @@ function FileTreeContextMenu({
   context,
   item,
   model,
+  drafts,
 }: {
   commands: UiCommandDispatcher;
   context: FileTreeContextMenuOpenContext;
   item: FileTreeContextMenuItem;
   model: ReturnType<typeof useFileTree>["model"];
+  drafts: Map<string, "file" | "folder">;
 }): ReactNode {
   const directoryPath = item.kind === "directory" ? item.path.replace(/\/$/, "") : parentPath(item.path);
   const close = (restoreFocus = true) => context.close({ restoreFocus });
@@ -180,8 +172,8 @@ function FileTreeContextMenu({
     <div className="defaultFileTreeContextMenu" data-file-tree-context-menu-root="true">
       {item.kind === "file" ? <button onClick={() => { close(); void openTreePath(commands, item.path); }}>Open</button> : null}
       <button onClick={() => { close(false); model.startRenaming(item.path); }}>Rename</button>
-      <button onClick={() => { close(false); addEntry(model, directoryPath, "file"); }}>New File</button>
-      <button onClick={() => { close(false); addEntry(model, directoryPath, "folder"); }}>New Folder</button>
+      <button onClick={() => { close(false); createDraftEntry(model, drafts, directoryPath, "file"); }}>New File</button>
+      <button onClick={() => { close(false); createDraftEntry(model, drafts, directoryPath, "folder"); }}>New Folder</button>
       <button className="danger" onClick={() => { close(false); model.remove(item.path, item.kind === "directory" ? { recursive: true } : undefined); }}>Delete</button>
     </div>
   );
@@ -201,12 +193,23 @@ function blurDeepActiveElement(root: Document | ShadowRoot = document): void {
   if (active instanceof HTMLElement) active.blur();
 }
 
-function addEntry(model: ReturnType<typeof useFileTree>["model"], directoryPath: string, kind: "file" | "folder"): void {
+function createDraftEntry(model: ReturnType<typeof useFileTree>["model"], drafts: Map<string, "file" | "folder">, directoryPath: string, kind: "file" | "folder"): void {
   const basePath = directoryPath ? `${directoryPath}/` : "";
   const template = kind === "folder" ? "untitled/" : "untitled";
   const path = uniquePath(model, `${basePath}${template}`);
+  drafts.set(path, kind);
+  drafts.set(path.replace(/\/$/, ""), kind);
   model.add(path);
-  model.startRenaming(path, { removeIfCanceled: true });
+  if (!model.startRenaming(path, { removeIfCanceled: true })) consumeDraftEntry(drafts, path);
+}
+
+function consumeDraftEntry(drafts: Map<string, "file" | "folder">, path: string): "file" | "folder" | undefined {
+  const normalized = path.replace(/\/$/, "");
+  const kind = drafts.get(path) ?? drafts.get(normalized) ?? drafts.get(`${normalized}/`);
+  drafts.delete(path);
+  drafts.delete(normalized);
+  drafts.delete(`${normalized}/`);
+  return kind;
 }
 
 function uniquePath(model: ReturnType<typeof useFileTree>["model"], path: string): string {

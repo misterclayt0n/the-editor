@@ -123,7 +123,9 @@ export async function refreshWorkbenchSnapshot(editor: EditorHost, viewport?: Vi
   }
 
   for (const pane of visibleSurfacePanes(editor, state)) {
-    pane.frame = await editor.runtime.surfaces.renderFrame({ surfaceId: pane.surfaceId });
+    pane.frame = pane.metrics
+      ? await editor.runtime.surfaces.renderFrame({ surfaceId: pane.surfaceId, viewport: pane.viewport, metrics: pane.metrics })
+      : undefined;
     const surfaceState = await editor.runtime.surfaces.readState({ surfaceId: pane.surfaceId });
     pane.lineCount = surfaceState.lineCount;
     const surfaceContext = {

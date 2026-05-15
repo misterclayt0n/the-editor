@@ -502,7 +502,7 @@ Good:
 
 ```ts
 runtime.documents.applyTransaction(documentId, tx)
-runtime.surfaces.renderFrame({ surfaceId, viewport })
+runtime.surfaces.renderFrame({ surfaceId, viewport, metrics })
 ```
 
 Bad:

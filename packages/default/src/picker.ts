@@ -485,7 +485,7 @@ async function readSurfacePreviewFrame(
     firstRow: clampNumber(viewport.firstRow, 0, Math.max(0, lineCount - viewport.rowCount)),
     firstCol: Math.max(0, viewport.firstCol),
   };
-  const frame = await editor.runtime.surfaces.renderFrame({ surfaceId, viewport: boundedViewport });
+  const frame = await editor.runtime.surfaces.renderFrame({ surfaceId, viewport: boundedViewport, metrics });
   return {
     frame,
     viewport: boundedViewport,

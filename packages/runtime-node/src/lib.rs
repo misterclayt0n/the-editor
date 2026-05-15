@@ -543,19 +543,6 @@ impl NativeRuntimeSession {
   }
 
   #[napi]
-  pub fn render_frame_json(&self, surface_id: u32, viewport: Option<JsViewport>) -> Result<String> {
-    let mut runtime = self.lock()?;
-    let surface = surface_handle(surface_id)?;
-    if let Some(viewport) = viewport {
-      runtime
-        .set_surface_viewport(surface, viewport.into())
-        .map_err(runtime_error)?;
-    }
-    let frame = runtime.render_surface(surface).map_err(runtime_error)?;
-    serde_json::to_string(&frame).map_err(|err| Error::from_reason(err.to_string()))
-  }
-
-  #[napi]
   pub fn save_surface_document(&self, surface_id: u32) -> Result<()> {
     let mut runtime = self.lock()?;
     let surface = surface_handle(surface_id)?;

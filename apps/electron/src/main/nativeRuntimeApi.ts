@@ -121,9 +121,8 @@ export class MainNativeRuntimeApi implements RuntimeApi {
       this.session.laterSurface(params.surfaceId, params.count ?? 1);
       return { ok: true };
     },
-    renderFrame: async (params: { surfaceId: SurfaceId; viewport?: Viewport }): Promise<RenderFrame> => {
-      const json = this.session.renderFrameJson(params.surfaceId, params.viewport ?? null);
-      return JSON.parse(json) as RenderFrame;
+    renderFrame: async (params: { surfaceId: SurfaceId; viewport: Viewport; metrics: CellGridMetrics }): Promise<RenderFrame> => {
+      return this.session.renderFrame(params.surfaceId, params.viewport, params.metrics) as RenderFrame;
     },
   };
 

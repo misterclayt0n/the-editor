@@ -307,7 +307,8 @@ export interface RuntimeApi {
     later(params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult>;
     renderFrame(params: {
       surfaceId: SurfaceId;
-      viewport?: Viewport;
+      viewport: Viewport;
+      metrics: CellGridMetrics;
     }): Promise<RenderFrame>;
   };
   registers: {

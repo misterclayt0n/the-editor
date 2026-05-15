@@ -23,6 +23,16 @@ class RuntimeBrokerError extends Error {
   }
 }
 
+class RuntimeOperationQueue {
+  private tail: Promise<unknown> = Promise.resolve();
+
+  run<T>(operation: () => T | Promise<T>): Promise<T> {
+    const runAfterTail = this.tail.catch(() => undefined).then(operation);
+    this.tail = runAfterTail.catch(() => undefined);
+    return runAfterTail;
+  }
+}
+
 export class MainNativeRuntimeApi implements RuntimeApi {
   readonly server = {
     ping: async (): Promise<OkResult> => ({ ok: true }),
@@ -190,12 +200,17 @@ export class MainNativeRuntimeApi implements RuntimeApi {
   };
 
   private readonly session = new NativeRuntimeSession();
+  private readonly queue = new RuntimeOperationQueue();
 
   async renderFrame(params: { surfaceId: SurfaceId; viewport: Viewport; metrics: CellGridMetrics }): Promise<RenderFrame> {
-    return this.session.renderFrame(params.surfaceId, params.viewport, params.metrics) as RenderFrame;
+    return this.queue.run(() => this.session.renderFrame(params.surfaceId, params.viewport, params.metrics) as RenderFrame);
   }
 
   async request(method: string, params: unknown = {}): Promise<unknown> {
+    return this.queue.run(() => this.dispatchRequest(method, params));
+  }
+
+  private async dispatchRequest(method: string, params: unknown = {}): Promise<unknown> {
     switch (method) {
       case "server.ping": return this.server.ping();
       case "syntax.highlightLegend": return this.syntax.highlightLegend();

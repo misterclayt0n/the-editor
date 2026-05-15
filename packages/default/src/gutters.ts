@@ -20,25 +20,22 @@ export function defaultGutters(): EditorModule {
         paddingRightPx: 2,
       },
       provide(ctx) {
-        if (!ctx.activePath || !ctx.gutterRows?.length || ctx.text === undefined) return [];
+        if (!ctx.activePath || !ctx.gutterRows?.length || ctx.activeSurfaceId === undefined || ctx.revision === undefined) return [];
         const root = editor.cwd.current();
         const relPath = normalizePath(relative(root, ctx.activePath));
         if (!relPath || relPath.startsWith("..")) return [];
-        const base = vcsBaseCache.get(`${root}\0${relPath}`);
+        const key = `${root}\0${relPath}`;
+        const base = vcsBaseCache.get(key);
         if (!base) {
           scheduleVcsBaseLoad(editor, root, relPath, ctx.activeSurfaceId);
           return [];
         }
         if (base.inFlight || base.text === null) return [];
-        const key = `${root}\0${relPath}`;
         const cached = vcsDiffCache.get(key);
-        const hunks = cached && cached.baseText === base.text && cached.currentText === ctx.text
-          ? cached.hunks
-          : diffLines(base.text, ctx.text);
-        if (!cached || cached.baseText !== base.text || cached.currentText !== ctx.text) {
-          vcsDiffCache.set(key, { baseText: base.text, currentText: ctx.text, hunks });
+        if (!cached || cached.baseText !== base.text || cached.revision !== ctx.revision) {
+          scheduleVcsDiff(editor, key, base.text, ctx.activeSurfaceId, ctx.revision);
         }
-        return gutterLinesForHunks(ctx.gutterRows, hunks);
+        return gutterLinesForHunks(ctx.gutterRows, cached?.hunks ?? []);
       },
     });
 
@@ -58,12 +55,14 @@ interface VcsBaseCacheEntry {
 
 interface VcsDiffCacheEntry {
   baseText: string;
-  currentText: string;
+  revision: number;
   hunks: DiffHunk[];
+  inFlight?: boolean;
 }
 
 const vcsBaseCache = new Map<string, VcsBaseCacheEntry>();
 const vcsDiffCache = new Map<string, VcsDiffCacheEntry>();
+const vcsDiffTimers = new Map<string, NodeJS.Timeout>();
 
 function scheduleVcsBaseLoad(editor: Parameters<EditorModule>[0], root: string, relPath: string, surfaceId: SurfaceId | undefined): void {
   const key = `${root}\0${relPath}`;
@@ -77,6 +76,25 @@ function scheduleVcsBaseLoad(editor: Parameters<EditorModule>[0], root: string, 
   }).catch(() => {
     vcsBaseCache.set(key, { text: null, inFlight: false });
   });
+}
+
+function scheduleVcsDiff(editor: Parameters<EditorModule>[0], key: string, baseText: string, surfaceId: SurfaceId, revision: number): void {
+  const current = vcsDiffCache.get(key);
+  if (current?.revision === revision && (current.inFlight || current.baseText === baseText)) return;
+  const existing = vcsDiffTimers.get(key);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(() => {
+    vcsDiffTimers.delete(key);
+    vcsDiffCache.set(key, { baseText, revision, hunks: current?.hunks ?? [], inFlight: true });
+    void editor.runtime.surfaces.readText({ surfaceId }).then(({ text }) => {
+      const hunks = diffLines(baseText, text);
+      vcsDiffCache.set(key, { baseText, revision, hunks });
+      editor.workbench.invalidateSurface(surfaceId, "unknown");
+    }).catch(() => {
+      vcsDiffCache.delete(key);
+    });
+  }, 180);
+  vcsDiffTimers.set(key, timer);
 }
 
 async function loadVcsBase(root: string, relPath: string): Promise<string | null> {

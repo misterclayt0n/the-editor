@@ -163,13 +163,13 @@ interface PolicyRequest {
 
 async function collectSurfaceGutters(params: SurfaceGuttersParams): Promise<GutterSnapshot[]> {
   const surfaceId = params.surfaceId;
-  const text = params.includeText ? (await editor.runtime.surfaces.readText({ surfaceId })).text : undefined;
+  const { revision } = await editor.runtime.surfaces.readRevision({ surfaceId });
   return editor.gutters.collect({
     activeSurfaceId: surfaceId,
     activePath: params.path,
     gutterRows: params.gutterRows,
+    revision,
     lineCount: params.lineCount,
-    text,
   });
 }
 
@@ -178,7 +178,6 @@ interface SurfaceGuttersParams {
   path?: string;
   lineCount?: number;
   gutterRows: GutterRow[];
-  includeText?: boolean;
 }
 
 interface SurfaceConfigureParams {

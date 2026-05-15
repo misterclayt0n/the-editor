@@ -698,7 +698,6 @@ function SurfaceEditorPane({
           path: pane.path,
           lineCount: paneState?.lineCount,
           gutterRows: frame.gutterRows,
-          includeText: Boolean(pane.path),
         }).then((result) => {
           if (requestId !== renderRequestRef.current) return;
           setProviderGutters(Array.isArray(result) ? result as GutterSnapshot[] : []);

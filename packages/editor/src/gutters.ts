@@ -50,6 +50,7 @@ export interface GutterProviderContext {
   /** @deprecated Normal visible gutter providers should use gutterRows instead. */
   frame?: RenderFrame;
   gutterRows?: GutterRow[];
+  revision?: number;
   lineCount?: number;
   /** @deprecated Normal visible gutter providers must not require full text. */
   text?: string;

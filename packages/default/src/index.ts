@@ -10,7 +10,7 @@ import { defaultPicker } from "./picker.js";
 import interactionModule from "./interaction.js";
 import { defaultReload } from "./reload.js";
 import runtimeModule from "./runtime.js";
-import { defaultScratch, defaultViewport, type CreateScratchArgs, type RenderActiveSurfaceArgs } from "./scratch.js";
+import { defaultScratch, defaultViewport, type CreateScratchArgs } from "./scratch.js";
 import { defaultSave } from "./save.js";
 import { getDefaultState, handleKeyInput, refreshActiveSurface, setEditorMode, type DefaultEditorState, type EditorMode } from "./state.js";
 import { defaultWindowCommands } from "./windowCommands.js";
@@ -42,5 +42,4 @@ export {
   type DefaultEditorState,
   type EditorMode,
   type KeyInput,
-  type RenderActiveSurfaceArgs,
 };

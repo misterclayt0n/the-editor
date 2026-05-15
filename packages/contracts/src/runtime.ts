@@ -291,6 +291,7 @@ export interface RuntimeApi {
     destroy(params: { surfaceId: SurfaceId }): Promise<OkResult>;
     loadFile(params: { surfaceId: SurfaceId; path: string }): Promise<OkResult>;
     lineCount(params: { surfaceId: SurfaceId }): Promise<{ lineCount: number }>;
+    readViewport(params: { surfaceId: SurfaceId }): Promise<{ viewport: Viewport }>;
     setViewport(params: { surfaceId: SurfaceId; viewport: Viewport }): Promise<OkResult>;
     setMetrics(params: { surfaceId: SurfaceId; metrics: CellGridMetrics }): Promise<OkResult>;
     setSoftWrap(params: { surfaceId: SurfaceId; softWrap: boolean }): Promise<OkResult>;

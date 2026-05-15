@@ -38,6 +38,7 @@ export class RuntimeIpcClient implements RuntimeApi {
     destroy: (params: Parameters<RuntimeApi["surfaces"]["destroy"]>[0]) => this.request("surfaces.destroy", params) as ReturnType<RuntimeApi["surfaces"]["destroy"]>,
     loadFile: (params: Parameters<RuntimeApi["surfaces"]["loadFile"]>[0]) => this.request("surfaces.loadFile", params) as ReturnType<RuntimeApi["surfaces"]["loadFile"]>,
     lineCount: (params: Parameters<RuntimeApi["surfaces"]["lineCount"]>[0]) => this.request("surfaces.lineCount", params) as ReturnType<RuntimeApi["surfaces"]["lineCount"]>,
+    readViewport: (params: Parameters<RuntimeApi["surfaces"]["readViewport"]>[0]) => this.request("surfaces.readViewport", params) as ReturnType<RuntimeApi["surfaces"]["readViewport"]>,
     setViewport: (params: Parameters<RuntimeApi["surfaces"]["setViewport"]>[0]) => this.request("surfaces.setViewport", params) as ReturnType<RuntimeApi["surfaces"]["setViewport"]>,
     setMetrics: (params: Parameters<RuntimeApi["surfaces"]["setMetrics"]>[0]) => this.request("surfaces.setMetrics", params) as ReturnType<RuntimeApi["surfaces"]["setMetrics"]>,
     setSoftWrap: (params: Parameters<RuntimeApi["surfaces"]["setSoftWrap"]>[0]) => this.request("surfaces.setSoftWrap", params) as ReturnType<RuntimeApi["surfaces"]["setSoftWrap"]>,

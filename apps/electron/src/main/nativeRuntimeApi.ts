@@ -60,6 +60,9 @@ export class MainNativeRuntimeApi implements RuntimeApi {
     lineCount: async (params: { surfaceId: SurfaceId }): Promise<{ lineCount: number }> => ({
       lineCount: this.session.readSurfaceLineCount(params.surfaceId),
     }),
+    readViewport: async (params: { surfaceId: SurfaceId }): Promise<{ viewport: Viewport }> => ({
+      viewport: this.session.readSurfaceViewport(params.surfaceId),
+    }),
     setViewport: async (params: { surfaceId: SurfaceId; viewport: Viewport }): Promise<OkResult> => {
       this.session.setSurfaceViewport(params.surfaceId, params.viewport);
       return { ok: true };
@@ -202,6 +205,7 @@ export class MainNativeRuntimeApi implements RuntimeApi {
       case "surfaces.destroy": return this.surfaces.destroy(params as Parameters<RuntimeApi["surfaces"]["destroy"]>[0]);
       case "surfaces.loadFile": return this.surfaces.loadFile(params as Parameters<RuntimeApi["surfaces"]["loadFile"]>[0]);
       case "surfaces.lineCount": return this.surfaces.lineCount(params as Parameters<RuntimeApi["surfaces"]["lineCount"]>[0]);
+      case "surfaces.readViewport": return this.surfaces.readViewport(params as Parameters<RuntimeApi["surfaces"]["readViewport"]>[0]);
       case "surfaces.setViewport": return this.surfaces.setViewport(params as Parameters<RuntimeApi["surfaces"]["setViewport"]>[0]);
       case "surfaces.setMetrics": return this.surfaces.setMetrics(params as Parameters<RuntimeApi["surfaces"]["setMetrics"]>[0]);
       case "surfaces.setSoftWrap": return this.surfaces.setSoftWrap(params as Parameters<RuntimeApi["surfaces"]["setSoftWrap"]>[0]);

@@ -23,7 +23,6 @@ const EDITOR_SURFACE_STYLE: CanvasTextSurfaceStyleOptions = {
 };
 
 interface SurfacePaneSnapshotState {
-  frame?: RenderFrame;
   lineCount?: number;
   viewport?: Viewport;
   metrics?: CellGridMetrics;
@@ -120,6 +119,9 @@ function App() {
             : undefined,
         };
         setSelectionPickerActive(Boolean(event.selectionPickerActive));
+        if (Array.isArray(event.surfaceInvalidations)) {
+          window.dispatchEvent(new CustomEvent("the-editor:surface-invalidated", { detail: event.surfaceInvalidations }));
+        }
         setWorkbench(snapshot);
         void uiRuntime.update(snapshot).then(() => {
           setUiRevision((revision) => revision + 1);
@@ -648,6 +650,7 @@ function SurfaceEditorPane({
 }) {
   const paneState = pane.state as SurfacePaneSnapshotState | undefined;
   const [renderFrame, setRenderFrame] = useState<RenderFrame | undefined>(undefined);
+  const [invalidationVersion, setInvalidationVersion] = useState(0);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lastConfigRef = useRef<string>("");
   const latestConfigMetricsRef = useRef<CellGridMetrics | undefined>(paneState?.metrics);
@@ -748,8 +751,18 @@ function SurfaceEditorPane({
   }, [pane.id, pane.surfaceId]);
 
   useEffect(() => {
+    const onInvalidated = (event: Event) => {
+      const ids = (event as CustomEvent<unknown>).detail;
+      if (!Array.isArray(ids) || !ids.includes(pane.surfaceId)) return;
+      setInvalidationVersion((version) => version + 1);
+    };
+    window.addEventListener("the-editor:surface-invalidated", onInvalidated);
+    return () => window.removeEventListener("the-editor:surface-invalidated", onInvalidated);
+  }, [pane.surfaceId]);
+
+  useEffect(() => {
     requestRenderFrame();
-  }, [pane.surfaceId, paneState?.frame, paneState?.metrics, paneState?.viewport]);
+  }, [pane.surfaceId, invalidationVersion, paneState?.metrics, paneState?.viewport]);
 
   useEffect(() => {
     const canvas = canvasRef.current;

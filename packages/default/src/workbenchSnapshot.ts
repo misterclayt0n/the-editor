@@ -1,5 +1,5 @@
 import { defineHostStore } from "@the-editor/editor";
-import type { CellGridMetrics, DocumentId, RenderFrame, SurfaceId, Viewport } from "@the-editor/contracts/runtime";
+import type { CellGridMetrics, DocumentId, SurfaceId, Viewport } from "@the-editor/contracts/runtime";
 import type { BufferDecoration, EditorHost, GutterSnapshot, RoleSnapshot, WorkbenchPaneId } from "@the-editor/editor";
 import type { WorkbenchSessionState } from "@the-editor/editor/workbench";
 
@@ -13,7 +13,6 @@ export interface SurfacePaneViewState {
   title: string;
   viewport: Viewport;
   metrics?: CellGridMetrics;
-  frame?: RenderFrame;
   lineCount?: number;
   gutters?: GutterSnapshot[];
   decorations?: BufferDecoration[];
@@ -27,7 +26,6 @@ export interface DefaultEditorState {
   activePaneId: WorkbenchPaneId | undefined;
   softWrap: boolean;
   preferredColumn: number | undefined;
-  lastFrame: RenderFrame | undefined;
   decorations: BufferDecoration[];
   gutters: GutterSnapshot[];
   roleStates: Record<string, RoleSnapshot>;
@@ -48,7 +46,6 @@ const defaultEditorStateStore = defineHostStore<DefaultEditorState>({
     activePaneId: undefined,
     softWrap: false,
     preferredColumn: undefined,
-    lastFrame: undefined,
     decorations: [],
     gutters: [],
     roleStates: {},
@@ -77,7 +74,6 @@ export function syncWorkbenchActiveSurface(editor: EditorHost, state = workbench
     state.activeDocumentId = undefined;
     state.activeSurfaceId = undefined;
     state.activePath = undefined;
-    state.lastFrame = undefined;
     return;
   }
 
@@ -88,7 +84,6 @@ export function syncWorkbenchActiveSurface(editor: EditorHost, state = workbench
   state.activePath = activePane.path;
   state.surfaceViewport = paneState?.viewport;
   state.surfaceMetrics = paneState?.metrics;
-  state.lastFrame = paneState?.frame;
 }
 
 export function activeWorkbenchSurfacePane(editor: EditorHost): SurfacePaneViewState | undefined {
@@ -123,26 +118,16 @@ export async function refreshWorkbenchSnapshot(editor: EditorHost, viewport?: Vi
   }
 
   for (const pane of visibleSurfacePanes(editor, state)) {
-    const surfaceState = await editor.runtime.surfaces.readState({ surfaceId: pane.surfaceId });
-    pane.viewport = surfaceState.viewport;
-    pane.lineCount = surfaceState.lineCount;
-    pane.frame = pane.metrics
-      ? await editor.runtime.surfaces.renderFrame({ surfaceId: pane.surfaceId, viewport: pane.viewport, metrics: pane.metrics })
-      : undefined;
-    const surfaceContext = {
-      mode: state.mode,
-      activeDocumentId: pane.documentId,
-      activeSurfaceId: pane.surfaceId,
-      activePath: pane.path,
-      frame: pane.frame,
-      lineCount: pane.lineCount,
-      text: surfaceState.text,
-    };
-    pane.gutters = await editor.gutters?.collect(surfaceContext) ?? [];
-    pane.decorations = await editor.decorations.collect(surfaceContext);
+    const [{ viewport }, { lineCount }] = await Promise.all([
+      editor.runtime.surfaces.readViewport({ surfaceId: pane.surfaceId }),
+      editor.runtime.surfaces.lineCount({ surfaceId: pane.surfaceId }),
+    ]);
+    pane.viewport = viewport;
+    pane.lineCount = lineCount;
+    pane.gutters = [];
+    pane.decorations = [];
   }
 
-  state.lastFrame = state.activePaneId ? state.surfacePanes.get(state.activePaneId)?.frame : undefined;
   if (shouldRefreshSyntaxLegend(state)) {
     state.syntaxLegend = await editor.runtime.syntax.highlightLegend();
   }
@@ -188,9 +173,7 @@ function visibleSurfacePanes(editor: EditorHost, state: DefaultEditorState): Sur
 }
 
 function shouldRefreshSyntaxLegend(state: DefaultEditorState): boolean {
-  if (!Object.keys(state.syntaxLegend).length) return true;
-  const kinds = state.lastFrame?.syntax ?? [];
-  return kinds.some((span) => state.syntaxLegend[span.kind] === undefined);
+  return !Object.keys(state.syntaxLegend).length;
 }
 
 function decorateItemSnapshot(item: Awaited<ReturnType<EditorHost["workbench"]["snapshotEditorLayout"]>>["items"][number], toolById: Map<string, ReturnType<EditorHost["tools"]["snapshotAll"]>[number]>) {
@@ -212,7 +195,6 @@ function decoratePaneSnapshot(pane: Awaited<ReturnType<EditorHost["workbench"]["
       ...pane,
       state: surface
         ? {
-          frame: surface.frame,
           lineCount: surface.lineCount,
           gutters: surface.gutters,
           decorations: surface.decorations,

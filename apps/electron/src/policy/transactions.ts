@@ -5,7 +5,7 @@ interface PolicyTransactionControllerOptions<TPayload> {
   editor: EditorHost;
   buildState(): Promise<WorkbenchSessionState>;
   publish(payload: TPayload): void;
-  toPayload(state: WorkbenchSessionState): TPayload;
+  toPayload(state: WorkbenchSessionState, invalidations: readonly WorkbenchInvalidationKind[]): TPayload;
   onError(error: unknown): void;
 }
 
@@ -51,16 +51,17 @@ export class PolicyTransactionController<TPayload> {
   }
 
   private async flush(options: { force?: boolean } = {}): Promise<TPayload> {
-    if (this.flushing) return this.lastPayload ?? this.options.toPayload(await this.options.buildState());
+    if (this.flushing) return this.lastPayload ?? this.options.toPayload(await this.options.buildState(), []);
     if (!options.force && !this.pendingKinds.size) {
-      return this.lastPayload ?? this.options.toPayload(await this.options.buildState());
+      return this.lastPayload ?? this.options.toPayload(await this.options.buildState(), []);
     }
 
     this.flushing = true;
+    const invalidations = [...this.pendingKinds];
     this.pendingKinds.clear();
     try {
       const state = await this.options.buildState();
-      const payload = this.options.toPayload(state);
+      const payload = this.options.toPayload(state, invalidations);
       this.lastPayload = payload;
       this.options.publish(payload);
       return payload;

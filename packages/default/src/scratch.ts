@@ -1,4 +1,4 @@
-import type { RenderFrame, SurfaceId, SurfaceSelectionRange, Viewport } from "@the-editor/contracts/runtime";
+import type { SurfaceId, SurfaceSelectionRange, Viewport } from "@the-editor/contracts/runtime";
 import { commandId, type EditorHost, type EditorModule, type WorkbenchPaneDescriptor } from "@the-editor/editor";
 import {
   activeSurfacePane,
@@ -20,10 +20,6 @@ export interface OpenFileArgs {
   viewport?: Viewport;
   line?: number;
   column?: number;
-}
-
-export interface RenderActiveSurfaceArgs {
-  viewport?: Viewport;
 }
 
 export function defaultScratch(): EditorModule {
@@ -172,17 +168,6 @@ export function defaultScratch(): EditorModule {
       },
     });
 
-    editor.commands.register<RenderActiveSurfaceArgs | undefined, RenderFrame>({
-      id: commandId("surface.renderActive"),
-      title: "Render Active Surface",
-      async run(_ctx, args) {
-        const state = await refreshActiveSurface(editor, args?.viewport);
-        if (!state.lastFrame) {
-          throw new Error("no active surface");
-        }
-        return state.lastFrame;
-      },
-    });
   };
 }
 

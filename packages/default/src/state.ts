@@ -43,7 +43,9 @@ export function removeSurfacePaneState(editor: EditorHost, paneId: string): void
 }
 
 export async function refreshActiveSurface(editor: EditorHost, viewport?: Viewport): Promise<DefaultEditorState> {
-  return refreshWorkbenchSnapshot(editor, viewport);
+  const state = await refreshWorkbenchSnapshot(editor, viewport);
+  if (state.activeSurfaceId !== undefined) editor.workbench.invalidateSurface(state.activeSurfaceId, viewport ? "viewport" : "content");
+  return state;
 }
 
 export async function buildWorkbenchSessionState(editor: EditorHost) {

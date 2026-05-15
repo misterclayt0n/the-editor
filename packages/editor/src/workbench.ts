@@ -37,6 +37,11 @@ export type WorkbenchInvalidationKind =
   | "layout"
   | "tabs";
 
+export interface SurfaceInvalidationEvent {
+  surfaceId: SurfaceId;
+  reason: "content" | "viewport" | "metrics" | "selection" | "layout" | "unknown";
+}
+
 export type WorkbenchItemId = string & { readonly __brand?: "WorkbenchItemId" };
 export type WorkbenchPaneId = string & { readonly __brand?: "WorkbenchPaneId" };
 export type WorkbenchGroupId = string & { readonly __brand?: "WorkbenchGroupId" };
@@ -264,6 +269,7 @@ type WorkbenchLayoutIntent =
 
 export class WorkbenchController {
   private readonly listeners = new Set<(kinds: readonly WorkbenchInvalidationKind[]) => void>();
+  private readonly surfaceListeners = new Set<(event: SurfaceInvalidationEvent) => void>();
   private readonly layout: WorkbenchLayoutModel;
 
   constructor(private readonly editor: EditorHost) {
@@ -279,6 +285,18 @@ export class WorkbenchController {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
+    };
+  }
+
+  invalidateSurface(surfaceId: SurfaceId, reason: SurfaceInvalidationEvent["reason"] = "unknown"): void {
+    const event = { surfaceId, reason };
+    for (const listener of this.surfaceListeners) listener(event);
+  }
+
+  subscribeSurfaceInvalidations(listener: (event: SurfaceInvalidationEvent) => void): () => void {
+    this.surfaceListeners.add(listener);
+    return () => {
+      this.surfaceListeners.delete(listener);
     };
   }
 

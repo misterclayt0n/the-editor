@@ -1,7 +1,7 @@
 import { parentPort, workerData } from "node:worker_threads";
 import type { KeyInput } from "@the-editor/editor";
 import { createEditorHost } from "@the-editor/editor";
-import { bootWorkbench, configureWorkbenchSurface, getWorkbenchSessionState, handleWorkbenchKeyInput, type WorkbenchInvalidationKind, type WorkbenchSessionState } from "@the-editor/editor/workbench";
+import { bootWorkbench, configureWorkbenchSurface, getWorkbenchSessionState, handleWorkbenchKeyInput, type SurfaceInvalidationEvent, type WorkbenchInvalidationKind, type WorkbenchSessionState } from "@the-editor/editor/workbench";
 import { ElectronPackageDiscovery } from "./packageDiscovery.js";
 import { createPolicyPackageTargetAdapters } from "./packageTargetAdapters.js";
 import { createRuntimeIpcClient } from "./runtimeIpcClient.js";
@@ -34,7 +34,7 @@ const transactions = new PolicyTransactionController({
   publish: (payload) => {
     parentPort?.postMessage(payload);
   },
-  toPayload: (state, invalidations) => buildSessionPayload(state, invalidations),
+  toPayload: (state, invalidations, surfaceInvalidations) => buildSessionPayload(state, invalidations, surfaceInvalidations),
   onError: (error) => {
     parentPort?.postMessage({ type: "policy.error", ...serializeError(error) });
   },
@@ -129,7 +129,7 @@ async function handlePolicyRequest(request: PolicyRequest): Promise<void> {
   }
 }
 
-function buildSessionPayload(state: WorkbenchSessionState, invalidations: readonly WorkbenchInvalidationKind[]) {
+function buildSessionPayload(state: WorkbenchSessionState, invalidations: readonly WorkbenchInvalidationKind[], surfaceInvalidations: readonly SurfaceInvalidationEvent[]) {
   return {
     type: "default.sessionChanged",
     roles: state.roles ?? {},
@@ -145,23 +145,8 @@ function buildSessionPayload(state: WorkbenchSessionState, invalidations: readon
     workingDirectory: state.workingDirectory ?? editor.cwd.snapshot(),
     selectionPickerActive: state.selectionPickerActive ?? false,
     editorLayout: state.editorLayout,
-    surfaceInvalidations: invalidatedSurfaceIds(state, invalidations),
+    surfaceInvalidations: surfaceInvalidations.map((event) => event.surfaceId),
   };
-}
-
-function invalidatedSurfaceIds(state: WorkbenchSessionState, invalidations: readonly WorkbenchInvalidationKind[]): number[] {
-  if (!invalidations.some((kind) => kind === "all" || kind === "frame" || kind === "layout" || kind === "focus")) return [];
-  const panes = state.editorLayout?.panes ?? [];
-  const activePaneId = state.editorLayout?.activePaneId;
-  const visible = new Set<string>();
-  for (const group of state.editorLayout?.groups ?? []) {
-    if (group.activePaneId) visible.add(group.activePaneId);
-  }
-  if (activePaneId) visible.add(activePaneId);
-  return panes.flatMap((pane) => {
-    if (pane.kind !== "surface" || !visible.has(pane.id)) return [];
-    return [pane.surfaceId as number];
-  });
 }
 
 interface PolicyRequest {

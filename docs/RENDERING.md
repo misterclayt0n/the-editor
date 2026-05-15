@@ -156,7 +156,9 @@ interface GutterRow {
 
 These facts are cheap because they are produced by the same visible-layout pass that creates `RenderFrame.rows`. The renderer can use them immediately for built-in line numbers and active-line gutter styling.
 
-Higher-level gutter policy belongs to TypeScript providers. Providers should consume visible `gutterRows` plus product metadata such as path, line count, diagnostics, or cached VCS hunks. Providers must not require full `RenderFrame` or full document text in the normal workbench snapshot path.
+Higher-level gutter policy belongs to TypeScript providers. Providers consume visible `gutterRows` plus product metadata such as path, line count, diagnostics, or cached VCS hunks through an explicit `surface.gutters` policy request from the renderer after it receives a frame. Provider gutter results are renderer presentation data; they do not ride the workbench snapshot.
+
+Providers must not require full `RenderFrame` in the normal workbench snapshot path. Temporary provider-specific text reads may happen behind the explicit gutter request, but long-term expensive metadata such as VCS hunks should be cached separately.
 
 VCS gutters should follow the same model used by editors like Zed:
 

@@ -602,7 +602,7 @@ editor.gutters.registerProvider({
 });
 ```
 
-Provider code should not require full document text or a full `RenderFrame` during normal editor refresh. If a feature needs expensive metadata, such as VCS hunks, it should maintain/cache that metadata separately and only project it onto `ctx.gutterRows` when asked to draw visible gutters.
+Provider code should not require a full `RenderFrame` during normal editor refresh. If a feature needs expensive metadata, such as VCS hunks, it should maintain/cache that metadata separately and only project it onto `ctx.gutterRows` when asked to draw visible gutters. Provider results are fetched by an explicit visible-surface gutter request, not by the general workbench snapshot.
 
 ## Example: statusline role
 

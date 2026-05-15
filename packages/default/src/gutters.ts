@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { relative, sep } from "node:path";
 import { promisify } from "node:util";
-import type { RenderFrame } from "@the-editor/contracts/runtime";
+import type { GutterRow, SurfaceId } from "@the-editor/contracts/runtime";
 import type { EditorModule, GutterLine } from "@the-editor/editor";
 
 const execFileAsync = promisify(execFile);
@@ -20,13 +20,13 @@ export function defaultGutters(): EditorModule {
         paddingRightPx: 2,
       },
       provide(ctx) {
-        if (!ctx.activePath || !ctx.frame || ctx.text === undefined) return [];
+        if (!ctx.activePath || !ctx.gutterRows?.length || ctx.text === undefined) return [];
         const root = editor.cwd.current();
         const relPath = normalizePath(relative(root, ctx.activePath));
         if (!relPath || relPath.startsWith("..")) return [];
         const base = vcsBaseCache.get(`${root}\0${relPath}`);
         if (!base) {
-          scheduleVcsBaseLoad(editor, root, relPath);
+          scheduleVcsBaseLoad(editor, root, relPath, ctx.activeSurfaceId);
           return [];
         }
         if (base.inFlight || base.text === null) return [];
@@ -38,36 +38,10 @@ export function defaultGutters(): EditorModule {
         if (!cached || cached.baseText !== base.text || cached.currentText !== ctx.text) {
           vcsDiffCache.set(key, { baseText: base.text, currentText: ctx.text, hunks });
         }
-        return gutterLinesForHunks(ctx.frame, hunks);
+        return gutterLinesForHunks(ctx.gutterRows, hunks);
       },
     });
 
-    editor.gutters.registerProvider({
-      id: "default.lineNumbers",
-      title: "Line Numbers",
-      lane: "lineNumbers",
-      laneSpec: {
-        id: "lineNumbers",
-        order: 100,
-        widthCells: 2,
-        paddingRightPx: 22,
-      },
-      provide(ctx) {
-        const rows = ctx.frame?.rows ?? [];
-        const maxLine = Math.max(ctx.lineCount ?? 0, rows.reduce((max, row) => Math.max(max, row.docLine ?? 0), 0) + 1);
-        const width = Math.max(2, String(maxLine).length);
-        return rows.map((row) => ({
-          id: `line:${row.surfaceRow}`,
-          surfaceRow: row.surfaceRow,
-          kind: "text" as const,
-          text: row.startsLogicalLine && row.docLine !== null ? String(row.docLine + 1).padStart(width, " ") : "",
-          align: "right" as const,
-          foreground: isActiveLine(ctx.frame, row.surfaceRow) ? "#e7b84a" : undefined,
-          background: isActiveLine(ctx.frame, row.surfaceRow) ? "rgba(255, 255, 255, 0.045)" : undefined,
-          opacity: isActiveLine(ctx.frame, row.surfaceRow) ? 0.95 : 0.58,
-        }));
-      },
-    });
   };
 }
 
@@ -91,7 +65,7 @@ interface VcsDiffCacheEntry {
 const vcsBaseCache = new Map<string, VcsBaseCacheEntry>();
 const vcsDiffCache = new Map<string, VcsDiffCacheEntry>();
 
-function scheduleVcsBaseLoad(editor: Parameters<EditorModule>[0], root: string, relPath: string): void {
+function scheduleVcsBaseLoad(editor: Parameters<EditorModule>[0], root: string, relPath: string, surfaceId: SurfaceId | undefined): void {
   const key = `${root}\0${relPath}`;
   const current = vcsBaseCache.get(key);
   if (current?.inFlight) return;
@@ -99,7 +73,7 @@ function scheduleVcsBaseLoad(editor: Parameters<EditorModule>[0], root: string, 
   void loadVcsBase(root, relPath).then((text) => {
     vcsBaseCache.set(key, { text, inFlight: false });
     vcsDiffCache.delete(key);
-    editor.workbench.invalidate("tools");
+    if (surfaceId !== undefined) editor.workbench.invalidateSurface(surfaceId, "unknown");
   }).catch(() => {
     vcsBaseCache.set(key, { text: null, inFlight: false });
   });
@@ -174,15 +148,14 @@ function splitLines(text: string): string[] {
   return normalized.length ? normalized.split(/\r?\n/) : [];
 }
 
-function gutterLinesForHunks(frame: RenderFrame, hunks: readonly DiffHunk[]): GutterLine[] {
+function gutterLinesForHunks(rows: readonly GutterRow[], hunks: readonly DiffHunk[]): GutterLine[] {
   const lines: GutterLine[] = [];
   for (const hunk of hunks) {
     let startRow: number | undefined;
     let endRow: number | undefined;
-    for (const row of frame.rows) {
-      if (row.docLine === null || !row.startsLogicalLine) continue;
-      const line = row.docLine + 1;
-      if (line < hunk.start || line >= hunk.start + hunk.count) continue;
+    for (const row of rows) {
+      if (row.lineNumber === null || !row.startsLogicalLine) continue;
+      if (row.lineNumber < hunk.start || row.lineNumber >= hunk.start + hunk.count) continue;
       startRow ??= row.surfaceRow;
       endRow = row.surfaceRow;
     }
@@ -208,10 +181,6 @@ function vcsColor(kind: DiffHunk["kind"]): string {
     case "modified":
       return "#d29922";
   }
-}
-
-function isActiveLine(frame: RenderFrame | undefined, surfaceRow: number): boolean {
-  return frame?.cursors.some((cursor) => cursor.active && cursor.surfaceRow === surfaceRow) ?? false;
 }
 
 function normalizePath(path: string): string {

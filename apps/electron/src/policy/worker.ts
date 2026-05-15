@@ -1,7 +1,8 @@
 import { parentPort, workerData } from "node:worker_threads";
-import type { KeyInput } from "@the-editor/editor";
+import type { GutterSnapshot, KeyInput } from "@the-editor/editor";
 import { createEditorHost } from "@the-editor/editor";
 import { bootWorkbench, configureWorkbenchSurface, getWorkbenchSessionState, handleWorkbenchKeyInput, type SurfaceInvalidationEvent, type WorkbenchInvalidationKind, type WorkbenchSessionState } from "@the-editor/editor/workbench";
+import type { GutterRow, SurfaceId } from "@the-editor/contracts/runtime";
 import { ElectronPackageDiscovery } from "./packageDiscovery.js";
 import { createPolicyPackageTargetAdapters } from "./packageTargetAdapters.js";
 import { createRuntimeIpcClient } from "./runtimeIpcClient.js";
@@ -100,6 +101,10 @@ async function handlePolicyRequest(request: PolicyRequest): Promise<void> {
         result = transaction.payload;
         break;
       }
+      case "surface.gutters": {
+        result = await collectSurfaceGutters(request.params as SurfaceGuttersParams);
+        break;
+      }
       case "surface.configure": {
         const transaction = await transactions.run(async () => {
           const handled = await configureWorkbenchSurface(editor, request.params as SurfaceConfigureParams);
@@ -154,6 +159,26 @@ interface PolicyRequest {
   id: number;
   method: string;
   params?: unknown;
+}
+
+async function collectSurfaceGutters(params: SurfaceGuttersParams): Promise<GutterSnapshot[]> {
+  const surfaceId = params.surfaceId;
+  const text = params.includeText ? (await editor.runtime.surfaces.readText({ surfaceId })).text : undefined;
+  return editor.gutters.collect({
+    activeSurfaceId: surfaceId,
+    activePath: params.path,
+    gutterRows: params.gutterRows,
+    lineCount: params.lineCount,
+    text,
+  });
+}
+
+interface SurfaceGuttersParams {
+  surfaceId: SurfaceId;
+  path?: string;
+  lineCount?: number;
+  gutterRows: GutterRow[];
+  includeText?: boolean;
 }
 
 interface SurfaceConfigureParams {

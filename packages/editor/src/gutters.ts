@@ -1,4 +1,4 @@
-import type { DocumentId, RenderFrame, SurfaceId } from "@the-editor/contracts/runtime";
+import type { DocumentId, GutterRow, RenderFrame, SurfaceId } from "@the-editor/contracts/runtime";
 import { contributionKind } from "./contributions.js";
 import type { EditorHost } from "./editorHost.js";
 import { toDisposable, type Disposable } from "./disposable.js";
@@ -47,8 +47,11 @@ export interface GutterProviderContext {
   activeDocumentId?: DocumentId;
   activeSurfaceId?: SurfaceId;
   activePath?: string;
+  /** @deprecated Normal visible gutter providers should use gutterRows instead. */
   frame?: RenderFrame;
+  gutterRows?: GutterRow[];
   lineCount?: number;
+  /** @deprecated Normal visible gutter providers must not require full text. */
   text?: string;
 }
 

@@ -650,6 +650,7 @@ function SurfaceEditorPane({
 }) {
   const paneState = pane.state as SurfacePaneSnapshotState | undefined;
   const [renderFrame, setRenderFrame] = useState<RenderFrame | undefined>(undefined);
+  const [providerGutters, setProviderGutters] = useState<GutterSnapshot[]>([]);
   const [invalidationVersion, setInvalidationVersion] = useState(0);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lastConfigRef = useRef<string>("");
@@ -666,7 +667,7 @@ function SurfaceEditorPane({
   const renderScheduledRef = useRef(false);
 
   const frameGutters = useMemo(() => builtInFrameGutters(renderFrame, paneState?.lineCount), [renderFrame, paneState?.lineCount]);
-  const gutters = useMemo(() => [...frameGutters, ...(paneState?.gutters ?? [])], [frameGutters, paneState?.gutters]);
+  const gutters = useMemo(() => [...providerGutters, ...frameGutters, ...(paneState?.gutters ?? [])], [frameGutters, paneState?.gutters, providerGutters]);
 
   latestFrameRef.current = renderFrame;
   latestDecorationsRef.current = decorations;
@@ -692,6 +693,18 @@ function SurfaceEditorPane({
       void window.theEditorRender.renderFrame({ surfaceId: pane.surfaceId, viewport: request.viewport, metrics: request.metrics }).then((frame) => {
         if (requestId !== renderRequestRef.current) return;
         setRenderFrame(frame);
+        void window.theEditor.policyRequest("surface.gutters", {
+          surfaceId: pane.surfaceId,
+          path: pane.path,
+          lineCount: paneState?.lineCount,
+          gutterRows: frame.gutterRows,
+          includeText: Boolean(pane.path),
+        }).then((result) => {
+          if (requestId !== renderRequestRef.current) return;
+          setProviderGutters(Array.isArray(result) ? result as GutterSnapshot[] : []);
+        }).catch((error) => {
+          console.error(error);
+        });
       }).catch((error) => {
         console.error(error);
       });

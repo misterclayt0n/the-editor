@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { commandId, createEditorHost, createRuntimeClient } from "../../editor/src/index.js";
+import { commandId, createEditorHost } from "../../editor/src/index.js";
 import { handleWorkbenchKeyInput } from "../../editor/src/workbench.js";
 import { defaultEditing } from "../src/editing.js";
 import { defaultInputPrompt } from "../src/inputPrompt.js";
@@ -11,8 +11,9 @@ import { defaultScratch } from "../src/scratch.js";
 import { getDefaultState } from "../src/state.js";
 import { defaultWorkbench } from "../src/workbench.js";
 
+import { createTestRuntime } from "./runtime.js";
 async function createTestEditor(text: string, options?: { keymaps?: boolean; prompt?: boolean }) {
-  const editor = createEditorHost({ runtime: createRuntimeClient() });
+  const editor = createEditorHost({ runtime: createTestRuntime() });
   await defaultScratch()(editor);
   await defaultEditing()(editor);
   if (options?.prompt) await defaultInputPrompt()(editor);
@@ -27,7 +28,7 @@ async function createTestEditor(text: string, options?: { keymaps?: boolean; pro
 
 async function createFileEditor(path: string, text: string, options?: { keymaps?: boolean; prompt?: boolean }) {
   await writeFile(path, text, "utf8");
-  const editor = createEditorHost({ runtime: createRuntimeClient() });
+  const editor = createEditorHost({ runtime: createTestRuntime() });
   await defaultScratch()(editor);
   await defaultEditing()(editor);
   if (options?.prompt) await defaultInputPrompt()(editor);

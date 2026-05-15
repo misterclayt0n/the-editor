@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { commandId, createEditorHost, createRuntimeClient } from "../../editor/src/index.js";
+import { commandId, createEditorHost } from "../../editor/src/index.js";
 import { defaultCommandPalette } from "../src/commandPalette.js";
 import themeModule from "../src/theme.js";
 
+import { createTestRuntime } from "./runtime.js";
 async function createThemeEditor() {
-  const editor = createEditorHost({ runtime: createRuntimeClient() });
+  const editor = createEditorHost({ runtime: createTestRuntime() });
   await defaultCommandPalette()(editor);
   await themeModule(editor);
   return editor;

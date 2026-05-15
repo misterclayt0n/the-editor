@@ -2,13 +2,14 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createEditorHost, createRuntimeClient } from "@the-editor/editor";
+import { createEditorHost } from "@the-editor/editor";
 import { getWorkbenchSessionState } from "@the-editor/editor/workbench";
 import { defaultScratch } from "../src/scratch.js";
 import { defaultWorkbench } from "../src/workbench.js";
 
+import { createTestRuntime } from "./runtime.js";
 async function createWorkbenchEditor(text = "alpha\nbeta\n") {
-  const editor = createEditorHost({ runtime: createRuntimeClient() });
+  const editor = createEditorHost({ runtime: createTestRuntime() });
   await defaultScratch()(editor);
   await defaultWorkbench()(editor);
   await editor.commands.dispatch({ id: "scratch.create", args: { text } });
@@ -65,7 +66,7 @@ describe("workbench splits", () => {
     await writeFile(first, "alpha\n", "utf8");
     await writeFile(second, "beta\n", "utf8");
 
-    const editor = createEditorHost({ runtime: createRuntimeClient(), cwd: dir });
+    const editor = createEditorHost({ runtime: createTestRuntime(), cwd: dir });
     await defaultScratch()(editor);
     await defaultWorkbench()(editor);
     await editor.commands.dispatch({ id: "scratch.create", args: { text: "" } });
@@ -90,7 +91,7 @@ describe("workbench splits", () => {
     await writeFile(first, "alpha\n", "utf8");
     await writeFile(second, "beta\n", "utf8");
 
-    const editor = createEditorHost({ runtime: createRuntimeClient(), cwd: dir });
+    const editor = createEditorHost({ runtime: createTestRuntime(), cwd: dir });
     await defaultScratch()(editor);
     await defaultWorkbench()(editor);
     await editor.commands.dispatch({ id: "scratch.create", args: { text: "" } });
@@ -115,7 +116,7 @@ describe("workbench splits", () => {
     await writeFile(first, "alpha\n", "utf8");
     await writeFile(second, "beta\n", "utf8");
 
-    const editor = createEditorHost({ runtime: createRuntimeClient(), cwd: dir });
+    const editor = createEditorHost({ runtime: createTestRuntime(), cwd: dir });
     await defaultScratch()(editor);
     await defaultWorkbench()(editor);
     await editor.commands.dispatch({ id: "scratch.create", args: { text: "" } });
@@ -146,7 +147,7 @@ describe("workbench splits", () => {
     await writeFile(first, "alpha\n", "utf8");
     await writeFile(second, "beta\n", "utf8");
 
-    const editor = createEditorHost({ runtime: createRuntimeClient(), cwd: dir });
+    const editor = createEditorHost({ runtime: createTestRuntime(), cwd: dir });
     await defaultScratch()(editor);
     await defaultWorkbench()(editor);
     await editor.commands.dispatch({ id: "scratch.create", args: { text: "" } });

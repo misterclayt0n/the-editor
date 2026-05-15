@@ -1,8 +1,10 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
+import { MainNativeRuntimeApi } from "./nativeRuntimeApi.js";
 
 const isDev = process.env.THE_EDITOR_DEV_SERVER_URL !== undefined;
+const runtime = new MainNativeRuntimeApi();
 
 let mainWindow: BrowserWindow | undefined;
 let policyWorker: Worker | undefined;
@@ -49,6 +51,10 @@ function startPolicyWorker(): void {
 
   policyWorker.on("message", (message: unknown) => {
     if (!isObject(message)) return;
+    if (message.type === "runtime.request") {
+      void handleRuntimeRequest(message as unknown as RuntimeBridgeRequest);
+      return;
+    }
     if (message.type === "policy.response") {
       handlePolicyResponse(message as unknown as PolicyBridgeResponse);
       return;
@@ -113,6 +119,22 @@ interface PolicyBridgeResponse {
   error?: unknown;
 }
 
+interface RuntimeBridgeRequest {
+  type: "runtime.request";
+  id: number;
+  method: string;
+  params?: unknown;
+}
+
+async function handleRuntimeRequest(request: RuntimeBridgeRequest): Promise<void> {
+  try {
+    const result = await runtime.request(request.method, request.params);
+    policyWorker?.postMessage({ type: "runtime.response", id: request.id, result });
+  } catch (error) {
+    policyWorker?.postMessage({ type: "runtime.response", id: request.id, error: serializeError(error) });
+  }
+}
+
 function handlePolicyResponse(response: PolicyBridgeResponse): void {
   const pending = pendingPolicyRequests.get(response.id);
   if (!pending) return;
@@ -133,4 +155,9 @@ function resolveLaunchCwd(): string {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function serializeError(error: unknown): { message: string; stack?: string } {
+  if (error instanceof Error) return { message: error.message, stack: error.stack };
+  return { message: String(error) };
 }

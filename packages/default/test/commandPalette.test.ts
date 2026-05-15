@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { createEditorHost, createRuntimeClient } from "../../editor/src/index.js";
+import { createEditorHost } from "../../editor/src/index.js";
 import { defaultCommandPalette } from "../src/commandPalette.js";
 
+import { createTestRuntime } from "./runtime.js";
 async function createPaletteEditor() {
-  const editor = createEditorHost({ runtime: createRuntimeClient() });
+  const editor = createEditorHost({ runtime: createTestRuntime() });
   await defaultCommandPalette()(editor);
   return editor;
 }

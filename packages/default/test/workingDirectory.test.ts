@@ -2,14 +2,15 @@ import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { commandId, createEditorHost, createRuntimeClient } from "../../editor/src/index.js";
+import { commandId, createEditorHost } from "../../editor/src/index.js";
 import { defaultCommandPalette } from "../src/commandPalette.js";
 import { defaultScratch } from "../src/scratch.js";
 import { defaultWorkingDirectory } from "../src/workingDirectory.js";
 import { getDefaultState } from "../src/state.js";
 
+import { createTestRuntime } from "./runtime.js";
 async function createWorkingDirectoryEditor(cwd: string) {
-  const editor = createEditorHost({ runtime: createRuntimeClient(), cwd });
+  const editor = createEditorHost({ runtime: createTestRuntime(), cwd });
   await defaultWorkingDirectory()(editor);
   await defaultCommandPalette()(editor);
   await defaultScratch()(editor);

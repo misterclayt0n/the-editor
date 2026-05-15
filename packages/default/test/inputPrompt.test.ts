@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { handleWorkbenchKeyInput } from "../../editor/src/workbench.js";
-import { commandId, createEditorHost, createRuntimeClient } from "../../editor/src/index.js";
+import { commandId, createEditorHost } from "../../editor/src/index.js";
 import { defaultEditing } from "../src/editing.js";
 import { defaultInputPrompt } from "../src/inputPrompt.js";
 import { defaultKeymaps } from "../src/keymaps.js";
@@ -8,8 +8,9 @@ import { defaultScratch } from "../src/scratch.js";
 import { getDefaultState } from "../src/state.js";
 import { defaultWorkbench } from "../src/workbench.js";
 
+import { createTestRuntime } from "./runtime.js";
 async function createTestEditor(text: string, options?: { keymaps?: boolean }) {
-  const editor = createEditorHost({ runtime: createRuntimeClient() });
+  const editor = createEditorHost({ runtime: createTestRuntime() });
   await defaultScratch()(editor);
   await defaultEditing()(editor);
   await defaultInputPrompt()(editor);

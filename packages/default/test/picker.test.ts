@@ -2,13 +2,14 @@ import { mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { commandId, createEditorHost, createRuntimeClient } from "../../editor/src/index.js";
+import { commandId, createEditorHost } from "../../editor/src/index.js";
 import { defaultKeymaps } from "../src/keymaps.js";
 import { defaultPicker } from "../src/picker.js";
 import { defaultScratch } from "../src/scratch.js";
 import { defaultViewport } from "../src/scratch.js";
 import { getDefaultState } from "../src/state.js";
 
+import { createTestRuntime } from "./runtime.js";
 interface PickerSnapshot {
   visible: boolean;
   sessionId?: string;
@@ -20,7 +21,7 @@ interface PickerSnapshot {
 }
 
 async function createPickerEditor(cwd?: string) {
-  const editor = createEditorHost({ runtime: createRuntimeClient(), cwd });
+  const editor = createEditorHost({ runtime: createTestRuntime(), cwd });
   await defaultScratch()(editor);
   await defaultPicker()(editor);
   await defaultKeymaps()(editor);
@@ -31,7 +32,7 @@ describe("default picker", () => {
   it("uses the editor working directory when no file is active", async () => {
     const dir = await mkdtemp(join(tmpdir(), "the-editor-picker-cwd-"));
     const root = await realpath(dir);
-    const editor = createEditorHost({ runtime: createRuntimeClient(), cwd: root });
+    const editor = createEditorHost({ runtime: createTestRuntime(), cwd: root });
     await defaultScratch()(editor);
     await defaultPicker()(editor);
     await defaultKeymaps()(editor);
@@ -47,7 +48,7 @@ describe("default picker", () => {
     const path = join(dir, "viewport.txt");
     await writeFile(path, "one\ntwo\nthree\n", "utf8");
 
-    const editor = createEditorHost({ runtime: createRuntimeClient() });
+    const editor = createEditorHost({ runtime: createTestRuntime() });
     await defaultScratch()(editor);
     const state = getDefaultState(editor);
     state.surfaceViewport = { ...defaultViewport(), rowCount: 41, wrapWidth: 137 };

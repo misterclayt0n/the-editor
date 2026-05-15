@@ -1,3 +1,5 @@
+import type { RuntimeApi } from "@the-editor/contracts/runtime";
+import { NativeRuntimeSession } from "@the-editor/runtime-node";
 import type {
   CellGridMetrics,
   ClipboardKind,
@@ -6,7 +8,6 @@ import type {
   DocumentOpened,
   OkResult,
   RenderFrame,
-  RuntimeApi,
   SurfaceCreated,
   SurfaceEdit,
   SurfaceId,
@@ -14,20 +15,15 @@ import type {
   SurfaceState,
   Viewport,
 } from "@the-editor/contracts/runtime";
-import { NativeRuntimeSession } from "@the-editor/runtime-node";
 
-export class RuntimeClientError extends Error {
-  constructor(message: string, readonly cause?: unknown) {
+class RuntimeBrokerError extends Error {
+  constructor(message: string) {
     super(message);
-    this.name = "RuntimeClientError";
+    this.name = "RuntimeBrokerError";
   }
 }
 
-export interface RuntimeNativeClientOptions {
-  session?: NativeRuntimeSession;
-}
-
-export class RuntimeNativeClient implements RuntimeApi {
+export class MainNativeRuntimeApi implements RuntimeApi {
   readonly server = {
     ping: async (): Promise<OkResult> => ({ ok: true }),
   };
@@ -125,10 +121,7 @@ export class RuntimeNativeClient implements RuntimeApi {
       this.session.laterSurface(params.surfaceId, params.count ?? 1);
       return { ok: true };
     },
-    renderFrame: async (params: {
-      surfaceId: SurfaceId;
-      viewport?: Viewport;
-    }): Promise<RenderFrame> => {
+    renderFrame: async (params: { surfaceId: SurfaceId; viewport?: Viewport }): Promise<RenderFrame> => {
       const json = this.session.renderFrameJson(params.surfaceId, params.viewport ?? null);
       return JSON.parse(json) as RenderFrame;
     },
@@ -194,96 +187,50 @@ export class RuntimeNativeClient implements RuntimeApi {
     },
   };
 
-  private readonly session: NativeRuntimeSession;
-
-  constructor(options: RuntimeNativeClientOptions = {}) {
-    this.session = options.session ?? new NativeRuntimeSession();
-  }
+  private readonly session = new NativeRuntimeSession();
 
   async request(method: string, params: unknown = {}): Promise<unknown> {
     switch (method) {
-      case "server.ping":
-        return this.server.ping();
-      case "syntax.highlightLegend":
-        return this.syntax.highlightLegend();
-      case "documents.openFile":
-        return this.documents.openFile(params as Parameters<RuntimeApi["documents"]["openFile"]>[0]);
-      case "documents.createScratch":
-        return this.documents.createScratch(params as Parameters<RuntimeApi["documents"]["createScratch"]>[0]);
-      case "surfaces.create":
-        return this.surfaces.create(params as Parameters<RuntimeApi["surfaces"]["create"]>[0]);
-      case "surfaces.destroy":
-        return this.surfaces.destroy(params as Parameters<RuntimeApi["surfaces"]["destroy"]>[0]);
-      case "surfaces.loadFile":
-        return this.surfaces.loadFile(params as Parameters<RuntimeApi["surfaces"]["loadFile"]>[0]);
-      case "surfaces.lineCount":
-        return this.surfaces.lineCount(params as Parameters<RuntimeApi["surfaces"]["lineCount"]>[0]);
-      case "surfaces.setViewport":
-        return this.surfaces.setViewport(params as Parameters<RuntimeApi["surfaces"]["setViewport"]>[0]);
-      case "surfaces.setMetrics":
-        return this.surfaces.setMetrics(params as Parameters<RuntimeApi["surfaces"]["setMetrics"]>[0]);
-      case "surfaces.setSoftWrap":
-        return this.surfaces.setSoftWrap(params as Parameters<RuntimeApi["surfaces"]["setSoftWrap"]>[0]);
-      case "surfaces.setCursorSemantics":
-        return this.surfaces.setCursorSemantics(params as Parameters<RuntimeApi["surfaces"]["setCursorSemantics"]>[0]);
-      case "surfaces.applyOperation":
-        return this.surfaces.applyOperation(params as Parameters<RuntimeApi["surfaces"]["applyOperation"]>[0]);
-      case "surfaces.readState":
-        return this.surfaces.readState(params as Parameters<RuntimeApi["surfaces"]["readState"]>[0]);
-      case "surfaces.setActiveCursor":
-        return this.surfaces.setActiveCursor(params as Parameters<RuntimeApi["surfaces"]["setActiveCursor"]>[0]);
-      case "surfaces.applyEdit":
-        return this.surfaces.applyEdit(params as Parameters<RuntimeApi["surfaces"]["applyEdit"]>[0]);
-      case "surfaces.commitUndoCheckpoint":
-        return this.surfaces.commitUndoCheckpoint(params as Parameters<RuntimeApi["surfaces"]["commitUndoCheckpoint"]>[0]);
-      case "surfaces.undo":
-        return this.surfaces.undo(params as Parameters<RuntimeApi["surfaces"]["undo"]>[0]);
-      case "surfaces.redo":
-        return this.surfaces.redo(params as Parameters<RuntimeApi["surfaces"]["redo"]>[0]);
-      case "surfaces.earlier":
-        return this.surfaces.earlier(params as Parameters<RuntimeApi["surfaces"]["earlier"]>[0]);
-      case "surfaces.later":
-        return this.surfaces.later(params as Parameters<RuntimeApi["surfaces"]["later"]>[0]);
-      case "surfaces.renderFrame":
-        return this.surfaces.renderFrame(params as Parameters<RuntimeApi["surfaces"]["renderFrame"]>[0]);
-      case "search.ensureIndex":
-        return this.search.ensureIndex(params as Parameters<RuntimeApi["search"]["ensureIndex"]>[0]);
-      case "search.status":
-        return this.search.status(params as Parameters<RuntimeApi["search"]["status"]>[0]);
-      case "search.refresh":
-        return this.search.refresh(params as Parameters<RuntimeApi["search"]["refresh"]>[0]);
-      case "search.queryFiles":
-        return this.search.queryFiles(params as Parameters<RuntimeApi["search"]["queryFiles"]>[0]);
-      case "search.queryDirs":
-        return this.search.queryDirs(params as Parameters<RuntimeApi["search"]["queryDirs"]>[0]);
-      case "search.queryMixed":
-        return this.search.queryMixed(params as Parameters<RuntimeApi["search"]["queryMixed"]>[0]);
-      case "search.queryGrep":
-        return this.search.queryGrep(params as Parameters<RuntimeApi["search"]["queryGrep"]>[0]);
-      case "search.recordSelection":
-        return this.search.recordSelection(params as Parameters<RuntimeApi["search"]["recordSelection"]>[0]);
-      case "search.readTextPreview":
-        return this.search.readTextPreview(params as Parameters<RuntimeApi["search"]["readTextPreview"]>[0]);
-      case "registers.read":
-        return this.registers.read(params as Parameters<RuntimeApi["registers"]["read"]>[0]);
-      case "registers.write":
-        return this.registers.write(params as Parameters<RuntimeApi["registers"]["write"]>[0]);
-      case "clipboard.read":
-        return this.clipboard.read(params as Parameters<RuntimeApi["clipboard"]["read"]>[0]);
-      case "clipboard.write":
-        return this.clipboard.write(params as Parameters<RuntimeApi["clipboard"]["write"]>[0]);
-      case "resources.save":
-        return this.resources.save(params as Parameters<RuntimeApi["resources"]["save"]>[0]);
+      case "server.ping": return this.server.ping();
+      case "syntax.highlightLegend": return this.syntax.highlightLegend();
+      case "documents.openFile": return this.documents.openFile(params as Parameters<RuntimeApi["documents"]["openFile"]>[0]);
+      case "documents.createScratch": return this.documents.createScratch(params as Parameters<RuntimeApi["documents"]["createScratch"]>[0]);
+      case "surfaces.create": return this.surfaces.create(params as Parameters<RuntimeApi["surfaces"]["create"]>[0]);
+      case "surfaces.destroy": return this.surfaces.destroy(params as Parameters<RuntimeApi["surfaces"]["destroy"]>[0]);
+      case "surfaces.loadFile": return this.surfaces.loadFile(params as Parameters<RuntimeApi["surfaces"]["loadFile"]>[0]);
+      case "surfaces.lineCount": return this.surfaces.lineCount(params as Parameters<RuntimeApi["surfaces"]["lineCount"]>[0]);
+      case "surfaces.setViewport": return this.surfaces.setViewport(params as Parameters<RuntimeApi["surfaces"]["setViewport"]>[0]);
+      case "surfaces.setMetrics": return this.surfaces.setMetrics(params as Parameters<RuntimeApi["surfaces"]["setMetrics"]>[0]);
+      case "surfaces.setSoftWrap": return this.surfaces.setSoftWrap(params as Parameters<RuntimeApi["surfaces"]["setSoftWrap"]>[0]);
+      case "surfaces.setCursorSemantics": return this.surfaces.setCursorSemantics(params as Parameters<RuntimeApi["surfaces"]["setCursorSemantics"]>[0]);
+      case "surfaces.applyOperation": return this.surfaces.applyOperation(params as Parameters<RuntimeApi["surfaces"]["applyOperation"]>[0]);
+      case "surfaces.readState": return this.surfaces.readState(params as Parameters<RuntimeApi["surfaces"]["readState"]>[0]);
+      case "surfaces.setActiveCursor": return this.surfaces.setActiveCursor(params as Parameters<RuntimeApi["surfaces"]["setActiveCursor"]>[0]);
+      case "surfaces.applyEdit": return this.surfaces.applyEdit(params as Parameters<RuntimeApi["surfaces"]["applyEdit"]>[0]);
+      case "surfaces.completeWords": return this.surfaces.completeWords(params as Parameters<RuntimeApi["surfaces"]["completeWords"]>[0]);
+      case "surfaces.commitUndoCheckpoint": return this.surfaces.commitUndoCheckpoint(params as Parameters<RuntimeApi["surfaces"]["commitUndoCheckpoint"]>[0]);
+      case "surfaces.undo": return this.surfaces.undo(params as Parameters<RuntimeApi["surfaces"]["undo"]>[0]);
+      case "surfaces.redo": return this.surfaces.redo(params as Parameters<RuntimeApi["surfaces"]["redo"]>[0]);
+      case "surfaces.earlier": return this.surfaces.earlier(params as Parameters<RuntimeApi["surfaces"]["earlier"]>[0]);
+      case "surfaces.later": return this.surfaces.later(params as Parameters<RuntimeApi["surfaces"]["later"]>[0]);
+      case "surfaces.renderFrame": return this.surfaces.renderFrame(params as Parameters<RuntimeApi["surfaces"]["renderFrame"]>[0]);
+      case "search.ensureIndex": return this.search.ensureIndex(params as Parameters<RuntimeApi["search"]["ensureIndex"]>[0]);
+      case "search.status": return this.search.status(params as Parameters<RuntimeApi["search"]["status"]>[0]);
+      case "search.refresh": return this.search.refresh(params as Parameters<RuntimeApi["search"]["refresh"]>[0]);
+      case "search.queryFiles": return this.search.queryFiles(params as Parameters<RuntimeApi["search"]["queryFiles"]>[0]);
+      case "search.queryDirs": return this.search.queryDirs(params as Parameters<RuntimeApi["search"]["queryDirs"]>[0]);
+      case "search.queryMixed": return this.search.queryMixed(params as Parameters<RuntimeApi["search"]["queryMixed"]>[0]);
+      case "search.queryGrep": return this.search.queryGrep(params as Parameters<RuntimeApi["search"]["queryGrep"]>[0]);
+      case "search.recordSelection": return this.search.recordSelection(params as Parameters<RuntimeApi["search"]["recordSelection"]>[0]);
+      case "search.previewPathCacheKey": return this.search.previewPathCacheKey(params as Parameters<RuntimeApi["search"]["previewPathCacheKey"]>[0]);
+      case "search.readTextPreview": return this.search.readTextPreview(params as Parameters<RuntimeApi["search"]["readTextPreview"]>[0]);
+      case "registers.read": return this.registers.read(params as Parameters<RuntimeApi["registers"]["read"]>[0]);
+      case "registers.write": return this.registers.write(params as Parameters<RuntimeApi["registers"]["write"]>[0]);
+      case "clipboard.read": return this.clipboard.read(params as Parameters<RuntimeApi["clipboard"]["read"]>[0]);
+      case "clipboard.write": return this.clipboard.write(params as Parameters<RuntimeApi["clipboard"]["write"]>[0]);
+      case "resources.save": return this.resources.save(params as Parameters<RuntimeApi["resources"]["save"]>[0]);
       default:
-        throw new RuntimeClientError(`unknown runtime method ${method}`);
+        throw new RuntimeBrokerError(`unknown runtime method ${method}`);
     }
   }
-
-  dispose(): void {}
 }
-
-export function createRuntimeClient(options?: RuntimeNativeClientOptions): RuntimeNativeClient {
-  return new RuntimeNativeClient(options);
-}
-
-export const spawnRuntimeClient = createRuntimeClient;

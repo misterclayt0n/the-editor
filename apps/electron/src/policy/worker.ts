@@ -1,14 +1,19 @@
 import { parentPort, workerData } from "node:worker_threads";
 import type { KeyInput } from "@the-editor/editor";
-import { createEditorHost, createRuntimeClient } from "@the-editor/editor";
+import { createEditorHost } from "@the-editor/editor";
 import { bootWorkbench, configureWorkbenchSurface, getWorkbenchSessionState, handleWorkbenchKeyInput, type WorkbenchSessionState } from "@the-editor/editor/workbench";
 import { ElectronPackageDiscovery } from "./packageDiscovery.js";
 import { createPolicyPackageTargetAdapters } from "./packageTargetAdapters.js";
+import { createRuntimeIpcClient } from "./runtimeIpcClient.js";
 import { PolicyTransactionController } from "./transactions.js";
 
 if (!parentPort) throw new Error("policy worker requires parentPort");
+const port = parentPort;
 
-const runtime = createRuntimeClient();
+const runtime = createRuntimeIpcClient({
+  postMessage: (message) => port.postMessage(message),
+  onMessage: (listener) => port.on("message", listener),
+});
 const initialCwd = typeof workerData?.cwd === "string" ? workerData.cwd : process.cwd();
 const editor = createEditorHost({ runtime, cwd: initialCwd, packageTargetAdapters: createPolicyPackageTargetAdapters() });
 const packageDiscovery = new ElectronPackageDiscovery(

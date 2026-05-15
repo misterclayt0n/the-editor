@@ -20,6 +20,7 @@
     "@the-editor/contracts": "workspace:*",
     "@the-editor/default": "workspace:*",
     "@the-editor/editor": "workspace:*",
+    "@the-editor/runtime-node": "workspace:*",
     "@vitejs/plugin-react": "latest",
     "electron": "latest",
     "react": "latest",

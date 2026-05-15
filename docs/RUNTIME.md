@@ -140,10 +140,13 @@ TypeScript should still own:
 `the-runtime` is not a replacement for the TypeScript product layer.
 It is the native substrate that TypeScript composes against.
 
+In the Electron app, the single native runtime session is owned by Electron main. The policy worker accesses it through a broad IPC-backed `RuntimeApi` client. The renderer accesses it only through a narrow render bridge for visible frame requests.
+
 That means:
 - `the-runtime` should expose honest native capabilities
 - it should not define the editor's personality
 - it should not become a giant built-in command/UI system
+- renderer access must stay paint-shaped, not semantic-command-shaped
 
 ## Runtime command boundary
 `the-runtime` may support command execution, but only as a generic adapter over `the-lib`.
@@ -327,7 +330,8 @@ Reason:
 Required shape:
 - transport is owned by per-server actors or an equivalent owner-task model
 - document-to-server sync is owned by a dedicated document mirror module, not by editing call sites
-- native LSP request waits do not hold the document/surface runtime lock
+- native LSP request waits do not hold the document/surface runtime core lock
+- LSP reads document state by acquiring a quick snapshot/delta and then releasing the core lock before awaiting server IO
 - TypeScript-facing LSP requests are stale-safe and should be cancellable where feasible
 - completion request/resolve paths use request ids and ignore stale results
 - request-local `content modified` / cancellation errors do not automatically become server-health failures
@@ -352,6 +356,42 @@ Reason:
 - external service waits must not block surface/document state, rendering, or typing
 
 A full event bus is not required before there is a concrete need, but LSP already creates the need for an owner-task seam, a document mirror seam, and stale-safe request handling.
+
+The native runtime must be split conceptually into a hot editor core and service owners:
+
+```txt
+RuntimeCore
+  documents
+  surfaces
+  resources/attachments
+  registers
+  cheap state needed for typing/rendering
+
+RuntimeServices
+  syntax scheduler
+  search
+  LSP
+  file watching
+  git/VCS
+```
+
+Hot editor calls may take a short core lock:
+
+- apply surface operation
+- apply surface edit
+- set/render viewport and metrics
+- render surface frame
+- read lightweight surface summary
+
+Slow service calls must not hold that core lock while waiting on external systems:
+
+- LSP request/response
+- search scans/queries that may block
+- file watcher events
+- git commands
+- long syntax/background work
+
+Services communicate with the core through snapshots, deltas, handles, revision ids, queued updates, and stale-result rejection. They do not wait on external IO while owning document/surface mutation access.
 
 ### Workspace/global-search/git/VCS
 These should come later.

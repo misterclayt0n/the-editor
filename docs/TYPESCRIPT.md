@@ -199,25 +199,52 @@ The renderer does not own semantic editor truth. It should not maintain a second
 
 ## Native runtime bridge
 
-V1 uses napi-rs instead of a separate JSON-RPC runtime process.
+V1 uses napi-rs, but the native runtime package is owned by **Electron main**, not the policy worker and not the renderer.
 
-The policy worker imports the native runtime package through `packages/editor`'s typed runtime client:
+```txt
+Electron main
+  owns the single NativeRuntimeSession
+  exposes a broad policy runtime bridge
+  exposes a narrow renderer render bridge
+
+Policy worker
+  owns EditorHost/product logic
+  uses an IPC-backed RuntimeApi client
+  does not import runtime-node directly
+
+Electron renderer
+  paints UI and canvas surfaces
+  uses only the narrow render bridge for visible text frames
+  does not import runtime-node directly
+```
+
+This keeps one authoritative native runtime instance while separating behavior traffic from paint traffic.
+
+The policy worker creates the editor host with an IPC-backed runtime client:
 
 ```ts
-const runtime = createRuntimeClient();
+const runtime = createRuntimeIpcClient();
 const editor = createEditorHost({ runtime });
 ```
 
-The native bridge is synchronous internally today, but exposed to TypeScript behind async domain methods so the public policy API can remain stable if specific calls become asynchronous later.
+The renderer uses a separate narrow bridge:
+
+```ts
+const frame = await renderBridge.renderFrame({ surfaceId, viewport, metrics });
+```
+
+The native bridge may be synchronous internally today, but public TypeScript methods remain async so individual calls can later move to async worker/actor implementations without changing the policy API.
 
 The important rule is unchanged:
 
 - keep runtime APIs coarse-grained
 - keep hot text/layout work in Rust
 - do not expose chatty per-row/per-token APIs
-- benchmark native serialization costs once the Electron loop exists
+- do not serialize hot-path render frames as JSON long-term
+- do not copy full document text during normal typing/render refresh
+- keep renderer access narrower than policy access
 
-`packages/editor` sees a typed runtime client, not napi-rs details.
+`packages/editor` sees a typed runtime client, not napi-rs details. Only `apps/electron/main` should know about `@the-editor/runtime-node`.
 
 ---
 
@@ -285,16 +312,35 @@ type LspSessionId = Brand<number, "LspSessionId">;
 
 Most semantic runtime calls flow through the policy worker. Rendering is the intentional exception.
 
-The renderer may use a narrow runtime render bridge:
+The renderer uses a separate, explicit render bridge owned by Electron main. This bridge is not the full runtime API.
+
+Allowed renderer bridge:
 
 ```ts
-runtime.surfaces.renderFrame({
+renderBridge.renderFrame({
   surfaceId,
   viewport,
+  metrics,
 });
 ```
 
-This avoids placing the policy worker in the paint hot path.
+Disallowed from the renderer bridge:
+
+```txt
+applyOperation
+applyEdit
+read full document text
+openFile
+save
+search
+LSP
+commands
+workbench mutation
+```
+
+`renderFrame({ surfaceId, viewport, metrics })` is stateful on the native `Surface`: Rust persists the viewport and metrics on the surface, reconciles surface/render state, and returns a `RenderFrame` for that request.
+
+This avoids placing the policy worker in the paint hot path while keeping Rust authoritative for cell-grid layout truth.
 
 Ownership remains clear:
 
@@ -304,18 +350,54 @@ Policy worker:
   decides where surfaces are placed
   configures surface policy/options
   dispatches editing commands
+  emits explicit surface invalidation events after surface mutations
 
 Renderer:
-  measures viewport size
+  measures viewport size and cell metrics
   tracks concrete scroll/pixel state
-  requests render frames for visible surfaces
+  requests render frames for visible surfaces after invalidation/scroll/resize
+  caches frames as presentation data only
   paints returned render frames
 
 Rust:
-  owns cell-grid layout truth, selection truth, document truth
+  owns document truth
+  owns surface truth, including persisted viewport/metrics
+  owns cell-grid layout/projection truth
+  returns RenderFrame paint data
 ```
 
 The renderer must not use the render bridge to make semantic editor decisions.
+
+### Surface invalidation model
+
+Visible text frames are not part of the general workbench snapshot.
+
+After policy code mutates a surface, it emits an explicit invalidation event:
+
+```ts
+{
+  type: "surface.invalidated",
+  surfaceIds: [surfaceId],
+  reason: "edit" | "selection" | "viewport" | "syntax" | "configuration",
+}
+```
+
+The renderer receives the event, checks which invalidated surfaces are visible, and requests fresh frames only for those surfaces.
+
+There is no compatibility fallback where every policy snapshot causes visible surfaces to rerender. Workbench snapshots communicate product/layout state; surface invalidation events communicate render freshness.
+
+### Policy render use
+
+The policy worker should not request frames for normal visible editor painting.
+
+Policy may request frames for utility and non-paint cases only, such as:
+
+- picker previews
+- file previews
+- headless tests
+- offscreen preview surfaces
+
+Those utility render calls must not become the normal typing paint path.
 
 ---
 
@@ -401,6 +483,8 @@ type WorkbenchModel = {
 ```
 
 The renderer receives this model and paints it.
+
+The logical model must identify text surfaces by handle, but it must not embed normal visible `RenderFrame` payloads. A surface pane snapshot should carry identity and product metadata such as `surfaceId`, `documentId`, title, path, dirty/revision metadata, and tool/pane state. The renderer obtains the actual frame through the explicit render bridge after surface invalidation, scroll, or resize.
 
 The policy worker decides:
 
@@ -1172,10 +1256,12 @@ V1 should prove the architecture, not complete the editor.
 ### V1 should include
 
 - `packages/runtime-node` napi-rs native package
+- Electron main owning the single native runtime session
+- Electron main exposing separate policy-runtime and renderer-render IPC endpoints
 - Electron main starting the policy worker
-- policy worker loading the native runtime client
+- policy worker using an IPC-backed runtime client instead of importing runtime-node
 - renderer React shell
-- Canvas2D surface painter
+- Canvas2D surface painter using the explicit render bridge for visible frames
 - `packages/editor` substrate skeleton
 - `packages/default` composed module skeleton
 - open file
@@ -1240,12 +1326,19 @@ Rust should own the impure/session/service work.
 - `packages/default` must use the same public API as user modules.
 - The policy worker owns logical UI composition.
 - The renderer paints and hosts views; it does not own semantic editor truth.
-- Electron main owns policy worker lifecycle.
+- Electron main owns policy worker lifecycle and the single native runtime session.
+- Electron main exposes separate policy-runtime and renderer-render bridges.
+- The renderer render bridge is explicit and narrow; it is not the full runtime API.
+- Visible `RenderFrame` payloads do not ride the general workbench snapshot.
+- Surface invalidation events, not generic snapshot changes, trigger renderer frame requests.
 - The native runtime package exposes domain APIs, not product behavior.
 - Keyboard/keymap resolution belongs in policy worker.
 - Rust executes native editing/rendering intents.
 - Splits and panes belong in TypeScript, not Rust.
 - Runtime calls must be coarse-grained.
+- Electron main owns the single native runtime session for the Electron distribution.
+- Policy runtime access and renderer render access must use separate explicit bridges.
+- Normal visible `RenderFrame` payloads must not ride the general workbench/app snapshot.
 - React must not be in the text-paint hot path.
 - Canvas2D painter must sit behind a replaceable `SurfacePainter` adapter.
 - Hot reload is dispose-and-reactivate by module.
@@ -1263,9 +1356,9 @@ packages/editor  = programmable editor substrate
 packages/default = first-party module distribution
 policy worker    = product behavior + logical UI composition
 Electron renderer= React chrome + Canvas surface painter
-Electron main    = policy worker supervision + IPC bridge
+Electron main    = policy worker supervision + native runtime broker + IPC bridges
 Rust runtime     = authoritative native state and services
-runtime-node     = thin napi-rs native adapter
+runtime-node     = thin napi-rs native adapter owned by Electron main
 ```
 
 The defining principle is:

@@ -91,9 +91,21 @@ impl RuntimeSession {
 }
 ```
 
+The Electron render bridge calls this through a single frame request that carries concrete renderer measurements:
+
+```ts
+renderBridge.renderFrame({
+  surfaceId,
+  viewport,
+  metrics,
+});
+```
+
+The native bridge applies `metrics` and `viewport` to the `Surface`, then renders. This is intentionally stateful: `Surface` remains the owner of viewport/metrics/reveal/render state.
+
 ## Important consequence
 
-The Electron client currently uses Rust as a:
+The Electron client uses Rust as a:
 
 > viewport-aware cell-grid projection engine
 
@@ -106,6 +118,21 @@ JS / Electron still owns:
 - line numbers / gutters
 - decorations / overlays
 - any richer product UI
+
+But normal visible editor frames are not part of the general workbench/app snapshot. The workbench snapshot identifies which `SurfaceId` belongs in which pane. The renderer requests `RenderFrame` payloads through the explicit render bridge after surface invalidation, scroll, or resize.
+
+The normal paint path is:
+
+```txt
+surface invalidated / scrolled / resized
+  -> renderer computes viewport + metrics
+  -> renderer calls renderBridge.renderFrame(surfaceId, viewport, metrics)
+  -> Electron main calls Rust
+  -> Rust updates Surface viewport/metrics and returns RenderFrame
+  -> renderer paints canvas
+```
+
+The policy worker may still request frames for utility cases such as picker previews, file previews, or headless tests, but it must not broker normal visible editor painting.
 
 ## Electron ligature shaping
 
@@ -218,3 +245,11 @@ If a feature is primarily:
 - client-owned visual policy
 
 it should stay out of this kernel.
+
+Performance rules:
+
+- do not serialize normal visible `RenderFrame` payloads as JSON long-term
+- do not copy full document text to TypeScript during normal typing/render refresh
+- do not send visible `RenderFrame` payloads inside workbench snapshots
+- surface invalidation events trigger frame requests
+- renderer frame caches are presentation caches only, not semantic truth

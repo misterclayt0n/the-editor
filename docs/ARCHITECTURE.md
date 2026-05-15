@@ -537,6 +537,7 @@ Reasoning:
 Reasoning:
 - Rust should own cell-grid layout truth
 - clients should own painting and richer presentation policy
+- normal visible render frames should travel through an explicit render bridge, not through the general app/workbench snapshot
 
 ### Rule 5: App/chrome state is separate from surface render state
 
@@ -551,7 +552,7 @@ The built-in cell-grid renderer is split into two stages.
 
 ```txt
 Rust (`the-lib`):   viewport-first cell-grid layout + visible-frame projection
-Client:             native painting and presentation scene
+Client:             native painting and presentation scene + explicit frame requests
 TypeScript:         orchestration + providers + surface composition
 ```
 
@@ -572,6 +573,7 @@ Client owns:
 TypeScript owns:
 - decoration/provider composition
 - deciding which surfaces exist and how they are arranged
+- explicit surface invalidation events after policy-driven surface mutations
 
 The important rendering decision is this:
 
@@ -694,6 +696,18 @@ TypeScript may contribute structured providers into runtime domains and surfaces
 Reasoning:
 - this preserves extensibility without sacrificing performance
 - providers should submit structured data, not run per-row native callbacks
+
+### Explicit render bridge, not render snapshots in app state
+
+Visible `RenderFrame` payloads should not be embedded in general workbench/app snapshots.
+
+The product layer decides which surfaces exist and where they are placed. The renderer observes surface invalidation events and requests frames for visible surfaces through a narrow render bridge. Rust still produces the `RenderFrame`; the client still paints it.
+
+Reasoning:
+- keeps policy/product state off the paint hot path
+- avoids cloning large frame payloads through app snapshots
+- preserves Rust ownership of cell-grid truth
+- preserves renderer ownership of concrete viewport measurement and painting
 
 ---
 

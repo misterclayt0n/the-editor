@@ -662,6 +662,8 @@ function SurfaceEditorPane({
   const latestSelectionPickerActiveRef = useRef(false);
   const latestCursorShapeRef = useRef<"bar" | "block" | "underline">("block");
   const renderRequestRef = useRef(0);
+  const pendingRenderRequestRef = useRef<{ viewport: Viewport; metrics: CellGridMetrics } | undefined>(undefined);
+  const renderScheduledRef = useRef(false);
 
   latestFrameRef.current = renderFrame;
   latestDecorationsRef.current = decorations;
@@ -675,12 +677,21 @@ function SurfaceEditorPane({
     const viewport = configuration?.viewport ?? paneState?.viewport;
     const metrics = configuration?.metrics ?? paneState?.metrics ?? latestConfigMetricsRef.current;
     if (!viewport || !metrics) return;
-    const requestId = ++renderRequestRef.current;
-    void window.theEditorRender.renderFrame({ surfaceId: pane.surfaceId, viewport, metrics }).then((frame) => {
-      if (requestId !== renderRequestRef.current) return;
-      setRenderFrame(frame);
-    }).catch((error) => {
-      console.error(error);
+    pendingRenderRequestRef.current = { viewport, metrics };
+    if (renderScheduledRef.current) return;
+    renderScheduledRef.current = true;
+    window.requestAnimationFrame(() => {
+      renderScheduledRef.current = false;
+      const request = pendingRenderRequestRef.current;
+      pendingRenderRequestRef.current = undefined;
+      if (!request) return;
+      const requestId = ++renderRequestRef.current;
+      void window.theEditorRender.renderFrame({ surfaceId: pane.surfaceId, viewport: request.viewport, metrics: request.metrics }).then((frame) => {
+        if (requestId !== renderRequestRef.current) return;
+        setRenderFrame(frame);
+      }).catch((error) => {
+        console.error(error);
+      });
     });
   };
 
@@ -744,6 +755,7 @@ function SurfaceEditorPane({
 
     return () => {
       disposed = true;
+      renderRequestRef.current += 1;
       if (raf) window.cancelAnimationFrame(raf);
       observer?.disconnect();
       surfaceCursorAnchors.delete(pane.surfaceId);

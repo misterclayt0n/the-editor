@@ -158,7 +158,7 @@ These facts are cheap because they are produced by the same visible-layout pass 
 
 Higher-level gutter policy belongs to TypeScript providers. Providers consume visible `gutterRows` plus product metadata such as path, line count, diagnostics, or cached VCS hunks through an explicit `surface.gutters` policy request from the renderer after it receives a frame. Provider gutter results are renderer presentation data; they do not ride the workbench snapshot.
 
-Providers must not require full `RenderFrame` in the normal workbench snapshot path. Expensive metadata such as VCS hunks must be cached/debounced separately; visible gutter collection should return cached metadata immediately and schedule refresh work out-of-band.
+Providers must not require full `RenderFrame` in the normal workbench snapshot path. Expensive metadata such as VCS hunks must be cached and refreshed out-of-band; visible gutter collection should return cached metadata immediately and schedule coalesced async refresh work when stale.
 
 VCS gutters should follow the same model used by editors like Zed:
 

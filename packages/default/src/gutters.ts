@@ -62,7 +62,7 @@ interface VcsDiffCacheEntry {
 
 const vcsBaseCache = new Map<string, VcsBaseCacheEntry>();
 const vcsDiffCache = new Map<string, VcsDiffCacheEntry>();
-const vcsDiffTimers = new Map<string, NodeJS.Timeout>();
+const vcsDiffJobs = new Map<string, { latestSurfaceId: SurfaceId; latestRevision: number; running: boolean }>();
 
 function scheduleVcsBaseLoad(editor: Parameters<EditorModule>[0], root: string, relPath: string, surfaceId: SurfaceId | undefined): void {
   const key = `${root}\0${relPath}`;
@@ -80,21 +80,40 @@ function scheduleVcsBaseLoad(editor: Parameters<EditorModule>[0], root: string, 
 
 function scheduleVcsDiff(editor: Parameters<EditorModule>[0], key: string, baseText: string, surfaceId: SurfaceId, revision: number): void {
   const current = vcsDiffCache.get(key);
-  if (current?.revision === revision && (current.inFlight || current.baseText === baseText)) return;
-  const existing = vcsDiffTimers.get(key);
-  if (existing) clearTimeout(existing);
-  const timer = setTimeout(() => {
-    vcsDiffTimers.delete(key);
-    vcsDiffCache.set(key, { baseText, revision, hunks: current?.hunks ?? [], inFlight: true });
-    void editor.runtime.surfaces.readText({ surfaceId }).then(({ text }) => {
+  if (current?.revision === revision && current.baseText === baseText && !current.inFlight) return;
+  const job = vcsDiffJobs.get(key);
+  if (job) {
+    job.latestSurfaceId = surfaceId;
+    job.latestRevision = revision;
+    return;
+  }
+
+  const nextJob = { latestSurfaceId: surfaceId, latestRevision: revision, running: false };
+  vcsDiffJobs.set(key, nextJob);
+  queueMicrotask(() => void runVcsDiffJob(editor, key, baseText));
+}
+
+async function runVcsDiffJob(editor: Parameters<EditorModule>[0], key: string, baseText: string): Promise<void> {
+  const job = vcsDiffJobs.get(key);
+  if (!job || job.running) return;
+  job.running = true;
+  try {
+    while (true) {
+      const surfaceId = job.latestSurfaceId;
+      const revision = job.latestRevision;
+      vcsDiffCache.set(key, { baseText, revision, hunks: vcsDiffCache.get(key)?.hunks ?? [], inFlight: true });
+      const { text } = await editor.runtime.surfaces.readText({ surfaceId });
+      if (job.latestRevision !== revision || job.latestSurfaceId !== surfaceId) continue;
       const hunks = diffLines(baseText, text);
       vcsDiffCache.set(key, { baseText, revision, hunks });
       editor.workbench.invalidateSurface(surfaceId, "unknown");
-    }).catch(() => {
-      vcsDiffCache.delete(key);
-    });
-  }, 180);
-  vcsDiffTimers.set(key, timer);
+      break;
+    }
+  } catch {
+    vcsDiffCache.delete(key);
+  } finally {
+    vcsDiffJobs.delete(key);
+  }
 }
 
 async function loadVcsBase(root: string, relPath: string): Promise<string | null> {

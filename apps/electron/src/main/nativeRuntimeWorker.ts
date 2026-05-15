@@ -86,6 +86,26 @@ async function dispatch(method: string, params: unknown = {}): Promise<unknown> 
         viewport: session.readSurfaceViewport(p.surfaceId),
       };
     }
+    case "surfaces.readText": {
+      const p = params as { surfaceId: SurfaceId };
+      return { text: session.readSurfaceText(p.surfaceId) };
+    }
+    case "surfaces.readRevision": {
+      const p = params as { surfaceId: SurfaceId };
+      return { revision: session.readSurfaceRevision(p.surfaceId) };
+    }
+    case "surfaces.readLineEnding": {
+      const p = params as { surfaceId: SurfaceId };
+      return { lineEnding: session.readSurfaceLineEnding(p.surfaceId) };
+    }
+    case "surfaces.readSelection": {
+      const p = params as { surfaceId: SurfaceId };
+      return { selection: session.readSurfaceSelection(p.surfaceId), activeCursorId: session.readSurfaceActiveCursor(p.surfaceId) };
+    }
+    case "surfaces.readCursorSemantics": {
+      const p = params as { surfaceId: SurfaceId };
+      return { cursorSemantics: session.readSurfaceCursorSemantics(p.surfaceId) };
+    }
     case "surfaces.setActiveCursor": {
       const p = params as Parameters<RuntimeApi["surfaces"]["setActiveCursor"]>[0]; session.setSurfaceActiveCursor(p.surfaceId, p.cursorId); return { ok: true };
     }

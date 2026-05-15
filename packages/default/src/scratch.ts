@@ -185,8 +185,8 @@ async function shouldReplaceInitialScratch(editor: EditorHost): Promise<boolean>
   if (!activePane || activePane.path || activePane.title !== "Scratch") return false;
   const layout = editor.workbench.snapshotEditorLayout();
   if (layout.panes.length !== 1) return false;
-  const state = await editor.runtime.surfaces.readState({ surfaceId: activePane.surfaceId });
-  return state.text.length === 0;
+  const { text } = await editor.runtime.surfaces.readText({ surfaceId: activePane.surfaceId });
+  return text.length === 0;
 }
 
 function findOpenFilePane(editor: EditorHost, path: string): Extract<WorkbenchPaneDescriptor, { kind: "surface" }> | undefined {
@@ -206,9 +206,12 @@ async function navigateSurfaceToLocation(
   surfaceId: SurfaceId,
   location: { line: number; column?: number; viewport?: Viewport },
 ): Promise<void> {
-  const surface = await editor.runtime.surfaces.readState({ surfaceId });
-  const cursor = offsetForLineColumn(surface.text, location.line, location.column);
-  const cursorId = Math.max(1, (surface.activeCursorId ?? surface.selection[0]?.cursorId ?? 0));
+  const [{ text }, selectionState] = await Promise.all([
+    editor.runtime.surfaces.readText({ surfaceId }),
+    editor.runtime.surfaces.readSelection({ surfaceId }),
+  ]);
+  const cursor = offsetForLineColumn(text, location.line, location.column);
+  const cursorId = Math.max(1, (selectionState.activeCursorId ?? selectionState.selection[0]?.cursorId ?? 0));
   const selection: SurfaceSelectionRange[] = [{ cursorId, anchor: cursor, head: cursor }];
   if (location.viewport) {
     await editor.runtime.surfaces.setViewport({ surfaceId, viewport: location.viewport });

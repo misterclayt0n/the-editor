@@ -204,7 +204,7 @@ export function defaultWorkbench(): EditorModule {
       const activePane = activeSurfacePane(editor);
       const activeWorkbenchPane = editor.workbench.activePane();
       if (activeWorkbenchPane?.kind !== "surface" || !activePane?.documentId) throw new Error("no active surface");
-      const source = await editor.runtime.surfaces.readState({ surfaceId: activePane.surfaceId });
+      const source = await editor.runtime.surfaces.readSelection({ surfaceId: activePane.surfaceId });
       const surface = await editor.runtime.surfaces.create({
         documentId: activePane.documentId,
         viewport: activePane.viewport,

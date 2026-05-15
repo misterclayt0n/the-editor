@@ -1627,7 +1627,26 @@ async function pageCursor(
 }
 
 async function readActiveSurfaceState(editor: EditorHost): Promise<SurfaceState> {
-  return editor.runtime.surfaces.readState({ surfaceId: activeSurfaceId(editor) });
+  const surfaceId = activeSurfaceId(editor);
+  const [text, revision, lineEnding, lineCount, selection, cursorSemantics, viewport] = await Promise.all([
+    editor.runtime.surfaces.readText({ surfaceId }),
+    editor.runtime.surfaces.readRevision({ surfaceId }),
+    editor.runtime.surfaces.readLineEnding({ surfaceId }),
+    editor.runtime.surfaces.lineCount({ surfaceId }),
+    editor.runtime.surfaces.readSelection({ surfaceId }),
+    editor.runtime.surfaces.readCursorSemantics({ surfaceId }),
+    editor.runtime.surfaces.readViewport({ surfaceId }),
+  ]);
+  return {
+    text: text.text,
+    revision: revision.revision,
+    lineEnding: lineEnding.lineEnding,
+    lineCount: lineCount.lineCount,
+    selection: selection.selection,
+    activeCursorId: selection.activeCursorId,
+    cursorSemantics: cursorSemantics.cursorSemantics,
+    viewport: viewport.viewport,
+  };
 }
 
 async function applyEdit(editor: EditorHost, edit: SurfaceEdit, checkpoint = false): Promise<void> {

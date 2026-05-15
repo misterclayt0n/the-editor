@@ -298,6 +298,11 @@ export interface RuntimeApi {
     setCursorSemantics(params: { surfaceId: SurfaceId; semantics: CursorSemantics }): Promise<OkResult>;
     applyOperation(params: { surfaceId: SurfaceId; operation: SurfaceOperation }): Promise<OkResult>;
     readState(params: { surfaceId: SurfaceId }): Promise<SurfaceState>;
+    readText(params: { surfaceId: SurfaceId }): Promise<{ text: string }>;
+    readRevision(params: { surfaceId: SurfaceId }): Promise<{ revision: number }>;
+    readLineEnding(params: { surfaceId: SurfaceId }): Promise<{ lineEnding: string }>;
+    readSelection(params: { surfaceId: SurfaceId }): Promise<{ selection: SurfaceSelectionRange[]; activeCursorId: number | null }>;
+    readCursorSemantics(params: { surfaceId: SurfaceId }): Promise<{ cursorSemantics: CursorSemantics }>;
     completeWords(params: { surfaceId: SurfaceId; cursorOffset: number; query: string; limit?: number }): Promise<Array<{ label: string }>>;
     setActiveCursor(params: { surfaceId: SurfaceId; cursorId: number | null }): Promise<OkResult>;
     applyEdit(params: { surfaceId: SurfaceId; edit: SurfaceEdit }): Promise<OkResult>;

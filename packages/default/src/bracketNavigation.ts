@@ -1,6 +1,6 @@
 import type { DiagnosticRecord, EditorHost, EditorModule } from "@the-editor/editor";
 import { commandId } from "@the-editor/editor";
-import type { SurfaceId, SurfaceSelectionRange, SurfaceState } from "@the-editor/contracts/runtime";
+import type { SurfaceId, SurfaceSelectionRange } from "@the-editor/contracts/runtime";
 import { activeSurfacePane, refreshActiveSurface } from "./state.js";
 
 type Direction = "prev" | "next";
@@ -36,7 +36,7 @@ function register(editor: EditorHost, id: string, run: () => Promise<void> | voi
 async function gotoDiagnostic(editor: EditorHost, direction: Direction): Promise<void> {
   const pane = activeSurfacePane(editor);
   if (!pane?.path || !pane.surfaceId) return;
-  const state = await editor.runtime.surfaces.readState({ surfaceId: pane.surfaceId });
+  const state = await readTextSelection(editor, pane.surfaceId);
   const cursor = activeCursorByteOffset(state);
   const ranges = diagnosticRanges(editor, pane.path, state.text);
   const target = direction === "next"
@@ -48,7 +48,7 @@ async function gotoDiagnostic(editor: EditorHost, direction: Direction): Promise
 async function gotoDiagnosticBoundary(editor: EditorHost, boundary: Boundary): Promise<void> {
   const pane = activeSurfacePane(editor);
   if (!pane?.path || !pane.surfaceId) return;
-  const state = await editor.runtime.surfaces.readState({ surfaceId: pane.surfaceId });
+  const state = await readTextSelection(editor, pane.surfaceId);
   const ranges = diagnosticRanges(editor, pane.path, state.text);
   const target = boundary === "first" ? ranges[0] : ranges.at(-1);
   if (target) await selectWithJump(editor, pane.surfaceId, target);
@@ -64,7 +64,7 @@ function diagnosticRanges(editor: EditorHost, path: string, text: string): Surfa
 async function gotoObject(editor: EditorHost, kind: ObjectKind, direction: Direction): Promise<void> {
   const pane = activeSurfacePane(editor);
   if (!pane?.path || !pane.surfaceId) return;
-  const state = await editor.runtime.surfaces.readState({ surfaceId: pane.surfaceId });
+  const state = await readTextSelection(editor, pane.surfaceId);
   const ranges = kind === "comment" ? commentRanges(state.text) : await symbolRanges(editor, pane.path, state.text, kind);
   const cursor = activeCursorByteOffset(state);
   const target = direction === "next"
@@ -90,7 +90,7 @@ function commentRanges(text: string): SurfaceSelectionRange[] {
 
 async function gotoParagraph(editor: EditorHost, direction: Direction): Promise<void> {
   const pane = activeSurfacePane(editor); if (!pane?.surfaceId) return;
-  const state = await editor.runtime.surfaces.readState({ surfaceId: pane.surfaceId });
+  const state = await readTextSelection(editor, pane.surfaceId);
   const cursor = activeCursorByteOffset(state); const index = stringIndexAtUtf8ByteOffset(state.text, cursor);
   const paras = paragraphRanges(state.text);
   const target = direction === "next"
@@ -136,7 +136,7 @@ function matchingBraceIndex(text: string, open: number): number {
 
 async function addNewline(editor: EditorHost, where: "above" | "below"): Promise<void> {
   const pane = activeSurfacePane(editor); if (!pane?.surfaceId) return;
-  const state = await editor.runtime.surfaces.readState({ surfaceId: pane.surfaceId });
+  const state = await readTextSelection(editor, pane.surfaceId);
   const cursor = activeCursorByteOffset(state); const index = stringIndexAtUtf8ByteOffset(state.text, cursor);
   const lineStart = state.text.lastIndexOf("\n", Math.max(0, index - 1)) + 1;
   const lineEndIndex = state.text.indexOf("\n", index); const lineEnd = lineEndIndex < 0 ? state.text.length : lineEndIndex;
@@ -156,7 +156,15 @@ async function selectWithJump(editor: EditorHost, surfaceId: SurfaceId, range: S
 }
 
 type Position = { line: number; character: number };
-function activeCursorByteOffset(state: SurfaceState): number { const c = state.selection.find((r) => r.cursorId === state.activeCursorId) ?? state.selection[0]; return c ? c.head : 0; }
+async function readTextSelection(editor: EditorHost, surfaceId: SurfaceId): Promise<{ text: string; selection: SurfaceSelectionRange[]; activeCursorId: number | null }> {
+  const [{ text }, selection] = await Promise.all([
+    editor.runtime.surfaces.readText({ surfaceId }),
+    editor.runtime.surfaces.readSelection({ surfaceId }),
+  ]);
+  return { text, ...selection };
+}
+
+function activeCursorByteOffset(state: { selection: SurfaceSelectionRange[]; activeCursorId: number | null }): number { const c = state.selection.find((r) => r.cursorId === state.activeCursorId) ?? state.selection[0]; return c ? c.head : 0; }
 function offsetAtPosition(text: string, pos: Position): number { return utf8ByteOffsetAtStringIndex(text, utf16PositionToStringIndex(text, pos)); }
 function utf16PositionToStringIndex(text: string, pos: Position): number { let line = 0, start = 0; for (let i = 0; i < text.length && line < pos.line; i++) if (text.charCodeAt(i) === 10) { line++; start = i + 1; } const end = text.indexOf("\n", start); return Math.min(start + pos.character, end < 0 ? text.length : end); }
 function stringIndexAtUtf8ByteOffset(text: string, byteOffset: number): number { if (byteOffset <= 0) return 0; let bytes = 0; for (let i = 0; i < text.length; i++) { const code = text.charCodeAt(i); const next = code >= 0xd800 && code <= 0xdbff && i + 1 < text.length ? text.slice(i, i + 2) : text[i] ?? ""; const len = new TextEncoder().encode(next).length; if (bytes + len > byteOffset) return i; bytes += len; if (next.length === 2) i++; if (bytes >= byteOffset) return i + 1; } return text.length; }

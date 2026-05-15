@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import type { SurfaceChange, SurfaceEdit, SurfaceId, SurfaceSelectionRange, SurfaceState } from "@the-editor/contracts/runtime";
+import type { CursorSemantics, SurfaceChange, SurfaceEdit, SurfaceId, SurfaceSelectionRange } from "@the-editor/contracts/runtime";
 import {
   commandId,
   roleId,
@@ -204,7 +204,7 @@ async function openInputPrompt(editor: Parameters<EditorModule>[0], kind: InputP
   if (!surfaceId) return;
 
   await closeInputPrompt(editor, false);
-  const state = await editor.runtime.surfaces.readState({ surfaceId });
+  const state = await readTextSelection(editor, surfaceId);
   const session = editor.sessions.create<ActiveInputPromptState>({
     kind: "inputPrompt",
     role: inputPromptRoleId,
@@ -373,7 +373,7 @@ async function updateSelectRegexPreview(
   }
 
   active.error = undefined;
-  const state = await editor.runtime.surfaces.readState({ surfaceId: active.surfaceId });
+  const state = await readTextSelection(editor, active.surfaceId);
   const nextSelection = selectRegexMatches(state.text, active.originalSelection, regex);
   if (nextSelection instanceof Error) {
     active.error = nextSelection.message;
@@ -399,7 +399,7 @@ async function finalizeSelectRegex(
     return false;
   }
 
-  const state = await editor.runtime.surfaces.readState({ surfaceId: active.surfaceId });
+  const state = await readTextSelection(editor, active.surfaceId);
   const nextSelection = selectRegexMatches(state.text, active.originalSelection, regex);
   if (nextSelection instanceof Error) {
     active.error = nextSelection.message;
@@ -438,7 +438,7 @@ async function updateSplitSelectionPreview(
   }
 
   active.error = undefined;
-  const state = await editor.runtime.surfaces.readState({ surfaceId: active.surfaceId });
+  const state = await readTextSelection(editor, active.surfaceId);
   const nextSelection = splitSelectionMatches(state.text, active.originalSelection, regex);
   await editor.runtime.surfaces.applyEdit({
     surfaceId: active.surfaceId,
@@ -458,7 +458,7 @@ async function finalizeSplitSelection(
     return false;
   }
 
-  const state = await editor.runtime.surfaces.readState({ surfaceId: active.surfaceId });
+  const state = await readTextSelection(editor, active.surfaceId);
   const nextSelection = splitSelectionMatches(state.text, active.originalSelection, regex);
   active.error = undefined;
   await editor.runtime.surfaces.applyEdit({
@@ -489,7 +489,7 @@ async function updateKeepOrRemoveSelectionsPreview(
   }
 
   active.error = undefined;
-  const state = await editor.runtime.surfaces.readState({ surfaceId: active.surfaceId });
+  const state = await readTextSelection(editor, active.surfaceId);
   const nextSelection = keepOrRemoveSelections(state.text, active.originalSelection, regex, remove);
   if (!nextSelection?.length) return;
 
@@ -512,7 +512,7 @@ async function finalizeKeepOrRemoveSelections(
     return false;
   }
 
-  const state = await editor.runtime.surfaces.readState({ surfaceId: active.surfaceId });
+  const state = await readTextSelection(editor, active.surfaceId);
   const nextSelection = keepOrRemoveSelections(state.text, active.originalSelection, regex, remove);
   if (!nextSelection?.length) {
     active.error = "no selections remaining";
@@ -548,7 +548,7 @@ async function updateSearchPreview(
   }
 
   active.error = undefined;
-  const state = await editor.runtime.surfaces.readState({ surfaceId: active.surfaceId });
+  const state = await readTextSelection(editor, active.surfaceId);
   const nextSelection = searchRegexSelection(state.text, active.originalSelection, regex, direction, active.extend);
   if (!nextSelection) return;
 
@@ -573,7 +573,7 @@ async function finalizeSearch(
   active.error = undefined;
   await editor.runtime.registers.write({ name: activeSearchRegister(editor), values: [active.query] });
 
-  const state = await editor.runtime.surfaces.readState({ surfaceId: active.surfaceId });
+  const state = await readTextSelection(editor, active.surfaceId);
   const nextSelection = searchRegexSelection(
     state.text,
     active.originalSelection,
@@ -607,7 +607,7 @@ async function repeatStoredSearch(
   if (regex instanceof Error) return;
 
   for (let remaining = Math.max(1, count ?? 1); remaining > 0; remaining -= 1) {
-    const state = await editor.runtime.surfaces.readState({ surfaceId });
+    const state = await readTextSelection(editor, surfaceId);
     const nextSelection = searchRegexSelection(state.text, state.selection, regex, direction, extend);
     if (!nextSelection) return;
     await editor.runtime.surfaces.applyEdit({
@@ -657,7 +657,7 @@ async function applyShellBehavior(
   command: string,
   behavior: ShellBehavior,
 ): Promise<void> {
-  const state = await editor.runtime.surfaces.readState({ surfaceId });
+  const state = await readTextSelection(editor, surfaceId);
 
   if (behavior === "keep") {
     const selection = await keepPipeSelections(editor, state, command);
@@ -968,7 +968,7 @@ function rangeContainsInclusive(range: Pick<SurfaceSelectionRange, "anchor" | "h
 }
 
 
-function cursorByteOffset(state: SurfaceState, cursor: SurfaceSelectionRange): number {
+function cursorByteOffset(state: { text: string; cursorSemantics: CursorSemantics }, cursor: SurfaceSelectionRange): number {
   if (state.cursorSemantics === "InsertionPoint") return cursor.head;
   if (cursor.head <= cursor.anchor) return cursor.head;
   return utf8ByteOffsetAtStringIndex(state.text, previousGraphemeIndex(state.text, stringIndexAtUtf8ByteOffset(state.text, cursor.head)));
@@ -1043,7 +1043,7 @@ async function initialPromptQuery(editor: Parameters<EditorModule>[0], kind: Inp
   if (kind !== "renameSymbol") return "";
   const surfaceId = getDefaultState(editor).activeSurfaceId;
   if (!surfaceId) return "";
-  const state = await editor.runtime.surfaces.readState({ surfaceId });
+  const state = await readTextSelectionCursorSemantics(editor, surfaceId);
   const cursor = state.selection.find((range) => range.cursorId === state.activeCursorId) ?? state.selection[0];
   if (!cursor) return "";
   const index = stringIndexAtUtf8ByteOffset(state.text, cursorByteOffset(state, cursor));
@@ -1102,6 +1102,22 @@ function promptPlaceholder(kind: InputPromptKind): string {
     case "shellKeepPipe":
       return "Shell command";
   }
+}
+
+async function readTextSelection(editor: Parameters<EditorModule>[0], surfaceId: SurfaceId): Promise<{ text: string; selection: SurfaceSelectionRange[]; activeCursorId: number | null }> {
+  const [{ text }, selection] = await Promise.all([
+    editor.runtime.surfaces.readText({ surfaceId }),
+    editor.runtime.surfaces.readSelection({ surfaceId }),
+  ]);
+  return { text, ...selection };
+}
+
+async function readTextSelectionCursorSemantics(editor: Parameters<EditorModule>[0], surfaceId: SurfaceId): Promise<{ text: string; selection: SurfaceSelectionRange[]; activeCursorId: number | null; cursorSemantics: CursorSemantics }> {
+  const [state, { cursorSemantics }] = await Promise.all([
+    readTextSelection(editor, surfaceId),
+    editor.runtime.surfaces.readCursorSemantics({ surfaceId }),
+  ]);
+  return { ...state, cursorSemantics };
 }
 
 function isInputPromptKind(value: unknown): value is InputPromptKind {

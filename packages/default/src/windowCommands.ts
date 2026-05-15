@@ -1,6 +1,6 @@
 import type { EditorHost, EditorModule } from "@the-editor/editor";
 import { commandId, defineHostStore } from "@the-editor/editor";
-import type { SurfaceSelectionRange, SurfaceState } from "@the-editor/contracts/runtime";
+import type { SurfaceSelectionRange } from "@the-editor/contracts/runtime";
 import type { WorkbenchPaneDescriptor, WorkbenchPaneId } from "@the-editor/editor/workbench";
 import { defaultViewport } from "./scratch.js";
 import { activeSurfacePane, getDefaultState, refreshActiveSurface, removeSurfacePaneState, upsertSurfacePaneState } from "./state.js";
@@ -54,14 +54,18 @@ function register(editor: EditorHost, id: string, run: () => Promise<unknown> | 
 async function gotoWindow(editor: EditorHost, align: "top" | "center" | "bottom"): Promise<void> {
   const pane = activeSurfacePane(editor);
   if (!pane?.surfaceId) return;
-  const state = await editor.runtime.surfaces.readState({ surfaceId: pane.surfaceId });
-  const height = pane.viewport.rowCount || state.viewport.rowCount || 0;
+  const [{ text }, selectionState, { viewport }] = await Promise.all([
+    editor.runtime.surfaces.readText({ surfaceId: pane.surfaceId }),
+    editor.runtime.surfaces.readSelection({ surfaceId: pane.surfaceId }),
+    editor.runtime.surfaces.readViewport({ surfaceId: pane.surfaceId }),
+  ]);
+  const height = pane.viewport.rowCount || viewport.rowCount || 0;
   if (!height) return;
   const row = align === "top" ? 0 : align === "center" ? Math.floor((height - 1) / 2) : height - 1;
-  const targetLine = (pane.viewport.firstRow ?? state.viewport.firstRow ?? 0) + row;
-  const target = byteOffsetAtLine(state.text, targetLine);
+  const targetLine = (pane.viewport.firstRow ?? viewport.firstRow ?? 0) + row;
+  const target = byteOffsetAtLine(text, targetLine);
   const extend = getDefaultState(editor).mode === "select";
-  const selection = state.selection.map((range) => putCursor(range, state, target, extend));
+  const selection = selectionState.selection.map((range) => putCursor(range, text, target, extend));
   await editor.runtime.surfaces.applyEdit({ surfaceId: pane.surfaceId, edit: { selection } });
   await refreshActiveSurface(editor);
   editor.workbench.invalidate("frame");
@@ -195,8 +199,8 @@ function recordModifiedBuffer(editor: EditorHost): void {
   if (path) bufferNavState(editor).modified = path;
 }
 
-function putCursor(range: SurfaceSelectionRange, state: SurfaceState, target: number, extend: boolean): SurfaceSelectionRange {
-  const head = Math.max(0, Math.min(target, new TextEncoder().encode(state.text).length));
+function putCursor(range: SurfaceSelectionRange, text: string, target: number, extend: boolean): SurfaceSelectionRange {
+  const head = Math.max(0, Math.min(target, new TextEncoder().encode(text).length));
   return extend ? { ...range, head } : { ...range, anchor: head, head };
 }
 

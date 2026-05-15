@@ -163,7 +163,7 @@ Providers must not require full `RenderFrame` in the normal workbench snapshot p
 VCS gutters should follow the same model used by editors like Zed:
 
 ```txt
-buffer/runtime metadata stores diff hunks
+runtime queries/cache diff hunks off the JS paint path
 render frame exposes visible row mapping
 gutter provider maps cached hunks onto visible gutter rows
 renderer paints bars

@@ -1,5 +1,7 @@
 use std::{
   num::NonZeroU64,
+  path::Path,
+  process::Command,
   sync::Mutex,
 };
 
@@ -277,6 +279,29 @@ impl NativeRuntimeSession {
       .and_then(|document| runtime.document(document))
       .ok_or_else(|| Error::from_reason(format!("unknown surface {surface_id}")))?;
     Ok(document.text().to_string())
+  }
+
+  #[napi]
+  pub fn query_vcs_hunks_json(
+    &self,
+    surface_id: u32,
+    root_path: String,
+    relative_path: String,
+  ) -> Result<String> {
+    let runtime = self.lock()?;
+    let surface = surface_handle(surface_id)?;
+    let document = runtime
+      .document_for_surface(surface)
+      .and_then(|document| runtime.document(document))
+      .ok_or_else(|| Error::from_reason(format!("unknown surface {surface_id}")))?;
+    let current_text = document.text().to_string();
+    drop(runtime);
+
+    let Some(base_text) = load_vcs_base(Path::new(&root_path), &relative_path) else {
+      return Ok("[]".to_string());
+    };
+    let hunks = diff_lines(&base_text, &current_text);
+    serde_json::to_string(&hunks).map_err(|err| Error::from_reason(err.to_string()))
   }
 
   #[napi]
@@ -817,6 +842,97 @@ fn js_render_frame(frame: the_lib::render::RenderFrame) -> JsRenderFrame {
         }
       })
       .collect(),
+  }
+}
+
+fn load_vcs_base(root: &Path, relative_path: &str) -> Option<String> {
+  Command::new("jj")
+    .args(["file", "show", "--revision", "@-", relative_path])
+    .current_dir(root)
+    .output()
+    .ok()
+    .filter(|output| output.status.success())
+    .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+    .or_else(|| {
+      Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("show")
+        .arg(format!("HEAD:{relative_path}"))
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+    })
+}
+
+fn diff_lines(base_text: &str, current_text: &str) -> Vec<serde_json::Value> {
+  if base_text == current_text {
+    return Vec::new();
+  }
+  let old_lines = split_lines(base_text);
+  let new_lines = split_lines(current_text);
+  let n = old_lines.len();
+  let m = new_lines.len();
+  let mut dp = vec![vec![0usize; m + 1]; n + 1];
+  for i in (0..n).rev() {
+    for j in (0..m).rev() {
+      dp[i][j] = if old_lines[i] == new_lines[j] {
+        dp[i + 1][j + 1] + 1
+      } else {
+        dp[i + 1][j].max(dp[i][j + 1])
+      };
+    }
+  }
+
+  let mut hunks = Vec::new();
+  let mut i = 0;
+  let mut j = 0;
+  let mut pending: Option<(usize, usize, usize)> = None;
+
+  let flush = |pending: &mut Option<(usize, usize, usize)>, hunks: &mut Vec<serde_json::Value>| {
+    let Some((old_count, new_start, new_count)) = pending.take() else {
+      return;
+    };
+    let kind = if new_count == 0 {
+      "deleted"
+    } else if old_count == 0 {
+      "added"
+    } else {
+      "modified"
+    };
+    hunks.push(serde_json::json!({
+      "start": new_start.max(1),
+      "count": new_count.max(1),
+      "kind": kind,
+    }));
+  };
+
+  while i < n || j < m {
+    if i < n && j < m && old_lines[i] == new_lines[j] {
+      flush(&mut pending, &mut hunks);
+      i += 1;
+      j += 1;
+    } else if j < m && (i == n || dp[i][j + 1] >= dp[i + 1][j]) {
+      let entry = pending.get_or_insert((0, j + 1, 0));
+      entry.2 += 1;
+      j += 1;
+    } else {
+      let entry = pending.get_or_insert((0, j + 1, 0));
+      entry.0 += 1;
+      i += 1;
+    }
+  }
+  flush(&mut pending, &mut hunks);
+  hunks
+}
+
+fn split_lines(text: &str) -> Vec<&str> {
+  let normalized = text.strip_suffix('\n').unwrap_or(text);
+  if normalized.is_empty() {
+    Vec::new()
+  } else {
+    normalized.lines().collect()
   }
 }
 

@@ -149,6 +149,10 @@ async function dispatch(method: string, params: unknown = {}): Promise<unknown> 
       const p = params as Parameters<RuntimeApi["search"]["readTextPreview"]>[0];
       return JSON.parse(session.readTextPreviewJson(p.path, p.maxBytes ?? null, p.maxLines ?? null, p.aroundLine ?? null, p.contextLines ?? null));
     }
+    case "vcs.queryHunks": {
+      const p = params as Parameters<RuntimeApi["vcs"]["queryHunks"]>[0];
+      return { hunks: JSON.parse(session.queryVcsHunksJson(p.surfaceId, p.rootPath, p.relativePath)) };
+    }
     case "registers.read": { const p = params as Parameters<RuntimeApi["registers"]["read"]>[0]; return { values: session.readRegister(p.name) ?? null }; }
     case "registers.write": { const p = params as Parameters<RuntimeApi["registers"]["write"]>[0]; session.writeRegister(p.name, p.values); return { ok: true }; }
     case "clipboard.read": { const p = params as Parameters<RuntimeApi["clipboard"]["read"]>[0]; return { value: session.readClipboard(p.kind) ?? null }; }

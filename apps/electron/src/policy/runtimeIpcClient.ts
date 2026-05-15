@@ -61,6 +61,10 @@ export class RuntimeIpcClient implements RuntimeApi {
     renderFrame: (params: Parameters<RuntimeApi["surfaces"]["renderFrame"]>[0]) => this.request("surfaces.renderFrame", params) as ReturnType<RuntimeApi["surfaces"]["renderFrame"]>,
   };
 
+  readonly vcs = {
+    queryHunks: (params: Parameters<RuntimeApi["vcs"]["queryHunks"]>[0]) => this.request("vcs.queryHunks", params) as ReturnType<RuntimeApi["vcs"]["queryHunks"]>,
+  };
+
   readonly registers = {
     read: (params: Parameters<RuntimeApi["registers"]["read"]>[0]) => this.request("registers.read", params) as ReturnType<RuntimeApi["registers"]["read"]>,
     write: (params: Parameters<RuntimeApi["registers"]["write"]>[0]) => this.request("registers.write", params) as ReturnType<RuntimeApi["registers"]["write"]>,

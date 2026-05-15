@@ -275,6 +275,12 @@ export interface TextPreviewSyntaxSpan {
   scope?: string;
 }
 
+export interface VcsHunk {
+  start: number;
+  count: number;
+  kind: "added" | "modified" | "deleted";
+}
+
 export interface TextPreviewResult {
   path: string;
   text: string;
@@ -361,6 +367,9 @@ export interface RuntimeApi {
       aroundLine?: number;
       contextLines?: number;
     }): Promise<TextPreviewResult>;
+  };
+  vcs: {
+    queryHunks(params: { surfaceId: SurfaceId; rootPath: string; relativePath: string }): Promise<{ hunks: VcsHunk[] }>;
   };
   resources: {
     save(params: { surfaceId: SurfaceId }): Promise<OkResult>;

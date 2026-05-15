@@ -158,6 +158,10 @@ export class MainNativeRuntimeApi implements RuntimeApi {
     readTextPreview: async (params: Parameters<RuntimeApi["search"]["readTextPreview"]>[0]) => this.call("search.readTextPreview", params) as ReturnType<RuntimeApi["search"]["readTextPreview"]>,
   };
 
+  readonly vcs = {
+    queryHunks: async (params: Parameters<RuntimeApi["vcs"]["queryHunks"]>[0]) => this.call("vcs.queryHunks", params) as ReturnType<RuntimeApi["vcs"]["queryHunks"]>,
+  };
+
   readonly registers = {
     read: async (params: { name: string }): Promise<{ values: string[] | null }> => this.call("registers.read", params),
     write: async (params: { name: string; values: string[] }): Promise<OkResult> => this.call("registers.write", params),

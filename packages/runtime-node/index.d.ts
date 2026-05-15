@@ -13,6 +13,7 @@ export declare class NativeRuntimeSession {
   setSurfaceCursorSemantics(surfaceId: number, semantics: string): void
   applySurfaceOperation(surfaceId: number, operation: JsSurfaceOperation): void
   readSurfaceText(surfaceId: number): string
+  queryVcsHunksJson(surfaceId: number, rootPath: string, relativePath: string): string
   readSurfaceRevision(surfaceId: number): number
   readSurfaceLineEnding(surfaceId: number): string
   readSurfaceLineCount(surfaceId: number): number

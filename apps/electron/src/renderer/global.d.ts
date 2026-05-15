@@ -1,7 +1,12 @@
+import type { CellGridMetrics, RenderFrame, SurfaceId, Viewport } from "@the-editor/contracts/runtime";
+
 export {};
 
 declare global {
   interface Window {
+    theEditorRender: {
+      renderFrame(request: { surfaceId: SurfaceId; viewport: Viewport; metrics: CellGridMetrics }): Promise<RenderFrame>;
+    };
     theEditor: {
       openFileDialog(): Promise<string | null>;
       policyRequest(method: string, params?: unknown): Promise<unknown>;

@@ -94,6 +94,50 @@ pub struct JsSurfaceEdit {
   pub selection: Option<Vec<JsSurfaceSelectionRange>>,
 }
 
+#[napi(object)]
+pub struct JsRenderRow {
+  pub surface_row:          u32,
+  pub text:                 String,
+  pub doc_line:             Option<u32>,
+  pub starts_logical_line:  bool,
+  pub wrapped_continuation: bool,
+}
+
+#[napi(object)]
+pub struct JsSelectionSpan {
+  pub cursor_id:   u32,
+  pub surface_row: u32,
+  pub start_col:   u32,
+  pub end_col:     u32,
+  pub active:      bool,
+}
+
+#[napi(object)]
+pub struct JsCursorPlacement {
+  pub cursor_id:   u32,
+  pub surface_row: u32,
+  pub col:         u32,
+  pub semantics:   String,
+  pub active:      bool,
+}
+
+#[napi(object)]
+pub struct JsSyntaxSpan {
+  pub surface_row: u32,
+  pub start_col:   u32,
+  pub end_col:     u32,
+  pub kind:        u32,
+}
+
+#[napi(object)]
+pub struct JsRenderFrame {
+  pub surface_id: u32,
+  pub rows:       Vec<JsRenderRow>,
+  pub selections: Vec<JsSelectionSpan>,
+  pub cursors:    Vec<JsCursorPlacement>,
+  pub syntax:     Vec<JsSyntaxSpan>,
+}
+
 #[napi]
 pub struct NativeRuntimeSession {
   inner: Mutex<RuntimeSession>,
@@ -477,6 +521,28 @@ impl NativeRuntimeSession {
   }
 
   #[napi]
+  pub fn render_frame(
+    &self,
+    surface_id: u32,
+    viewport: JsViewport,
+    metrics: JsCellGridMetrics,
+  ) -> Result<JsRenderFrame> {
+    let mut runtime = self.lock()?;
+    let surface = surface_handle(surface_id)?;
+    runtime
+      .set_surface_measurements(
+        surface,
+        CellGridMetrics::new(metrics.cell_width_px, metrics.row_height_px),
+      )
+      .map_err(runtime_error)?;
+    runtime
+      .set_surface_viewport(surface, viewport.into())
+      .map_err(runtime_error)?;
+    let frame = runtime.render_surface(surface).map_err(runtime_error)?;
+    Ok(js_render_frame(frame))
+  }
+
+  #[napi]
   pub fn render_frame_json(&self, surface_id: u32, viewport: Option<JsViewport>) -> Result<String> {
     let mut runtime = self.lock()?;
     let surface = surface_handle(surface_id)?;
@@ -660,6 +726,67 @@ impl NativeRuntimeSession {
       .inner
       .lock()
       .map_err(|_| Error::from_reason("runtime session lock poisoned"))
+  }
+}
+
+fn js_render_frame(frame: the_lib::render::RenderFrame) -> JsRenderFrame {
+  JsRenderFrame {
+    surface_id: frame.surface_id.get() as u32,
+    rows:       frame
+      .rows
+      .into_iter()
+      .map(|row| {
+        JsRenderRow {
+          surface_row:          row.surface_row as u32,
+          text:                 row.text.to_string(),
+          doc_line:             row.doc_line.map(|line| line as u32),
+          starts_logical_line:  row.starts_logical_line,
+          wrapped_continuation: row.wrapped_continuation,
+        }
+      })
+      .collect(),
+    selections: frame
+      .selections
+      .into_iter()
+      .map(|span| {
+        JsSelectionSpan {
+          cursor_id:   span.cursor_id.get() as u32,
+          surface_row: span.surface_row as u32,
+          start_col:   span.start_col as u32,
+          end_col:     span.end_col as u32,
+          active:      span.active,
+        }
+      })
+      .collect(),
+    cursors:    frame
+      .cursors
+      .into_iter()
+      .map(|cursor| {
+        JsCursorPlacement {
+          cursor_id:   cursor.cursor_id.get() as u32,
+          surface_row: cursor.surface_row as u32,
+          col:         cursor.col as u32,
+          semantics:   match cursor.semantics {
+            CursorSemantics::InsertionPoint => "InsertionPoint",
+            CursorSemantics::Cell => "Cell",
+          }
+          .to_string(),
+          active:      cursor.active,
+        }
+      })
+      .collect(),
+    syntax:     frame
+      .syntax
+      .into_iter()
+      .map(|span| {
+        JsSyntaxSpan {
+          surface_row: span.surface_row as u32,
+          start_col:   span.start_col as u32,
+          end_col:     span.end_col as u32,
+          kind:        span.kind.get(),
+        }
+      })
+      .collect(),
   }
 }
 

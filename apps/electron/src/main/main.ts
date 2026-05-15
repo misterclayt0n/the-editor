@@ -1,3 +1,4 @@
+import type { CellGridMetrics, SurfaceId, Viewport } from "@the-editor/contracts/runtime";
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
@@ -99,6 +100,10 @@ ipcMain.handle("policy:request", async (_event, request: { method: string; param
   });
 });
 
+ipcMain.handle("render:frame", async (_event, request: RenderFrameRequest) => {
+  return runtime.renderFrame(request);
+});
+
 app.whenReady().then(async () => {
   await createWindow();
   startPolicyWorker();
@@ -111,6 +116,12 @@ app.on("window-all-closed", () => {
 app.on("before-quit", () => {
   policyWorker?.terminate();
 });
+
+interface RenderFrameRequest {
+  surfaceId: SurfaceId;
+  viewport: Viewport;
+  metrics: CellGridMetrics;
+}
 
 interface PolicyBridgeResponse {
   type: "policy.response";

@@ -24,6 +24,12 @@ if (inputPerfEnabled) {
   }, { capture: true });
 }
 
+contextBridge.exposeInMainWorld("theEditorRender", {
+  renderFrame(request) {
+    return ipcRenderer.invoke("render:frame", request);
+  },
+});
+
 contextBridge.exposeInMainWorld("theEditor", {
   openFileDialog() {
     return ipcRenderer.invoke("app:open-file-dialog");

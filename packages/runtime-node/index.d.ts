@@ -33,6 +33,7 @@ export declare class NativeRuntimeSession {
   readClipboard(kind: string): string | null
   writeClipboard(value: string, kind: string): void
   readSyntaxHighlightLegendJson(): string
+  renderFrame(surfaceId: number, viewport: JsViewport, metrics: JsCellGridMetrics): JsRenderFrame
   renderFrameJson(surfaceId: number, viewport?: JsViewport | undefined | null): string
   saveSurfaceDocument(surfaceId: number): void
   ensureSearchIndexJson(rootPath: string): string
@@ -50,6 +51,38 @@ export declare class NativeRuntimeSession {
 export interface JsCellGridMetrics {
   cellWidthPx: number
   rowHeightPx: number
+}
+
+export interface JsCursorPlacement {
+  cursorId: number
+  surfaceRow: number
+  col: number
+  semantics: string
+  active: boolean
+}
+
+export interface JsRenderFrame {
+  surfaceId: number
+  rows: Array<JsRenderRow>
+  selections: Array<JsSelectionSpan>
+  cursors: Array<JsCursorPlacement>
+  syntax: Array<JsSyntaxSpan>
+}
+
+export interface JsRenderRow {
+  surfaceRow: number
+  text: string
+  docLine?: number
+  startsLogicalLine: boolean
+  wrappedContinuation: boolean
+}
+
+export interface JsSelectionSpan {
+  cursorId: number
+  surfaceRow: number
+  startCol: number
+  endCol: number
+  active: boolean
 }
 
 export interface JsSurfaceChange {
@@ -80,6 +113,13 @@ export interface JsSurfaceSelectionRange {
   cursorId: number
   anchor: number
   head: number
+}
+
+export interface JsSyntaxSpan {
+  surfaceRow: number
+  startCol: number
+  endCol: number
+  kind: number
 }
 
 export interface JsViewport {

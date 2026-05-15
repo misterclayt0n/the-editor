@@ -647,6 +647,7 @@ function SurfaceEditorPane({
   cursorShape: "bar" | "block" | "underline";
 }) {
   const paneState = pane.state as SurfacePaneSnapshotState | undefined;
+  const [renderFrame, setRenderFrame] = useState<RenderFrame | undefined>(undefined);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lastConfigRef = useRef<string>("");
   const latestConfigMetricsRef = useRef<CellGridMetrics | undefined>(paneState?.metrics);
@@ -657,14 +658,28 @@ function SurfaceEditorPane({
   const latestSyntaxLegendRef = useRef<Record<number, string>>({});
   const latestSelectionPickerActiveRef = useRef(false);
   const latestCursorShapeRef = useRef<"bar" | "block" | "underline">("block");
+  const renderRequestRef = useRef(0);
 
-  latestFrameRef.current = paneState?.frame;
+  latestFrameRef.current = renderFrame;
   latestDecorationsRef.current = decorations;
   latestGuttersRef.current = paneState?.gutters ?? [];
   latestThemeRef.current = theme;
   latestSyntaxLegendRef.current = syntaxLegend;
   latestSelectionPickerActiveRef.current = selectionPickerActive;
   latestCursorShapeRef.current = cursorShape;
+
+  const requestRenderFrame = (configuration?: { viewport: Viewport; metrics: CellGridMetrics }) => {
+    const viewport = configuration?.viewport ?? paneState?.viewport;
+    const metrics = configuration?.metrics ?? paneState?.metrics ?? latestConfigMetricsRef.current;
+    if (!viewport || !metrics) return;
+    const requestId = ++renderRequestRef.current;
+    void window.theEditorRender.renderFrame({ surfaceId: pane.surfaceId, viewport, metrics }).then((frame) => {
+      if (requestId !== renderRequestRef.current) return;
+      setRenderFrame(frame);
+    }).catch((error) => {
+      console.error(error);
+    });
+  };
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -706,6 +721,7 @@ function SurfaceEditorPane({
       }
       if (serialized === lastConfigRef.current) return;
       lastConfigRef.current = serialized;
+      requestRenderFrame(config);
       void window.theEditor.policyRequest("surface.configure", { paneId: pane.id, ...config }).catch((error) => {
         console.error(error);
       });
@@ -732,35 +748,39 @@ function SurfaceEditorPane({
   }, [pane.id, pane.surfaceId]);
 
   useEffect(() => {
+    requestRenderFrame();
+  }, [pane.surfaceId, paneState?.frame, paneState?.metrics, paneState?.viewport]);
+
+  useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     surfaceCursorAnchors.set({
       surfaceId: pane.surfaceId,
       canvas,
-      frame: paneState?.frame,
+      frame: renderFrame,
       gutters: paneState?.gutters ?? [],
       metrics: paneState?.metrics ?? latestConfigMetricsRef.current,
       styleOptions: EDITOR_SURFACE_STYLE,
     });
-  }, [pane.surfaceId, paneState?.frame, paneState?.gutters, paneState?.metrics]);
+  }, [pane.surfaceId, renderFrame, paneState?.gutters, paneState?.metrics]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    if (!paneState?.frame) {
+    if (!renderFrame) {
       clearCanvasTextSurface(canvas, theme, EDITOR_SURFACE_STYLE);
       return;
     }
     paintCanvasTextSurface(
       canvas,
-      paneState.frame,
+      renderFrame,
       decorations,
       theme,
       syntaxLegend,
-      { selectionPickerActive, gutters: paneState.gutters ?? [], cursorShape },
+      { selectionPickerActive, gutters: paneState?.gutters ?? [], cursorShape },
       EDITOR_SURFACE_STYLE,
     );
-  }, [cursorShape, decorations, pane.id, pane.path, paneState?.frame, paneState?.gutters, selectionPickerActive, syntaxLegend, theme]);
+  }, [cursorShape, decorations, pane.id, pane.path, renderFrame, paneState?.gutters, selectionPickerActive, syntaxLegend, theme]);
 
   return (
     <div className="editorSurfacePane" data-active={active ? "true" : undefined} onMouseDown={() => focusPane(pane.id)}>

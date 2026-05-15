@@ -189,6 +189,10 @@ export class MainNativeRuntimeApi implements RuntimeApi {
 
   private readonly session = new NativeRuntimeSession();
 
+  async renderFrame(params: { surfaceId: SurfaceId; viewport: Viewport; metrics: CellGridMetrics }): Promise<RenderFrame> {
+    return this.session.renderFrame(params.surfaceId, params.viewport, params.metrics) as RenderFrame;
+  }
+
   async request(method: string, params: unknown = {}): Promise<unknown> {
     switch (method) {
       case "server.ping": return this.server.ping();

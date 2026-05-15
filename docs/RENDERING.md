@@ -12,6 +12,7 @@ Rust owns a pure **cell-grid projection** path for monospace rendering:
 - document visual-row indexing
 - viewport-local visible row extraction
 - row metadata
+- low-level visible gutter facts
 - selection projection
 - cursor projection
 - syntax projection
@@ -46,7 +47,7 @@ into a `RenderFrame`.
 These are no longer part of the built-in render kernel:
 
 - widgets
-- gutters
+- extension gutter policy
 - overlays
 - text annotations / virtual text
 - render manager
@@ -115,7 +116,8 @@ JS / Electron still owns:
 
 - font measurement
 - canvas painting
-- line numbers / gutters
+- line number painting
+- extension gutter policy
 - decorations / overlays
 - any richer product UI
 
@@ -134,6 +136,39 @@ surface invalidated / scrolled / resized
 
 The policy worker may still request frames for utility cases such as picker previews, file previews, or headless tests, but it must not broker normal visible editor painting.
 
+## Gutters and decorations
+
+Gutters are split into two layers.
+
+Low-level facts come from the render frame:
+
+```ts
+interface GutterRow {
+  surfaceRow: number;
+  docLine: number | null;
+  lineNumber: number | null;
+  active: boolean;
+  selected: boolean;
+  startsLogicalLine: boolean;
+  wrappedContinuation: boolean;
+}
+```
+
+These facts are cheap because they are produced by the same visible-layout pass that creates `RenderFrame.rows`. The renderer can use them immediately for built-in line numbers and active-line gutter styling.
+
+Higher-level gutter policy belongs to TypeScript providers. Providers should consume visible `gutterRows` plus product metadata such as path, line count, diagnostics, or cached VCS hunks. Providers must not require full `RenderFrame` or full document text in the normal workbench snapshot path.
+
+VCS gutters should follow the same model used by editors like Zed:
+
+```txt
+buffer/runtime metadata stores diff hunks
+render frame exposes visible row mapping
+gutter provider maps cached hunks onto visible gutter rows
+renderer paints bars
+```
+
+So VCS diffing should be cached/debounced outside paint and snapshot refresh. Gutter collection should only project already-known hunk metadata onto the visible rows.
+
 ## Electron ligature shaping
 
 The current Electron renderer intentionally allows browser/font shaping, including ligatures.
@@ -147,6 +182,7 @@ This lives in:
 Rust still projects the visible frame in **cell-grid coordinates**:
 
 - `RenderRow.text`
+- `GutterRow` visible-row facts
 - selection spans in cols
 - cursor placements in cols
 - syntax spans in cols

@@ -568,6 +568,42 @@ That means the same diagnostics can be projected through existing extension seam
 LSP diagnostics are just one adapter.
 A first-party LSP module may mirror runtime LSP diagnostics into `editor.diagnostics`, but user extensions should be equally able to publish diagnostics from any source.
 
+## Gutter provider model
+
+Gutter providers are presentation policy, not text layout owners.
+
+The low-level runtime/render frame provides visible gutter facts:
+
+```ts
+interface GutterRow {
+  surfaceRow: number;
+  docLine: number | null;
+  lineNumber: number | null;
+  active: boolean;
+  selected: boolean;
+  startsLogicalLine: boolean;
+  wrappedContinuation: boolean;
+}
+```
+
+Extension gutter providers should consume visible rows and metadata, then return compact visible gutter lines:
+
+```ts
+editor.gutters.registerProvider({
+  id: "example.markers",
+  lane: "markers",
+  provide(ctx) {
+    return ctx.gutterRows.map((row) => ({
+      id: `marker:${row.surfaceRow}`,
+      surfaceRow: row.surfaceRow,
+      kind: "marker",
+    }));
+  },
+});
+```
+
+Provider code should not require full document text or a full `RenderFrame` during normal editor refresh. If a feature needs expensive metadata, such as VCS hunks, it should maintain/cache that metadata separately and only project it onto `ctx.gutterRows` when asked to draw visible gutters.
+
 ## Example: statusline role
 
 The host should know how to:

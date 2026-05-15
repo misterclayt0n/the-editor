@@ -559,6 +559,7 @@ TypeScript:         orchestration + providers + surface composition
 Rust owns the built-in monospace path:
 - viewport-first cell-grid text layout
 - visible-row mapping
+- low-level visible gutter facts
 - column-based wrap
 - visible-window resume/indexing helpers
 - visible-frame projection
@@ -572,6 +573,7 @@ Client owns:
 
 TypeScript owns:
 - decoration/provider composition
+- higher-level gutter provider policy
 - deciding which surfaces exist and how they are arranged
 - explicit surface invalidation events after policy-driven surface mutations
 

@@ -203,9 +203,15 @@ V1 uses napi-rs, but the native runtime package is owned by **Electron main**, n
 
 ```txt
 Electron main
-  owns the single NativeRuntimeSession
+  owns runtime authority and IPC boundaries
   exposes a broad policy runtime bridge
   exposes a narrow renderer render bridge
+  serializes native runtime operations
+
+Runtime worker thread
+  owns the single NativeRuntimeSession
+  imports runtime-node directly
+  executes Rust/NAPI calls off Electron main
 
 Policy worker
   owns EditorHost/product logic
@@ -218,7 +224,7 @@ Electron renderer
   does not import runtime-node directly
 ```
 
-This keeps one authoritative native runtime instance while separating behavior traffic from paint traffic.
+This keeps one authoritative native runtime instance while separating behavior traffic from paint traffic and keeping heavy native work off Electron main.
 
 The policy worker creates the editor host with an IPC-backed runtime client:
 
@@ -233,7 +239,7 @@ The renderer uses a separate narrow bridge:
 const frame = await renderBridge.renderFrame({ surfaceId, viewport, metrics });
 ```
 
-The native bridge may be synchronous internally today, but public TypeScript methods remain async so individual calls can later move to async worker/actor implementations without changing the policy API.
+Electron main routes runtime requests through an explicit serialized operation queue to the runtime worker thread. Public TypeScript methods remain async; callers do not observe whether a request came from policy or the renderer render bridge.
 
 The important rule is unchanged:
 

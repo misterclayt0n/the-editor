@@ -205,9 +205,6 @@ function App() {
       <div className="workbenchOverlayRoot">
         <UiErrorBoundary name="overlayModal">{overlayModal}</UiErrorBoundary>
         <UiErrorBoundary name="overlayFloating">{overlayFloating}</UiErrorBoundary>
-        <UiErrorBoundary name="hover">{uiRuntime.renderRole("hover")}</UiErrorBoundary>
-        <UiErrorBoundary name="signatureHelp">{uiRuntime.renderRole("signatureHelp")}</UiErrorBoundary>
-        <UiErrorBoundary name="completionMenu">{uiRuntime.renderRole("completionMenu")}</UiErrorBoundary>
         <UiErrorBoundary name="notifications">{uiRuntime.renderRole("notifications")}</UiErrorBoundary>
         <UiErrorBoundary name="picker">{uiRuntime.renderRole("picker")}</UiErrorBoundary>
         <UiErrorBoundary name="inputPrompt">{uiRuntime.renderRole("inputPrompt")}</UiErrorBoundary>

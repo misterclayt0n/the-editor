@@ -6,12 +6,6 @@ import type {
   DocumentOpened,
   OkResult,
   RenderFrame,
-  JsonValue,
-  LspDiagnosticEntry,
-  LspLogEntry,
-  LspServerConfig,
-  LspServerId,
-  LspServerStatus,
   RuntimeApi,
   SurfaceCreated,
   SurfaceEdit,
@@ -86,58 +80,57 @@ export class RuntimeNativeClient implements RuntimeApi {
       this.session.setSurfaceCursorSemantics(params.surfaceId, params.semantics);
       return { ok: true };
     },
-    applyOperation: async (params: { surfaceId: SurfaceId; operation: SurfaceOperation }): Promise<SurfaceState> => {
-      const span = runtimePerfSpan("runtime", "applySurfaceOperation", { surfaceId: params.surfaceId, operation: params.operation.name }, 4);
-      const state = surfaceStateFromJson(String(this.session.applySurfaceOperation(params.surfaceId, params.operation)));
-      span.end({ textLength: state.text.length, revision: state.revision });
-      return state;
+    applyOperation: async (params: { surfaceId: SurfaceId; operation: SurfaceOperation }): Promise<OkResult> => {
+      this.session.applySurfaceOperation(params.surfaceId, params.operation);
+      return { ok: true };
     },
-    readState: async (params: { surfaceId: SurfaceId }): Promise<SurfaceState> => {
-      const span = runtimePerfSpan("runtime", "readSurfaceState", { surfaceId: params.surfaceId }, 4);
-      const state = {
-        text: this.session.readSurfaceText(params.surfaceId),
-        revision: this.session.readSurfaceRevision(params.surfaceId),
-        lineEnding: this.session.readSurfaceLineEnding(params.surfaceId),
-        lineCount: this.session.readSurfaceLineCount(params.surfaceId),
-        selection: this.session.readSurfaceSelection(params.surfaceId),
-        activeCursorId: this.session.readSurfaceActiveCursor(params.surfaceId),
-        cursorSemantics: this.session.readSurfaceCursorSemantics(params.surfaceId) as CursorSemantics,
-        viewport: this.session.readSurfaceViewport(params.surfaceId),
-      } satisfies SurfaceState;
-      span.end({ textLength: state.text.length, revision: state.revision });
-      return state;
+    readState: async (params: { surfaceId: SurfaceId }): Promise<SurfaceState> => ({
+      text: this.session.readSurfaceText(params.surfaceId),
+      revision: this.session.readSurfaceRevision(params.surfaceId),
+      lineEnding: this.session.readSurfaceLineEnding(params.surfaceId),
+      lineCount: this.session.readSurfaceLineCount(params.surfaceId),
+      selection: this.session.readSurfaceSelection(params.surfaceId),
+      activeCursorId: this.session.readSurfaceActiveCursor(params.surfaceId),
+      cursorSemantics: this.session.readSurfaceCursorSemantics(params.surfaceId) as CursorSemantics,
+      viewport: this.session.readSurfaceViewport(params.surfaceId),
+    }),
+    setActiveCursor: async (params: { surfaceId: SurfaceId; cursorId: number | null }): Promise<OkResult> => {
+      this.session.setSurfaceActiveCursor(params.surfaceId, params.cursorId);
+      return { ok: true };
     },
-    setActiveCursor: async (params: { surfaceId: SurfaceId; cursorId: number | null }): Promise<SurfaceState> => surfaceStateFromJson(
-      String(this.session.setSurfaceActiveCursor(params.surfaceId, params.cursorId)),
-    ),
-    applyEdit: async (params: { surfaceId: SurfaceId; edit: SurfaceEdit }): Promise<SurfaceState> => surfaceStateFromJson(
-      String(this.session.applySurfaceEdit(params.surfaceId, params.edit)),
+    applyEdit: async (params: { surfaceId: SurfaceId; edit: SurfaceEdit }): Promise<OkResult> => {
+      this.session.applySurfaceEdit(params.surfaceId, params.edit);
+      return { ok: true };
+    },
+    completeWords: async (params: { surfaceId: SurfaceId; cursorOffset: number; query: string; limit?: number }): Promise<Array<{ label: string }>> => (
+      JSON.parse(this.session.completeSurfaceWordsJson(params.surfaceId, params.cursorOffset, params.query, params.limit ?? null)) as Array<{ label: string }>
     ),
     commitUndoCheckpoint: async (params: { surfaceId: SurfaceId }): Promise<OkResult> => {
       this.session.commitSurfaceUndoCheckpoint(params.surfaceId);
       return { ok: true };
     },
-    undo: async (params: { surfaceId: SurfaceId; count?: number }): Promise<SurfaceState> => surfaceStateFromJson(
-      String(this.session.undoSurface(params.surfaceId, params.count ?? 1)),
-    ),
-    redo: async (params: { surfaceId: SurfaceId; count?: number }): Promise<SurfaceState> => surfaceStateFromJson(
-      String(this.session.redoSurface(params.surfaceId, params.count ?? 1)),
-    ),
-    earlier: async (params: { surfaceId: SurfaceId; count?: number }): Promise<SurfaceState> => surfaceStateFromJson(
-      String(this.session.earlierSurface(params.surfaceId, params.count ?? 1)),
-    ),
-    later: async (params: { surfaceId: SurfaceId; count?: number }): Promise<SurfaceState> => surfaceStateFromJson(
-      String(this.session.laterSurface(params.surfaceId, params.count ?? 1)),
-    ),
+    undo: async (params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult> => {
+      this.session.undoSurface(params.surfaceId, params.count ?? 1);
+      return { ok: true };
+    },
+    redo: async (params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult> => {
+      this.session.redoSurface(params.surfaceId, params.count ?? 1);
+      return { ok: true };
+    },
+    earlier: async (params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult> => {
+      this.session.earlierSurface(params.surfaceId, params.count ?? 1);
+      return { ok: true };
+    },
+    later: async (params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult> => {
+      this.session.laterSurface(params.surfaceId, params.count ?? 1);
+      return { ok: true };
+    },
     renderFrame: async (params: {
       surfaceId: SurfaceId;
       viewport?: Viewport;
     }): Promise<RenderFrame> => {
-      const span = runtimePerfSpan("runtime", "renderFrame", { surfaceId: params.surfaceId }, 4);
       const json = this.session.renderFrameJson(params.surfaceId, params.viewport ?? null);
-      const frame = JSON.parse(json) as RenderFrame;
-      span.end({ rows: frame.rows.length });
-      return frame;
+      return JSON.parse(json) as RenderFrame;
     },
   };
 
@@ -194,61 +187,12 @@ export class RuntimeNativeClient implements RuntimeApi {
     },
   };
 
-  readonly lsp = {
-    registerServer: async (params: LspServerConfig): Promise<OkResult> => {
-      this.nativeLsp().lspRegisterServer(JSON.stringify(toNativeLspServerConfig(params)));
-      return { ok: true };
-    },
-    configuredServers: async (): Promise<LspServerConfig[]> => JSON.parse(this.nativeLsp().lspConfiguredServersJson()) as LspServerConfig[],
-    startServer: async (params: { id: string; rootUri?: string }): Promise<{ serverId: LspServerId }> => ({
-      serverId: this.nativeLsp().lspStartServer(params.id, params.rootUri ?? null) as LspServerId,
-    }),
-    shutdownServer: async (params: { serverId: LspServerId }): Promise<OkResult> => {
-      this.nativeLsp().lspShutdownServer(params.serverId);
-      return { ok: true };
-    },
-    status: async (): Promise<LspServerStatus[]> => {
-      const span = runtimePerfSpan("lsp", "status.native", {}, 8);
-      const statuses = JSON.parse(String(await this.nativeLsp().lspStatusJsonAsync())) as LspServerStatus[];
-      span.end({ count: statuses.length });
-      return statuses;
-    },
-    diagnostics: async (): Promise<LspDiagnosticEntry[]> => JSON.parse(this.nativeLsp().lspDiagnosticsJson()) as LspDiagnosticEntry[],
-    logs: async (params: { serverId: LspServerId }): Promise<LspLogEntry[]> => JSON.parse(this.nativeLsp().lspLogsJson(params.serverId)) as LspLogEntry[],
-    request: async (params: { serverId: LspServerId; method: string; params?: JsonValue; timeoutMs?: number }): Promise<JsonValue> => {
-      const span = runtimePerfSpan("lsp", "request.native", { serverId: params.serverId, method: params.method, timeoutMs: params.timeoutMs }, 8);
-      const result = JSON.parse(String(await this.nativeLsp().lspRequestJsonAsync(params.serverId, params.method, JSON.stringify(params.params ?? null), params.timeoutMs ?? null))) as JsonValue;
-      span.end();
-      return result;
-    },
-    notify: async (params: { serverId: LspServerId; method: string; params?: JsonValue }): Promise<OkResult> => {
-      this.nativeLsp().lspNotifyJson(params.serverId, params.method, JSON.stringify(params.params ?? null));
-      return { ok: true };
-    },
-  };
-
   readonly resources = {
     save: async (params: { surfaceId: SurfaceId }): Promise<OkResult> => {
       this.session.saveSurfaceDocument(params.surfaceId);
       return { ok: true };
     },
   };
-
-  private nativeLsp(): NativeRuntimeSession & {
-    lspRegisterServer(configJson: string): void;
-    lspConfiguredServersJson(): string;
-    lspStartServer(id: string, rootUri: string | null): number;
-    lspShutdownServer(serverId: number): void;
-    lspStatusJsonAsync(): Promise<string>;
-    lspDiagnosticsJson(): string;
-    lspLogsJson(serverId: number): string;
-    lspRequestJsonAsync(serverId: number, method: string, paramsJson: string, timeoutMs: number | null): Promise<string>;
-    lspNotifyJson(serverId: number, method: string, paramsJson: string): void;
-    previewPathCacheKey(path: string): string;
-    readSurfaceRevision(surfaceId: number): number;
-  } {
-    return this.session as ReturnType<RuntimeNativeClient["nativeLsp"]>;
-  }
 
   private readonly session: NativeRuntimeSession;
 
@@ -328,24 +272,6 @@ export class RuntimeNativeClient implements RuntimeApi {
         return this.clipboard.read(params as Parameters<RuntimeApi["clipboard"]["read"]>[0]);
       case "clipboard.write":
         return this.clipboard.write(params as Parameters<RuntimeApi["clipboard"]["write"]>[0]);
-      case "lsp.registerServer":
-        return this.lsp.registerServer(params as Parameters<RuntimeApi["lsp"]["registerServer"]>[0]);
-      case "lsp.configuredServers":
-        return this.lsp.configuredServers();
-      case "lsp.startServer":
-        return this.lsp.startServer(params as Parameters<RuntimeApi["lsp"]["startServer"]>[0]);
-      case "lsp.shutdownServer":
-        return this.lsp.shutdownServer(params as Parameters<RuntimeApi["lsp"]["shutdownServer"]>[0]);
-      case "lsp.status":
-        return this.lsp.status();
-      case "lsp.diagnostics":
-        return this.lsp.diagnostics();
-      case "lsp.logs":
-        return this.lsp.logs(params as Parameters<RuntimeApi["lsp"]["logs"]>[0]);
-      case "lsp.request":
-        return this.lsp.request(params as Parameters<RuntimeApi["lsp"]["request"]>[0]);
-      case "lsp.notify":
-        return this.lsp.notify(params as Parameters<RuntimeApi["lsp"]["notify"]>[0]);
       case "resources.save":
         return this.resources.save(params as Parameters<RuntimeApi["resources"]["save"]>[0]);
       default:
@@ -354,86 +280,6 @@ export class RuntimeNativeClient implements RuntimeApi {
   }
 
   dispose(): void {}
-}
-
-function runtimePerfSpan(category: string, phase: string, data: Record<string, unknown> = {}, slowMs = 16) {
-  const start = performance.now();
-  return {
-    end(extra: Record<string, unknown> = {}) {
-      const ms = Math.round((performance.now() - start) * 10) / 10;
-      if (!runtimePerfEnabled()) return;
-      emitRuntimePerfLog(category, phase, { ms, ...data, ...extra });
-    },
-  };
-}
-
-let runtimePerfAnnounced = false;
-
-function runtimePerfEnabled(): boolean {
-  const enabled = readRuntimePerfFlag();
-  if (enabled && !runtimePerfAnnounced) {
-    runtimePerfAnnounced = true;
-    emitRuntimePerfLog("runtime", "diagnostics.enabled", { source: runtimePerfFlagSource() });
-  }
-  return enabled;
-}
-
-function readRuntimePerfFlag(): boolean {
-  const globalValue = (globalThis as { __THE_EDITOR_PERF__?: unknown }).__THE_EDITOR_PERF__;
-  if (globalValue === true || globalValue === "1" || globalValue === "true") return true;
-  if (readRuntimePerfBridge()?.perfEnabled === true) return true;
-  try {
-    const storage = typeof window !== "undefined" ? window.localStorage : undefined;
-    if (storage?.getItem("the-editor.perf") === "1" || storage?.getItem("the-editor.perf") === "true") return true;
-  } catch {
-    // Ignore storage access failures.
-  }
-  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
-  return env?.THE_EDITOR_PERF === "1" || env?.THE_EDITOR_PERF === "true";
-}
-
-function runtimePerfFlagSource(): string {
-  const globalValue = (globalThis as { __THE_EDITOR_PERF__?: unknown }).__THE_EDITOR_PERF__;
-  if (globalValue === true || globalValue === "1" || globalValue === "true") return "globalThis.__THE_EDITOR_PERF__";
-  if (readRuntimePerfBridge()?.perfEnabled === true) return "window.theEditor.perfEnabled";
-  try {
-    const storage = typeof window !== "undefined" ? window.localStorage : undefined;
-    if (storage?.getItem("the-editor.perf") === "1" || storage?.getItem("the-editor.perf") === "true") return "localStorage.the-editor.perf";
-  } catch {
-    // Ignore storage access failures.
-  }
-  return "THE_EDITOR_PERF";
-}
-
-function emitRuntimePerfLog(category: string, phase: string, data: Record<string, unknown>): void {
-  const bridge = readRuntimePerfBridge();
-  if (bridge?.perfLog) {
-    bridge.perfLog({ category, phase, data });
-    return;
-  }
-  console.info(`[perf:${category}] ${phase}`, data);
-}
-
-function readRuntimePerfBridge(): { perfEnabled?: boolean; perfLog?: (payload: { category: string; phase: string; data?: Record<string, unknown> }) => void } | undefined {
-  return typeof window !== "undefined"
-    ? (window as unknown as { theEditor?: { perfEnabled?: boolean; perfLog?: (payload: { category: string; phase: string; data?: Record<string, unknown> }) => void } }).theEditor
-    : undefined;
-}
-
-function surfaceStateFromJson(json: string): SurfaceState {
-  return JSON.parse(json) as SurfaceState;
-}
-
-function toNativeLspServerConfig(config: LspServerConfig): Record<string, unknown> {
-  return {
-    id: config.id,
-    command: config.command,
-    args: config.args ?? [],
-    env: config.env ?? {},
-    languages: config.languages ?? [],
-    file_types: config.fileTypes ?? [],
-    initialization_options: config.initializationOptions ?? null,
-  };
 }
 
 export function createRuntimeClient(options?: RuntimeNativeClientOptions): RuntimeNativeClient {

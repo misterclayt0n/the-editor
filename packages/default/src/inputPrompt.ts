@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import type { JsonValue, SurfaceChange, SurfaceEdit, SurfaceId, SurfaceSelectionRange, SurfaceState } from "@the-editor/contracts/runtime";
+import type { SurfaceChange, SurfaceEdit, SurfaceId, SurfaceSelectionRange, SurfaceState } from "@the-editor/contracts/runtime";
 import {
   commandId,
   roleId,
@@ -8,7 +8,6 @@ import {
   type InteractiveSessionController,
   type InteractiveSessionId,
   defineHostStore, } from "@the-editor/editor";
-import { ensureLspForPath, fileUri } from "./lsp.js";
 import { activeSurfacePane, getDefaultState, refreshActiveSurface } from "./state.js";
 
 type InputPromptKind =
@@ -619,37 +618,13 @@ async function repeatStoredSearch(
 }
 
 async function finalizeRenameSymbol(
-  editor: Parameters<EditorModule>[0],
+  _editor: Parameters<EditorModule>[0],
   active: ActiveInputPromptState,
 ): Promise<boolean> {
   const newName = active.query.trim();
   if (!newName) {
     active.error = "symbol name cannot be empty";
     return false;
-  }
-  const pane = activeSurfacePane(editor);
-  if (!pane?.path || pane.surfaceId !== active.surfaceId) return false;
-  await ensureLspForPath(editor, pane.path);
-  const state = await editor.runtime.surfaces.readState({ surfaceId: active.surfaceId });
-  const cursor = state.selection.find((range) => range.cursorId === state.activeCursorId) ?? state.selection[0];
-  if (!cursor) return false;
-  const uri = fileUri(pane.path);
-  const position = positionAtByteOffset(state.text, cursorByteOffset(state, cursor));
-  const running = await runningServersForPath(editor, pane.path);
-  for (const server of running) {
-    try {
-      const edit = await editor.lsp.request({
-        serverId: server.handle,
-        method: "textDocument/rename",
-        timeoutMs: 5000,
-        params: { textDocument: { uri }, position, newName },
-      });
-      await applyWorkspaceEdit(editor, edit);
-      active.error = undefined;
-      return true;
-    } catch {
-      // Try the next running server.
-    }
   }
   active.error = "rename unavailable";
   return false;
@@ -992,71 +967,6 @@ function rangeContainsInclusive(range: Pick<SurfaceSelectionRange, "anchor" | "h
   return from <= pos && pos <= to;
 }
 
-async function runningServersForPath(editor: Parameters<EditorModule>[0], path: string) {
-  const serverIds = editor.lsp.serverIdsForPath(path);
-  const statuses = await editor.lsp.status();
-  return statuses.filter((status) => serverIds.includes(status.id) && (status.state === "running" || status.state === "initialized"));
-}
-
-async function applyWorkspaceEdit(editor: Parameters<EditorModule>[0], edit: JsonValue): Promise<void> {
-  const object = asRecord(edit);
-  const documentChanges = Array.isArray(object?.documentChanges) ? object.documentChanges : undefined;
-  if (documentChanges) {
-    for (const change of documentChanges) {
-      const changeObject = asRecord(change);
-      const textDocument = asRecord(changeObject?.textDocument);
-      const uri = typeof textDocument?.uri === "string" ? textDocument.uri : undefined;
-      const edits = Array.isArray(changeObject?.edits) ? changeObject.edits : undefined;
-      const path = uri ? pathForFileUri(uri) : undefined;
-      if (path && edits) await applyTextEditsToPath(editor, path, edits);
-    }
-    return;
-  }
-  const changes = asRecord(object?.changes);
-  if (!changes) return;
-  for (const [uri, edits] of Object.entries(changes)) {
-    const path = pathForFileUri(uri);
-    if (path && Array.isArray(edits)) await applyTextEditsToPath(editor, path, edits);
-  }
-}
-
-async function applyTextEditsToPath(editor: Parameters<EditorModule>[0], path: string, edits: JsonValue[]): Promise<void> {
-  await editor.commands.dispatch({ id: commandId("file.open"), args: { path } });
-  const pane = activeSurfacePane(editor);
-  if (!pane?.surfaceId) return;
-  const state = await editor.runtime.surfaces.readState({ surfaceId: pane.surfaceId });
-  const changes = edits.map((edit) => lspTextEditToSurfaceChange(edit, state.text)).filter((change): change is SurfaceChange => Boolean(change)).sort((a, b) => b.start - a.start || b.end - a.end);
-  if (changes.length) await editor.runtime.surfaces.applyEdit({ surfaceId: pane.surfaceId, edit: { changes } });
-}
-
-function lspTextEditToSurfaceChange(value: JsonValue, text: string): SurfaceChange | undefined {
-  const object = asRecord(value);
-  const range = parseLspRange(object?.range);
-  const newText = typeof object?.newText === "string" ? object.newText : undefined;
-  if (!range || newText === undefined) return undefined;
-  return { start: utf8ByteOffsetAtStringIndex(text, utf16PositionToStringIndex(text, range.start)), end: utf8ByteOffsetAtStringIndex(text, utf16PositionToStringIndex(text, range.end)), text: newText };
-}
-
-function parseLspRange(value: JsonValue | undefined): { start: { line: number; character: number }; end: { line: number; character: number } } | undefined {
-  const object = asRecord(value);
-  const start = parseLspPosition(object?.start);
-  const end = parseLspPosition(object?.end);
-  return start && end ? { start, end } : undefined;
-}
-
-function parseLspPosition(value: JsonValue | undefined): { line: number; character: number } | undefined {
-  const object = asRecord(value);
-  return object && typeof object.line === "number" && typeof object.character === "number" ? { line: object.line, character: object.character } : undefined;
-}
-
-function asRecord(value: JsonValue | undefined): Record<string, any> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : undefined;
-}
-
-function pathForFileUri(uri: string): string | undefined {
-  if (!uri.startsWith("file://")) return undefined;
-  try { return decodeURIComponent(new URL(uri).pathname); } catch { return undefined; }
-}
 
 function cursorByteOffset(state: SurfaceState, cursor: SurfaceSelectionRange): number {
   if (state.cursorSemantics === "InsertionPoint") return cursor.head;

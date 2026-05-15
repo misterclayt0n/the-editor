@@ -9,15 +9,12 @@ import type { CanvasTextSurfaceStyleOptions } from "@the-editor/editor/textSurfa
 import { surfaceCursorAnchors, type SurfaceCursorAnchor } from "@the-editor/editor/cursorAnchors";
 import { resolveThemeStyleLoose, type ResolvedThemeDefinition } from "@the-editor/editor/themes";
 import type { EditorUiModule, UiSessionClient, WorkbenchSnapshot } from "@the-editor/editor/ui";
-import type { CompletionSessionState } from "./completion.js";
 import type { FileTreeToolState } from "./fileTree.js";
-import type { SignatureHelpRoleState } from "./signatureHelp.js";
 import { diagnosticLocationLabel, diagnosticPrimaryLine } from "./diagnosticsShared.js";
 import { DefaultFileTree } from "./fileTreeUi.js";
 import { MarkdownView } from "@the-editor/editor/markdownView";
 import { DefaultWorkbenchTabstrip } from "./workbenchTabstrip.js";
 import "./commandPalette.css";
-import "./completion.css";
 import "./fileTree.css";
 import "./hover.css";
 import "./markdown.css";
@@ -66,6 +63,38 @@ interface CompletionViewState {
   visible: boolean;
   sessionId?: string;
   surfaceId?: number;
+}
+
+interface CompletionSessionState {
+  query: string;
+  selectedIndex: number;
+  items: Array<{
+    id: string;
+    label: string;
+    labelHighlights: number[];
+    detail?: string;
+    detailHighlights: number[];
+    labelDetail?: string;
+    labelDescription?: string;
+    kind?: string;
+    badge?: string;
+    source?: string;
+    deprecated?: boolean;
+  }>;
+  loading: boolean;
+  emptyText?: string;
+}
+
+interface SignatureHelpRoleState {
+  visible: boolean;
+  surfaceId?: number;
+  items?: Array<{
+    label: string;
+    documentation?: string;
+    activeParameter?: number;
+    activeParameterRange?: { start: number; end: number };
+  }>;
+  activeSignature?: number;
 }
 
 interface PickerItemView {
@@ -172,33 +201,6 @@ const uiModule: EditorUiModule = (host) => {
     render({ state, sessions, workbench }) {
       if (!state?.visible || !state.sessionId) return null;
       return <PickerOverlay sessionId={state.sessionId} sessions={sessions} workbench={workbench} />;
-    },
-  });
-
-  host.roles.register<HoverViewState>({
-    role: "hover",
-    implementationId: "default.hover",
-    render({ state, workbench }) {
-      if (!state?.visible || !state.markdown?.trim()) return null;
-      return <HoverOverlay markdown={state.markdown} source={state.source} surfaceId={state.surfaceId} workbench={workbench} />;
-    },
-  });
-
-  host.roles.register<CompletionViewState>({
-    role: "completionMenu",
-    implementationId: "default.completionMenu",
-    render({ state, sessions, workbench, commands }) {
-      if (!state?.visible || !state.sessionId) return null;
-      return <CompletionOverlay sessionId={state.sessionId} surfaceId={state.surfaceId} sessions={sessions} workbench={workbench} dispatch={commands.dispatch} />;
-    },
-  });
-
-  host.roles.register<SignatureHelpRoleState>({
-    role: "signatureHelp",
-    implementationId: "default.signatureHelp",
-    render({ state, workbench }) {
-      if (!state?.visible || !state.items?.length) return null;
-      return <SignatureHelpOverlay state={state} workbench={workbench} />;
     },
   });
 

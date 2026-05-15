@@ -29,9 +29,6 @@ use the_lib::{
 };
 use the_runtime::{
   DocumentHandle,
-  LspServerConfig,
-  LspServerHandle,
-  LspStore,
   OperationSpec,
   RuntimeSession,
   SearchIndexHandle,
@@ -97,60 +94,6 @@ pub struct JsSurfaceEdit {
   pub selection: Option<Vec<JsSurfaceSelectionRange>>,
 }
 
-pub struct LspStatusTask {
-  lsp: std::sync::Arc<std::sync::Mutex<LspStore>>,
-}
-
-impl Task for LspStatusTask {
-  type Output = String;
-  type JsValue = String;
-
-  fn compute(&mut self) -> Result<Self::Output> {
-    let mut lsp = self
-      .lsp
-      .lock()
-      .map_err(|_| Error::from_reason("LSP lock poisoned"))?;
-    serde_json::to_string(&lsp.status()).map_err(|err| Error::from_reason(err.to_string()))
-  }
-
-  fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
-    Ok(output)
-  }
-}
-
-pub struct LspRequestTask {
-  lsp:        std::sync::Arc<std::sync::Mutex<LspStore>>,
-  server_id:  u32,
-  method:     String,
-  params:     serde_json::Value,
-  timeout_ms: Option<u32>,
-}
-
-impl Task for LspRequestTask {
-  type Output = String;
-  type JsValue = String;
-
-  fn compute(&mut self) -> Result<Self::Output> {
-    let mut lsp = self
-      .lsp
-      .lock()
-      .map_err(|_| Error::from_reason("LSP lock poisoned"))?;
-    let result = lsp
-      .request(
-        lsp_server_handle(self.server_id)?,
-        &self.method,
-        self.params.clone(),
-        std::time::Duration::from_millis(self.timeout_ms.unwrap_or(10_000) as u64),
-      )
-      .map_err(|err: the_runtime::LspError| Error::from_reason(err.to_string()))?;
-    serde_json::to_string(&result).map_err(|err| Error::from_reason(err.to_string()))
-  }
-
-  fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
-    Ok(output)
-  }
-}
-
 #[napi]
 pub struct NativeRuntimeSession {
   inner: Mutex<RuntimeSession>,
@@ -163,114 +106,6 @@ impl NativeRuntimeSession {
     Self {
       inner: Mutex::new(RuntimeSession::default()),
     }
-  }
-
-  #[napi]
-  pub fn lsp_register_server(&self, config_json: String) -> Result<()> {
-    let config: LspServerConfig =
-      serde_json::from_str(&config_json).map_err(|err| Error::from_reason(err.to_string()))?;
-    let mut runtime = self.lock()?;
-    runtime.lsp_register_server(config);
-    Ok(())
-  }
-
-  #[napi]
-  pub fn lsp_configured_servers_json(&self) -> Result<String> {
-    let runtime = self.lock()?;
-    serde_json::to_string(&runtime.lsp_configured_servers())
-      .map_err(|err| Error::from_reason(err.to_string()))
-  }
-
-  #[napi]
-  pub fn lsp_start_server(&self, id: String, root_uri: Option<String>) -> Result<u32> {
-    let mut runtime = self.lock()?;
-    let handle = runtime
-      .lsp_start_server(&id, root_uri)
-      .map_err(runtime_error)?;
-    Ok(handle.get() as u32)
-  }
-
-  #[napi]
-  pub fn lsp_shutdown_server(&self, server_id: u32) -> Result<()> {
-    let mut runtime = self.lock()?;
-    runtime
-      .lsp_shutdown_server(lsp_server_handle(server_id)?)
-      .map_err(runtime_error)
-  }
-
-  #[napi]
-  pub fn lsp_status_json_async(&self) -> Result<AsyncTask<LspStatusTask>> {
-    let lsp = {
-      let runtime = self.lock()?;
-      runtime.lsp_store()
-    };
-    Ok(AsyncTask::new(LspStatusTask { lsp }))
-  }
-
-  #[napi]
-  pub fn lsp_diagnostics_json(&self) -> Result<String> {
-    let lsp = {
-      let runtime = self.lock()?;
-      runtime.lsp_store()
-    };
-    let mut lsp = lsp
-      .lock()
-      .map_err(|_| Error::from_reason("LSP lock poisoned"))?;
-    serde_json::to_string(&lsp.diagnostics()).map_err(|err| Error::from_reason(err.to_string()))
-  }
-
-  #[napi]
-  pub fn lsp_logs_json(&self, server_id: u32) -> Result<String> {
-    let lsp = {
-      let runtime = self.lock()?;
-      runtime.lsp_store()
-    };
-    let mut lsp = lsp
-      .lock()
-      .map_err(|_| Error::from_reason("LSP lock poisoned"))?;
-    let logs = lsp
-      .logs(lsp_server_handle(server_id)?)
-      .map_err(|err| Error::from_reason(err.to_string()))?;
-    serde_json::to_string(&logs).map_err(|err| Error::from_reason(err.to_string()))
-  }
-
-  #[napi]
-  pub fn lsp_request_json_async(
-    &self,
-    server_id: u32,
-    method: String,
-    params_json: String,
-    timeout_ms: Option<u32>,
-  ) -> Result<AsyncTask<LspRequestTask>> {
-    let params =
-      serde_json::from_str(&params_json).map_err(|err| Error::from_reason(err.to_string()))?;
-    let lsp = {
-      let runtime = self.lock()?;
-      runtime.lsp_store()
-    };
-    Ok(AsyncTask::new(LspRequestTask {
-      lsp,
-      server_id,
-      method,
-      params,
-      timeout_ms,
-    }))
-  }
-
-  #[napi]
-  pub fn lsp_notify_json(&self, server_id: u32, method: String, params_json: String) -> Result<()> {
-    let params =
-      serde_json::from_str(&params_json).map_err(|err| Error::from_reason(err.to_string()))?;
-    let lsp = {
-      let runtime = self.lock()?;
-      runtime.lsp_store()
-    };
-    let mut lsp = lsp
-      .lock()
-      .map_err(|_| Error::from_reason("LSP lock poisoned"))?;
-    lsp
-      .notify(lsp_server_handle(server_id)?, &method, params)
-      .map_err(|err| Error::from_reason(err.to_string()))
   }
 
   #[napi]
@@ -370,13 +205,11 @@ impl NativeRuntimeSession {
     &self,
     surface_id: u32,
     operation: JsSurfaceOperation,
-  ) -> Result<String> {
+  ) -> Result<()> {
     let mut runtime = self.lock()?;
-    let surface = surface_handle(surface_id)?;
     runtime
-      .apply_surface_operation(surface, operation_spec(operation))
-      .map_err(runtime_error)?;
-    surface_state_json(&runtime, surface)
+      .apply_surface_operation(surface_handle(surface_id)?, operation_spec(operation))
+      .map_err(runtime_error)
   }
 
   #[napi]
@@ -448,6 +281,46 @@ impl NativeRuntimeSession {
   }
 
   #[napi]
+  pub fn complete_surface_words_json(
+    &self,
+    surface_id: u32,
+    cursor_offset: u32,
+    query: String,
+    limit: Option<u32>,
+  ) -> Result<String> {
+    let runtime = self.lock()?;
+    let surface = surface_handle(surface_id)?;
+    let document = runtime
+      .document_for_surface(surface)
+      .ok_or_else(|| Error::from_reason(format!("unknown surface {surface_id}")))?;
+    let text = runtime
+      .document(document)
+      .ok_or_else(|| Error::from_reason(format!("unknown document {}", document.get())))?
+      .text()
+      .to_string();
+    let cursor = cursor_offset as usize;
+    let query_lower = query.to_lowercase();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut words = Vec::<serde_json::Value>::new();
+    for (start, word) in indexed_words(&text) {
+      if start <= cursor && cursor <= start + word.len() {
+        continue;
+      }
+      if !query_lower.is_empty() && !word.to_lowercase().contains(&query_lower) {
+        continue;
+      }
+      if !seen.insert(word.to_string()) {
+        continue;
+      }
+      words.push(serde_json::json!({ "label": word }));
+      if words.len() >= limit.unwrap_or(100) as usize {
+        break;
+      }
+    }
+    serde_json::to_string(&words).map_err(|err| Error::from_reason(err.to_string()))
+  }
+
+  #[napi]
   pub fn read_surface_active_cursor(&self, surface_id: u32) -> Result<Option<u32>> {
     let runtime = self.lock()?;
     Ok(
@@ -491,21 +364,15 @@ impl NativeRuntimeSession {
   }
 
   #[napi]
-  pub fn set_surface_active_cursor(
-    &self,
-    surface_id: u32,
-    cursor_id: Option<u32>,
-  ) -> Result<String> {
+  pub fn set_surface_active_cursor(&self, surface_id: u32, cursor_id: Option<u32>) -> Result<()> {
     let mut runtime = self.lock()?;
-    let surface = surface_handle(surface_id)?;
     runtime
-      .set_surface_active_cursor(surface, cursor_id.map(|id| id as u64))
-      .map_err(runtime_error)?;
-    surface_state_json(&runtime, surface)
+      .set_surface_active_cursor(surface_handle(surface_id)?, cursor_id.map(|id| id as u64))
+      .map_err(runtime_error)
   }
 
   #[napi]
-  pub fn apply_surface_edit(&self, surface_id: u32, edit: JsSurfaceEdit) -> Result<String> {
+  pub fn apply_surface_edit(&self, surface_id: u32, edit: JsSurfaceEdit) -> Result<()> {
     let mut runtime = self.lock()?;
     let surface = surface_handle(surface_id)?;
     let document_len = runtime
@@ -524,8 +391,7 @@ impl NativeRuntimeSession {
         surface,
         js_surface_edit(edit, document_len, &current_selection)?,
       )
-      .map_err(runtime_error)?;
-    surface_state_json(&runtime, surface)
+      .map_err(runtime_error)
   }
 
   #[napi]
@@ -537,43 +403,35 @@ impl NativeRuntimeSession {
   }
 
   #[napi]
-  pub fn undo_surface(&self, surface_id: u32, count: u32) -> Result<String> {
+  pub fn undo_surface(&self, surface_id: u32, count: u32) -> Result<()> {
     let mut runtime = self.lock()?;
-    let surface = surface_handle(surface_id)?;
     runtime
-      .undo_surface(surface, count as usize)
-      .map_err(runtime_error)?;
-    surface_state_json(&runtime, surface)
+      .undo_surface(surface_handle(surface_id)?, count as usize)
+      .map_err(runtime_error)
   }
 
   #[napi]
-  pub fn redo_surface(&self, surface_id: u32, count: u32) -> Result<String> {
+  pub fn redo_surface(&self, surface_id: u32, count: u32) -> Result<()> {
     let mut runtime = self.lock()?;
-    let surface = surface_handle(surface_id)?;
     runtime
-      .redo_surface(surface, count as usize)
-      .map_err(runtime_error)?;
-    surface_state_json(&runtime, surface)
+      .redo_surface(surface_handle(surface_id)?, count as usize)
+      .map_err(runtime_error)
   }
 
   #[napi]
-  pub fn earlier_surface(&self, surface_id: u32, count: u32) -> Result<String> {
+  pub fn earlier_surface(&self, surface_id: u32, count: u32) -> Result<()> {
     let mut runtime = self.lock()?;
-    let surface = surface_handle(surface_id)?;
     runtime
-      .earlier_surface(surface, count as usize)
-      .map_err(runtime_error)?;
-    surface_state_json(&runtime, surface)
+      .earlier_surface(surface_handle(surface_id)?, count as usize)
+      .map_err(runtime_error)
   }
 
   #[napi]
-  pub fn later_surface(&self, surface_id: u32, count: u32) -> Result<String> {
+  pub fn later_surface(&self, surface_id: u32, count: u32) -> Result<()> {
     let mut runtime = self.lock()?;
-    let surface = surface_handle(surface_id)?;
     runtime
-      .later_surface(surface, count as usize)
-      .map_err(runtime_error)?;
-    surface_state_json(&runtime, surface)
+      .later_surface(surface_handle(surface_id)?, count as usize)
+      .map_err(runtime_error)
   }
 
   #[napi]
@@ -805,6 +663,30 @@ impl NativeRuntimeSession {
   }
 }
 
+fn indexed_words(text: &str) -> Vec<(usize, &str)> {
+  let mut words = Vec::new();
+  let mut start = None;
+  for (index, ch) in text.char_indices() {
+    let is_word = ch == '_' || ch == '$' || ch.is_ascii_alphanumeric();
+    match (start, is_word) {
+      (None, true) => start = Some(index),
+      (Some(word_start), false) => {
+        if index > word_start + 1 {
+          words.push((word_start, &text[word_start..index]));
+        }
+        start = None;
+      },
+      _ => {},
+    }
+  }
+  if let Some(word_start) = start
+    && text.len() > word_start + 1
+  {
+    words.push((word_start, &text[word_start..]));
+  }
+  words
+}
+
 fn document_handle(id: u32) -> Result<DocumentHandle> {
   DocumentHandle::new(u64::from(id))
     .ok_or_else(|| Error::from_reason(format!("invalid document id {id}")))
@@ -833,43 +715,6 @@ fn operation_spec(operation: JsSurfaceOperation) -> OperationSpec {
     indent_width: operation.indent_width.map(|width| width as usize),
     tab_width:    operation.tab_width.map(|width| width as usize),
   }
-}
-
-fn surface_state_json(runtime: &RuntimeSession, surface: SurfaceHandle) -> Result<String> {
-  let document_handle = runtime
-    .document_for_surface(surface)
-    .ok_or_else(|| Error::from_reason(format!("unknown surface {}", surface.get())))?;
-  let document = runtime
-    .document(document_handle)
-    .ok_or_else(|| Error::from_reason(format!("unknown document {}", document_handle.get())))?;
-  let surface_state = runtime
-    .surface(surface)
-    .ok_or_else(|| Error::from_reason(format!("unknown surface {}", surface.get())))?;
-  let viewport = surface_state.viewport();
-  let cursor_semantics = match surface_state.cursor_semantics() {
-    CursorSemantics::InsertionPoint => "InsertionPoint",
-    CursorSemantics::Cell => "Cell",
-  };
-  serde_json::to_string(&serde_json::json!({
-    "text": document.text().to_string(),
-    "revision": document.revision() as u32,
-    "lineEnding": document.line_ending().as_str(),
-    "lineCount": document.text().len_lines() as u32,
-    "selection": surface_state.selection().iter().map(|cursor| serde_json::json!({
-      "cursorId": cursor.id.get() as u32,
-      "anchor": cursor.range.anchor as u32,
-      "head": cursor.range.head as u32,
-    })).collect::<Vec<_>>(),
-    "activeCursorId": surface_state.active_cursor().map(|cursor| cursor.get() as u32),
-    "cursorSemantics": cursor_semantics,
-    "viewport": {
-      "firstRow": viewport.first_row as u32,
-      "rowCount": viewport.row_count as u32,
-      "firstCol": viewport.first_col as u32,
-      "wrapWidth": viewport.wrap_width as u32,
-    },
-  }))
-  .map_err(|err| Error::from_reason(err.to_string()))
 }
 
 fn js_surface_edit(edit: JsSurfaceEdit, len: usize, current_selection: &Selection) -> Result<Edit> {
@@ -940,13 +785,6 @@ fn register_name(name: &str) -> Result<char> {
       ))
     },
   }
-}
-
-fn lsp_server_handle(id: u32) -> Result<LspServerHandle> {
-  if id == 0 {
-    return Err(Error::from_reason("lsp server handle must be non-zero"));
-  }
-  Ok(LspServerHandle::from_raw(id as u64))
 }
 
 fn clipboard_type(kind: &str) -> Result<the_lib::clipboard::ClipboardType> {

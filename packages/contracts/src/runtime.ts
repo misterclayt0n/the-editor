@@ -34,7 +34,6 @@ export type DocumentId = number & { readonly __brand: "DocumentId" };
 export type SurfaceId = number & { readonly __brand: "SurfaceId" };
 export type ResourceId = number & { readonly __brand: "ResourceId" };
 export type SearchIndexId = number & { readonly __brand: "SearchIndexId" };
-export type LspServerId = number & { readonly __brand: "LspServerId" };
 
 export interface Viewport {
   firstRow: number;
@@ -276,38 +275,6 @@ export interface TextPreviewResult {
   syntax?: TextPreviewSyntaxSpan[];
 }
 
-export interface LspServerConfig {
-  id: string;
-  command: string;
-  args?: string[];
-  env?: Record<string, string>;
-  languages?: string[];
-  fileTypes?: string[];
-  initializationOptions?: JsonValue;
-}
-
-export interface LspServerStatus {
-  handle: LspServerId;
-  id: string;
-  state: string;
-  message?: string | null;
-  completionProvider?: boolean;
-  completionTriggerCharacters?: string[];
-}
-
-export interface LspLogEntry {
-  server: LspServerId;
-  stream: string;
-  message: string;
-}
-
-export interface LspDiagnosticEntry {
-  server: LspServerId;
-  uri: string;
-  diagnostics: JsonValue[];
-  version?: number | null;
-}
-
 export interface RuntimeApi {
   server: {
     ping(): Promise<OkResult>;
@@ -328,15 +295,16 @@ export interface RuntimeApi {
     setMetrics(params: { surfaceId: SurfaceId; metrics: CellGridMetrics }): Promise<OkResult>;
     setSoftWrap(params: { surfaceId: SurfaceId; softWrap: boolean }): Promise<OkResult>;
     setCursorSemantics(params: { surfaceId: SurfaceId; semantics: CursorSemantics }): Promise<OkResult>;
-    applyOperation(params: { surfaceId: SurfaceId; operation: SurfaceOperation }): Promise<SurfaceState>;
+    applyOperation(params: { surfaceId: SurfaceId; operation: SurfaceOperation }): Promise<OkResult>;
     readState(params: { surfaceId: SurfaceId }): Promise<SurfaceState>;
-    setActiveCursor(params: { surfaceId: SurfaceId; cursorId: number | null }): Promise<SurfaceState>;
-    applyEdit(params: { surfaceId: SurfaceId; edit: SurfaceEdit }): Promise<SurfaceState>;
+    completeWords(params: { surfaceId: SurfaceId; cursorOffset: number; query: string; limit?: number }): Promise<Array<{ label: string }>>;
+    setActiveCursor(params: { surfaceId: SurfaceId; cursorId: number | null }): Promise<OkResult>;
+    applyEdit(params: { surfaceId: SurfaceId; edit: SurfaceEdit }): Promise<OkResult>;
     commitUndoCheckpoint(params: { surfaceId: SurfaceId }): Promise<OkResult>;
-    undo(params: { surfaceId: SurfaceId; count?: number }): Promise<SurfaceState>;
-    redo(params: { surfaceId: SurfaceId; count?: number }): Promise<SurfaceState>;
-    earlier(params: { surfaceId: SurfaceId; count?: number }): Promise<SurfaceState>;
-    later(params: { surfaceId: SurfaceId; count?: number }): Promise<SurfaceState>;
+    undo(params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult>;
+    redo(params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult>;
+    earlier(params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult>;
+    later(params: { surfaceId: SurfaceId; count?: number }): Promise<OkResult>;
     renderFrame(params: {
       surfaceId: SurfaceId;
       viewport?: Viewport;
@@ -375,17 +343,6 @@ export interface RuntimeApi {
       aroundLine?: number;
       contextLines?: number;
     }): Promise<TextPreviewResult>;
-  };
-  lsp: {
-    registerServer(params: LspServerConfig): Promise<OkResult>;
-    configuredServers(): Promise<LspServerConfig[]>;
-    startServer(params: { id: string; rootUri?: string }): Promise<{ serverId: LspServerId }>;
-    shutdownServer(params: { serverId: LspServerId }): Promise<OkResult>;
-    status(): Promise<LspServerStatus[]>;
-    diagnostics(): Promise<LspDiagnosticEntry[]>;
-    logs(params: { serverId: LspServerId }): Promise<LspLogEntry[]>;
-    request(params: { serverId: LspServerId; method: string; params?: JsonValue; timeoutMs?: number }): Promise<JsonValue>;
-    notify(params: { serverId: LspServerId; method: string; params?: JsonValue }): Promise<OkResult>;
   };
   resources: {
     save(params: { surfaceId: SurfaceId }): Promise<OkResult>;

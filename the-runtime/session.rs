@@ -7,10 +7,7 @@ use std::{
     Path,
     PathBuf,
   },
-  sync::{
-    Arc,
-    Mutex,
-  },
+  sync::Arc,
   time::Duration,
 };
 
@@ -48,15 +45,6 @@ use crate::{
   io::{
     read_text_file,
     write_text_file,
-  },
-  lsp::{
-    LspDiagnosticEntry,
-    LspError,
-    LspLogEntry,
-    LspServerConfig,
-    LspServerHandle,
-    LspServerStatus,
-    LspStore,
   },
   resource::{
     Resource,
@@ -205,9 +193,6 @@ pub enum RuntimeError {
   #[error(transparent)]
   Search(#[from] SearchError),
 
-  #[error(transparent)]
-  Lsp(#[from] LspError),
-
   #[error("unknown document handle {0:?}")]
   UnknownDocument(DocumentHandle),
 
@@ -235,7 +220,6 @@ pub struct RuntimeSession {
   registers:          Registers,
   syntax_scheduler:   SyntaxScheduler,
   search:             SearchManager,
-  lsp:                Arc<Mutex<LspStore>>,
   next_resource_id:   u64,
   next_document_id:   u64,
   next_surface_id:    u64,
@@ -277,7 +261,6 @@ impl RuntimeSession {
       registers: Registers::new(),
       syntax_scheduler: SyntaxScheduler::default(),
       search: SearchManager::default(),
-      lsp: Arc::new(Mutex::new(LspStore::default())),
       next_resource_id: 0,
       next_document_id: 0,
       next_surface_id: 0,
@@ -287,108 +270,6 @@ impl RuntimeSession {
       documents: BTreeMap::new(),
       surfaces: BTreeMap::new(),
     }
-  }
-
-  pub fn lsp_store(&self) -> Arc<Mutex<LspStore>> {
-    self.lsp.clone()
-  }
-
-  pub fn lsp_register_server(&mut self, config: LspServerConfig) {
-    if let Ok(mut lsp) = self.lsp.lock() {
-      lsp.register_server(config);
-    }
-  }
-
-  pub fn lsp_configured_servers(&self) -> Vec<LspServerConfig> {
-    self
-      .lsp
-      .lock()
-      .map(|lsp| lsp.configured_servers())
-      .unwrap_or_default()
-  }
-
-  pub fn lsp_start_server(
-    &mut self,
-    id: &str,
-    root_uri: Option<String>,
-  ) -> RuntimeResult<LspServerHandle> {
-    let handle = self
-      .lsp
-      .lock()
-      .map_err(|_| LspError::Transport("LSP lock poisoned".into()))?
-      .start_server(id, root_uri)?;
-    let documents = self.documents.keys().copied().collect::<Vec<_>>();
-    for document in documents {
-      self.lsp_open_document(document)?;
-    }
-    Ok(handle)
-  }
-
-  pub fn lsp_shutdown_server(&mut self, handle: LspServerHandle) -> RuntimeResult<()> {
-    Ok(
-      self
-        .lsp
-        .lock()
-        .map_err(|_| LspError::Transport("LSP lock poisoned".into()))?
-        .shutdown_server(handle)?,
-    )
-  }
-
-  pub fn lsp_status(&mut self) -> Vec<LspServerStatus> {
-    self
-      .lsp
-      .lock()
-      .map(|mut lsp| lsp.status())
-      .unwrap_or_default()
-  }
-
-  pub fn lsp_diagnostics(&mut self) -> Vec<LspDiagnosticEntry> {
-    self
-      .lsp
-      .lock()
-      .map(|mut lsp| lsp.diagnostics())
-      .unwrap_or_default()
-  }
-
-  pub fn lsp_logs(&mut self, handle: LspServerHandle) -> RuntimeResult<Vec<LspLogEntry>> {
-    Ok(
-      self
-        .lsp
-        .lock()
-        .map_err(|_| LspError::Transport("LSP lock poisoned".into()))?
-        .logs(handle)?,
-    )
-  }
-
-  pub fn lsp_request(
-    &mut self,
-    handle: LspServerHandle,
-    method: &str,
-    params: serde_json::Value,
-    timeout_ms: u64,
-  ) -> RuntimeResult<serde_json::Value> {
-    Ok(
-      self
-        .lsp
-        .lock()
-        .map_err(|_| LspError::Transport("LSP lock poisoned".into()))?
-        .request(handle, method, params, Duration::from_millis(timeout_ms))?,
-    )
-  }
-
-  pub fn lsp_notify(
-    &mut self,
-    handle: LspServerHandle,
-    method: &str,
-    params: serde_json::Value,
-  ) -> RuntimeResult<()> {
-    Ok(
-      self
-        .lsp
-        .lock()
-        .map_err(|_| LspError::Transport("LSP lock poisoned".into()))?
-        .notify(handle, method, params)?,
-    )
   }
 
   pub fn syntax(&self) -> &RuntimeSyntax {
@@ -923,7 +804,6 @@ impl RuntimeSession {
     });
     self.resource_documents.insert(resource, handle);
     self.syntax_scheduler.touch_document(handle);
-    self.lsp_open_document(handle)?;
     Ok(handle)
   }
 
@@ -1016,12 +896,9 @@ impl RuntimeSession {
     surface: SurfaceHandle,
     edit: the_lib::operation::Edit,
   ) -> RuntimeResult<()> {
-    let old_text = self.surface_document_text(surface)?;
-    let changeset = edit.transaction.changes().clone();
     self.with_surface_document_mut(surface, move |surface, document| {
       surface.apply_edit(document, edit)
     })??;
-    self.lsp_sync_surface_document_incremental(surface, &old_text, &changeset)?;
     Ok(())
   }
 
@@ -1086,125 +963,15 @@ impl RuntimeSession {
         })??;
       },
       OperationAtom::Edit(edit) => {
-        let old_text = self.surface_document_text(surface)?;
-        let changeset = edit.transaction.changes().clone();
         self.with_surface_document_mut(surface, move |surface, document| {
           surface.apply_edit(document, edit)
         })??;
-        self.lsp_sync_surface_document_incremental(surface, &old_text, &changeset)?;
       },
       OperationAtom::RegisterWrite(write) => {
         self.registers.write(write.name, write.values);
       },
     }
     Ok(())
-  }
-
-  fn surface_document_text(&self, surface: SurfaceHandle) -> RuntimeResult<ropey::Rope> {
-    let document = self
-      .surfaces
-      .get(&surface)
-      .ok_or(RuntimeError::UnknownSurface(surface))?
-      .document;
-    Ok(
-      self
-        .documents
-        .get(&document)
-        .ok_or(RuntimeError::UnknownDocument(document))?
-        .document
-        .text()
-        .clone(),
-    )
-  }
-
-  fn lsp_sync_surface_document(&mut self, surface: SurfaceHandle) -> RuntimeResult<()> {
-    let document = self
-      .surfaces
-      .get(&surface)
-      .ok_or(RuntimeError::UnknownSurface(surface))?
-      .document;
-    self.lsp_change_document(document)
-  }
-
-  fn lsp_sync_surface_document_incremental(
-    &mut self,
-    surface: SurfaceHandle,
-    old_text: &ropey::Rope,
-    changeset: &the_lib::transaction::ChangeSet,
-  ) -> RuntimeResult<()> {
-    let document = self
-      .surfaces
-      .get(&surface)
-      .ok_or(RuntimeError::UnknownSurface(surface))?
-      .document;
-    self.lsp_change_document_incremental(document, old_text, changeset)
-  }
-
-  fn lsp_open_document(&mut self, document: DocumentHandle) -> RuntimeResult<()> {
-    let Some((uri, language_id, text, version)) = self.lsp_document_payload(document) else {
-      return Ok(());
-    };
-    Ok(
-      self
-        .lsp
-        .lock()
-        .map_err(|_| LspError::Transport("LSP lock poisoned".into()))?
-        .did_open_document(&uri, &language_id, &text, version)?,
-    )
-  }
-
-  fn lsp_change_document(&mut self, document: DocumentHandle) -> RuntimeResult<()> {
-    let Some((uri, _language_id, text, version)) = self.lsp_document_payload(document) else {
-      return Ok(());
-    };
-    Ok(
-      self
-        .lsp
-        .lock()
-        .map_err(|_| LspError::Transport("LSP lock poisoned".into()))?
-        .did_change_document(&uri, &text, version)?,
-    )
-  }
-
-  fn lsp_change_document_incremental(
-    &mut self,
-    document: DocumentHandle,
-    old_text: &ropey::Rope,
-    changeset: &the_lib::transaction::ChangeSet,
-  ) -> RuntimeResult<()> {
-    let Some((uri, _language_id, _text, version)) = self.lsp_document_payload(document) else {
-      return Ok(());
-    };
-    let new_text = self
-      .documents
-      .get(&document)
-      .ok_or(RuntimeError::UnknownDocument(document))?
-      .document
-      .text();
-    Ok(
-      self
-        .lsp
-        .lock()
-        .map_err(|_| LspError::Transport("LSP lock poisoned".into()))?
-        .did_change_document_incremental(&uri, old_text, new_text, changeset, version)?,
-    )
-  }
-
-  fn lsp_document_payload(
-    &self,
-    document: DocumentHandle,
-  ) -> Option<(String, String, String, i64)> {
-    let entry = self.documents.get(&document)?;
-    let resource = entry.resource?;
-    let path = self.resources.get(&resource)?.path();
-    let uri = file_uri(path);
-    let language_id = lsp_language_id_for_path(path);
-    Some((
-      uri,
-      language_id,
-      entry.document.text().to_string(),
-      entry.document.revision() as i64,
-    ))
   }
 
   pub fn commit_surface_undo_checkpoint(&mut self, surface: SurfaceHandle) -> RuntimeResult<()> {
@@ -1224,7 +991,6 @@ impl RuntimeSession {
       }
       Ok::<_, the_lib::surface::SurfaceError>(())
     })??;
-    self.lsp_sync_surface_document(surface)?;
     Ok(())
   }
 
@@ -1238,7 +1004,6 @@ impl RuntimeSession {
       }
       Ok::<_, the_lib::surface::SurfaceError>(())
     })??;
-    self.lsp_sync_surface_document(surface)?;
     Ok(())
   }
 
@@ -1514,31 +1279,6 @@ fn truncate_string_at_char_boundary(text: &mut String, max_bytes: usize) {
     boundary -= 1;
   }
   text.truncate(boundary);
-}
-
-fn file_uri(path: &Path) -> String {
-  format!("file://{}", path.to_string_lossy())
-}
-
-fn lsp_language_id_for_path(path: &Path) -> String {
-  match path
-    .extension()
-    .and_then(|extension| extension.to_str())
-    .unwrap_or_default()
-  {
-    "ts" => "typescript",
-    "tsx" => "typescriptreact",
-    "js" => "javascript",
-    "jsx" => "javascriptreact",
-    "rs" => "rust",
-    "json" => "json",
-    "css" => "css",
-    "html" => "html",
-    "md" => "markdown",
-    other if !other.is_empty() => other,
-    _ => "plaintext",
-  }
-  .to_string()
 }
 
 fn merge_range(ranges: &mut Vec<Range<usize>>, mut range: Range<usize>) {

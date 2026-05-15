@@ -1,7 +1,6 @@
 import type { DiagnosticRecord, EditorHost, EditorModule } from "@the-editor/editor";
 import { commandId } from "@the-editor/editor";
-import type { JsonValue, SurfaceId, SurfaceSelectionRange, SurfaceState } from "@the-editor/contracts/runtime";
-import { ensureLspForPath, fileUri } from "./lsp.js";
+import type { SurfaceId, SurfaceSelectionRange, SurfaceState } from "@the-editor/contracts/runtime";
 import { activeSurfacePane, refreshActiveSurface } from "./state.js";
 
 type Direction = "prev" | "next";
@@ -74,34 +73,9 @@ async function gotoObject(editor: EditorHost, kind: ObjectKind, direction: Direc
   if (target) await selectWithJump(editor, pane.surfaceId, orientRange(target, direction));
 }
 
-async function symbolRanges(editor: EditorHost, path: string, text: string, kind: ObjectKind): Promise<SurfaceSelectionRange[]> {
+async function symbolRanges(_editor: EditorHost, _path: string, text: string, kind: ObjectKind): Promise<SurfaceSelectionRange[]> {
   if (kind === "parameter" || kind === "entry" || kind === "test" || kind === "xml_element") return [];
-  await ensureLspForPath(editor, path);
-  const server = (await runningServersForPath(editor, path))[0];
-  if (!server) return fallbackSymbolRanges(text, kind);
-  try {
-    const result = await editor.lsp.request({ serverId: server.handle, method: "textDocument/documentSymbol", timeoutMs: 3000, params: { textDocument: { uri: fileUri(path) } } });
-    const ranges = flattenSymbols(result).filter((s) => symbolMatchesKind(s, kind)).map((s, i) => expandObjectRange(text, { cursorId: i + 1, anchor: offsetAtPosition(text, s.range.start), head: offsetAtPosition(text, s.range.end) }, kind));
-    return ranges.length ? ranges.sort((a, b) => a.anchor - b.anchor) : fallbackSymbolRanges(text, kind);
-  } catch { return fallbackSymbolRanges(text, kind); }
-}
-
-function flattenSymbols(value: JsonValue): Array<{ kind?: number; range: { start: Position; end: Position }; name?: string }> {
-  if (!Array.isArray(value)) return [];
-  const out: Array<{ kind?: number; range: { start: Position; end: Position }; name?: string }> = [];
-  const visit = (item: JsonValue) => {
-    const o = asRecord(item); const range = parseRange(o?.range ?? (o?.location && asRecord(o.location)?.range));
-    if (range) out.push({ kind: typeof o?.kind === "number" ? o.kind : undefined, range, name: typeof o?.name === "string" ? o.name : undefined });
-    if (Array.isArray(o?.children)) for (const child of o.children) visit(child);
-  };
-  for (const item of value) visit(item);
-  return out;
-}
-
-function symbolMatchesKind(symbol: { kind?: number; name?: string }, kind: ObjectKind): boolean {
-  if (kind === "function") return symbol.kind === 12 || symbol.kind === 6 || symbol.kind === 5;
-  if (kind === "class") return symbol.kind === 5 || symbol.kind === 23;
-  return false;
+  return fallbackSymbolRanges(text, kind);
 }
 
 function fallbackSymbolRanges(text: string, kind: ObjectKind): SurfaceSelectionRange[] {
@@ -181,12 +155,8 @@ async function selectWithJump(editor: EditorHost, surfaceId: SurfaceId, range: S
   await refreshActiveSurface(editor); editor.workbench.invalidate("frame");
 }
 
-async function runningServersForPath(editor: EditorHost, path: string) { const ids = editor.lsp.serverIdsForPath(path); return (await editor.lsp.status()).filter((s) => ids.includes(s.id) && (s.state === "running" || s.state === "initialized")); }
 type Position = { line: number; character: number };
 function activeCursorByteOffset(state: SurfaceState): number { const c = state.selection.find((r) => r.cursorId === state.activeCursorId) ?? state.selection[0]; return c ? c.head : 0; }
-function parseRange(value: unknown): { start: Position; end: Position } | undefined { const o = asRecord(value); const s = parsePos(o?.start); const e = parsePos(o?.end); return s && e ? { start: s, end: e } : undefined; }
-function parsePos(value: unknown): Position | undefined { const o = asRecord(value); return typeof o?.line === "number" && typeof o?.character === "number" ? { line: o.line, character: o.character } : undefined; }
-function asRecord(value: unknown): Record<string, any> | undefined { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : undefined; }
 function offsetAtPosition(text: string, pos: Position): number { return utf8ByteOffsetAtStringIndex(text, utf16PositionToStringIndex(text, pos)); }
 function utf16PositionToStringIndex(text: string, pos: Position): number { let line = 0, start = 0; for (let i = 0; i < text.length && line < pos.line; i++) if (text.charCodeAt(i) === 10) { line++; start = i + 1; } const end = text.indexOf("\n", start); return Math.min(start + pos.character, end < 0 ? text.length : end); }
 function stringIndexAtUtf8ByteOffset(text: string, byteOffset: number): number { if (byteOffset <= 0) return 0; let bytes = 0; for (let i = 0; i < text.length; i++) { const code = text.charCodeAt(i); const next = code >= 0xd800 && code <= 0xdbff && i + 1 < text.length ? text.slice(i, i + 2) : text[i] ?? ""; const len = new TextEncoder().encode(next).length; if (bytes + len > byteOffset) return i; bytes += len; if (next.length === 2) i++; if (bytes >= byteOffset) return i + 1; } return text.length; }

@@ -1,5 +1,4 @@
-import { commandId, matchesCommandPaletteItem, roleImplementationId, toolTypeId, type CommandPaletteItem, type EditorModule, defineHostStore } from "@the-editor/editor";
-import { currentPathDiagnosticSummary } from "./diagnostics.js";
+import { commandId, matchesCommandPaletteItem, roleImplementationId, toolTypeId, type CommandPaletteItem, type EditorModule } from "@the-editor/editor";
 import { getDefaultState } from "./state.js";
 
 const inspectorToolTypeId = toolTypeId("default.inspector");
@@ -18,13 +17,10 @@ export function defaultWorkbenchControls(): EditorModule {
       snapshot() {
         const state = getDefaultState(editor);
         const commandPalette = editor.roles.snapshot("commandPalette");
-        const lsp = editor.stores.get(defineHostStore<{ text?: string } | undefined>({ id: "default.lsp.statusline", init: () => undefined }));
         return {
           mode: editor.interaction.snapshot().mode?.id,
           activePath: state.activePaneId ? state.surfacePanes.get(state.activePaneId)?.path : undefined,
-          lspStatus: lsp?.text,
           activeRoleImplementation: commandPalette?.implementationId,
-          diagnosticsSummary: currentPathDiagnosticSummary(editor),
           selectedCommandPalette: commandPalette?.selectedImplementationId,
         };
       },

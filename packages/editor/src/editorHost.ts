@@ -11,7 +11,6 @@ import { GutterRegistry } from "./gutters.js";
 import { Hooks } from "./hooks.js";
 import { InteractionRegistry } from "./interaction.js";
 import { KeymapRegistry } from "./keymaps.js";
-import { LspRegistry } from "./lsp.js";
 import { ModuleRegistry, type EditorModule, type EditorModuleRegistration } from "./modules.js";
 import { NotificationRegistry } from "./notifications.js";
 import { OverlayRegistry } from "./overlays.js";
@@ -54,7 +53,6 @@ export class EditorHost {
   readonly interaction = new InteractionRegistry(this);
   readonly decorations = new DecorationRegistry(this);
   readonly gutters = new GutterRegistry(this);
-  readonly lsp = new LspRegistry(this);
   readonly input = new InputRouter(this);
   readonly themes = new ThemeRegistry(this);
   readonly sessions = new InteractiveSessionRegistry(this);

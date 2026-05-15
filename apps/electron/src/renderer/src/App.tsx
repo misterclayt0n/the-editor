@@ -665,9 +665,12 @@ function SurfaceEditorPane({
   const pendingRenderRequestRef = useRef<{ viewport: Viewport; metrics: CellGridMetrics } | undefined>(undefined);
   const renderScheduledRef = useRef(false);
 
+  const frameGutters = useMemo(() => builtInFrameGutters(renderFrame, paneState?.lineCount), [renderFrame, paneState?.lineCount]);
+  const gutters = useMemo(() => [...frameGutters, ...(paneState?.gutters ?? [])], [frameGutters, paneState?.gutters]);
+
   latestFrameRef.current = renderFrame;
   latestDecorationsRef.current = decorations;
-  latestGuttersRef.current = paneState?.gutters ?? [];
+  latestGuttersRef.current = gutters;
   latestThemeRef.current = theme;
   latestSyntaxLegendRef.current = syntaxLegend;
   latestSelectionPickerActiveRef.current = selectionPickerActive;
@@ -783,11 +786,11 @@ function SurfaceEditorPane({
       surfaceId: pane.surfaceId,
       canvas,
       frame: renderFrame,
-      gutters: paneState?.gutters ?? [],
+      gutters,
       metrics: paneState?.metrics ?? latestConfigMetricsRef.current,
       styleOptions: EDITOR_SURFACE_STYLE,
     });
-  }, [pane.surfaceId, renderFrame, paneState?.gutters, paneState?.metrics]);
+  }, [gutters, pane.surfaceId, renderFrame, paneState?.metrics]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -802,16 +805,44 @@ function SurfaceEditorPane({
       decorations,
       theme,
       syntaxLegend,
-      { selectionPickerActive, gutters: paneState?.gutters ?? [], cursorShape },
+      { selectionPickerActive, gutters, cursorShape },
       EDITOR_SURFACE_STYLE,
     );
-  }, [cursorShape, decorations, pane.id, pane.path, renderFrame, paneState?.gutters, selectionPickerActive, syntaxLegend, theme]);
+  }, [cursorShape, decorations, gutters, pane.id, pane.path, renderFrame, selectionPickerActive, syntaxLegend, theme]);
 
   return (
     <div className="editorSurfacePane" data-active={active ? "true" : undefined} onMouseDown={() => focusPane(pane.id)}>
       <canvas ref={canvasRef} />
     </div>
   );
+}
+
+function builtInFrameGutters(frame: RenderFrame | undefined, lineCount: number | undefined): GutterSnapshot[] {
+  const rows = frame?.gutterRows ?? [];
+  if (!rows.length) return [];
+  const maxLine = Math.max(lineCount ?? 0, ...rows.map((row) => row.lineNumber ?? 0));
+  const width = Math.max(2, String(maxLine).length);
+  return [{
+    providerId: "runtime.lineNumbers",
+    lane: {
+      id: "lineNumbers",
+      side: "left",
+      order: 100,
+      widthCells: width,
+      paddingLeftPx: 0,
+      paddingRightPx: 22,
+    },
+    lines: rows.map((row) => ({
+      id: `line:${row.surfaceRow}`,
+      surfaceRow: row.surfaceRow,
+      kind: "text" as const,
+      text: row.lineNumber === null || row.lineNumber === undefined ? "" : String(row.lineNumber).padStart(width, " "),
+      align: "right" as const,
+      foreground: row.active ? "#e7b84a" : undefined,
+      background: row.active ? "rgba(255, 255, 255, 0.045)" : undefined,
+      opacity: row.active ? 0.95 : 0.58,
+    })),
+  }];
 }
 
 function ToolEditorPane({

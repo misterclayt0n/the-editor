@@ -104,6 +104,17 @@ pub struct JsRenderRow {
 }
 
 #[napi(object)]
+pub struct JsGutterRow {
+  pub surface_row:          u32,
+  pub doc_line:             Option<u32>,
+  pub line_number:          Option<u32>,
+  pub active:               bool,
+  pub selected:             bool,
+  pub starts_logical_line:  bool,
+  pub wrapped_continuation: bool,
+}
+
+#[napi(object)]
 pub struct JsSelectionSpan {
   pub cursor_id:   u32,
   pub surface_row: u32,
@@ -131,11 +142,12 @@ pub struct JsSyntaxSpan {
 
 #[napi(object)]
 pub struct JsRenderFrame {
-  pub surface_id: u32,
-  pub rows:       Vec<JsRenderRow>,
-  pub selections: Vec<JsSelectionSpan>,
-  pub cursors:    Vec<JsCursorPlacement>,
-  pub syntax:     Vec<JsSyntaxSpan>,
+  pub surface_id:  u32,
+  pub rows:        Vec<JsRenderRow>,
+  pub gutter_rows: Vec<JsGutterRow>,
+  pub selections:  Vec<JsSelectionSpan>,
+  pub cursors:     Vec<JsCursorPlacement>,
+  pub syntax:      Vec<JsSyntaxSpan>,
 }
 
 #[napi]
@@ -717,9 +729,40 @@ impl NativeRuntimeSession {
 }
 
 fn js_render_frame(frame: the_lib::render::RenderFrame) -> JsRenderFrame {
+  let active_rows = frame
+    .cursors
+    .iter()
+    .filter(|cursor| cursor.active)
+    .map(|cursor| cursor.surface_row)
+    .collect::<std::collections::HashSet<_>>();
+  let selected_rows = frame
+    .selections
+    .iter()
+    .map(|selection| selection.surface_row)
+    .collect::<std::collections::HashSet<_>>();
+  let gutter_rows = frame
+    .rows
+    .iter()
+    .map(|row| {
+      JsGutterRow {
+        surface_row:          row.surface_row as u32,
+        doc_line:             row.doc_line.map(|line| line as u32),
+        line_number:          row
+          .doc_line
+          .filter(|_| row.starts_logical_line)
+          .map(|line| line as u32 + 1),
+        active:               active_rows.contains(&row.surface_row),
+        selected:             selected_rows.contains(&row.surface_row),
+        starts_logical_line:  row.starts_logical_line,
+        wrapped_continuation: row.wrapped_continuation,
+      }
+    })
+    .collect();
+
   JsRenderFrame {
     surface_id: frame.surface_id.get() as u32,
-    rows:       frame
+    gutter_rows,
+    rows: frame
       .rows
       .into_iter()
       .map(|row| {
@@ -745,7 +788,7 @@ fn js_render_frame(frame: the_lib::render::RenderFrame) -> JsRenderFrame {
         }
       })
       .collect(),
-    cursors:    frame
+    cursors: frame
       .cursors
       .into_iter()
       .map(|cursor| {
@@ -762,7 +805,7 @@ fn js_render_frame(frame: the_lib::render::RenderFrame) -> JsRenderFrame {
         }
       })
       .collect(),
-    syntax:     frame
+    syntax: frame
       .syntax
       .into_iter()
       .map(|span| {

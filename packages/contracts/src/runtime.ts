@@ -136,9 +136,20 @@ export interface SyntaxSpan {
   kind: number;
 }
 
+export interface GutterRow {
+  surfaceRow: number;
+  docLine: number | null;
+  lineNumber: number | null;
+  active: boolean;
+  selected: boolean;
+  startsLogicalLine: boolean;
+  wrappedContinuation: boolean;
+}
+
 export interface RenderFrame {
   surfaceId: SurfaceId;
   rows: RenderRow[];
+  gutterRows: GutterRow[];
   selections: SelectionSpan[];
   cursors: CursorPlacement[];
   syntax: SyntaxSpan[];

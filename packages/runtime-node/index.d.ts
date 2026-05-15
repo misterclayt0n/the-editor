@@ -60,9 +60,20 @@ export interface JsCursorPlacement {
   active: boolean
 }
 
+export interface JsGutterRow {
+  surfaceRow: number
+  docLine?: number
+  lineNumber?: number
+  active: boolean
+  selected: boolean
+  startsLogicalLine: boolean
+  wrappedContinuation: boolean
+}
+
 export interface JsRenderFrame {
   surfaceId: number
   rows: Array<JsRenderRow>
+  gutterRows: Array<JsGutterRow>
   selections: Array<JsSelectionSpan>
   cursors: Array<JsCursorPlacement>
   syntax: Array<JsSyntaxSpan>

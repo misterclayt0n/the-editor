@@ -3,6 +3,7 @@ import { defineConfig } from "tsdown";
 export default defineConfig({
   entry: {
     "main/main": "src/main/main.ts",
+    "main/nativeRuntimeWorker": "src/main/nativeRuntimeWorker.ts",
     "policy/worker": "src/policy/worker.ts",
   },
   format: "cjs",

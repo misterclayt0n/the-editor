@@ -174,10 +174,10 @@
 .commandPaletteItemMain {
   align-items: center;
   display: grid;
+  flex: 1 1 auto;
   gap: 12px;
   grid-template-columns: minmax(0, 1fr) auto;
   min-width: 0;
-  width: 100%;
 }
 
 .commandPaletteTitle {
@@ -205,6 +205,33 @@
 
 .commandPaletteItem[data-active="true"] .commandPaletteDetail {
   color: var(--theme-ui-command-palette-detail-selected-fg, color-mix(in lab, var(--commandPaletteSelectedFg) 72%, var(--commandPaletteSelectedBg)));
+}
+
+.commandPaletteItemMeta {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  margin-left: 12px;
+}
+
+.commandPrimitiveShortcut {
+  border: 1px solid color-mix(in lab, var(--commandPaletteFgMuted) 28%, transparent);
+  border-radius: 5px;
+  color: var(--commandPaletteFgMuted);
+  font-family: Iosevka, ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 5px;
+}
+
+.commandPaletteAlias {
+  border-color: color-mix(in lab, var(--commandPaletteAccent) 32%, transparent);
+  color: color-mix(in lab, var(--commandPaletteAccent) 80%, var(--commandPaletteFg));
+}
+
+.commandPaletteItem[data-active="true"] .commandPrimitiveShortcut {
+  color: color-mix(in lab, var(--commandPaletteSelectedFg) 76%, var(--commandPaletteSelectedBg));
 }
 
 .commandPaletteEmpty {

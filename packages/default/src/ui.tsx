@@ -14,6 +14,7 @@ import { diagnosticLocationLabel, diagnosticPrimaryLine } from "./diagnosticsSha
 import { DefaultFileTree } from "./fileTreeUi.js";
 import { MarkdownView } from "@the-editor/editor/markdownView";
 import { DefaultWorkbenchTabstrip } from "./workbenchTabstrip.js";
+import { Command, CommandEmpty, CommandInput, CommandItem, CommandList, CommandShortcut } from "./components/command.js";
 import "./commandPalette.css";
 import "./fileTree.css";
 import "./hover.css";
@@ -26,6 +27,8 @@ interface CommandPaletteItemView {
   id: string;
   title: string;
   detail?: string;
+  alias?: string;
+  keybinding?: string;
 }
 
 interface CommandPaletteViewState {
@@ -718,17 +721,17 @@ function CommandPaletteOverlay({
       <div className="commandPaletteViewport">
         <div className="commandPaletteShell">
           <div className="commandPaletteSurface">
-            <div className="commandPalettePanel">
+            <Command className="commandPalettePanel" shouldFilter={false} value={state.items[state.selectedIndex]?.id ?? ""}>
               <div className="commandPaletteInputRow">
                 <CommandPaletteSearchIcon />
-                <input
+                <CommandInput
                   ref={inputRef}
                   className="commandPaletteInput"
                   placeholder={state.placeholder || "Type a command"}
                   spellCheck={false}
                   value={state.query}
-                  onChange={(event) => {
-                    void sessions.dispatch(sessionId, "setQuery", { query: event.target.value });
+                  onValueChange={(query) => {
+                    void sessions.dispatch(sessionId, "setQuery", { query });
                   }}
                   onKeyDown={(event) => {
                     if (event.key === "ArrowUp") {
@@ -753,13 +756,13 @@ function CommandPaletteOverlay({
                   }}
                 />
               </div>
-              <div ref={itemsRef} className="commandPaletteItems">
+              <CommandList ref={itemsRef} className="commandPaletteItems">
                 {state.items.length ? state.items.map((item, index) => {
                   const isActive = index === state.selectedIndex;
                   return (
-                    <button
+                    <CommandItem
                       key={item.id}
-                      type="button"
+                      value={item.id}
                       className="commandPaletteItem"
                       data-active={isActive ? "true" : undefined}
                       onMouseMove={() => {
@@ -769,7 +772,7 @@ function CommandPaletteOverlay({
                       onMouseDown={(event) => {
                         event.preventDefault();
                       }}
-                      onClick={() => {
+                      onSelect={() => {
                         void sessions.dispatch(sessionId, "selectIndex", { index }).then(() => sessions.dispatch(sessionId, "accept"));
                       }}
                     >
@@ -777,11 +780,15 @@ function CommandPaletteOverlay({
                         <div className="commandPaletteTitle">{item.title}</div>
                         {item.detail ? <div className="commandPaletteDetail">{item.detail}</div> : null}
                       </div>
-                    </button>
+                      <div className="commandPaletteItemMeta">
+                        {item.alias ? <CommandShortcut className="commandPaletteAlias">{item.alias}</CommandShortcut> : null}
+                        {item.keybinding ? <CommandShortcut>{item.keybinding}</CommandShortcut> : null}
+                      </div>
+                    </CommandItem>
                   );
-                }) : <div className="commandPaletteEmpty">No matching commands</div>}
-              </div>
-            </div>
+                }) : <CommandEmpty className="commandPaletteEmpty">No matching commands</CommandEmpty>}
+              </CommandList>
+            </Command>
             <div className="commandPaletteFooter">
               <span>Enter to run</span>
               <span>Esc to close</span>

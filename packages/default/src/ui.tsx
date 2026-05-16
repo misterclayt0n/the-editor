@@ -39,6 +39,9 @@ interface CommandPaletteViewState {
 interface CommandPaletteSessionViewState {
   query: string;
   placeholder?: string;
+  mode?: "commands" | "argument";
+  commandTitle?: string;
+  stack?: unknown[];
   items: CommandPaletteItemView[];
 }
 
@@ -699,6 +702,8 @@ function CommandPaletteOverlay({
 
   if (!state) return null;
 
+  const canGoBack = Boolean(state.stack?.length);
+
   return (
     <CommandDialog
       open
@@ -710,8 +715,18 @@ function CommandPaletteOverlay({
         <CommandInput
           ref={inputRef}
           placeholder={state.placeholder || "Type a command or search..."}
+          canGoBack={canGoBack}
+          onBack={() => {
+            void sessions.dispatch(sessionId, "back");
+          }}
           spellCheck={false}
           value={state.query}
+          onKeyDown={(event) => {
+            if (event.key === "Backspace" && canGoBack && !state.query) {
+              event.preventDefault();
+              void sessions.dispatch(sessionId, "back");
+            }
+          }}
           onValueChange={(query) => {
             void sessions.dispatch(sessionId, "setQuery", { query });
           }}

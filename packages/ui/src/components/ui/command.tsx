@@ -1,6 +1,6 @@
 import * as React from "react"
 import { Command as CommandPrimitive } from "cmdk"
-import { SearchIcon } from "lucide-react"
+import { ArrowLeftIcon, SearchIcon } from "lucide-react"
 
 import { cn } from "../../lib/utils.js"
 import {
@@ -62,14 +62,30 @@ function CommandDialog({
 
 function CommandInput({
   className,
+  canGoBack = false,
+  onBack,
   ...props
-}: React.ComponentProps<typeof CommandPrimitive.Input>) {
+}: React.ComponentProps<typeof CommandPrimitive.Input> & {
+  canGoBack?: boolean
+  onBack?: () => void
+}) {
   return (
     <div
       data-slot="command-input-wrapper"
       className="flex h-9 items-center gap-2 border-b border-border px-3"
     >
-      <SearchIcon className="size-4 shrink-0 opacity-50" />
+      {canGoBack ? (
+        <button
+          type="button"
+          aria-label="Back"
+          className="-ml-1 flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+          onClick={() => onBack?.()}
+        >
+          <ArrowLeftIcon className="size-4" />
+        </button>
+      ) : (
+        <SearchIcon className="size-4 shrink-0 opacity-50" />
+      )}
       <CommandPrimitive.Input
         data-slot="command-input"
         className={cn(

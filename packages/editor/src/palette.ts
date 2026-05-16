@@ -36,6 +36,9 @@ export interface CommandPaletteRoleState {
   visible: boolean;
   query: string;
   placeholder?: string;
+  mode?: "commands" | "argument";
+  commandTitle?: string;
+  canGoBack?: boolean;
   items: CommandPaletteItem[];
 }
 

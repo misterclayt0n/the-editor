@@ -172,24 +172,30 @@ The palette may join command metadata with active keymap data for display, but k
 
 Commands can define first-class argument flows.
 
-V1 grammar is intentionally simple:
+Argument collection is a nested picker flow, not an inline command language. The command palette has one search input for the current frame. Selecting a command that requires an argument pushes a new frame, clears the search query, and shows suggestions from the command's argument provider.
+
+Example flow:
 
 ```txt
-<command-or-alias> <argument query>
+Command frame
+  query: theme
+  selected item: Select Theme
+  Enter
+
+Argument frame
+  title: Select Theme
+  query: gruv
+  selected item: Gruvbox Dark
+  Enter
 ```
 
-Examples:
+The final dispatch is still a normal command dispatch:
 
-```txt
-open App.tsx
-o App.tsx
-rename NewName
-pwd
+```ts
+{ id: commandId("workbench.selectTheme"), args: { theme: "gruvbox_dark" } }
 ```
 
-The first token resolves the command. The rest of the input is passed to that command's active argument provider.
-
-Example:
+Example command definition:
 
 ```ts
 editor.commands.register({
@@ -208,27 +214,24 @@ editor.commands.register({
 });
 ```
 
-Typing either of these should switch the palette from command results to file results:
+Selecting `Open File` enters a `Files` picker. Typing in that frame fuzzy-matches files. Pressing Backspace with an empty argument query, or using the UI back affordance, returns to the previous command frame.
 
-```txt
-open 
-o 
-```
-
-The palette should then fuzzy-match files using the argument query.
+Aliases remain searchable metadata for command discovery, but aliases are not an inline invocation language. Inputs such as `open App.tsx`, `theme gruvbox`, or `cd ~/code/foo` are not parsed specially by the palette.
 
 ## Non-goals for V1
 
-Do not build shell grammar yet.
+Do not build shell grammar.
 
 Out of scope:
 
 ```txt
+open App.tsx
+o App.tsx
 open "some file.ts" --split right --line 20
 grep "hello" --case-sensitive | open
 ```
 
-No quoting rules, pipes, flags, nested subcommands, or shell-style escaping in V1.
+No inline command invocation, quoting rules, pipes, flags, nested subcommands, shell-style escaping, or compatibility shims.
 
 ## Palette session model
 
@@ -241,8 +244,23 @@ interface CommandPaletteSession {
   query: string;
   mode: "commands" | "argument";
   commandId?: CommandId;
+  commandTitle?: string;
   argumentIndex?: number;
+  argumentName?: string;
+  placeholder?: string;
   items: CommandPaletteItem[];
+  canGoBack?: boolean;
+  stack: CommandPaletteFrame[];
+}
+
+interface CommandPaletteFrame {
+  query: string;
+  mode: "commands" | "argument";
+  commandId?: CommandId;
+  commandTitle?: string;
+  argumentIndex?: number;
+  argumentName?: string;
+  placeholder?: string;
 }
 
 interface CommandPaletteItem {

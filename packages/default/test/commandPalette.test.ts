@@ -26,8 +26,11 @@ describe("default command palette", () => {
     expect(items.some((item) => item.id === "command.run")).toBe(true);
     expect(items.some((item) => item.id === "append_mode")).toBe(false);
 
-    await editor.sessions.dispatch(role!.sessionId!, "setQuery", { query: "command append" });
-    const commandSession = editor.sessions.snapshot<{ items: Array<{ id: string; title: string; command?: { id: string; args?: unknown } }> }>(role!.sessionId!)?.state;
+    await editor.sessions.dispatch(role!.sessionId!, "setQuery", { query: "command" });
+    await editor.sessions.dispatch(role!.sessionId!, "acceptItem", { id: "command.run" });
+    await editor.sessions.dispatch(role!.sessionId!, "setQuery", { query: "append" });
+    const commandSession = editor.sessions.snapshot<{ mode: string; items: Array<{ id: string; title: string; command?: { id: string; args?: unknown } }> }>(role!.sessionId!)?.state;
+    expect(commandSession?.mode).toBe("argument");
     expect(commandSession?.items.some((item) => item.title === "append_mode" && (item.command?.args as { id?: string } | undefined)?.id === "append_mode")).toBe(true);
   });
 
@@ -46,9 +49,12 @@ describe("default command palette", () => {
     });
     await editor.packages.load("default");
 
-    await editor.commands.dispatch({ id: "commandPalette.open" as never, args: { initialQuery: "reload default/" } });
+    await editor.commands.dispatch({ id: "commandPalette.open" as never, args: { initialQuery: "reload" } });
     const role = editor.roles.snapshot("commandPalette")?.state as { sessionId?: string } | undefined;
-    const session = role?.sessionId ? editor.sessions.snapshot<{ items: Array<{ command?: { args?: unknown } }> }>(role.sessionId)?.state : undefined;
+    await editor.sessions.dispatch(role!.sessionId!, "acceptItem", { id: "editor.reload" });
+    await editor.sessions.dispatch(role!.sessionId!, "setQuery", { query: "default/" });
+    const session = role?.sessionId ? editor.sessions.snapshot<{ mode: string; items: Array<{ command?: { args?: unknown } }> }>(role.sessionId)?.state : undefined;
+    expect(session?.mode).toBe("argument");
     const items = session?.items ?? [];
     expect(items.some((item) => item.command?.args && typeof item.command.args === "object" && (item.command.args as { specifier?: string }).specifier === "default/ui")).toBe(true);
     expect(items.some((item) => item.command?.args && typeof item.command.args === "object" && (item.command.args as { specifier?: string }).specifier === "default/runtime")).toBe(true);

@@ -18,12 +18,18 @@ import {
 } from "@the-editor/editor";
 import { resolveFilePickerRoot } from "./workingDirectory.js";
 
-interface CommandPaletteSessionState {
+interface CommandPaletteFrameState {
   query: string;
   placeholder?: string;
   mode: "commands" | "argument";
+  commandId?: string;
   commandTitle?: string;
+  argumentName?: string;
+}
+
+interface CommandPaletteSessionState extends CommandPaletteFrameState {
   items: CommandPaletteItem[];
+  stack: CommandPaletteFrameState[];
 }
 
 interface CommandPaletteStoredState {
@@ -61,6 +67,9 @@ export function defaultCommandPalette(): EditorModule {
           sessionId,
           query: session?.state.query ?? "",
           placeholder: session?.state.placeholder,
+          mode: session?.state.mode,
+          commandTitle: session?.state.commandTitle,
+          canGoBack: Boolean(session?.state.stack.length),
           items: session?.state.items ?? [],
         };
       },
@@ -125,7 +134,10 @@ export function defaultCommandPalette(): EditorModule {
         const sessionId = activeSessionId(editor);
         if (!sessionId) return;
         const snapshot = editor.sessions.snapshot<CommandPaletteSessionState>(sessionId);
-        if (!snapshot?.state.query) return;
+        if (!snapshot?.state.query) {
+          await editor.sessions.dispatch(sessionId, "back");
+          return;
+        }
         await editor.sessions.dispatch(sessionId, "setQuery", { query: snapshot.state.query.slice(0, -1) });
       },
     });
@@ -192,6 +204,7 @@ export function defaultCommandPalette(): EditorModule {
           placeholder: "Type a command",
           mode: "commands",
           items: [],
+          stack: [],
         },
         methods: {
           setQuery: async ({ session }, args) => {
@@ -211,8 +224,18 @@ export function defaultCommandPalette(): EditorModule {
             const snapshot = session.snapshot().state;
             const item = snapshot.items.find((candidate) => candidate.id === itemId);
             if (!item?.command) return;
+            const command = editor.commands.get(item.command.id);
+            const firstArg = command?.args?.[0];
+            if (command && firstArg && !item.command.args) {
+              await enterArgumentFrame(editor, session, requestState, ++requestState.version, command, firstArg.name, firstArg.source);
+              return;
+            }
             closePalette(editor, true);
             await editor.commands.dispatch(item.command);
+          },
+          back: async ({ session }) => {
+            if (!goBack(session)) return;
+            await refresh(session, requestState, ++requestState.version);
           },
           close: () => {
             closePalette(editor, true);
@@ -230,8 +253,8 @@ export function defaultCommandPalette(): EditorModule {
       requestState: { version: number },
       version: number,
     ): Promise<void> {
-      const query = session.snapshot().state.query;
-      const resolved = await resolvePaletteItems(editor, query);
+      const snapshot = session.snapshot().state;
+      const resolved = await resolvePaletteItems(editor, snapshot);
       if (activeSessionId(editor) !== session.id || version !== requestState.version) return;
       session.updateState((state) => {
         state.mode = resolved.mode;
@@ -243,27 +266,25 @@ export function defaultCommandPalette(): EditorModule {
   };
 }
 
-async function resolvePaletteItems(editor: Parameters<EditorModule>[0], query: string): Promise<{ mode: "commands" | "argument"; commandTitle?: string; placeholder: string; items: CommandPaletteItem[] }> {
-  const parsed = parseCommandInput(query);
-  const tokenResolution = parsed.hasTail ? editor.commands.resolveToken(parsed.head) : undefined;
-  const command = tokenResolution?.command;
-  const firstArg = command?.args?.[0];
-  if (command && firstArg) {
-    const provider = editor.commands.argumentProvider(firstArg.source);
-    const argItems = provider ? await provider.provide({ editor, command, query: parsed.tail }) : [];
-    const items = rankArgumentItems(parsed.tail, command, firstArg.name, argItems);
+async function resolvePaletteItems(editor: Parameters<EditorModule>[0], state: CommandPaletteFrameState): Promise<{ mode: "commands" | "argument"; commandTitle?: string; placeholder: string; items: CommandPaletteItem[] }> {
+  if (state.mode === "argument" && state.commandId && state.argumentName) {
+    const command = editor.commands.get(commandId(state.commandId));
+    if (!command) return { mode: "commands", placeholder: "Type a command", items: [] };
+    const firstArg = command.args?.[0];
+    const provider = firstArg ? editor.commands.argumentProvider(firstArg.source) : undefined;
+    const argItems = provider ? await provider.provide({ editor, command, query: state.query }) : [];
     return {
       mode: "argument",
       commandTitle: command.title,
-      placeholder: `${tokenResolution.kind === "alias" ? tokenResolution.alias : command.title} ${firstArg.name}`,
-      items,
+      placeholder: state.placeholder ?? `Search ${firstArg?.name ?? "argument"}...`,
+      items: rankArgumentItems(state.query, command, state.argumentName, argItems),
     };
   }
 
   return {
     mode: "commands",
     placeholder: "Type a command",
-    items: rankCommandItems(editor.commands.all().filter((command) => paletteVisibility(command) === "topLevel"), query),
+    items: rankCommandItems(editor.commands.all().filter((command) => paletteVisibility(command) === "topLevel"), state.query),
   };
 }
 
@@ -321,10 +342,63 @@ function scoreCommand(command: Command, query: string, item: CommandPaletteItem)
   return scoreCommandPaletteItem(query, item);
 }
 
-function parseCommandInput(query: string): { head: string; tail: string; hasTail: boolean } {
-  const match = query.match(/^(\S+)\s+(.*)$/s);
-  if (!match) return { head: query.trim(), tail: "", hasTail: false };
-  return { head: match[1] ?? "", tail: match[2] ?? "", hasTail: true };
+async function enterArgumentFrame(
+  editor: Parameters<EditorModule>[0],
+  session: InteractiveSessionController<CommandPaletteSessionState>,
+  requestState: { version: number },
+  version: number,
+  command: Command,
+  argumentName: string,
+  argumentSource: string,
+): Promise<void> {
+  session.updateState((state) => {
+    state.stack.push(currentFrame(state));
+    state.query = "";
+    state.mode = "argument";
+    state.commandId = command.id;
+    state.commandTitle = command.title;
+    state.argumentName = argumentName;
+    state.placeholder = `Search ${argumentSource}...`;
+    state.items = [];
+  });
+  // Resolve through the same versioned refresh path as text changes so stale async providers cannot win.
+  const snapshot = session.snapshot().state;
+  const resolved = await resolvePaletteItems(editor, snapshot);
+  if (version !== requestState.version) return;
+  session.updateState((state) => {
+    state.mode = resolved.mode;
+    state.commandTitle = resolved.commandTitle;
+    state.placeholder = resolved.placeholder;
+    state.items = resolved.items;
+  });
+}
+
+function goBack(session: InteractiveSessionController<CommandPaletteSessionState>): boolean {
+  let didGoBack = false;
+  session.updateState((state) => {
+    const previous = state.stack.pop();
+    if (!previous) return;
+    state.query = previous.query;
+    state.placeholder = previous.placeholder;
+    state.mode = previous.mode;
+    state.commandId = previous.commandId;
+    state.commandTitle = previous.commandTitle;
+    state.argumentName = previous.argumentName;
+    state.items = [];
+    didGoBack = true;
+  });
+  return didGoBack;
+}
+
+function currentFrame(state: CommandPaletteSessionState): CommandPaletteFrameState {
+  return {
+    query: state.query,
+    placeholder: state.placeholder,
+    mode: state.mode,
+    commandId: state.commandId,
+    commandTitle: state.commandTitle,
+    argumentName: state.argumentName,
+  };
 }
 
 function listFiles(root: string, limit: number): string[] {

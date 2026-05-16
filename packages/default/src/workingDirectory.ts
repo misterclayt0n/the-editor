@@ -1,7 +1,7 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import os from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { commandId, matchesCommandPaletteItem, roleImplementationId, type CommandPaletteItem, type EditorHost, type EditorModule } from "@the-editor/editor";
+import { commandId, roleImplementationId, type EditorHost, type EditorModule } from "@the-editor/editor";
 
 interface NotificationsRoleState {
   items: ReturnType<EditorHost["notifications"]["snapshot"]>;
@@ -28,9 +28,9 @@ export function defaultWorkingDirectory(): EditorModule {
 
     editor.commands.register<ChangeWorkingDirectoryArgs | undefined, void>({
       id: commandId("editor.changeWorkingDirectory"),
-      title: ":cd",
-      category: "Workbench",
-      hidden: true,
+      title: "Change Working Directory",
+      aliases: ["cd"],
+      category: "Workspace",
       async run(_ctx, args) {
         const requested = args?.path;
         const dir = requested === "-"
@@ -49,9 +49,9 @@ export function defaultWorkingDirectory(): EditorModule {
 
     editor.commands.register<void, void>({
       id: commandId("editor.showWorkingDirectory"),
-      title: ":pwd",
-      category: "Workbench",
-      hidden: true,
+      title: "Show Current Directory",
+      aliases: ["pwd"],
+      category: "Workspace",
       run() {
         const cwd = editor.cwd.current();
         const message = `current working directory: ${cwd}`;
@@ -60,82 +60,7 @@ export function defaultWorkingDirectory(): EditorModule {
       },
     });
 
-    editor.palette.registerProvider({
-      id: "default.cwd",
-      title: "Working Directory",
-      priority: 100,
-      provide(ctx, query) {
-        const trimmed = query.trim();
-        const items: CommandPaletteItem[] = [];
-
-        if (matchesPwdQuery(trimmed)) {
-          const cwd = ctx.editor.cwd.current();
-          items.push({
-            id: "cwd:pwd",
-            title: ":pwd",
-            detail: cwd,
-            group: "Working Directory",
-            keywords: [":pwd", "pwd", "cwd", cwd],
-            command: { id: commandId("editor.showWorkingDirectory") },
-          });
-        }
-
-        if (matchesCdQuery(trimmed)) {
-          const path = cdQueryPath(trimmed);
-          const detail = describeChangeDirectoryTarget(ctx.editor, path);
-          items.push({
-            id: `cwd:cd:${path ?? "default"}`,
-            title: path ? `:cd ${path}` : ":cd",
-            detail,
-            group: "Working Directory",
-            keywords: [":cd", "cd", "cwd", path ?? "", ctx.editor.cwd.current()],
-            command: path
-              ? { id: commandId("editor.changeWorkingDirectory"), args: { path } }
-              : { id: commandId("editor.changeWorkingDirectory") },
-          });
-        }
-
-        return items.filter((item) => matchesCommandPaletteItem(query, item));
-      },
-    });
   };
-}
-
-function matchesPwdQuery(query: string): boolean {
-  if (!query) return false;
-  return query === ":pwd"
-    || query === "pwd"
-    || ":pwd".startsWith(query)
-    || "pwd".startsWith(query);
-}
-
-function matchesCdQuery(query: string): boolean {
-  if (!query) return false;
-  return query === ":cd"
-    || query === "cd"
-    || query.startsWith(":cd ")
-    || query.startsWith("cd ")
-    || ":cd".startsWith(query)
-    || "cd".startsWith(query);
-}
-
-function cdQueryPath(query: string): string | undefined {
-  if (query.startsWith(":cd ")) return query.slice(4).trim() || undefined;
-  if (query.startsWith("cd ")) return query.slice(3).trim() || undefined;
-  return undefined;
-}
-
-function describeChangeDirectoryTarget(editor: EditorHost, path: string | undefined): string {
-  try {
-    if (path === "-") {
-      const previous = editor.cwd.previous();
-      return previous ? `Previous: ${previous}` : "No previous working directory";
-    }
-    const resolved = path ? resolveDirectoryCommandPath(editor, path) : homeDirectory();
-    return `Change current working directory to ${resolved}`;
-  } catch (error) {
-    return error instanceof Error ? error.message : String(error);
-  }
 }
 
 function resolveDirectoryCommandPath(editor: EditorHost, input: string): string {

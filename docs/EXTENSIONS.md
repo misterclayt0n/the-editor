@@ -487,6 +487,8 @@ The contract should be as small as possible while still supporting host integrat
 
 ## Example: command palette role
 
+See [COMMAND_PALETTE.md](COMMAND_PALETTE.md) for the command id, alias, argument provider, keybinding, and palette session model.
+
 The host should know how to:
 
 - open it

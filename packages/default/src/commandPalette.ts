@@ -1,3 +1,5 @@
+import { readdirSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
 import {
   commandId,
   commandPaletteRoleId,
@@ -5,17 +7,23 @@ import {
   matchesCommandPaletteItem,
   roleImplementationId,
   scoreCommandPaletteItem,
+  type Command,
+  type CommandArgumentItem,
   type CommandPaletteItem,
   type CommandPaletteRoleState,
   type EditorModule,
   type InteractiveSessionController,
   type InteractiveSessionId,
-  defineHostStore, } from "@the-editor/editor";
+  defineHostStore,
+} from "@the-editor/editor";
+import { resolveFilePickerRoot } from "./workingDirectory.js";
 
 interface CommandPaletteSessionState {
   query: string;
   selectedIndex: number;
   placeholder?: string;
+  mode: "commands" | "argument";
+  commandTitle?: string;
   items: CommandPaletteItem[];
 }
 
@@ -61,10 +69,10 @@ export function defaultCommandPalette(): EditorModule {
     });
 
     editor.commands.register<{ initialQuery?: string } | undefined, void>({
-      id: commandId("command_palette.open"),
-      title: "Command Palette",
+      id: commandId("commandPalette.open"),
+      title: "Open Command Palette",
+      aliases: ["commands"],
       category: "Workbench",
-      keywords: ["palette", "commands", "reload"],
       async run(_ctx, args) {
         const initialQuery = typeof args === "string"
           ? args
@@ -76,7 +84,7 @@ export function defaultCommandPalette(): EditorModule {
     });
 
     editor.commands.register<void, void>({
-      id: commandId("command_palette.close"),
+      id: commandId("commandPalette.close"),
       title: "Close Command Palette",
       hidden: true,
       run() {
@@ -85,7 +93,7 @@ export function defaultCommandPalette(): EditorModule {
     });
 
     editor.commands.register<{ text: string }, void>({
-      id: commandId("command_palette.appendText"),
+      id: commandId("commandPalette.appendText"),
       title: "Append Command Palette Text",
       hidden: true,
       async run(_ctx, args) {
@@ -98,7 +106,7 @@ export function defaultCommandPalette(): EditorModule {
     });
 
     editor.commands.register<{ query: string }, void>({
-      id: commandId("command_palette.setQuery"),
+      id: commandId("commandPalette.setQuery"),
       title: "Set Command Palette Query",
       hidden: true,
       async run(_ctx, args) {
@@ -107,7 +115,7 @@ export function defaultCommandPalette(): EditorModule {
     });
 
     editor.commands.register<void, void>({
-      id: commandId("command_palette.backspace"),
+      id: commandId("commandPalette.backspace"),
       title: "Delete Command Palette Character",
       hidden: true,
       async run() {
@@ -120,7 +128,7 @@ export function defaultCommandPalette(): EditorModule {
     });
 
     editor.commands.register<{ delta: number }, void>({
-      id: commandId("command_palette.moveSelection"),
+      id: commandId("commandPalette.moveSelection"),
       title: "Move Command Palette Selection",
       hidden: true,
       async run(_ctx, args) {
@@ -129,7 +137,7 @@ export function defaultCommandPalette(): EditorModule {
     });
 
     editor.commands.register<void, void>({
-      id: commandId("command_palette.accept"),
+      id: commandId("commandPalette.accept"),
       title: "Accept Command Palette Selection",
       hidden: true,
       async run() {
@@ -138,7 +146,7 @@ export function defaultCommandPalette(): EditorModule {
     });
 
     editor.commands.register<{ index: number }, void>({
-      id: commandId("command_palette.selectIndex"),
+      id: commandId("commandPalette.selectIndex"),
       title: "Select Command Palette Item",
       hidden: true,
       async run(_ctx, args) {
@@ -152,80 +160,32 @@ export function defaultCommandPalette(): EditorModule {
       tree: {
         name: "Command Palette",
         bindings: {
-          esc: "command_palette.close",
-          ret: "command_palette.accept",
-          up: dispatch("command_palette.moveSelection", { delta: -1 }),
-          down: dispatch("command_palette.moveSelection", { delta: 1 }),
-          "C-p": dispatch("command_palette.moveSelection", { delta: -1 }),
-          "C-n": dispatch("command_palette.moveSelection", { delta: 1 }),
-          backspace: "command_palette.backspace",
+          esc: "commandPalette.close",
+          ret: "commandPalette.accept",
+          up: dispatch("commandPalette.moveSelection", { delta: -1 }),
+          down: dispatch("commandPalette.moveSelection", { delta: 1 }),
+          "C-p": dispatch("commandPalette.moveSelection", { delta: -1 }),
+          "C-n": dispatch("commandPalette.moveSelection", { delta: 1 }),
+          backspace: "commandPalette.backspace",
         },
       },
     });
 
-    editor.palette.registerProvider({
-      id: "default.commands",
-      title: "Commands",
-      async provide(ctx, query) {
-        return ctx.editor.commands
-          .all()
-          .filter((command) => !command.hidden)
-          .map((command) => ({
-            id: command.id,
-            title: command.category ? `${command.category}: ${command.title ?? command.id}` : (command.title ?? command.id),
-            detail: command.id,
-            group: command.category,
-            keywords: [command.id, ...(command.keywords ?? [])],
-            command: { id: command.id },
+    editor.commands.registerArgumentProvider({
+      id: "files",
+      title: "Files",
+      provide(ctx) {
+        const root = resolveFilePickerRoot(editor);
+        const files = listFiles(root, 900);
+        return files
+          .map((path): CommandArgumentItem<string> => ({
+            id: path,
+            title: path,
+            detail: root,
+            value: join(root, path),
+            keywords: [path],
           }))
-          .filter((item) => matchesCommandPaletteItem(query, item));
-      },
-    });
-
-    editor.palette.registerProvider({
-      id: "default.reload",
-      title: "Reload",
-      priority: 100,
-      provide(ctx, query) {
-        const trimmed = query.trim();
-        if (!(trimmed.startsWith(":") || trimmed.startsWith("reload"))) return [];
-        const packages = ctx.editor.packages.snapshot();
-        const items: CommandPaletteItem[] = [];
-        if (":reload".startsWith(trimmed) || "reload".startsWith(trimmed) || trimmed === ":reload" || trimmed === "reload") {
-          items.push({
-            id: "reload:all",
-            title: ":reload",
-            detail: "Reload all loaded packages",
-            keywords: ["reload", ":reload"],
-            command: { id: commandId("editor.reload") },
-          });
-        }
-
-        const prefix = trimmed.startsWith(":reload") ? trimmed.slice(7).trim() : trimmed.startsWith("reload") ? trimmed.slice(6).trim() : "";
-        for (const pkg of packages) {
-          if (!prefix || pkg.id.includes(prefix)) {
-            items.push({
-              id: `reload:${pkg.id}`,
-              title: `:reload ${pkg.id}`,
-              detail: pkg.loadedTargets.length ? `Targets: ${pkg.loadedTargets.join(", ")}` : "Registered package",
-              keywords: [":reload", "reload", pkg.id],
-              command: { id: commandId("editor.reload"), args: { specifier: pkg.id } },
-            });
-          }
-          for (const target of pkg.loadedTargets) {
-            const specifier = `${pkg.id}/${target}`;
-            if (prefix && !specifier.includes(prefix)) continue;
-            items.push({
-              id: `reload:${specifier}`,
-              title: `:reload ${specifier}`,
-              detail: `Reload ${target} target`,
-              keywords: [":reload", "reload", specifier, pkg.id, target],
-              command: { id: commandId("editor.reload"), args: { specifier } },
-            });
-          }
-        }
-
-        return items;
+          .filter((item) => matchesCommandPaletteItem(ctx.query, item));
       },
     });
 
@@ -242,6 +202,7 @@ export function defaultCommandPalette(): EditorModule {
           query,
           selectedIndex: 0,
           placeholder: "Type a command",
+          mode: "commands",
           items: [],
         },
         methods: {
@@ -298,20 +259,122 @@ export function defaultCommandPalette(): EditorModule {
       version: number,
     ): Promise<void> {
       const query = session.snapshot().state.query;
-      const items = await editor.palette.items(query);
+      const resolved = await resolvePaletteItems(editor, query);
       if (activeSessionId(editor) !== session.id || version !== requestState.version) return;
-      const scored = items
-        .map((item) => ({ item, score: scoreCommandPaletteItem(query, item) }))
-        .filter(({ score }) => !query.trim() || score > 0)
-        .sort((a, b) => b.score - a.score || a.item.title.localeCompare(b.item.title))
-        .map(({ item }) => item);
       session.updateState((state) => {
-        state.items = scored;
+        state.mode = resolved.mode;
+        state.commandTitle = resolved.commandTitle;
+        state.placeholder = resolved.placeholder;
+        state.items = resolved.items;
         state.selectedIndex = clampIndex(state.selectedIndex, state.items.length);
       });
     }
-
   };
+}
+
+async function resolvePaletteItems(editor: Parameters<EditorModule>[0], query: string): Promise<{ mode: "commands" | "argument"; commandTitle?: string; placeholder: string; items: CommandPaletteItem[] }> {
+  const parsed = parseCommandInput(query);
+  const tokenResolution = parsed.hasTail ? editor.commands.resolveToken(parsed.head) : undefined;
+  const command = tokenResolution?.command;
+  const firstArg = command?.args?.[0];
+  if (command && firstArg) {
+    const provider = editor.commands.argumentProvider(firstArg.source);
+    const argItems = provider ? await provider.provide({ editor, command, query: parsed.tail }) : [];
+    const items = rankArgumentItems(parsed.tail, command, firstArg.name, argItems);
+    return {
+      mode: "argument",
+      commandTitle: command.title,
+      placeholder: `${tokenResolution.kind === "alias" ? tokenResolution.alias : command.title} ${firstArg.name}`,
+      items,
+    };
+  }
+
+  return {
+    mode: "commands",
+    placeholder: "Type a command",
+    items: rankCommandItems(editor.commands.all().filter((command) => !command.hidden), query),
+  };
+}
+
+function rankCommandItems(commands: Command[], query: string): CommandPaletteItem[] {
+  const trimmed = query.trim();
+  return commands
+    .map((command) => {
+      const alias = command.aliases?.[0];
+      const item: CommandPaletteItem = {
+        id: command.id,
+        title: command.title,
+        detail: command.category,
+        alias,
+        group: command.category,
+        keywords: [command.id, command.title, ...(command.aliases ?? []), ...(command.keywords ?? [])],
+        command: { id: command.id },
+      };
+      return { item, score: scoreCommand(command, trimmed, item) };
+    })
+    .filter(({ score }) => !trimmed || score > 0)
+    .sort((a, b) => b.score - a.score || a.item.title.localeCompare(b.item.title))
+    .map(({ item }) => item);
+}
+
+function rankArgumentItems<T>(query: string, command: Command, name: string, items: CommandArgumentItem<T>[]): CommandPaletteItem[] {
+  return items
+    .map((arg) => ({
+      item: {
+        id: `${command.id}:${arg.id}`,
+        title: arg.title,
+        detail: arg.detail,
+        keywords: arg.keywords,
+        command: { id: command.id, args: { [name]: arg.value } },
+      } satisfies CommandPaletteItem,
+      score: scoreCommandPaletteItem(query, arg),
+    }))
+    .filter(({ score }) => !query.trim() || score > 0)
+    .sort((a, b) => b.score - a.score || a.item.title.localeCompare(b.item.title))
+    .map(({ item }) => item);
+}
+
+function scoreCommand(command: Command, query: string, item: CommandPaletteItem): number {
+  if (!query) return 1;
+  const normalized = query.trim().toLowerCase();
+  if (command.aliases?.some((alias) => alias.toLowerCase() === normalized)) return 100_000;
+  if (command.title.toLowerCase() === normalized) return 90_000;
+  if (command.id.toLowerCase() === normalized) return 80_000;
+  return scoreCommandPaletteItem(query, item);
+}
+
+function parseCommandInput(query: string): { head: string; tail: string; hasTail: boolean } {
+  const match = query.match(/^(\S+)\s+(.*)$/s);
+  if (!match) return { head: query.trim(), tail: "", hasTail: false };
+  return { head: match[1] ?? "", tail: match[2] ?? "", hasTail: true };
+}
+
+function listFiles(root: string, limit: number): string[] {
+  const results: string[] = [];
+  const ignored = new Set([".git", ".jj", "node_modules", "target", "dist", ".next"]);
+  const visit = (dir: string) => {
+    if (results.length >= limit) return;
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (results.length >= limit || ignored.has(entry)) continue;
+      const path = join(dir, entry);
+      let stat;
+      try {
+        stat = statSync(path);
+      } catch {
+        continue;
+      }
+      if (stat.isDirectory()) visit(path);
+      else if (stat.isFile()) results.push(relative(root, path));
+    }
+  };
+  visit(root);
+  return results;
 }
 
 function paletteState(editor: Parameters<EditorModule>[0]): CommandPaletteStoredState {
@@ -334,14 +397,12 @@ async function dispatchPaletteSession(editor: Parameters<EditorModule>[0], metho
 
 function closePalette(editor: Parameters<EditorModule>[0], restoreFocus: boolean): void {
   const sessionId = activeSessionId(editor);
-  paletteState(editor).activeSessionId = undefined;
   if (sessionId) editor.sessions.dispose(sessionId);
+  paletteState(editor).activeSessionId = undefined;
   editor.overlays.close(commandPaletteRoleId, { restoreFocus });
 }
 
 function clampIndex(index: number, length: number): number {
-  if (!length) return 0;
-  if (index < 0) return length - 1;
-  if (index >= length) return 0;
-  return index;
+  if (length <= 0) return 0;
+  return ((index % length) + length) % length;
 }

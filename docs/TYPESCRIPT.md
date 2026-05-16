@@ -428,6 +428,8 @@ Canvas2D:
   syntax spans
 ```
 
+The command palette command/alias/argument model is defined in [COMMAND_PALETTE.md](COMMAND_PALETTE.md).
+
 React must not be in the text-paint hot path.
 
 Bad:

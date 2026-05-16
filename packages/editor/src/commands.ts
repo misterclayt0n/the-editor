@@ -8,9 +8,37 @@ export interface CommandContext {
   editor: EditorHost;
 }
 
+export interface CommandArgumentProviderContext {
+  editor: EditorHost;
+  command: Command;
+  query: string;
+}
+
+export interface CommandArgumentItem<TValue = unknown> {
+  id: string;
+  title: string;
+  detail?: string;
+  value: TValue;
+  keywords?: string[];
+}
+
+export interface CommandArgumentProvider<TValue = unknown> {
+  id: string;
+  title?: string;
+  provide(ctx: CommandArgumentProviderContext): CommandArgumentItem<TValue>[] | Promise<CommandArgumentItem<TValue>[]>;
+}
+
+export interface CommandArgumentSpec {
+  name: string;
+  source: string;
+  required?: boolean;
+}
+
 export interface Command<TArgs = unknown, TResult = unknown> {
   id: CommandId;
-  title?: string;
+  title: string;
+  aliases?: string[];
+  args?: CommandArgumentSpec[];
   category?: string;
   hidden?: boolean;
   keywords?: string[];
@@ -22,20 +50,39 @@ export interface CommandDispatch<TArgs = unknown> {
   args?: TArgs;
 }
 
+export type CommandTokenResolution =
+  | { kind: "alias"; command: Command; alias: string }
+  | { kind: "title"; command: Command }
+  | { kind: "id"; command: Command };
+
 export class CommandRegistry {
   private readonly commands = new Map<CommandId, Command>();
+  private readonly aliases = new Map<string, CommandId>();
+  private readonly argumentProviders = new Map<string, CommandArgumentProvider>();
 
   constructor(private readonly editor: EditorHost) {}
 
   register<TArgs, TResult>(command: Command<TArgs, TResult>, moduleId = this.editor.currentModuleId()): Disposable {
+    const normalizedAliases = [...new Set((command.aliases ?? []).map(normalizeCommandAlias).filter(Boolean))];
+    for (const alias of normalizedAliases) {
+      const owner = this.aliases.get(alias);
+      if (owner && owner !== command.id) throw new Error(`command alias '${alias}' already registered by ${owner}`);
+    }
+    const registered = { ...command, aliases: normalizedAliases } as Command;
     const previous = this.commands.get(command.id);
-    this.commands.set(command.id, command as Command);
+    this.commands.set(command.id, registered);
+    for (const alias of normalizedAliases) this.aliases.set(alias, command.id);
 
     const unregister = toDisposable(() => {
       const current = this.commands.get(command.id);
-      if (current === command) {
-        if (previous) this.commands.set(command.id, previous);
-        else this.commands.delete(command.id);
+      if (current === registered) {
+        for (const alias of normalizedAliases) {
+          if (this.aliases.get(alias) === command.id) this.aliases.delete(alias);
+        }
+        if (previous) {
+          this.commands.set(command.id, previous);
+          for (const alias of previous.aliases ?? []) this.aliases.set(normalizeCommandAlias(alias), previous.id);
+        } else this.commands.delete(command.id);
       }
     });
 
@@ -53,7 +100,45 @@ export class CommandRegistry {
   }
 
   all(): Command[] {
-    return [...this.commands.values()].sort((a, b) => a.id.localeCompare(b.id));
+    return [...this.commands.values()].sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
+  }
+
+  registerArgumentProvider(provider: CommandArgumentProvider, moduleId = this.editor.currentModuleId()): Disposable {
+    this.argumentProviders.set(provider.id, provider);
+    const unregister = toDisposable(() => {
+      if (this.argumentProviders.get(provider.id) === provider) this.argumentProviders.delete(provider.id);
+    });
+    return this.editor.contributions.add({
+      moduleId,
+      kind: contributionKind("commandArgumentProvider"),
+      localId: provider.id,
+      label: provider.title,
+      disposable: unregister,
+    });
+  }
+
+  argumentProvider(id: string): CommandArgumentProvider | undefined {
+    return this.argumentProviders.get(id);
+  }
+
+  resolveToken(token: string): CommandTokenResolution | undefined {
+    const normalized = normalizeCommandAlias(token);
+    if (!normalized) return undefined;
+    const aliasOwner = this.aliases.get(normalized);
+    if (aliasOwner) {
+      const command = this.commands.get(aliasOwner);
+      if (command) return { kind: "alias", command, alias: normalized };
+    }
+    for (const command of this.commands.values()) {
+      if (normalizeCommandAlias(command.title) === normalized) return { kind: "title", command };
+    }
+    const byId = this.commands.get(token as CommandId);
+    if (byId) return { kind: "id", command: byId };
+    return undefined;
+  }
+
+  aliasesFor(commandId: CommandId): string[] {
+    return this.commands.get(commandId)?.aliases ?? [];
   }
 
   async dispatch<TResult = unknown>(dispatch: CommandDispatch): Promise<TResult> {
@@ -70,6 +155,10 @@ export class CommandRegistry {
 
 export function commandId(id: string): CommandId {
   return id as CommandId;
+}
+
+function normalizeCommandAlias(alias: string): string {
+  return alias.trim().toLowerCase();
 }
 
 export type { ModuleId };

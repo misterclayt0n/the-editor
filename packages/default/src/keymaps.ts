@@ -25,7 +25,7 @@ export function defaultKeymaps(): EditorModule {
           return {
             state: ctx.state,
             handled: true,
-            effects: [{ kind: "command.dispatch", dispatch: { id: commandId("command_palette.appendText"), args: { text: input.text } } }],
+            effects: [{ kind: "command.dispatch", dispatch: { id: commandId("commandPalette.appendText"), args: { text: input.text } } }],
           };
         }
         return { state: ctx.state, handled: false };
@@ -84,7 +84,7 @@ export function defaultKeymaps(): EditorModule {
           // ".": "goto_last_modification",
           // w: "goto_word",
         }),
-        ":": dispatch("command_palette.open", { initialQuery: ":" }),
+        ":": "commandPalette.open",
 
         i: "insert_mode",
         I: "insert_at_line_start",
@@ -265,7 +265,7 @@ export function defaultKeymaps(): EditorModule {
         "A-!": "shell_append_output",
         $: "shell_keep_pipe",
         // "C-z": "suspend",
-        "C-p": "command_palette.open",
+        "C-p": "commandPalette.open",
 
         "C-a": "increment",
         "C-x": "decrement",
@@ -338,7 +338,7 @@ export function defaultKeymaps(): EditorModule {
       scope: "insert",
       tree: keymap("Insert mode", {
         esc: "exit_insert_mode",
-        "C-p": "command_palette.open",
+        "C-p": "commandPalette.open",
 
         // "C-s": "commit_undo_checkpoint",
         // "C-x": "completion",

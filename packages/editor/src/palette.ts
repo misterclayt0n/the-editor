@@ -11,6 +11,8 @@ export interface CommandPaletteItem {
   title: string;
   detail?: string;
   group?: string;
+  alias?: string;
+  keybinding?: string;
   keywords?: string[];
   command?: CommandDispatch;
 }

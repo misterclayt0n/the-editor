@@ -1,5 +1,5 @@
 import type { EditorModule, KeyInput } from "@the-editor/editor";
-import { commandId, matchesCommandPaletteItem, toDisposable, type CommandPaletteItem, defineHostStore } from "@the-editor/editor";
+import { commandId, toDisposable, defineHostStore } from "@the-editor/editor";
 import type {
   WorkbenchSessionState,
   WorkbenchSurfaceConfigureRequest,
@@ -88,8 +88,9 @@ export function defaultWorkbench(): EditorModule {
     editor.commands.register<void, void>({
       id: commandId("workbench.vsplit"),
       title: "Split Editor Right",
+      aliases: ["vsplit"],
       category: "Workbench",
-      keywords: [":vsplit", "vsplit", "split", "right", "vertical"],
+      keywords: ["split", "right", "vertical"],
       async run() {
         await splitActiveSurface("right");
       },
@@ -98,37 +99,11 @@ export function defaultWorkbench(): EditorModule {
     editor.commands.register<void, void>({
       id: commandId("workbench.hsplit"),
       title: "Split Editor Down",
+      aliases: ["hsplit"],
       category: "Workbench",
-      keywords: [":hsplit", "hsplit", "split", "down", "horizontal"],
+      keywords: ["split", "down", "horizontal"],
       async run() {
         await splitActiveSurface("down");
-      },
-    });
-
-    editor.palette.registerProvider({
-      id: "default.splits",
-      title: "Splits",
-      priority: 90,
-      provide(_ctx, query) {
-        const items: CommandPaletteItem[] = [
-          {
-            id: "split:vsplit",
-            title: ":vsplit",
-            detail: "Split editor right",
-            group: "Workbench",
-            keywords: [":vsplit", "vsplit", "split", "right", "vertical"],
-            command: { id: commandId("workbench.vsplit") },
-          },
-          {
-            id: "split:hsplit",
-            title: ":hsplit",
-            detail: "Split editor down",
-            group: "Workbench",
-            keywords: [":hsplit", "hsplit", "split", "down", "horizontal"],
-            command: { id: commandId("workbench.hsplit") },
-          },
-        ];
-        return items.filter((item) => matchesCommandPaletteItem(query, item));
       },
     });
 

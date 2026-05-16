@@ -1,13 +1,14 @@
-import { commandId, matchesCommandPaletteItem, type CommandPaletteItem, type EditorModule } from "@the-editor/editor";
+import { commandId, type EditorModule } from "@the-editor/editor";
 import { activeSurfacePane, refreshActiveSurface } from "./state.js";
 
 export function defaultSave(): EditorModule {
   return (editor) => {
     editor.commands.register<void, void>({
       id: commandId("write"),
-      title: "Write File",
+      title: "Save File",
+      aliases: ["write", "w"],
       category: "File",
-      keywords: [":write", "write", ":w", "w", "save"],
+      keywords: ["save"],
       async run() {
         const pane = activeSurfacePane(editor);
         if (!pane?.surfaceId) {
@@ -22,23 +23,6 @@ export function defaultSave(): EditorModule {
         } catch (error) {
           editor.notifications.error("save", error instanceof Error ? error.message : String(error));
         }
-      },
-    });
-
-    editor.palette.registerProvider({
-      id: "default.write",
-      title: "Write",
-      priority: 95,
-      provide(_ctx, query) {
-        const item: CommandPaletteItem = {
-          id: "write",
-          title: ":write",
-          detail: "Write buffer to file",
-          group: "File",
-          keywords: ["write", ":write", "w", ":w", "save"],
-          command: { id: commandId("write") },
-        };
-        return matchesCommandPaletteItem(query, item) ? [item] : [];
       },
     });
   };

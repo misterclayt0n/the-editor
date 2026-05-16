@@ -39,13 +39,12 @@ describe("working directory", () => {
     expect(editor.notifications.snapshot()[0]?.message).toBe(`current working directory: ${root}`);
   });
 
-  it("offers cd and pwd items in the command palette", async () => {
+  it("exposes cd and pwd command aliases", async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "the-editor-cwd-palette-")));
     const editor = await createWorkingDirectoryEditor(root);
 
-    const items = await editor.palette.items(":");
-    expect(items.some((item) => item.command?.id === commandId("editor.changeWorkingDirectory"))).toBe(true);
-    expect(items.some((item) => item.command?.id === commandId("editor.showWorkingDirectory"))).toBe(true);
+    expect(editor.commands.resolveToken("cd")?.command.id).toBe(commandId("editor.changeWorkingDirectory"));
+    expect(editor.commands.resolveToken("pwd")?.command.id).toBe(commandId("editor.showWorkingDirectory"));
   });
 
   it("resolves relative file opens from the current working directory", async () => {

@@ -76,6 +76,8 @@ export function defaultScratch(): EditorModule {
     editor.commands.register<OpenFileArgs, DefaultEditorState>({
       id: commandId("file.open"),
       title: "Open File",
+      aliases: ["open", "o"],
+      args: [{ name: "path", source: "files", required: true }],
       async run(_ctx, args) {
         const state = getDefaultState(editor);
         const activePane = activeSurfacePane(editor);

@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createEditorHost } from "@the-editor/editor";
+import { commandId, createEditorHost } from "@the-editor/editor";
 import { getWorkbenchSessionState } from "@the-editor/editor/workbench";
 import { defaultScratch } from "../src/scratch.js";
 import { defaultWorkbench } from "../src/workbench.js";
@@ -198,12 +198,10 @@ describe("workbench splits", () => {
 
   });
 
-  it("exposes :hsplit and :vsplit in the command palette provider registry", async () => {
+  it("exposes split command aliases", async () => {
     const editor = await createWorkbenchEditor();
 
-    const items = await editor.palette.items(":split");
-    const titles = items.map((item) => item.title);
-    expect(titles).toContain(":hsplit");
-    expect(titles).toContain(":vsplit");
+    expect(editor.commands.resolveToken("hsplit")?.command.id).toBe(commandId("workbench.hsplit"));
+    expect(editor.commands.resolveToken("vsplit")?.command.id).toBe(commandId("workbench.vsplit"));
   });
 });

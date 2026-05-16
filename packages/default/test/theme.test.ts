@@ -23,11 +23,13 @@ describe("default themes", () => {
       query: paletteSession?.query,
     }).toMatchObject({
       visible: true,
-      query: ":theme ",
+      query: "theme ",
     });
 
-    const items = await editor.palette.items(":theme dark_plus");
-    const darkPlus = items.find((item) => item.command?.id === commandId("theme.set") && (item.command.args as { id: string } | undefined)?.id === "dark_plus");
+    const role = editor.roles.snapshot("commandPalette")?.state as { sessionId?: string } | undefined;
+    if (role?.sessionId) await editor.sessions.dispatch(role.sessionId, "setQuery", { query: "theme dark_plus" });
+    const updatedPaletteSession = role?.sessionId ? editor.sessions.snapshot<{ items: Array<{ command?: { id: unknown; args?: unknown } }> }>(role.sessionId)?.state : undefined;
+    const darkPlus = updatedPaletteSession?.items.find((item) => item.command?.id === commandId("theme.select") && (item.command.args as { id: string } | undefined)?.id === "dark_plus");
     expect(darkPlus).toBeTruthy();
 
     await editor.commands.dispatch({ id: commandId("theme.set"), args: { id: "dark_plus" } });

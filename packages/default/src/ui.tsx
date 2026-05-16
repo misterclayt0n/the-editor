@@ -15,7 +15,6 @@ import { DefaultFileTree } from "./fileTreeUi.js";
 import { MarkdownView } from "@the-editor/editor/markdownView";
 import { DefaultWorkbenchTabstrip } from "./workbenchTabstrip.js";
 import { Command, CommandEmpty, CommandInput, CommandItem, CommandList, CommandShortcut } from "./components/command.js";
-import "./commandPalette.css";
 import "./fileTree.css";
 import "./hover.css";
 import "./markdown.css";
@@ -703,96 +702,94 @@ function CommandPaletteOverlay({
 
   useLayoutEffect(() => {
     if (!state) return;
-    scrollActiveItemIntoView(itemsRef.current, '.commandPaletteItem[data-active="true"]');
+    scrollActiveItemIntoView(itemsRef.current, '[data-command-item][data-active="true"]');
   }, [state?.items, state?.selectedIndex]);
 
   if (!state) return null;
 
   return (
-    <section className="commandPaletteOverlay">
+    <section className="absolute inset-0 z-50 pointer-events-auto">
       <button
         type="button"
-        className="commandPaletteBackdrop"
+        className="absolute inset-0 cursor-default border-0 bg-black/30 p-0 backdrop-blur-sm"
         aria-label="Close command palette"
         onClick={() => {
           void sessions.dispatch(sessionId, "close");
         }}
       />
-      <div className="commandPaletteViewport">
-        <div className="commandPaletteShell">
-          <div className="commandPaletteSurface">
-            <Command className="commandPalettePanel" shouldFilter={false} value={state.items[state.selectedIndex]?.id ?? ""}>
-              <div className="commandPaletteInputRow">
-                <CommandPaletteSearchIcon />
-                <CommandInput
-                  ref={inputRef}
-                  className="commandPaletteInput"
-                  placeholder={state.placeholder || "Type a command"}
-                  spellCheck={false}
-                  value={state.query}
-                  onValueChange={(query) => {
-                    void sessions.dispatch(sessionId, "setQuery", { query });
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "ArrowUp") {
-                      event.preventDefault();
-                      void sessions.dispatch(sessionId, "moveSelection", { delta: -1 });
-                      return;
-                    }
-                    if (event.key === "ArrowDown") {
-                      event.preventDefault();
-                      void sessions.dispatch(sessionId, "moveSelection", { delta: 1 });
-                      return;
-                    }
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      void sessions.dispatch(sessionId, "accept");
-                      return;
-                    }
-                    if (event.key === "Escape") {
-                      event.preventDefault();
-                      void sessions.dispatch(sessionId, "close");
-                    }
-                  }}
-                />
-              </div>
-              <CommandList ref={itemsRef} className="commandPaletteItems">
-                {state.items.length ? state.items.map((item, index) => {
-                  const isActive = index === state.selectedIndex;
-                  return (
-                    <CommandItem
-                      key={item.id}
-                      value={item.id}
-                      className="commandPaletteItem"
-                      data-active={isActive ? "true" : undefined}
-                      onMouseMove={() => {
-                        if (isActive) return;
-                        void sessions.dispatch(sessionId, "selectIndex", { index });
-                      }}
-                      onMouseDown={(event) => {
-                        event.preventDefault();
-                      }}
-                      onSelect={() => {
-                        void sessions.dispatch(sessionId, "selectIndex", { index }).then(() => sessions.dispatch(sessionId, "accept"));
-                      }}
-                    >
-                      <div className="commandPaletteItemMain">
-                        <div className="commandPaletteTitle">{item.title}</div>
-                        {item.detail ? <div className="commandPaletteDetail">{item.detail}</div> : null}
-                      </div>
-                      <div className="commandPaletteItemMeta">
-                        {item.alias ? <CommandShortcut className="commandPaletteAlias">{item.alias}</CommandShortcut> : null}
-                        {item.keybinding ? <CommandShortcut>{item.keybinding}</CommandShortcut> : null}
-                      </div>
-                    </CommandItem>
-                  );
-                }) : <CommandEmpty className="commandPaletteEmpty">No matching commands</CommandEmpty>}
-              </CommandList>
-            </Command>
-            <div className="commandPaletteFooter">
-              <span>Enter to run</span>
-              <span>Esc to close</span>
+      <div className="absolute inset-0 flex justify-center px-4 py-[max(1rem,4vh)] sm:py-[10vh]">
+        <div className="relative w-full max-w-xl self-start overflow-hidden rounded-2xl border border-border bg-popover text-popover-foreground shadow-lg outline-none">
+          <Command shouldFilter={false} value={state.items[state.selectedIndex]?.id ?? ""}>
+            <div className="flex items-center border-b border-border px-3" data-command-input-wrapper>
+              <CommandPaletteSearchIcon />
+              <CommandInput
+                ref={inputRef}
+                className="pl-2"
+                placeholder={state.placeholder || "Type a command"}
+                spellCheck={false}
+                value={state.query}
+                onValueChange={(query) => {
+                  void sessions.dispatch(sessionId, "setQuery", { query });
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    void sessions.dispatch(sessionId, "moveSelection", { delta: -1 });
+                    return;
+                  }
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    void sessions.dispatch(sessionId, "moveSelection", { delta: 1 });
+                    return;
+                  }
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void sessions.dispatch(sessionId, "accept");
+                    return;
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    void sessions.dispatch(sessionId, "close");
+                  }
+                }}
+              />
             </div>
+            <CommandList ref={itemsRef}>
+              {state.items.length ? state.items.map((item, index) => {
+                const isActive = index === state.selectedIndex;
+                return (
+                  <CommandItem
+                    key={item.id}
+                    value={item.id}
+                    data-command-item=""
+                    data-active={isActive ? "true" : undefined}
+                    onMouseMove={() => {
+                      if (isActive) return;
+                      void sessions.dispatch(sessionId, "selectIndex", { index });
+                    }}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                    }}
+                    onSelect={() => {
+                      void sessions.dispatch(sessionId, "selectIndex", { index }).then(() => sessions.dispatch(sessionId, "accept"));
+                    }}
+                  >
+                    <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
+                      <div className="truncate font-medium">{item.title}</div>
+                      {item.detail ? <div className="max-w-64 truncate font-mono text-xs text-muted-foreground">{item.detail}</div> : null}
+                    </div>
+                    <div className="ml-3 flex shrink-0 items-center gap-1.5">
+                      {item.alias ? <CommandShortcut className="rounded border border-border px-1.5 py-0.5 text-[10px] normal-case tracking-normal">{item.alias}</CommandShortcut> : null}
+                      {item.keybinding ? <CommandShortcut className="rounded border border-border px-1.5 py-0.5 text-[10px]">{item.keybinding}</CommandShortcut> : null}
+                    </div>
+                  </CommandItem>
+                );
+              }) : <CommandEmpty>No matching commands</CommandEmpty>}
+            </CommandList>
+          </Command>
+          <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-2 text-xs text-muted-foreground">
+            <span>Enter to run</span>
+            <span>Esc to close</span>
           </div>
         </div>
       </div>
@@ -1518,7 +1515,7 @@ function normalizeStatuslineMode(mode?: string): string {
 
 function CommandPaletteSearchIcon() {
   return (
-    <svg className="commandPaletteSearchIcon" viewBox="0 0 24 24" aria-hidden="true">
+    <svg className="h-4 w-4 shrink-0 text-muted-foreground" viewBox="0 0 24 24" aria-hidden="true">
       <path d="M10.5 4a6.5 6.5 0 1 0 4.03 11.6l4.43 4.43 1.06-1.06-4.43-4.43A6.5 6.5 0 0 0 10.5 4Zm0 1.5a5 5 0 1 1 0 10 5 5 0 0 1 0-10Z" fill="currentColor" />
     </svg>
   );

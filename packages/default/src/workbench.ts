@@ -90,6 +90,7 @@ export function defaultWorkbench(): EditorModule {
       title: "Split Editor Right",
       aliases: ["vsplit"],
       category: "Workbench",
+      palette: "topLevel",
       keywords: ["split", "right", "vertical"],
       async run() {
         await splitActiveSurface("right");
@@ -101,6 +102,7 @@ export function defaultWorkbench(): EditorModule {
       title: "Split Editor Down",
       aliases: ["hsplit"],
       category: "Workbench",
+      palette: "topLevel",
       keywords: ["split", "down", "horizontal"],
       async run() {
         await splitActiveSurface("down");

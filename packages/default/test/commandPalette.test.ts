@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createEditorHost } from "../../editor/src/index.js";
 import { defaultCommandPalette } from "../src/commandPalette.js";
 import { defaultReload } from "../src/reload.js";
+import { commandId } from "@the-editor/editor";
 
 import { createTestRuntime } from "./runtime.js";
 async function createPaletteEditor() {
@@ -12,6 +13,24 @@ async function createPaletteEditor() {
 }
 
 describe("default command palette", () => {
+  it("shows curated commands by default and raw commands behind command", async () => {
+    const editor = await createPaletteEditor();
+
+    editor.commands.register({ id: commandId("append_mode"), title: "Append Mode", run: () => undefined });
+
+    await editor.commands.dispatch({ id: "commandPalette.open" as never });
+    const role = editor.roles.snapshot("commandPalette")?.state as { sessionId?: string } | undefined;
+    const session = role?.sessionId ? editor.sessions.snapshot<{ items: Array<{ id: string; title: string }> }>(role.sessionId)?.state : undefined;
+    const items = session?.items ?? [];
+    expect(items.some((item) => item.id === "editor.reload")).toBe(true);
+    expect(items.some((item) => item.id === "command.run")).toBe(true);
+    expect(items.some((item) => item.id === "append_mode")).toBe(false);
+
+    await editor.sessions.dispatch(role!.sessionId!, "setQuery", { query: "command append" });
+    const commandSession = editor.sessions.snapshot<{ items: Array<{ id: string; title: string; command?: { id: string; args?: unknown } }> }>(role!.sessionId!)?.state;
+    expect(commandSession?.items.some((item) => item.title === "append_mode" && (item.command?.args as { id?: string } | undefined)?.id === "append_mode")).toBe(true);
+  });
+
   it("offers reload target items for package/target path queries", async () => {
     const editor = await createPaletteEditor();
 

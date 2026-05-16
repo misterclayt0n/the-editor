@@ -99,6 +99,7 @@ const themeModule: EditorModule = (editor) => {
     aliases: ["theme"],
     args: [{ name: "id", source: "themes", required: true }],
     category: "Workbench",
+    palette: "topLevel",
     keywords: ["colorscheme", "appearance", "palette"],
     async run(_ctx, args) {
       if (args?.id) {
@@ -116,6 +117,7 @@ const themeModule: EditorModule = (editor) => {
     id: commandId("theme.set"),
     title: "Set Theme",
     hidden: true,
+    palette: "hidden",
     run(_ctx, args) {
       editor.themes.activate(args.id);
     },

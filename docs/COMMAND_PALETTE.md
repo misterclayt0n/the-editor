@@ -36,6 +36,7 @@ interface Command {
   aliases?: string[];
   category?: string;
   hidden?: boolean;
+  palette?: "topLevel" | "command" | "hidden";
   args?: CommandArgumentSpec[];
   run(ctx, args): unknown | Promise<unknown>;
 }
@@ -84,6 +85,42 @@ Show Current Directory        pwd        <keybinding>
 Default aliases should be concise. Users may define their own aliases later.
 
 Aliases are globally unique by default. Duplicate aliases should produce a diagnostic. User configuration may intentionally override aliases later.
+
+## Palette visibility
+
+Not every registered command is a top-level palette command. Keymap targets and low-level editing primitives must remain dispatchable without becoming default palette noise.
+
+Visibility levels:
+
+```ts
+palette: "topLevel" // shown when the palette opens
+palette: "command"  // hidden from the default list, available through `command <id>`
+palette: "hidden"   // internal plumbing; not shown in command browsing
+```
+
+Default visibility is `"command"` for normal commands and `"hidden"` for legacy `hidden: true` commands.
+
+Top-level commands should be curated actions such as:
+
+```txt
+open
+write
+theme
+reload
+pwd
+cd
+vsplit
+hsplit
+command
+```
+
+Raw/keymap commands remain available explicitly:
+
+```txt
+command append_mode
+command insert_mode
+command edit.deleteBackward
+```
 
 ## Matching priority
 

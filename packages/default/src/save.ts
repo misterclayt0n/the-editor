@@ -8,6 +8,7 @@ export function defaultSave(): EditorModule {
       title: "Save File",
       aliases: ["write", "w"],
       category: "File",
+      palette: "topLevel",
       keywords: ["save"],
       async run() {
         const pane = activeSurfacePane(editor);

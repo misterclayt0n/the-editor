@@ -8,6 +8,7 @@ export function defaultReload(): EditorModule {
       aliases: ["reload"],
       args: [{ name: "specifier", source: "reloadTargets" }],
       category: "Workbench",
+      palette: "topLevel",
       keywords: ["packages"],
       async run(_ctx, args) {
         await editor.roles.close("commandPalette");

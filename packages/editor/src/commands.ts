@@ -34,6 +34,8 @@ export interface CommandArgumentSpec {
   required?: boolean;
 }
 
+export type CommandPaletteVisibility = "topLevel" | "command" | "hidden";
+
 export interface Command<TArgs = unknown, TResult = unknown> {
   id: CommandId;
   title: string;
@@ -41,6 +43,7 @@ export interface Command<TArgs = unknown, TResult = unknown> {
   args?: CommandArgumentSpec[];
   category?: string;
   hidden?: boolean;
+  palette?: CommandPaletteVisibility;
   keywords?: string[];
   run(ctx: CommandContext, args: TArgs): TResult | Promise<TResult>;
 }

@@ -77,6 +77,7 @@ export function defaultScratch(): EditorModule {
       id: commandId("file.open"),
       title: "Open File",
       aliases: ["open", "o"],
+      palette: "topLevel",
       args: [{ name: "path", source: "files", required: true }],
       async run(_ctx, args) {
         const state = getDefaultState(editor);

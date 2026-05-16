@@ -73,6 +73,7 @@ export function defaultCommandPalette(): EditorModule {
       title: "Open Command Palette",
       aliases: ["commands"],
       category: "Workbench",
+      palette: "hidden",
       async run(_ctx, args) {
         const initialQuery = typeof args === "string"
           ? args
@@ -87,6 +88,7 @@ export function defaultCommandPalette(): EditorModule {
       id: commandId("commandPalette.close"),
       title: "Close Command Palette",
       hidden: true,
+      palette: "hidden",
       run() {
         closePalette(editor, true);
       },
@@ -96,6 +98,7 @@ export function defaultCommandPalette(): EditorModule {
       id: commandId("commandPalette.appendText"),
       title: "Append Command Palette Text",
       hidden: true,
+      palette: "hidden",
       async run(_ctx, args) {
         const session = activeSessionId(editor);
         if (!session) return;
@@ -109,6 +112,7 @@ export function defaultCommandPalette(): EditorModule {
       id: commandId("commandPalette.setQuery"),
       title: "Set Command Palette Query",
       hidden: true,
+      palette: "hidden",
       async run(_ctx, args) {
         await dispatchPaletteSession(editor, "setQuery", args);
       },
@@ -118,6 +122,7 @@ export function defaultCommandPalette(): EditorModule {
       id: commandId("commandPalette.backspace"),
       title: "Delete Command Palette Character",
       hidden: true,
+      palette: "hidden",
       async run() {
         const sessionId = activeSessionId(editor);
         if (!sessionId) return;
@@ -131,6 +136,7 @@ export function defaultCommandPalette(): EditorModule {
       id: commandId("commandPalette.moveSelection"),
       title: "Move Command Palette Selection",
       hidden: true,
+      palette: "hidden",
       async run(_ctx, args) {
         await dispatchPaletteSession(editor, "moveSelection", args);
       },
@@ -140,6 +146,7 @@ export function defaultCommandPalette(): EditorModule {
       id: commandId("commandPalette.accept"),
       title: "Accept Command Palette Selection",
       hidden: true,
+      palette: "hidden",
       async run() {
         await dispatchPaletteSession(editor, "accept");
       },
@@ -149,6 +156,7 @@ export function defaultCommandPalette(): EditorModule {
       id: commandId("commandPalette.selectIndex"),
       title: "Select Command Palette Item",
       hidden: true,
+      palette: "hidden",
       async run(_ctx, args) {
         await dispatchPaletteSession(editor, "selectIndex", args);
       },
@@ -168,6 +176,36 @@ export function defaultCommandPalette(): EditorModule {
           "C-n": dispatch("commandPalette.moveSelection", { delta: 1 }),
           backspace: "commandPalette.backspace",
         },
+      },
+    });
+
+    editor.commands.register<{ id: string }, void>({
+      id: commandId("command.run"),
+      title: "Run Command",
+      aliases: ["command"],
+      category: "Workbench",
+      palette: "topLevel",
+      args: [{ name: "id", source: "commands", required: true }],
+      async run(_ctx, args) {
+        if (!args?.id) return;
+        await editor.commands.dispatch({ id: commandId(args.id) });
+      },
+    });
+
+    editor.commands.registerArgumentProvider({
+      id: "commands",
+      title: "Commands",
+      provide(ctx) {
+        return editor.commands.all()
+          .filter((command) => paletteVisibility(command) !== "hidden" && command.id !== commandId("command.run"))
+          .map((command): CommandArgumentItem<string> => ({
+            id: command.id,
+            title: command.id,
+            detail: command.title,
+            value: command.id,
+            keywords: [command.id, command.title, ...(command.aliases ?? []), ...(command.keywords ?? [])],
+          }))
+          .filter((item) => matchesCommandPaletteItem(ctx.query, item));
       },
     });
 
@@ -292,8 +330,14 @@ async function resolvePaletteItems(editor: Parameters<EditorModule>[0], query: s
   return {
     mode: "commands",
     placeholder: "Type a command",
-    items: rankCommandItems(editor.commands.all().filter((command) => !command.hidden), query),
+    items: rankCommandItems(editor.commands.all().filter((command) => paletteVisibility(command) === "topLevel"), query),
   };
+}
+
+function paletteVisibility(command: Command): "topLevel" | "command" | "hidden" {
+  if (command.palette) return command.palette;
+  if (command.hidden) return "hidden";
+  return "command";
 }
 
 function rankCommandItems(commands: Command[], query: string): CommandPaletteItem[] {

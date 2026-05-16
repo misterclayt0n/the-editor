@@ -1,0 +1,38 @@
+{
+  "name": "@the-editor/renderer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.4.1",
+    "@pierre/diffs": "^1.1.0-beta.16",
+    "@pierre/trees": "1.0.0-beta.3",
+    "@tailwindcss/vite": "^4.3.0",
+    "@the-editor/contracts": "workspace:*",
+    "@the-editor/default": "workspace:*",
+    "@the-editor/editor": "workspace:*",
+    "@vitejs/plugin-react": "latest",
+    "class-variance-authority": "^0.7.1",
+    "lucide-react": "^1.16.0",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "tailwind-merge": "^3.6.0",
+    "tailwindcss": "^4.3.0",
+    "vite": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

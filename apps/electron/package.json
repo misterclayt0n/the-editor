@@ -7,32 +7,22 @@
   "scripts": {
     "dev": "bun run scripts/dev.mjs",
     "dev:main": "tsdown --watch",
-    "dev:renderer": "vite --host 127.0.0.1",
+    "dev:renderer": "bun run --filter @the-editor/renderer dev",
     "dev:electron": "bun run scripts/dev-electron.mjs",
-    "build": "tsdown && mkdir -p dist/main && cp src/main/preload.cjs dist/main/preload.cjs && vite build",
+    "build": "tsdown && mkdir -p dist/main && cp src/main/preload.cjs dist/main/preload.cjs && bun run --filter @the-editor/renderer build",
     "start": "electron dist/main/main.cjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@pierre/diffs": "^1.1.0-beta.16",
-    "@pierre/trees": "1.0.0-beta.3",
     "@the-editor/contracts": "workspace:*",
     "@the-editor/default": "workspace:*",
     "@the-editor/editor": "workspace:*",
     "@the-editor/runtime-node": "workspace:*",
-    "@vitejs/plugin-react": "latest",
-    "electron": "latest",
-    "react": "latest",
-    "react-dom": "latest",
-    "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1",
-    "vite": "latest"
+    "electron": "latest"
   },
   "devDependencies": {
     "@types/node": "catalog:",
-    "@types/react": "latest",
-    "@types/react-dom": "latest",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

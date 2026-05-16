@@ -1,8 +1,7 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": {
-    "jsx": "react-jsx",
     "lib": ["ES2024", "DOM", "DOM.Iterable"]
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "scripts/**/*.mjs", "vite.config.ts", "tsdown.config.ts"]
+  "include": ["src/**/*.ts", "scripts/**/*.mjs", "tsdown.config.ts"]
 }

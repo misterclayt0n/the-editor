@@ -1,9 +1,45 @@
+@import "tailwindcss";
+
+@source "../../../packages/default/src";
+@source "../../../packages/editor/src";
+
+@custom-variant dark (&:is(.dark, .dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+}
+
 @font-face {
   font-family: "Iosevka";
   font-style: normal;
   font-weight: 400;
   font-display: block;
-  src: url("../assets/fonts/iosevka-latin-400-normal.woff2") format("woff2");
+  src: url("./assets/fonts/iosevka-latin-400-normal.woff2") format("woff2");
 }
 
 * {
@@ -25,6 +61,27 @@ body {
 }
 
 :root {
+  color-scheme: dark;
+  --radius: 0.625rem;
+  --background: var(--theme-background);
+  --foreground: var(--theme-foreground);
+  --card: var(--theme-ui-background-bg);
+  --card-foreground: var(--theme-foreground);
+  --popover: var(--theme-ui-menu-bg);
+  --popover-foreground: var(--theme-ui-menu-fg);
+  --primary: var(--theme-ui-menu-selected-bg);
+  --primary-foreground: var(--theme-ui-menu-selected-fg);
+  --secondary: color-mix(in srgb, var(--theme-ui-text-inactive-fg) 14%, transparent);
+  --secondary-foreground: var(--theme-foreground);
+  --muted: color-mix(in srgb, var(--theme-ui-text-inactive-fg) 10%, transparent);
+  --muted-foreground: var(--theme-ui-text-inactive-fg);
+  --accent: color-mix(in srgb, var(--theme-ui-menu-selected-bg) 60%, transparent);
+  --accent-foreground: var(--theme-ui-menu-selected-fg);
+  --destructive: #ef4444;
+  --destructive-foreground: #fecaca;
+  --border: var(--theme-ui-background-separator-fg);
+  --input: var(--theme-ui-background-separator-fg);
+  --ring: var(--theme-ui-menu-selected-bg);
   --workbench-shell-bg: var(--theme-ui-background-bg);
   --workbench-shell-border: var(--theme-ui-background-separator-fg);
   --workbench-sidebar-surface: var(--theme-ui-menu-bg);

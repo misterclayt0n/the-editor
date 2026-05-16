@@ -31,8 +31,8 @@ Node native runtime package     napi-rs wrapper around `the-runtime`
 TypeScript editor substrate    hooks, dispatch, commands, keymaps, layout, modules
 Default distribution           first-party modules built on the same public substrate
 Policy worker                  runs the editor product layer and user modules
-Electron renderer              paints app chrome + cell-grid surfaces
-Electron main                  app lifecycle + runtime process supervision
+Renderer app (`apps/renderer`) paints app chrome + cell-grid surfaces
+Electron main                  app lifecycle + worker/runtime supervision
 ```
 
 The TypeScript layer is not a thin settings file around a fixed app. It is the editor's programmable personality.
@@ -65,28 +65,29 @@ the-editor/
     contracts/             # shared TS contracts for IPC/model messages, if needed
 
   apps/
-    electron/              # Electron main + renderer + policy worker wiring
+    electron/              # Electron main/preload + policy/runtime worker wiring
+    renderer/              # React renderer app + browser UI build
 ```
 
 `packages/editor` must not import Electron, React DOM, browser globals, or Node filesystem APIs directly. It should depend on injected capabilities.
 
 `packages/default` should be a composed distribution of first-party modules, not a monolithic app.
 
-`apps/electron` is an adapter. It hosts the policy worker, renderer, native runtime package, and concrete painting/UI implementation.
+`apps/electron` is the native desktop adapter. It hosts Electron main/preload, the policy worker, and the runtime worker boundary. `apps/renderer` is the web UI app that Electron loads; it owns the React renderer shell, browser CSS pipeline, Tailwind/shadcn-style UI foundation, and concrete painting/UI implementation.
 
 ---
 
 ## Process model
 
-V1 uses three cooperating execution contexts.
+V1 uses four cooperating execution contexts.
 
 ```txt
 ┌──────────────────────────────────────────────────────────────┐
 │ Electron main                                                │
 │ - owns windows/app lifecycle                                 │
 │ - owns windows/app lifecycle                                 │
-│ - starts and supervises policy worker                        │
-│ - bridges renderer requests to policy worker                 │
+│ - starts and supervises policy/runtime workers               │
+│ - bridges renderer requests to policy/runtime workers        │
 └───────────────────────────────────────────┬──────────────────┘
                                             │ Electron IPC / MessagePort
                                             │
@@ -94,20 +95,22 @@ V1 uses three cooperating execution contexts.
                                      │ Policy worker              │
                                      │ - runs packages/editor      │
                                      │ - runs packages/default     │
-                                     │ - imports runtime-node      │
-                                     │ - owns RuntimeSession       │
+                                     │ - uses IPC runtime client    │
                                      │ - loads user modules        │
                                      │ - owns logical UI model     │
                                      └──────┬────────────────────┘
                                              │ logical app model + commands
                                              │
                                       ┌──────▼────────────────────┐
-                                      │ Electron renderer          │
+                                      │ Renderer app               │
+                                      │ apps/renderer              │
                                       │ - React app chrome adapter │
                                       │ - Canvas2D surface painter │
                                       │ - captures browser input   │
                                       │ - requests render frames   │
                                       └───────────────────────────┘
+
+Runtime worker thread, supervised by Electron main, owns the single `NativeRuntimeSession` and imports `runtime-node` directly.
 ```
 
 ### Electron main
@@ -117,8 +120,9 @@ Electron main owns:
 - application lifecycle
 - window lifecycle
 - starting the policy worker
-- restarting or shutting down the policy worker
-- policy worker logs and crash diagnostics
+- starting the native runtime worker thread
+- restarting or shutting down workers
+- worker logs and crash diagnostics
 - typed bridge endpoints for renderer ↔ policy worker requests
 
 Electron main does not own editor product policy.
@@ -180,9 +184,9 @@ It owns:
 
 The policy worker does not paint text rows. It does not own document text truth. It does not own selection truth. It does not perform cell-grid layout.
 
-### Electron renderer
+### Renderer app
 
-The renderer is the concrete view adapter.
+The renderer app in `apps/renderer` is the concrete browser view adapter loaded by Electron.
 
 It owns:
 
@@ -218,7 +222,7 @@ Policy worker
   uses an IPC-backed RuntimeApi client
   does not import runtime-node directly
 
-Electron renderer
+Renderer app
   paints UI and canvas surfaces
   uses only the narrow render bridge for visible text frames
   does not import runtime-node directly

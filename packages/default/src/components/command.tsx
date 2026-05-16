@@ -1,5 +1,4 @@
-import { Command as CommandPrimitive } from "cmdk";
-import type { ComponentPropsWithoutRef, ElementRef, ForwardedRef } from "react";
+import type { ComponentPropsWithoutRef, ForwardedRef } from "react";
 import { forwardRef } from "react";
 
 function cx(...classes: Array<string | false | null | undefined>): string {
@@ -7,52 +6,52 @@ function cx(...classes: Array<string | false | null | undefined>): string {
 }
 
 export const Command = forwardRef(function Command(
-  { className, ...props }: ComponentPropsWithoutRef<typeof CommandPrimitive>,
-  ref: ForwardedRef<ElementRef<typeof CommandPrimitive>>,
+  { className, shouldFilter: _shouldFilter, value: _value, ...props }: ComponentPropsWithoutRef<"div"> & { shouldFilter?: boolean; value?: string },
+  ref: ForwardedRef<HTMLDivElement>,
 ) {
-  return <CommandPrimitive ref={ref} className={cx("commandPrimitive", className)} {...props} />;
+  return <div ref={ref} className={cx("commandPrimitive", className)} {...props} />;
 });
 
 export const CommandInput = forwardRef(function CommandInput(
-  { className, ...props }: ComponentPropsWithoutRef<typeof CommandPrimitive.Input>,
-  ref: ForwardedRef<ElementRef<typeof CommandPrimitive.Input>>,
+  { className, onValueChange, ...props }: Omit<ComponentPropsWithoutRef<"input">, "onChange"> & { onValueChange?: (value: string) => void },
+  ref: ForwardedRef<HTMLInputElement>,
 ) {
-  return <CommandPrimitive.Input ref={ref} className={cx("commandPrimitiveInput", className)} {...props} />;
+  return <input ref={ref} className={cx("commandPrimitiveInput", className)} onChange={(event) => onValueChange?.(event.target.value)} {...props} />;
 });
 
 export const CommandList = forwardRef(function CommandList(
-  { className, ...props }: ComponentPropsWithoutRef<typeof CommandPrimitive.List>,
-  ref: ForwardedRef<ElementRef<typeof CommandPrimitive.List>>,
+  { className, ...props }: ComponentPropsWithoutRef<"div">,
+  ref: ForwardedRef<HTMLDivElement>,
 ) {
-  return <CommandPrimitive.List ref={ref} className={cx("commandPrimitiveList", className)} {...props} />;
+  return <div ref={ref} className={cx("commandPrimitiveList", className)} {...props} />;
 });
 
 export const CommandEmpty = forwardRef(function CommandEmpty(
-  { className, ...props }: ComponentPropsWithoutRef<typeof CommandPrimitive.Empty>,
-  ref: ForwardedRef<ElementRef<typeof CommandPrimitive.Empty>>,
+  { className, ...props }: ComponentPropsWithoutRef<"div">,
+  ref: ForwardedRef<HTMLDivElement>,
 ) {
-  return <CommandPrimitive.Empty ref={ref} className={cx("commandPrimitiveEmpty", className)} {...props} />;
+  return <div ref={ref} className={cx("commandPrimitiveEmpty", className)} {...props} />;
 });
 
 export const CommandGroup = forwardRef(function CommandGroup(
-  { className, ...props }: ComponentPropsWithoutRef<typeof CommandPrimitive.Group>,
-  ref: ForwardedRef<ElementRef<typeof CommandPrimitive.Group>>,
+  { className, ...props }: ComponentPropsWithoutRef<"div">,
+  ref: ForwardedRef<HTMLDivElement>,
 ) {
-  return <CommandPrimitive.Group ref={ref} className={cx("commandPrimitiveGroup", className)} {...props} />;
+  return <div ref={ref} className={cx("commandPrimitiveGroup", className)} {...props} />;
 });
 
 export const CommandItem = forwardRef(function CommandItem(
-  { className, ...props }: ComponentPropsWithoutRef<typeof CommandPrimitive.Item>,
-  ref: ForwardedRef<ElementRef<typeof CommandPrimitive.Item>>,
+  { className, onSelect, onClick, value: _value, ...props }: Omit<ComponentPropsWithoutRef<"button">, "value"> & { value?: string; onSelect?: () => void },
+  ref: ForwardedRef<HTMLButtonElement>,
 ) {
-  return <CommandPrimitive.Item ref={ref} className={cx("commandPrimitiveItem", className)} {...props} />;
+  return <button ref={ref} type="button" className={cx("commandPrimitiveItem", className)} onClick={(event) => { onClick?.(event); if (!event.defaultPrevented) onSelect?.(); }} {...props} />;
 });
 
 export const CommandSeparator = forwardRef(function CommandSeparator(
-  { className, ...props }: ComponentPropsWithoutRef<typeof CommandPrimitive.Separator>,
-  ref: ForwardedRef<ElementRef<typeof CommandPrimitive.Separator>>,
+  { className, ...props }: ComponentPropsWithoutRef<"div">,
+  ref: ForwardedRef<HTMLDivElement>,
 ) {
-  return <CommandPrimitive.Separator ref={ref} className={cx("commandPrimitiveSeparator", className)} {...props} />;
+  return <div ref={ref} role="separator" className={cx("commandPrimitiveSeparator", className)} {...props} />;
 });
 
 export function CommandShortcut({ className, ...props }: ComponentPropsWithoutRef<"span">) {

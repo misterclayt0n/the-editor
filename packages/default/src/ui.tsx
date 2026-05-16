@@ -14,7 +14,7 @@ import { diagnosticLocationLabel, diagnosticPrimaryLine } from "./diagnosticsSha
 import { DefaultFileTree } from "./fileTreeUi.js";
 import { MarkdownView } from "@the-editor/editor/markdownView";
 import { DefaultWorkbenchTabstrip } from "./workbenchTabstrip.js";
-import { Command, CommandEmpty, CommandInput, CommandItem, CommandList, CommandShortcut } from "./components/command.js";
+import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator, CommandShortcut } from "@the-editor/ui/command";
 import "./fileTree.css";
 import "./hover.css";
 import "./markdown.css";
@@ -26,6 +26,7 @@ interface CommandPaletteItemView {
   id: string;
   title: string;
   detail?: string;
+  group?: string;
   alias?: string;
   keybinding?: string;
 }
@@ -37,7 +38,6 @@ interface CommandPaletteViewState {
 
 interface CommandPaletteSessionViewState {
   query: string;
-  selectedIndex: number;
   placeholder?: string;
   items: CommandPaletteItemView[];
 }
@@ -690,111 +690,79 @@ function CommandPaletteOverlay({
 }) {
   const state = useUiSession<CommandPaletteSessionViewState>(sessions, sessionId);
   const inputRef = useRef<HTMLInputElement>(null);
-  const itemsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const input = inputRef.current;
     if (!input || !state) return;
     input.focus();
-    const end = input.value.length;
-    input.setSelectionRange(end, end);
-  }, [sessionId]);
-
-  useLayoutEffect(() => {
-    if (!state) return;
-    scrollActiveItemIntoView(itemsRef.current, '[data-command-item][data-active="true"]');
-  }, [state?.items, state?.selectedIndex]);
+  }, [sessionId, state]);
 
   if (!state) return null;
 
   return (
-    <section className="absolute inset-0 z-50 pointer-events-auto">
-      <button
-        type="button"
-        className="absolute inset-0 cursor-default border-0 bg-black/30 p-0 backdrop-blur-sm"
-        aria-label="Close command palette"
-        onClick={() => {
-          void sessions.dispatch(sessionId, "close");
-        }}
-      />
-      <div className="absolute inset-0 flex justify-center px-4 py-[max(1rem,4vh)] sm:py-[10vh]">
-        <div className="relative w-full max-w-xl self-start overflow-hidden rounded-2xl border border-border bg-popover text-popover-foreground shadow-lg outline-none">
-          <Command shouldFilter={false} value={state.items[state.selectedIndex]?.id ?? ""}>
-            <div className="flex items-center border-b border-border px-3" data-command-input-wrapper>
-              <CommandPaletteSearchIcon />
-              <CommandInput
-                ref={inputRef}
-                className="pl-2"
-                placeholder={state.placeholder || "Type a command"}
-                spellCheck={false}
-                value={state.query}
-                onValueChange={(query) => {
-                  void sessions.dispatch(sessionId, "setQuery", { query });
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "ArrowUp") {
-                    event.preventDefault();
-                    void sessions.dispatch(sessionId, "moveSelection", { delta: -1 });
-                    return;
-                  }
-                  if (event.key === "ArrowDown") {
-                    event.preventDefault();
-                    void sessions.dispatch(sessionId, "moveSelection", { delta: 1 });
-                    return;
-                  }
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    void sessions.dispatch(sessionId, "accept");
-                    return;
-                  }
-                  if (event.key === "Escape") {
-                    event.preventDefault();
-                    void sessions.dispatch(sessionId, "close");
-                  }
-                }}
-              />
-            </div>
-            <CommandList ref={itemsRef}>
-              {state.items.length ? state.items.map((item, index) => {
-                const isActive = index === state.selectedIndex;
-                return (
+    <CommandDialog
+      open
+      onOpenChange={(open) => {
+        if (!open) void sessions.dispatch(sessionId, "close");
+      }}
+    >
+      <Command shouldFilter={false}>
+        <CommandInput
+          ref={inputRef}
+          placeholder={state.placeholder || "Type a command or search..."}
+          spellCheck={false}
+          value={state.query}
+          onValueChange={(query) => {
+            void sessions.dispatch(sessionId, "setQuery", { query });
+          }}
+        />
+        <CommandList>
+          <CommandEmpty>No matching commands</CommandEmpty>
+          {groupCommandPaletteItems(state.items).map((group, groupIndex) => (
+            <Fragment key={group.heading}>
+              {groupIndex > 0 ? <CommandSeparator /> : null}
+              <CommandGroup heading={group.heading}>
+                {group.items.map((item) => (
                   <CommandItem
                     key={item.id}
                     value={item.id}
-                    data-command-item=""
-                    data-active={isActive ? "true" : undefined}
-                    onMouseMove={() => {
-                      if (isActive) return;
-                      void sessions.dispatch(sessionId, "selectIndex", { index });
-                    }}
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                    }}
                     onSelect={() => {
-                      void sessions.dispatch(sessionId, "selectIndex", { index }).then(() => sessions.dispatch(sessionId, "accept"));
+                      void sessions.dispatch(sessionId, "acceptItem", { id: item.id });
                     }}
                   >
-                    <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
-                      <div className="truncate font-medium">{item.title}</div>
-                      {item.detail ? <div className="max-w-64 truncate font-mono text-xs text-muted-foreground">{item.detail}</div> : null}
-                    </div>
-                    <div className="ml-3 flex shrink-0 items-center gap-1.5">
-                      {item.alias ? <CommandShortcut className="rounded border border-border px-1.5 py-0.5 text-[10px] normal-case tracking-normal">{item.alias}</CommandShortcut> : null}
-                      {item.keybinding ? <CommandShortcut className="rounded border border-border px-1.5 py-0.5 text-[10px]">{item.keybinding}</CommandShortcut> : null}
-                    </div>
+                    <span className="flex size-4 shrink-0 items-center justify-center text-[10px] font-medium text-muted-foreground">{commandPaletteIconLabel(item)}</span>
+                    <span className="min-w-0 flex-1 truncate">{item.title}</span>
+                    {item.alias ? <CommandShortcut>{item.alias}</CommandShortcut> : null}
+                    {item.keybinding ? <CommandShortcut>{item.keybinding}</CommandShortcut> : null}
                   </CommandItem>
-                );
-              }) : <CommandEmpty>No matching commands</CommandEmpty>}
-            </CommandList>
-          </Command>
-          <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-2 text-xs text-muted-foreground">
-            <span>Enter to run</span>
-            <span>Esc to close</span>
-          </div>
-        </div>
-      </div>
-    </section>
+                ))}
+              </CommandGroup>
+            </Fragment>
+          ))}
+        </CommandList>
+      </Command>
+    </CommandDialog>
   );
+}
+
+function groupCommandPaletteItems(items: CommandPaletteItemView[]): Array<{ heading: string; items: CommandPaletteItemView[] }> {
+  const groups: Array<{ heading: string; items: CommandPaletteItemView[] }> = [];
+  const byHeading = new Map<string, CommandPaletteItemView[]>();
+  for (const item of items) {
+    const heading = item.group || "Commands";
+    const group = byHeading.get(heading) ?? [];
+    if (!byHeading.has(heading)) {
+      byHeading.set(heading, group);
+      groups.push({ heading, items: group });
+    }
+    group.push(item);
+  }
+  return groups;
+}
+
+function commandPaletteIconLabel(item: CommandPaletteItemView): string {
+  const source = item.alias || item.title || item.id;
+  return source.trim().slice(0, 1).toUpperCase() || "•";
 }
 
 function scrollActiveItemIntoView(container: HTMLDivElement | null, selector: string): void {

@@ -15,6 +15,7 @@ import * as editorSurfaceViewportControllerModule from "@the-editor/editor/surfa
 import * as editorThemesModule from "@the-editor/editor/themes";
 import { themeCssVariables } from "@the-editor/editor/themes";
 import * as editorUiModule from "@the-editor/editor/ui";
+import * as editorUiCommandModule from "@the-editor/ui/command";
 import {
   createUiHost,
   type EditorUiModule,
@@ -363,6 +364,7 @@ class RendererSourceModuleLoader {
     if (specifier === "@the-editor/editor/markdown") return editorMarkdownModule;
     if (specifier === "@the-editor/editor/markdownLinks") return editorMarkdownLinksModule;
     if (specifier === "@the-editor/editor/markdownView") return editorMarkdownViewModule;
+    if (specifier === "@the-editor/ui/command") return editorUiCommandModule;
     if (!specifier.startsWith(".") && !specifier.startsWith("/")) {
       throw new Error(
         `unsupported ui module import ${specifier} from ${importerPath}; `

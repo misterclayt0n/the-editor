@@ -62,6 +62,7 @@ the-editor/
     runtime-node/          # napi-rs Node native wrapper around the-runtime
     editor/                # TS programmable editor substrate
     default/               # first-party default distribution modules
+    ui/                    # renderer-only shared UI primitives/design system
     contracts/             # shared TS contracts for IPC/model messages, if needed
 
   apps/
@@ -69,9 +70,9 @@ the-editor/
     renderer/              # React renderer app + browser UI build
 ```
 
-`packages/editor` must not import Electron, React DOM, browser globals, or Node filesystem APIs directly. It should depend on injected capabilities.
+`packages/editor` must not import Electron, React DOM, browser globals, `packages/ui`, or Node filesystem APIs directly. It should depend on injected capabilities.
 
-`packages/default` should be a composed distribution of first-party modules, not a monolithic app.
+`packages/default` should be a composed distribution of first-party modules, not a monolithic app. Its renderer-side UI modules may use `packages/ui` primitives.
 
 `apps/electron` is the native desktop adapter. It hosts Electron main/preload, the policy worker, and the runtime worker boundary. `apps/renderer` is the web UI app that Electron loads; it owns the React renderer shell, browser CSS pipeline, Tailwind/shadcn-style UI foundation, and concrete painting/UI implementation.
 

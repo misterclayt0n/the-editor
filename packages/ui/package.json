@@ -1,0 +1,32 @@
+{
+  "name": "@the-editor/ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./command": "./src/components/ui/command.tsx",
+    "./input": "./src/components/ui/input.tsx",
+    "./utils": "./src/lib/utils.ts"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.4.1",
+    "class-variance-authority": "^0.7.1",
+    "cmdk": "^1.1.1",
+    "lucide-react": "^1.16.0",
+    "tailwind-merge": "^3.6.0"
+  },
+  "peerDependencies": {
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "typescript": "catalog:"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}

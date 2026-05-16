@@ -17,6 +17,7 @@
     "@the-editor/contracts": "workspace:*",
     "@the-editor/default": "workspace:*",
     "@the-editor/editor": "workspace:*",
+    "@the-editor/ui": "workspace:*",
     "@vitejs/plugin-react": "latest",
     "class-variance-authority": "^0.7.1",
     "lucide-react": "^1.16.0",

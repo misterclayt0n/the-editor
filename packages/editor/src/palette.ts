@@ -35,7 +35,6 @@ interface CommandPaletteProviderEntry extends CommandPaletteProvider {
 export interface CommandPaletteRoleState {
   visible: boolean;
   query: string;
-  selectedIndex: number;
   placeholder?: string;
   items: CommandPaletteItem[];
 }

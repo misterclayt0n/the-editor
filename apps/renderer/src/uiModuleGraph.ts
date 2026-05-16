@@ -16,6 +16,7 @@ export const UI_SOURCE_ALLOWED_SPECIFIERS = new Set([
   "@the-editor/editor/markdown",
   "@the-editor/editor/markdownLinks",
   "@the-editor/editor/markdownView",
+  "@the-editor/ui/command",
 ]);
 
 export function validateUiModuleImportGraph(

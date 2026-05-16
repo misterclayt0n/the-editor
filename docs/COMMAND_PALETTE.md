@@ -243,7 +243,6 @@ interface CommandPaletteSession {
   commandId?: CommandId;
   argumentIndex?: number;
   items: CommandPaletteItem[];
-  selectedIndex: number;
 }
 
 interface CommandPaletteItem {

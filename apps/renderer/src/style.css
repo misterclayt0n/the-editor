@@ -2,6 +2,7 @@
 
 @source "../../../packages/default/src";
 @source "../../../packages/editor/src";
+@source "../../../packages/ui/src";
 
 @custom-variant dark (&:is(.dark, .dark *));
 

@@ -218,7 +218,6 @@ export function defaultCommandPalette(): EditorModule {
               : "";
             session.updateState((state) => {
               state.query = query;
-              state.items = [];
             });
             await refresh(session, requestState, ++requestState.version);
           },

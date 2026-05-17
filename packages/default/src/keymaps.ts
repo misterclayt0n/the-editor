@@ -265,7 +265,7 @@ export function defaultKeymaps(): EditorModule {
         "A-!": "shell_append_output",
         $: "shell_keep_pipe",
         // "C-z": "suspend",
-        "C-p": "commandPalette.open",
+        "C-p | M-k": "commandPalette.open",
 
         "C-a": "increment",
         "C-x": "decrement",
@@ -338,7 +338,7 @@ export function defaultKeymaps(): EditorModule {
       scope: "insert",
       tree: keymap("Insert mode", {
         esc: "exit_insert_mode",
-        "C-p": "commandPalette.open",
+        "C-p | M-k": "commandPalette.open",
 
         // "C-s": "commit_undo_checkpoint",
         // "C-x": "completion",

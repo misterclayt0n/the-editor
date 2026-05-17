@@ -134,6 +134,13 @@ function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (isCommandPaletteShortcut(event)) {
+        event.preventDefault();
+        void window.theEditor.policyRequest("command.dispatch", { id: "commandPalette.open" }).catch((error) => {
+          console.error(error);
+        });
+        return;
+      }
       if (isEditableKeyEvent(event)) return;
       if (event.metaKey) return;
       const input = toKeyInput(event);
@@ -1116,6 +1123,10 @@ function findLeadingGroupId(node: WorkbenchEditorLayoutNodeSnapshot): string | u
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function isCommandPaletteShortcut(event: KeyboardEvent): boolean {
+  return event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k";
 }
 
 function isEditableKeyEvent(event: KeyboardEvent): boolean {

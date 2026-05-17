@@ -214,7 +214,7 @@ editor.commands.register({
 });
 ```
 
-Selecting `Open File` enters a `Files` picker. Typing in that frame fuzzy-matches files. Pressing Backspace with an empty argument query, or using the UI back affordance, returns to the previous command frame.
+Selecting `Open File` enters a `Files` picker. Path-like providers should prefer immediate children over flat recursive dumps. File rows dispatch the command. Directory rows can enter a provider-backed child frame, or for directory-only commands such as `cd`, typing a slash in the query narrows into that directory and selecting a directory dispatches the command.
 
 Aliases remain searchable metadata for command discovery, but aliases are not an inline invocation language. Inputs such as `open App.tsx`, `theme gruvbox`, or `cd ~/code/foo` are not parsed specially by the palette.
 

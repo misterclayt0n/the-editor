@@ -70,7 +70,7 @@ export class CommandPaletteRegistry {
 
   constructor(private readonly editor: EditorHost) {}
 
-  registerProvider(provider: CommandPaletteProvider, moduleId = this.editor.currentModuleId()): Disposable {
+  registerProvider<TArgs = unknown>(provider: CommandPaletteProvider<TArgs>, moduleId = this.editor.currentModuleId()): Disposable {
     const entry: CommandPaletteProviderEntry = {
       ...provider,
       order: this.nextOrder++,

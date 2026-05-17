@@ -1,6 +1,6 @@
 import { contributionKind, type ModuleId } from "./contributions.js";
 import type { EditorHost } from "./editorHost.js";
-import type { CommandPaletteIcon } from "./palette.js";
+import type { CommandPaletteFrameTarget, CommandPaletteIcon } from "./palette.js";
 import { toDisposable, type Disposable } from "./disposable.js";
 
 export type CommandId = string & { readonly __brand?: "CommandId" };
@@ -22,6 +22,7 @@ export interface CommandArgumentItem<TValue = unknown> {
   value: TValue;
   keywords?: string[];
   icon?: CommandPaletteIcon;
+  frame?: CommandPaletteFrameTarget;
 }
 
 export interface CommandArgumentProvider<TValue = unknown> {

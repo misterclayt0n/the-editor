@@ -298,6 +298,7 @@ export interface RuntimeApi {
   };
   syntax: {
     highlightLegend(): Promise<Record<number, string>>;
+    drainWork(params?: { maxDocuments?: number; budgetMs?: number }): Promise<{ advanced: number }>;
   };
   documents: {
     openFile(params: { path: string }): Promise<DocumentOpened>;

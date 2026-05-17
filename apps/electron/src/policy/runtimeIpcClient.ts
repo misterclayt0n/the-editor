@@ -26,6 +26,7 @@ export class RuntimeIpcClient implements RuntimeApi {
 
   readonly syntax = {
     highlightLegend: () => this.request("syntax.highlightLegend") as ReturnType<RuntimeApi["syntax"]["highlightLegend"]>,
+    drainWork: (params: Parameters<RuntimeApi["syntax"]["drainWork"]>[0] = {}) => this.request("syntax.drainWork", params) as ReturnType<RuntimeApi["syntax"]["drainWork"]>,
   };
 
   readonly documents = {

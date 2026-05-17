@@ -110,6 +110,7 @@ export class MainNativeRuntimeApi implements RuntimeApi {
 
   readonly syntax = {
     highlightLegend: async (): Promise<Record<number, string>> => this.call("syntax.highlightLegend", {}),
+    drainWork: async (params: Parameters<RuntimeApi["syntax"]["drainWork"]>[0] = {}): ReturnType<RuntimeApi["syntax"]["drainWork"]> => this.call("syntax.drainWork", params),
   };
 
   readonly documents = {

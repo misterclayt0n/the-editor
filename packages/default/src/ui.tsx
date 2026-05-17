@@ -13,9 +13,10 @@ import type { FileTreeToolState } from "./fileTree.js";
 import { diagnosticLocationLabel, diagnosticPrimaryLine } from "./diagnosticsShared.js";
 import { DefaultFileTree } from "./fileTreeUi.js";
 import { MarkdownView } from "@the-editor/editor/markdownView";
+import { createFileTreeIconResolver, getBuiltInFileIconColor, getBuiltInSpriteSheet } from "@pierre/trees";
 import { DefaultWorkbenchTabstrip } from "./workbenchTabstrip.js";
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator, CommandShortcut } from "@the-editor/ui/command";
-import { Columns2Icon, FileIcon, FolderIcon, FolderOpenIcon, PaletteIcon, RefreshCwIcon, Rows2Icon, SaveIcon, TerminalIcon, type LucideIcon } from "lucide-react";
+import { Columns2Icon, FileIcon, FolderIcon, FolderOpenIcon, KeyboardIcon, PaletteIcon, RefreshCwIcon, Rows2Icon, SaveIcon, type LucideIcon } from "lucide-react";
 import "./fileTree.css";
 import "./hover.css";
 import "./markdown.css";
@@ -782,16 +783,19 @@ function commandPaletteIconLabel(item: CommandPaletteItemView): string {
   return source.trim().slice(0, 1).toUpperCase() || "•";
 }
 
+const commandPaletteFileIconResolver = createFileTreeIconResolver();
+const commandPaletteFileIconSpriteSheet = getBuiltInSpriteSheet("complete");
+
 const commandPaletteLucideIcons: Record<string, LucideIcon> = {
   "columns-2": Columns2Icon,
   file: FileIcon,
   folder: FolderIcon,
   "folder-open": FolderOpenIcon,
+  keyboard: KeyboardIcon,
   palette: PaletteIcon,
   "refresh-cw": RefreshCwIcon,
   "rows-2": Rows2Icon,
   save: SaveIcon,
-  terminal: TerminalIcon,
 };
 
 function CommandPaletteIconView({ icon, fallback }: { icon?: CommandPaletteIcon; fallback: string }) {
@@ -805,7 +809,16 @@ function CommandPaletteIconView({ icon, fallback }: { icon?: CommandPaletteIcon;
   }
 
   if (icon.kind === "file") {
-    return icon.entryKind === "directory" ? <FolderIcon className={className} /> : <FileIcon className={className} />;
+    const resolved = commandPaletteFileIconResolver.resolveIcon(icon.entryKind === "directory" ? "file-tree-icon-chevron" : "file-tree-icon-file", icon.path);
+    const color = resolved.token ? getBuiltInFileIconColor(resolved.token) : undefined;
+    return (
+      <span className="flex size-4 shrink-0 items-center justify-center" style={color ? { color } : undefined}>
+        <span className="hidden" dangerouslySetInnerHTML={{ __html: commandPaletteFileIconSpriteSheet }} />
+        <svg aria-hidden="true" className="size-4">
+          <use href={`#${resolved.name}`} />
+        </svg>
+      </span>
+    );
   }
 
   if (icon.kind === "text") {

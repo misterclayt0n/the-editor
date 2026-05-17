@@ -6,6 +6,7 @@ export const UI_SOURCE_ALLOWED_SPECIFIERS = new Set([
   "react-markdown",
   "remark-gfm",
   "@pierre/diffs",
+  "@pierre/trees",
   "@pierre/trees/react",
   "lucide-react",
   "@the-editor/contracts/runtime",

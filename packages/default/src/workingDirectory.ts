@@ -33,6 +33,7 @@ export function defaultWorkingDirectory(): EditorModule {
       category: "Workspace",
       palette: "topLevel",
       icon: { kind: "lucide", name: "folder-open" },
+      args: [{ name: "path", source: "directories", required: true }],
       async run(_ctx, args) {
         const requested = args?.path;
         const dir = requested === "-"

@@ -101,6 +101,7 @@ const themeModule: EditorModule = (editor) => {
     category: "Workbench",
     palette: "topLevel",
     keywords: ["colorscheme", "appearance", "palette"],
+    icon: { kind: "lucide", name: "palette" },
     async run(_ctx, args) {
       if (args?.id) {
         editor.themes.activate(args.id);

@@ -32,6 +32,12 @@ async function dispatch(method: string, params: unknown = {}): Promise<unknown> 
       if (typeof read !== "function") return {};
       return JSON.parse(read.call(session)) as Record<number, string>;
     }
+    case "syntax.drainWork": {
+      const p = params as Parameters<RuntimeApi["syntax"]["drainWork"]>[0] | undefined;
+      const drain = (session as { drainSyntaxWork?: (maxDocuments?: number, budgetMs?: number) => number }).drainSyntaxWork;
+      if (typeof drain !== "function") return { advanced: 0 };
+      return { advanced: drain.call(session, p?.maxDocuments, p?.budgetMs) };
+    }
     case "documents.openFile": {
       const p = params as Parameters<RuntimeApi["documents"]["openFile"]>[0];
       return { documentId: session.openFile(p.path) };

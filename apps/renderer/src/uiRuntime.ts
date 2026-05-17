@@ -3,6 +3,7 @@ import * as ReactJsxRuntime from "react/jsx-runtime";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import * as PierreDiffs from "@pierre/diffs";
+import * as PierreTrees from "@pierre/trees";
 import * as PierreTreesReact from "@pierre/trees/react";
 import * as LucideReact from "lucide-react";
 import ts from "typescript";
@@ -355,6 +356,7 @@ class RendererSourceModuleLoader {
     if (specifier === "react-markdown") return ReactMarkdown;
     if (specifier === "remark-gfm") return remarkGfm;
     if (specifier === "@pierre/diffs") return PierreDiffs;
+    if (specifier === "@pierre/trees") return PierreTrees;
     if (specifier === "@pierre/trees/react") return PierreTreesReact;
     if (specifier === "lucide-react") return LucideReact;
     if (specifier === "@the-editor/contracts/runtime") return {};

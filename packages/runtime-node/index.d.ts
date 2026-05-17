@@ -34,6 +34,7 @@ export declare class NativeRuntimeSession {
   readClipboard(kind: string): string | null
   writeClipboard(value: string, kind: string): void
   readSyntaxHighlightLegendJson(): string
+  drainSyntaxWork(maxDocuments?: number | undefined | null, budgetMs?: number | undefined | null): number
   renderFrame(surfaceId: number, viewport: JsViewport, metrics: JsCellGridMetrics): JsRenderFrame
   saveSurfaceDocument(surfaceId: number): void
   ensureSearchIndexJson(rootPath: string): string

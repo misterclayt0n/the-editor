@@ -19,6 +19,16 @@ import {
 } from "@the-editor/editor";
 import { resolveFilePickerRoot } from "./workingDirectory.js";
 
+type PathPaletteMode = "file" | "directory" | "both";
+
+interface PathPaletteFrameArgs {
+  root: string;
+  baseRoot: string;
+  mode: PathPaletteMode;
+  commandId: string;
+  argumentName: string;
+}
+
 interface CommandPaletteFrameState {
   query: string;
   placeholder?: string;
@@ -146,11 +156,11 @@ export function defaultCommandPalette(): EditorModule {
 
     editor.commands.register<{ id: string }, void>({
       id: commandId("command.run"),
-      title: "Run Command",
+      title: "Run Editor Command",
       aliases: ["command"],
       category: "Workbench",
       palette: "topLevel",
-      icon: { kind: "lucide", name: "terminal" },
+      icon: { kind: "lucide", name: "keyboard" },
       args: [{ name: "id", source: "commands", required: true }],
       async run(_ctx, args) {
         if (!args?.id) return;
@@ -180,18 +190,38 @@ export function defaultCommandPalette(): EditorModule {
       id: "files",
       title: "Files",
       provide(ctx) {
-        const root = resolveFilePickerRoot(editor);
-        const files = listFiles(root, 900);
-        return files
-          .map((path): CommandArgumentItem<string> => ({
-            id: path,
-            title: path,
-            detail: root,
-            value: join(root, path),
-            keywords: [path],
-            icon: { kind: "file", path, entryKind: "file" },
-          }))
-          .filter((item) => matchesCommandPaletteItem(ctx.query, item));
+        return pathArgumentItems(editor, ctx.query, {
+          root: resolveFilePickerRoot(editor),
+          baseRoot: resolveFilePickerRoot(editor),
+          mode: "both",
+          commandId: ctx.command.id,
+          argumentName: ctx.command.args?.[0]?.name ?? "path",
+        });
+      },
+    });
+
+    editor.commands.registerArgumentProvider({
+      id: "directories",
+      title: "Directories",
+      provide(ctx) {
+        return pathArgumentItems(editor, ctx.query, {
+          root: resolveFilePickerRoot(editor),
+          baseRoot: resolveFilePickerRoot(editor),
+          mode: "directory",
+          commandId: ctx.command.id,
+          argumentName: ctx.command.args?.[0]?.name ?? "path",
+        });
+      },
+    });
+
+    editor.palette.registerProvider<PathPaletteFrameArgs>({
+      id: "default.paths",
+      title: "Paths",
+      visibility: "hidden",
+      provide(ctx) {
+        const args = ctx.frame?.args;
+        if (!args) return [];
+        return pathPaletteItems(editor, ctx.query, args);
       },
     });
 
@@ -351,7 +381,8 @@ function rankArgumentItems<T>(query: string, command: Command, name: string, ite
         group: command.title,
         keywords: arg.keywords,
         icon: arg.icon,
-        command: { id: command.id, args: { [name]: arg.value } },
+        command: arg.frame ? undefined : { id: command.id, args: { [name]: arg.value } },
+        frame: arg.frame,
       } satisfies CommandPaletteItem,
       score: scoreCommandPaletteItem(query, arg),
     }))
@@ -445,32 +476,83 @@ function currentFrame(state: CommandPaletteSessionState): CommandPaletteFrameSta
   };
 }
 
-function listFiles(root: string, limit: number): string[] {
-  const results: string[] = [];
-  const ignored = new Set([".git", ".jj", "node_modules", "target", "dist", ".next"]);
-  const visit = (dir: string) => {
-    if (results.length >= limit) return;
-    let entries: string[];
-    try {
-      entries = readdirSync(dir);
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      if (results.length >= limit || ignored.has(entry)) continue;
-      const path = join(dir, entry);
-      let stat;
-      try {
-        stat = statSync(path);
-      } catch {
-        continue;
+function pathArgumentItems(editor: Parameters<EditorModule>[0], query: string, args: PathPaletteFrameArgs): CommandArgumentItem<string>[] {
+  return pathPaletteItems(editor, query, args)
+    .map((item): CommandArgumentItem<string> => ({
+      id: item.id,
+      title: item.title,
+      detail: item.detail,
+      value: ((item.command?.args as Record<string, unknown> | undefined)?.[args.argumentName] as string | undefined) ?? join(args.root, item.title.replace(/\/$/, "")),
+      keywords: item.keywords,
+      icon: item.icon,
+      frame: item.frame,
+    }));
+}
+
+function pathPaletteItems(_editor: Parameters<EditorModule>[0], query: string, args: PathPaletteFrameArgs): CommandPaletteItem[] {
+  const parsed = parsePathQuery(query);
+  const currentRoot = join(args.root, parsed.dir);
+  const entries = listDirectoryEntries(currentRoot)
+    .filter((entry) => args.mode === "both" || (args.mode === "file" ? !entry.isDirectory : entry.isDirectory))
+    .map((entry): CommandPaletteItem => {
+      const absolute = join(currentRoot, entry.name);
+      const relativePath = relative(args.baseRoot, absolute) || entry.name;
+      const displayTitle = entry.isDirectory ? `${entry.name}/` : entry.name;
+      const keywords = [entry.name, relativePath];
+      if (entry.isDirectory && args.mode !== "directory") {
+        return {
+          id: `path:${relativePath}`,
+          title: displayTitle,
+          detail: relativePath,
+          group: "Open File",
+          keywords,
+          icon: { kind: "file", path: absolute, entryKind: "directory" },
+          frame: {
+            title: displayTitle,
+            provider: "default.paths",
+            placeholder: `Search ${displayTitle}`,
+            query: "",
+            args: { ...args, root: absolute },
+          },
+        };
       }
-      if (stat.isDirectory()) visit(path);
-      else if (stat.isFile()) results.push(relative(root, path));
-    }
-  };
-  visit(root);
-  return results;
+      return {
+        id: `path:${relativePath}`,
+        title: displayTitle,
+        detail: relativePath,
+        group: args.mode === "directory" ? "Directories" : "Open File",
+        keywords,
+        icon: { kind: "file", path: absolute, entryKind: entry.isDirectory ? "directory" : "file" },
+        command: { id: commandId(args.commandId), args: { [args.argumentName]: absolute } },
+      };
+    });
+  return entries.filter((item) => matchesCommandPaletteItem(parsed.leaf, item));
+}
+
+function parsePathQuery(query: string): { dir: string; leaf: string } {
+  const normalized = query.replace(/\\+/g, "/");
+  const slash = normalized.lastIndexOf("/");
+  if (slash < 0) return { dir: "", leaf: normalized };
+  return { dir: normalized.slice(0, slash + 1), leaf: normalized.slice(slash + 1) };
+}
+
+function listDirectoryEntries(root: string): Array<{ name: string; isDirectory: boolean }> {
+  let entries: string[];
+  try {
+    entries = readdirSync(root);
+  } catch {
+    return [];
+  }
+  return entries
+    .map((name) => {
+      try {
+        return { name, isDirectory: statSync(join(root, name)).isDirectory() };
+      } catch {
+        return undefined;
+      }
+    })
+    .filter((entry): entry is { name: string; isDirectory: boolean } => Boolean(entry))
+    .sort((a, b) => Number(b.isDirectory) - Number(a.isDirectory) || a.name.localeCompare(b.name));
 }
 
 function paletteState(editor: Parameters<EditorModule>[0]): CommandPaletteStoredState {

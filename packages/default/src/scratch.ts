@@ -117,6 +117,8 @@ export function defaultScratch(): EditorModule {
           await editor.runtime.surfaces.setSoftWrap({ surfaceId: surface.surfaceId, softWrap: true });
         }
 
+        await editor.runtime.syntax.drainWork({ maxDocuments: 8, budgetMs: 8 });
+
         const title = fileTitle(path);
         const pane = await shouldReplaceInitialScratch(editor)
           ? editor.workbench.replaceActiveSurface({
@@ -144,6 +146,7 @@ export function defaultScratch(): EditorModule {
         });
         setEditorMode(editor, "normal");
         editor.input.focusEditor({ reason: "scratch.fileSurface" });
+        editor.workbench.focusPane(pane.id);
         const nextViewport = args.line ? viewportForLocation(viewport, args.line) : viewport;
         if (args.line) {
           const paneState = getDefaultState(editor).surfacePanes.get(pane.id);

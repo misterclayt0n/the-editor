@@ -558,6 +558,18 @@ impl NativeRuntimeSession {
   }
 
   #[napi]
+  pub fn drain_syntax_work(&self, max_documents: Option<u32>, budget_ms: Option<u32>) -> Result<u32> {
+    let mut runtime = self.lock()?;
+    let advanced = runtime
+      .drain_syntax_work(
+        max_documents.unwrap_or(8) as usize,
+        std::time::Duration::from_millis(budget_ms.unwrap_or(8) as u64),
+      )
+      .map_err(runtime_error)?;
+    Ok(advanced as u32)
+  }
+
+  #[napi]
   pub fn render_frame(
     &self,
     surface_id: u32,

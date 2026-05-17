@@ -49,7 +49,7 @@ function CommandDialog({
       </DialogHeader>
       <DialogContent
         className={cn(
-          "overflow-hidden p-0 shadow-xl sm:max-w-[450px] data-open:duration-150 data-open:ease-out data-open:slide-in-from-top-2 data-open:zoom-in-98 data-closed:duration-100 data-closed:ease-in data-closed:slide-out-to-top-2 data-closed:zoom-out-98",
+          "overflow-hidden rounded-2xl p-0 shadow-xl sm:max-w-[450px] before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-2xl)-1px)] before:bg-muted/35 before:shadow-[0_1px_rgba(0,0,0,0.04)] dark:before:shadow-[0_-1px_rgba(255,255,255,0.06)] data-open:duration-200 data-open:ease-in-out data-open:slide-in-from-top-3 data-open:zoom-in-98 data-closed:duration-150 data-closed:ease-in data-closed:slide-out-to-top-3 data-closed:zoom-out-98 data-starting-style:-translate-y-2 data-starting-style:scale-98 data-starting-style:opacity-0 data-ending-style:-translate-y-2 data-ending-style:scale-98 data-ending-style:opacity-0",
           className
         )}
         showCloseButton={showCloseButton}

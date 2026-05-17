@@ -233,6 +233,70 @@ grep "hello" --case-sensitive | open
 
 No inline command invocation, quoting rules, pipes, flags, nested subcommands, shell-style escaping, or compatibility shims.
 
+## Global providers and everything palette
+
+The palette is one interaction surface backed by explicit providers. Command browsing is the built-in provider. Other domains, such as themes, files, symbols, diagnostics, tasks, and extension features, opt into global search by registering a command palette provider.
+
+Global provider participation is explicit. Argument providers do not automatically leak into global results. If a domain should appear in the everything palette, register a palette provider for it.
+
+Empty global palette results stay calm and command-oriented. Extra global providers are queried only after the user enters a non-empty query. Scoped entrypoints may choose different initial providers later.
+
+Provider results are normal palette items. They can execute commands directly or enter nested provider frames:
+
+```ts
+editor.palette.registerProvider({
+  id: "themes",
+  title: "Themes",
+  priority: -10,
+  provide(ctx) {
+    return themesMatching(ctx.query).map((theme) => ({
+      id: `theme:${theme.id}`,
+      title: theme.title,
+      group: "Themes",
+      icon: { kind: "lucide", name: "palette" },
+      command: { id: commandId("theme.select"), args: { id: theme.id } },
+    }));
+  },
+});
+```
+
+Nested provider frames use explicit frame metadata:
+
+```ts
+{
+  id: "project:the-editor",
+  title: "the-editor",
+  frame: {
+    title: "the-editor",
+    provider: "project.actions",
+    placeholder: "Search project actions...",
+    args: { projectId: "the-editor" },
+  },
+}
+```
+
+Provider visibility controls where providers participate. Omitted visibility means `global`. Developer/internal workbench plumbing should use `developer` or `hidden` and must not appear in the normal everything palette.
+
+Provider API is a single context object:
+
+```ts
+interface CommandPaletteProviderContext<TArgs = unknown> {
+  editor: EditorHost;
+  query: string;
+  frame?: CommandPaletteFrameTarget<TArgs>;
+}
+
+type CommandPaletteProviderVisibility = "global" | "developer" | "hidden";
+
+interface CommandPaletteProvider<TArgs = unknown> {
+  id: string;
+  title?: string;
+  priority?: number;
+  visibility?: CommandPaletteProviderVisibility;
+  provide(ctx: CommandPaletteProviderContext<TArgs>): CommandPaletteItem[] | Promise<CommandPaletteItem[]>;
+}
+```
+
 ## Palette session model
 
 The command palette should be driven by an internal session model, not by the UI library.
@@ -261,6 +325,15 @@ interface CommandPaletteFrame {
   argumentIndex?: number;
   argumentName?: string;
   placeholder?: string;
+  providerFrame?: CommandPaletteFrameTarget;
+}
+
+interface CommandPaletteFrameTarget<TArgs = unknown> {
+  title: string;
+  provider: string;
+  placeholder?: string;
+  query?: string;
+  args?: TArgs;
 }
 
 type CommandPaletteIcon =
@@ -277,6 +350,8 @@ interface CommandPaletteItem {
   alias?: string;
   keybinding?: string;
   icon?: CommandPaletteIcon;
+  command?: CommandDispatch;
+  frame?: CommandPaletteFrameTarget;
   score?: number;
   payload?: unknown;
 }

@@ -9,6 +9,7 @@ import {
   scoreCommandPaletteItem,
   type Command,
   type CommandArgumentItem,
+  type CommandPaletteFrameTarget,
   type CommandPaletteItem,
   type CommandPaletteRoleState,
   type EditorModule,
@@ -25,6 +26,7 @@ interface CommandPaletteFrameState {
   commandId?: string;
   commandTitle?: string;
   argumentName?: string;
+  providerFrame?: CommandPaletteFrameTarget;
 }
 
 interface CommandPaletteSessionState extends CommandPaletteFrameState {
@@ -226,7 +228,13 @@ export function defaultCommandPalette(): EditorModule {
               : "";
             const snapshot = session.snapshot().state;
             const item = snapshot.items.find((candidate) => candidate.id === itemId);
-            if (!item?.command) return;
+            if (!item) return;
+            if (item.frame) {
+              enterProviderFrame(session, item.frame);
+              await refresh(session, requestState, ++requestState.version);
+              return;
+            }
+            if (!item.command) return;
             const command = editor.commands.get(item.command.id);
             const firstArg = command?.args?.[0];
             if (command && firstArg && !item.command.args) {
@@ -270,6 +278,15 @@ export function defaultCommandPalette(): EditorModule {
 }
 
 async function resolvePaletteItems(editor: Parameters<EditorModule>[0], state: CommandPaletteFrameState): Promise<{ mode: "commands" | "argument"; commandTitle?: string; placeholder: string; items: CommandPaletteItem[] }> {
+  if (state.mode === "argument" && state.providerFrame) {
+    return {
+      mode: "argument",
+      commandTitle: state.providerFrame.title,
+      placeholder: state.providerFrame.placeholder ?? "Search...",
+      items: await editor.palette.items(state.query, { ...state.providerFrame, query: state.query }),
+    };
+  }
+
   if (state.mode === "argument" && state.commandId && state.argumentName) {
     const command = editor.commands.get(commandId(state.commandId));
     if (!command) return { mode: "commands", placeholder: "Type a command", items: [] };
@@ -287,8 +304,14 @@ async function resolvePaletteItems(editor: Parameters<EditorModule>[0], state: C
   return {
     mode: "commands",
     placeholder: "Type a command",
-    items: rankCommandItems(editor.commands.all().filter((command) => paletteVisibility(command) === "topLevel"), state.query),
+    items: await resolveGlobalPaletteItems(editor, state.query),
   };
+}
+
+async function resolveGlobalPaletteItems(editor: Parameters<EditorModule>[0], query: string): Promise<CommandPaletteItem[]> {
+  const commandItems = rankCommandItems(editor.commands.all().filter((command) => paletteVisibility(command) === "topLevel"), query);
+  if (!query.trim()) return commandItems;
+  return [...commandItems, ...await editor.palette.items(query)];
 }
 
 function paletteVisibility(command: Command): "topLevel" | "command" | "hidden" {
@@ -363,6 +386,7 @@ async function enterArgumentFrame(
     state.commandId = command.id;
     state.commandTitle = command.title;
     state.argumentName = argumentName;
+    state.providerFrame = undefined;
     state.placeholder = `Search ${argumentSource}...`;
     state.items = [];
   });
@@ -378,6 +402,20 @@ async function enterArgumentFrame(
   });
 }
 
+function enterProviderFrame(session: InteractiveSessionController<CommandPaletteSessionState>, frame: CommandPaletteFrameTarget): void {
+  session.updateState((state) => {
+    state.stack.push(currentFrame(state));
+    state.query = frame.query ?? "";
+    state.mode = "argument";
+    state.commandId = undefined;
+    state.commandTitle = frame.title;
+    state.argumentName = undefined;
+    state.providerFrame = frame;
+    state.placeholder = frame.placeholder ?? "Search...";
+    state.items = [];
+  });
+}
+
 function goBack(session: InteractiveSessionController<CommandPaletteSessionState>): boolean {
   let didGoBack = false;
   session.updateState((state) => {
@@ -389,6 +427,7 @@ function goBack(session: InteractiveSessionController<CommandPaletteSessionState
     state.commandId = previous.commandId;
     state.commandTitle = previous.commandTitle;
     state.argumentName = previous.argumentName;
+    state.providerFrame = previous.providerFrame;
     state.items = [];
     didGoBack = true;
   });
@@ -403,6 +442,7 @@ function currentFrame(state: CommandPaletteSessionState): CommandPaletteFrameSta
     commandId: state.commandId,
     commandTitle: state.commandTitle,
     argumentName: state.argumentName,
+    providerFrame: state.providerFrame,
   };
 }
 

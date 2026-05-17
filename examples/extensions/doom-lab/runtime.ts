@@ -38,7 +38,7 @@ const doomLabRuntime: EditorModule = (editor) => {
     id: "doom-lab.commands",
     title: "Doom Lab",
     priority: 15,
-    provide(_ctx, query) {
+    provide(ctx) {
       return [
         paletteItem({
           id: "doom-lab:open",
@@ -47,7 +47,7 @@ const doomLabRuntime: EditorModule = (editor) => {
           keywords: ["doom", "game", "fps", "shareware", "extension"],
           command: { id: commandId("doom_lab.open") },
         }),
-      ].filter((item) => matchesCommandPaletteItem(query, item));
+      ].filter((item) => matchesCommandPaletteItem(ctx.query, item));
     },
   });
 };

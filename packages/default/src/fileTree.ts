@@ -168,7 +168,8 @@ export function defaultFileTree(): EditorModule {
       id: "default.fileTree",
       title: "File Tree",
       priority: 10,
-      provide(_ctx, query) {
+      visibility: "developer",
+      provide(ctx) {
         const items: CommandPaletteItem[] = [
           {
             id: "fileTree.open",
@@ -195,7 +196,7 @@ export function defaultFileTree(): EditorModule {
             command: { id: commandId("fileTree.toggle") },
           },
         ];
-        return items.filter((item) => matchesCommandPaletteItem(query, item));
+        return items.filter((item) => matchesCommandPaletteItem(ctx.query, item));
       },
     });
 

@@ -106,7 +106,8 @@ export function defaultWorkbenchControls(): EditorModule {
       id: "default.roles",
       title: "Roles",
       priority: 20,
-      provide(ctx, query) {
+      visibility: "developer",
+      provide(ctx) {
         const items: CommandPaletteItem[] = [];
         const snapshots = ctx.editor.roles.snapshotAll();
         for (const [role, snapshot] of Object.entries(snapshots)) {
@@ -137,7 +138,7 @@ export function defaultWorkbenchControls(): EditorModule {
             });
           }
         }
-        return items.filter((item) => matchesCommandPaletteItem(query, item));
+        return items.filter((item) => matchesCommandPaletteItem(ctx.query, item));
       },
     });
 
@@ -145,7 +146,8 @@ export function defaultWorkbenchControls(): EditorModule {
       id: "default.tools",
       title: "Tools",
       priority: 10,
-      provide(_ctx, query) {
+      visibility: "developer",
+      provide(ctx) {
         return [
           {
             id: "tool:inspector",
@@ -155,7 +157,7 @@ export function defaultWorkbenchControls(): EditorModule {
             keywords: ["tool", "inspector", "diagnostics", "extensions"],
             command: { id: commandId("workbench.toggleInspector") },
           },
-        ].filter((item) => matchesCommandPaletteItem(query, item));
+        ].filter((item) => matchesCommandPaletteItem(ctx.query, item));
       },
     });
   };

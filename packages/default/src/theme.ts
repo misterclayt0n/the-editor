@@ -1,5 +1,5 @@
 import type { CommandArgumentItem, EditorModule } from "@the-editor/editor";
-import { commandId, defineTheme, matchesCommandPaletteItem } from "@the-editor/editor";
+import { commandId, defineTheme, matchesCommandPaletteItem, type CommandPaletteItem } from "@the-editor/editor";
 import { importedThemes } from "./themes/generated/index.js";
 
 export const defaultDarkTheme = defineTheme({
@@ -108,7 +108,7 @@ const themeModule: EditorModule = (editor) => {
       }
       await editor.commands.dispatch({
         id: commandId("commandPalette.open"),
-        args: { initialQuery: "theme " },
+        args: { initialQuery: "theme" },
       });
     },
   });
@@ -135,6 +135,27 @@ const themeModule: EditorModule = (editor) => {
         detail: theme.id === activeId ? `${theme.id} · active` : theme.id,
         value: theme.id,
         keywords: ["theme", "colorscheme", theme.id, theme.title ?? ""],
+        icon: { kind: "lucide", name: "palette" },
+      }));
+      return items.filter((item) => matchesCommandPaletteItem(ctx.query, item));
+    },
+  });
+
+  editor.palette.registerProvider({
+    id: "default.themes",
+    title: "Themes",
+    priority: -10,
+    provide(ctx) {
+      const snapshot = editor.themes.snapshot();
+      const activeId = snapshot.active?.id;
+      const items: CommandPaletteItem[] = snapshot.available.map((theme) => ({
+        id: `theme:${theme.id}`,
+        title: theme.title ?? theme.id,
+        detail: theme.id === activeId ? `${theme.id} · active` : theme.id,
+        group: "Themes",
+        keywords: ["theme", "colorscheme", theme.id, theme.title ?? ""],
+        icon: { kind: "lucide", name: "palette" },
+        command: { id: commandId("theme.select"), args: { id: theme.id } },
       }));
       return items.filter((item) => matchesCommandPaletteItem(ctx.query, item));
     },

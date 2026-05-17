@@ -13,6 +13,14 @@ export type CommandPaletteIcon =
   | { kind: "svg"; source: string; viewBox?: string }
   | { kind: "uri"; src: string };
 
+export interface CommandPaletteFrameTarget<TArgs = unknown> {
+  title: string;
+  provider: string;
+  placeholder?: string;
+  query?: string;
+  args?: TArgs;
+}
+
 export interface CommandPaletteItem {
   id: string;
   title: string;
@@ -23,17 +31,23 @@ export interface CommandPaletteItem {
   keywords?: string[];
   icon?: CommandPaletteIcon;
   command?: CommandDispatch;
+  frame?: CommandPaletteFrameTarget;
 }
 
-export interface CommandPaletteProviderContext {
+export interface CommandPaletteProviderContext<TArgs = unknown> {
   editor: EditorHost;
+  query: string;
+  frame?: CommandPaletteFrameTarget<TArgs>;
 }
 
-export interface CommandPaletteProvider {
+export type CommandPaletteProviderVisibility = "global" | "developer" | "hidden";
+
+export interface CommandPaletteProvider<TArgs = unknown> {
   id: string;
   title?: string;
   priority?: number;
-  provide(ctx: CommandPaletteProviderContext, query: string): CommandPaletteItem[] | Promise<CommandPaletteItem[]>;
+  visibility?: CommandPaletteProviderVisibility;
+  provide(ctx: CommandPaletteProviderContext<TArgs>): CommandPaletteItem[] | Promise<CommandPaletteItem[]>;
 }
 
 interface CommandPaletteProviderEntry extends CommandPaletteProvider {
@@ -77,12 +91,14 @@ export class CommandPaletteRegistry {
     });
   }
 
-  async items(query: string): Promise<CommandPaletteItem[]> {
-    const ctx: CommandPaletteProviderContext = { editor: this.editor };
+  async items(query: string, frame?: CommandPaletteFrameTarget): Promise<CommandPaletteItem[]> {
     const providers = [...this.providers.values()].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0) || a.order - b.order);
+    const selectedProviders = frame
+      ? providers.filter((provider) => provider.id === frame.provider)
+      : providers.filter((provider) => (provider.visibility ?? "global") === "global");
     const items: CommandPaletteItem[] = [];
-    for (const provider of providers) {
-      items.push(...await provider.provide(ctx, query));
+    for (const provider of selectedProviders) {
+      items.push(...await provider.provide({ editor: this.editor, query, frame }));
     }
     return items;
   }

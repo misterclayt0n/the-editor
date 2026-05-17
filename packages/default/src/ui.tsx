@@ -15,7 +15,7 @@ import { DefaultFileTree } from "./fileTreeUi.js";
 import { MarkdownView } from "@the-editor/editor/markdownView";
 import { DefaultWorkbenchTabstrip } from "./workbenchTabstrip.js";
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator, CommandShortcut } from "@the-editor/ui/command";
-import { Columns2Icon, FileIcon, FolderIcon, FolderOpenIcon, RefreshCwIcon, Rows2Icon, SaveIcon, TerminalIcon, type LucideIcon } from "lucide-react";
+import { Columns2Icon, FileIcon, FolderIcon, FolderOpenIcon, PaletteIcon, RefreshCwIcon, Rows2Icon, SaveIcon, TerminalIcon, type LucideIcon } from "lucide-react";
 import "./fileTree.css";
 import "./hover.css";
 import "./markdown.css";
@@ -787,6 +787,7 @@ const commandPaletteLucideIcons: Record<string, LucideIcon> = {
   file: FileIcon,
   folder: FolderIcon,
   "folder-open": FolderOpenIcon,
+  palette: PaletteIcon,
   "refresh-cw": RefreshCwIcon,
   "rows-2": Rows2Icon,
   save: SaveIcon,

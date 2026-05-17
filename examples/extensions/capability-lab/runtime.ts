@@ -336,8 +336,8 @@ const capabilityLabRuntime: EditorModule = (editor) => {
     id: "capability-lab.commands",
     title: "Capability Lab",
     priority: 30,
-    provide(_ctx, query) {
-      return capabilityPaletteItems().filter((item) => matchesCommandPaletteItem(query, item));
+    provide(ctx) {
+      return capabilityPaletteItems().filter((item) => matchesCommandPaletteItem(ctx.query, item));
     },
   });
 

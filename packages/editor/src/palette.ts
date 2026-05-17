@@ -6,6 +6,13 @@ import { roleId } from "./roles.js";
 
 export const commandPaletteRoleId = roleId("commandPalette");
 
+export type CommandPaletteIcon =
+  | { kind: "lucide"; name: string }
+  | { kind: "file"; path: string; entryKind?: "file" | "directory" }
+  | { kind: "text"; value: string }
+  | { kind: "svg"; source: string; viewBox?: string }
+  | { kind: "uri"; src: string };
+
 export interface CommandPaletteItem {
   id: string;
   title: string;
@@ -14,6 +21,7 @@ export interface CommandPaletteItem {
   alias?: string;
   keybinding?: string;
   keywords?: string[];
+  icon?: CommandPaletteIcon;
   command?: CommandDispatch;
 }
 

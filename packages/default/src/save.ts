@@ -10,6 +10,7 @@ export function defaultSave(): EditorModule {
       category: "File",
       palette: "topLevel",
       keywords: ["save"],
+      icon: { kind: "lucide", name: "save" },
       async run() {
         const pane = activeSurfacePane(editor);
         if (!pane?.surfaceId) {

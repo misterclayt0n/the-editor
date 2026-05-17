@@ -148,6 +148,7 @@ export function defaultCommandPalette(): EditorModule {
       aliases: ["command"],
       category: "Workbench",
       palette: "topLevel",
+      icon: { kind: "lucide", name: "terminal" },
       args: [{ name: "id", source: "commands", required: true }],
       async run(_ctx, args) {
         if (!args?.id) return;
@@ -167,6 +168,7 @@ export function defaultCommandPalette(): EditorModule {
             detail: command.title,
             value: command.id,
             keywords: [command.id, command.title, ...(command.aliases ?? []), ...(command.keywords ?? [])],
+            icon: command.icon,
           }))
           .filter((item) => matchesCommandPaletteItem(ctx.query, item));
       },
@@ -185,6 +187,7 @@ export function defaultCommandPalette(): EditorModule {
             detail: root,
             value: join(root, path),
             keywords: [path],
+            icon: { kind: "file", path, entryKind: "file" },
           }))
           .filter((item) => matchesCommandPaletteItem(ctx.query, item));
       },
@@ -306,6 +309,7 @@ function rankCommandItems(commands: Command[], query: string): CommandPaletteIte
         alias,
         group: command.category ?? "Commands",
         keywords: [command.id, command.title, ...(command.aliases ?? []), ...(command.keywords ?? [])],
+        icon: command.icon,
         command: { id: command.id },
       };
       return { item, score: scoreCommand(command, trimmed, item) };
@@ -324,6 +328,7 @@ function rankArgumentItems<T>(query: string, command: Command, name: string, ite
         detail: arg.detail,
         group: command.title,
         keywords: arg.keywords,
+        icon: arg.icon,
         command: { id: command.id, args: { [name]: arg.value } },
       } satisfies CommandPaletteItem,
       score: scoreCommandPaletteItem(query, arg),

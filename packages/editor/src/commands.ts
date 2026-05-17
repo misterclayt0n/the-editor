@@ -1,5 +1,6 @@
 import { contributionKind, type ModuleId } from "./contributions.js";
 import type { EditorHost } from "./editorHost.js";
+import type { CommandPaletteIcon } from "./palette.js";
 import { toDisposable, type Disposable } from "./disposable.js";
 
 export type CommandId = string & { readonly __brand?: "CommandId" };
@@ -20,6 +21,7 @@ export interface CommandArgumentItem<TValue = unknown> {
   detail?: string;
   value: TValue;
   keywords?: string[];
+  icon?: CommandPaletteIcon;
 }
 
 export interface CommandArgumentProvider<TValue = unknown> {
@@ -45,6 +47,7 @@ export interface Command<TArgs = unknown, TResult = unknown> {
   hidden?: boolean;
   palette?: CommandPaletteVisibility;
   keywords?: string[];
+  icon?: CommandPaletteIcon;
   run(ctx: CommandContext, args: TArgs): TResult | Promise<TResult>;
 }
 

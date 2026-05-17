@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode, type RefObject } from "react";
 import type { RenderFrame, SurfaceId, Viewport } from "@the-editor/contracts/runtime";
-import type { BufferDecoration, DiagnosticRecord, HealthDiagnosticEntry, NotificationEntry } from "@the-editor/editor";
+import type { BufferDecoration, CommandPaletteIcon, DiagnosticRecord, HealthDiagnosticEntry, NotificationEntry } from "@the-editor/editor";
 import {
   SurfaceViewportController,
   type SurfaceViewportControllerState,
@@ -15,6 +15,7 @@ import { DefaultFileTree } from "./fileTreeUi.js";
 import { MarkdownView } from "@the-editor/editor/markdownView";
 import { DefaultWorkbenchTabstrip } from "./workbenchTabstrip.js";
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator, CommandShortcut } from "@the-editor/ui/command";
+import { Columns2Icon, FileIcon, FolderIcon, FolderOpenIcon, RefreshCwIcon, Rows2Icon, SaveIcon, TerminalIcon, type LucideIcon } from "lucide-react";
 import "./fileTree.css";
 import "./hover.css";
 import "./markdown.css";
@@ -29,6 +30,7 @@ interface CommandPaletteItemView {
   group?: string;
   alias?: string;
   keybinding?: string;
+  icon?: CommandPaletteIcon;
 }
 
 interface CommandPaletteViewState {
@@ -745,7 +747,7 @@ function CommandPaletteOverlay({
                       void sessions.dispatch(sessionId, "acceptItem", { id: item.id });
                     }}
                   >
-                    <span className="flex size-4 shrink-0 items-center justify-center text-[10px] font-medium text-muted-foreground">{commandPaletteIconLabel(item)}</span>
+                    <CommandPaletteIconView icon={item.icon} fallback={commandPaletteIconLabel(item)} />
                     <span className="min-w-0 flex-1 truncate">{item.title}</span>
                     {item.alias ? <CommandShortcut>{item.alias}</CommandShortcut> : null}
                     {item.keybinding ? <CommandShortcut>{item.keybinding}</CommandShortcut> : null}
@@ -778,6 +780,48 @@ function groupCommandPaletteItems(items: CommandPaletteItemView[]): Array<{ head
 function commandPaletteIconLabel(item: CommandPaletteItemView): string {
   const source = item.alias || item.title || item.id;
   return source.trim().slice(0, 1).toUpperCase() || "•";
+}
+
+const commandPaletteLucideIcons: Record<string, LucideIcon> = {
+  "columns-2": Columns2Icon,
+  file: FileIcon,
+  folder: FolderIcon,
+  "folder-open": FolderOpenIcon,
+  "refresh-cw": RefreshCwIcon,
+  "rows-2": Rows2Icon,
+  save: SaveIcon,
+  terminal: TerminalIcon,
+};
+
+function CommandPaletteIconView({ icon, fallback }: { icon?: CommandPaletteIcon; fallback: string }) {
+  const className = "size-4 shrink-0 text-muted-foreground";
+  if (!icon) return <span className="flex size-4 shrink-0 items-center justify-center text-[10px] font-medium text-muted-foreground">{fallback}</span>;
+
+  if (icon.kind === "lucide") {
+    const Icon = commandPaletteLucideIcons[icon.name];
+    if (Icon) return <Icon className={className} />;
+    return <span className="flex size-4 shrink-0 items-center justify-center text-[10px] font-medium text-muted-foreground">{fallback}</span>;
+  }
+
+  if (icon.kind === "file") {
+    return icon.entryKind === "directory" ? <FolderIcon className={className} /> : <FileIcon className={className} />;
+  }
+
+  if (icon.kind === "text") {
+    return <span className="flex size-4 shrink-0 items-center justify-center text-[10px] font-medium text-muted-foreground">{icon.value || fallback}</span>;
+  }
+
+  if (icon.kind === "uri") {
+    return <img src={icon.src} alt="" aria-hidden="true" className="size-4 shrink-0" />;
+  }
+
+  return (
+    <span
+      aria-hidden="true"
+      className="flex size-4 shrink-0 items-center justify-center [&_svg]:size-4"
+      dangerouslySetInnerHTML={{ __html: icon.source }}
+    />
+  );
 }
 
 function scrollActiveItemIntoView(container: HTMLDivElement | null, selector: string): void {

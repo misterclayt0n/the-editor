@@ -92,6 +92,7 @@ export function defaultWorkbench(): EditorModule {
       category: "Workbench",
       palette: "topLevel",
       keywords: ["split", "right", "vertical"],
+      icon: { kind: "lucide", name: "columns-2" },
       async run() {
         await splitActiveSurface("right");
       },
@@ -104,6 +105,7 @@ export function defaultWorkbench(): EditorModule {
       category: "Workbench",
       palette: "topLevel",
       keywords: ["split", "down", "horizontal"],
+      icon: { kind: "lucide", name: "rows-2" },
       async run() {
         await splitActiveSurface("down");
       },

@@ -32,6 +32,7 @@ export function defaultWorkingDirectory(): EditorModule {
       aliases: ["cd"],
       category: "Workspace",
       palette: "topLevel",
+      icon: { kind: "lucide", name: "folder-open" },
       async run(_ctx, args) {
         const requested = args?.path;
         const dir = requested === "-"
@@ -54,6 +55,7 @@ export function defaultWorkingDirectory(): EditorModule {
       aliases: ["pwd"],
       category: "Workspace",
       palette: "topLevel",
+      icon: { kind: "lucide", name: "folder" },
       run() {
         const cwd = editor.cwd.current();
         const message = `current working directory: ${cwd}`;

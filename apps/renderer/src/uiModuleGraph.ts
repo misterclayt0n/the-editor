@@ -7,6 +7,7 @@ export const UI_SOURCE_ALLOWED_SPECIFIERS = new Set([
   "remark-gfm",
   "@pierre/diffs",
   "@pierre/trees/react",
+  "lucide-react",
   "@the-editor/contracts/runtime",
   "@the-editor/editor/ui",
   "@the-editor/editor/themes",

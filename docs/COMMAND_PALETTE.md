@@ -263,13 +263,20 @@ interface CommandPaletteFrame {
   placeholder?: string;
 }
 
+type CommandPaletteIcon =
+  | { kind: "lucide"; name: string }
+  | { kind: "file"; path: string; entryKind?: "file" | "directory" }
+  | { kind: "text"; value: string }
+  | { kind: "svg"; source: string; viewBox?: string }
+  | { kind: "uri"; src: string };
+
 interface CommandPaletteItem {
   id: string;
   title: string;
   subtitle?: string;
   alias?: string;
   keybinding?: string;
-  icon?: string;
+  icon?: CommandPaletteIcon;
   score?: number;
   payload?: unknown;
 }

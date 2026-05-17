@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import * as PierreDiffs from "@pierre/diffs";
 import * as PierreTreesReact from "@pierre/trees/react";
+import * as LucideReact from "lucide-react";
 import ts from "typescript";
 import type { HealthDiagnosticEntry, InteractiveSessionSnapshot, PackageSnapshot, ThemeSnapshot, ToolRootTarget } from "@the-editor/editor";
 import * as editorCursorAnchorsModule from "@the-editor/editor/cursorAnchors";
@@ -355,6 +356,7 @@ class RendererSourceModuleLoader {
     if (specifier === "remark-gfm") return remarkGfm;
     if (specifier === "@pierre/diffs") return PierreDiffs;
     if (specifier === "@pierre/trees/react") return PierreTreesReact;
+    if (specifier === "lucide-react") return LucideReact;
     if (specifier === "@the-editor/contracts/runtime") return {};
     if (specifier === "@the-editor/editor/ui") return editorUiModule;
     if (specifier === "@the-editor/editor/themes") return editorThemesModule;

@@ -10,6 +10,7 @@ export function defaultReload(): EditorModule {
       category: "Workbench",
       palette: "topLevel",
       keywords: ["packages"],
+      icon: { kind: "lucide", name: "refresh-cw" },
       async run(_ctx, args) {
         await editor.roles.close("commandPalette");
         await editor.packages.reload(args?.specifier);

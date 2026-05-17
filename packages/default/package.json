@@ -35,6 +35,7 @@
     "@the-editor/contracts": "workspace:*",
     "@the-editor/editor": "workspace:*",
     "@the-editor/ui": "workspace:*",
+    "lucide-react": "^1.16.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1"
   },

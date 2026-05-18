@@ -106,6 +106,10 @@ async function handlePolicyRequest(request: PolicyRequest): Promise<void> {
         result = await collectSurfaceGutters(request.params as SurfaceGuttersParams);
         break;
       }
+      case "syntax.highlightLegend": {
+        result = await editor.runtime.syntax.highlightLegend();
+        break;
+      }
       case "surface.configure": {
         const transaction = await transactions.run(async () => {
           const handled = await configureWorkbenchSurface(editor, request.params as SurfaceConfigureParams);

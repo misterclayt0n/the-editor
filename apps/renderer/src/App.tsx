@@ -674,6 +674,7 @@ function SurfaceEditorPane({
 }) {
   const paneState = pane.state as SurfacePaneSnapshotState | undefined;
   const [renderFrame, setRenderFrame] = useState<RenderFrame | undefined>(undefined);
+  const [runtimeSyntaxLegend, setRuntimeSyntaxLegend] = useState<Record<number, string>>({});
   const [providerGutters, setProviderGutters] = useState<GutterSnapshot[]>([]);
   const [invalidationVersion, setInvalidationVersion] = useState(0);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -693,13 +694,14 @@ function SurfaceEditorPane({
 
   const frameGutters = useMemo(() => builtInFrameGutters(renderFrame, paneState?.lineCount), [renderFrame, paneState?.lineCount]);
   const gutters = useMemo(() => [...providerGutters, ...frameGutters, ...(paneState?.gutters ?? [])], [frameGutters, paneState?.gutters, providerGutters]);
+  const effectiveSyntaxLegend = useMemo(() => ({ ...syntaxLegend, ...runtimeSyntaxLegend }), [runtimeSyntaxLegend, syntaxLegend]);
 
   latestFrameRef.current = renderFrame;
   latestViewportRef.current = paneState?.viewport;
   latestDecorationsRef.current = decorations;
   latestGuttersRef.current = gutters;
   latestThemeRef.current = theme;
-  latestSyntaxLegendRef.current = syntaxLegend;
+  latestSyntaxLegendRef.current = effectiveSyntaxLegend;
   latestSelectionPickerActiveRef.current = selectionPickerActive;
   latestCursorShapeRef.current = cursorShape;
 
@@ -719,6 +721,12 @@ function SurfaceEditorPane({
       void window.theEditorRender.renderFrame({ surfaceId: pane.surfaceId, viewport: request.viewport, metrics: request.metrics }).then((frame) => {
         if (requestId !== renderRequestRef.current) return;
         setRenderFrame(frame);
+        void window.theEditor.policyRequest("syntax.highlightLegend").then((legend) => {
+          if (requestId !== renderRequestRef.current || !isRecordOfStrings(legend)) return;
+          setRuntimeSyntaxLegend(legend);
+        }).catch((error) => {
+          console.error(error);
+        });
         void window.theEditor.policyRequest("surface.gutters", {
           surfaceId: pane.surfaceId,
           path: pane.path,
@@ -851,11 +859,11 @@ function SurfaceEditorPane({
       renderFrame,
       decorations,
       theme,
-      syntaxLegend,
+      effectiveSyntaxLegend,
       { selectionPickerActive, gutters, cursorShape },
       EDITOR_SURFACE_STYLE,
     );
-  }, [cursorShape, decorations, gutters, pane.id, pane.path, renderFrame, selectionPickerActive, syntaxLegend, theme]);
+  }, [cursorShape, decorations, effectiveSyntaxLegend, gutters, pane.id, pane.path, renderFrame, selectionPickerActive, theme]);
 
   return (
     <div className="editorSurfacePane" data-active={active ? "true" : undefined} onMouseDown={() => focusPane(pane.id)}>
@@ -1179,6 +1187,10 @@ function isEditableTarget(target: EventTarget | null): boolean {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function isRecordOfStrings(value: unknown): value is Record<number, string> {
+  return isObject(value) && Object.values(value).every((entry) => typeof entry === "string");
 }
 
 createRoot(document.getElementById("root")!).render(<App />);

@@ -174,8 +174,10 @@ function visibleSurfacePanes(editor: EditorHost, state: DefaultEditorState): Sur
     .filter((pane): pane is SurfacePaneViewState => Boolean(pane));
 }
 
-function shouldRefreshSyntaxLegend(state: DefaultEditorState): boolean {
-  return !Object.keys(state.syntaxLegend).length;
+function shouldRefreshSyntaxLegend(_state: DefaultEditorState): boolean {
+  // Highlight kinds are interned lazily as runtime queries compile during rendering.
+  // Refresh each snapshot so newly-seen capture ids do not render with fallback colors.
+  return true;
 }
 
 function decorateItemSnapshot(item: Awaited<ReturnType<EditorHost["workbench"]["snapshotEditorLayout"]>>["items"][number], toolById: Map<string, ReturnType<EditorHost["tools"]["snapshotAll"]>[number]>) {

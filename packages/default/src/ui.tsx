@@ -3,6 +3,7 @@ import type { SurfaceId } from "@the-editor/contracts/runtime";
 import type { BufferDecoration, CommandPaletteIcon, DiagnosticRecord, HealthDiagnosticEntry, NotificationEntry } from "@the-editor/editor";
 import { surfaceCursorAnchors, type SurfaceCursorAnchor } from "@the-editor/editor/cursorAnchors";
 import type { EditorUiModule, UiSessionClient, WorkbenchSnapshot } from "@the-editor/editor/ui";
+import type { ConfirmPromptSessionState } from "./confirmPrompt.js";
 import type { FileTreeToolState } from "./fileTree.js";
 import { diagnosticLocationLabel, diagnosticPrimaryLine } from "./diagnosticsShared.js";
 import { DefaultFileTree } from "./fileTreeUi.js";
@@ -111,6 +112,10 @@ interface NotificationsViewState {
   items: NotificationEntry[];
 }
 
+interface ConfirmPromptViewState {
+  sessionId?: string;
+}
+
 const inspectorToolTypeId = "default.inspector";
 const defaultTabstripImplementationId = "default.tabstrip";
 const uiModule: EditorUiModule = (host) => {
@@ -129,6 +134,15 @@ const uiModule: EditorUiModule = (host) => {
     render({ state, sessions }) {
       if (!state?.visible || !state.sessionId) return null;
       return <InputPromptOverlay sessionId={state.sessionId} sessions={sessions} />;
+    },
+  });
+
+  host.roles.register<ConfirmPromptViewState>({
+    role: "confirmPrompt",
+    implementationId: "default.confirmPrompt",
+    render({ state, sessions }) {
+      if (!state?.sessionId) return null;
+      return <ConfirmPromptOverlay sessionId={state.sessionId} sessions={sessions} />;
     },
   });
 
@@ -155,7 +169,11 @@ const uiModule: EditorUiModule = (host) => {
       return (
         <DefaultWorkbenchTabstrip
           dispatch={commands.dispatch}
-          panes={panes}
+          panes={panes.map((pane) => ({
+            ...pane,
+            dirty: Boolean((pane.state as { dirty?: unknown } | undefined)?.dirty),
+            conflict: Boolean((pane.state as { conflict?: unknown } | undefined)?.conflict),
+          }))}
           activePaneId={activePaneId}
           showWindowControls={showWindowControls}
           groupId={group.id}
@@ -772,6 +790,31 @@ function CommandPaletteIconView({ icon, fallback }: { icon?: CommandPaletteIcon;
 function scrollActiveItemIntoView(container: HTMLDivElement | null, selector: string): void {
   const active = container?.querySelector<HTMLElement>(selector);
   active?.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
+function ConfirmPromptOverlay({ sessionId, sessions }: { sessionId: string; sessions: UiSessionClient }) {
+  const state = useUiSession<ConfirmPromptSessionState>(sessions, sessionId);
+  if (!state) return null;
+  return (
+    <section className="confirmPromptOverlay" onMouseDown={() => void sessions.dispatch(sessionId, "close")}>
+      <div className="confirmPromptShell" data-level={state.level} onMouseDown={(event) => event.stopPropagation()}>
+        <div className="confirmPromptMessage">{state.message}</div>
+        <div className="confirmPromptActions">
+          {state.actions.map((action, index) => (
+            <button
+              key={action}
+              type="button"
+              className="confirmPromptAction"
+              data-primary={index === 0 ? "true" : undefined}
+              onClick={() => void sessions.dispatch(sessionId, "choose", { action })}
+            >
+              {action}
+            </button>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
 }
 
 function InputPromptOverlay({

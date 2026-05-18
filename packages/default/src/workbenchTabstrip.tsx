@@ -8,6 +8,8 @@ export interface WorkbenchTabPane {
   path?: string;
   closeable: boolean;
   kind: string;
+  dirty?: boolean;
+  conflict?: boolean;
 }
 
 interface DraggedWorkbenchPane {
@@ -126,6 +128,8 @@ export function DefaultWorkbenchTabstrip({
                     label={tabLabel(pane.path, pane.title)}
                     path={pane.path ?? pane.title}
                     closeable={pane.closeable}
+                    dirty={pane.dirty}
+                    conflict={pane.conflict}
                   />
                 </div>
               );
@@ -153,6 +157,8 @@ function DefaultFileTab({
   label,
   path,
   closeable,
+  dirty,
+  conflict,
 }: {
   paneId: string;
   groupId: string;
@@ -165,6 +171,8 @@ function DefaultFileTab({
   label: string;
   path: string;
   closeable: boolean;
+  dirty?: boolean;
+  conflict?: boolean;
 }) {
   return (
     <div className={`workbenchFileTab ${isActive ? "isActive" : "isInactive"}`} data-dragging={dragging ? "true" : undefined}>
@@ -187,6 +195,7 @@ function DefaultFileTab({
         title={path}
         className="workbenchFileTabButton"
       >
+        {conflict ? <span className="workbenchFileTabIndicator conflict" aria-hidden="true" /> : dirty ? <span className="workbenchFileTabIndicator dirty" aria-hidden="true" /> : null}
         <DefaultWorkbenchTabIcon icon={icon} />
         <span className="workbenchFileTabLabel">{label}</span>
       </button>

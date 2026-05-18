@@ -184,7 +184,9 @@ export class MainNativeRuntimeApi implements RuntimeApi {
   };
 
   readonly resources = {
-    save: async (params: { surfaceId: SurfaceId }): Promise<OkResult> => this.call("resources.save", params),
+    status: async (params: Parameters<RuntimeApi["resources"]["status"]>[0]) => this.call("resources.status", params) as ReturnType<RuntimeApi["resources"]["status"]>,
+    save: async (params: Parameters<RuntimeApi["resources"]["save"]>[0]): Promise<OkResult> => this.call("resources.save", params),
+    reload: async (params: Parameters<RuntimeApi["resources"]["reload"]>[0]): Promise<OkResult> => this.call("resources.reload", params),
   };
 
   async renderFrame(params: { surfaceId: SurfaceId; viewport: Viewport; metrics: CellGridMetrics }): Promise<RenderFrame> {

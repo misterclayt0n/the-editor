@@ -486,3 +486,18 @@
   white-space: pre-wrap;
 }
 
+
+.workbenchFileTabIndicator {
+  border-radius: 999px;
+  flex: 0 0 auto;
+  height: 8px;
+  width: 8px;
+}
+
+.workbenchFileTabIndicator.dirty {
+  background: var(--theme-accent-fg, #3b82f6);
+}
+
+.workbenchFileTabIndicator.conflict {
+  background: var(--theme-diagnostic-warning-fg, #f6c177);
+}

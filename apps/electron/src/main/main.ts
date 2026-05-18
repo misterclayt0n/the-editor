@@ -60,6 +60,10 @@ function startPolicyWorker(): void {
       handlePolicyResponse(message as unknown as PolicyBridgeResponse);
       return;
     }
+    if (message.type === "native.prompt") {
+      void handleNativePrompt(message as unknown as NativePromptRequest);
+      return;
+    }
     mainWindow?.webContents.send("policy:event", message);
   });
 
@@ -135,6 +139,32 @@ interface RuntimeBridgeRequest {
   id: number;
   method: string;
   params?: unknown;
+}
+
+interface NativePromptRequest {
+  type: "native.prompt";
+  id: number;
+  level: "info" | "warning" | "critical";
+  message: string;
+  detail?: string;
+  actions: string[];
+}
+
+async function handleNativePrompt(request: NativePromptRequest): Promise<void> {
+  try {
+    const result = await dialog.showMessageBox(mainWindow!, {
+      type: request.level === "critical" ? "error" : request.level,
+      message: request.message,
+      detail: request.detail,
+      buttons: request.actions,
+      defaultId: 0,
+      cancelId: Math.max(0, request.actions.findIndex((action) => action.toLowerCase() === "cancel")),
+      noLink: true,
+    });
+    policyWorker?.postMessage({ type: "native.promptResponse", id: request.id, action: request.actions[result.response] });
+  } catch (error) {
+    policyWorker?.postMessage({ type: "native.promptResponse", id: request.id, error: serializeError(error) });
+  }
 }
 
 async function handleRuntimeRequest(request: RuntimeBridgeRequest): Promise<void> {

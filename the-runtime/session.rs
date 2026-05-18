@@ -160,6 +160,20 @@ impl RuntimeDocument {
   }
 }
 
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceDocumentStatus {
+  pub document_id: u64,
+  pub resource_id: Option<u64>,
+  pub path: Option<String>,
+  pub dirty: bool,
+  pub conflict: bool,
+  pub deleted_on_disk: bool,
+  pub external_change_pending: bool,
+  pub readonly: bool,
+  pub disk_state: &'static str,
+}
+
 #[derive(Debug)]
 pub struct RuntimeSurface {
   pub surface:  Surface,
@@ -1305,7 +1319,46 @@ impl RuntimeSession {
     Ok(())
   }
 
+  pub fn resource_status_for_surface(&self, surface: SurfaceHandle) -> RuntimeResult<ResourceDocumentStatus> {
+    let document = self.document_for_surface(surface).ok_or(RuntimeError::UnknownSurface(surface))?;
+    self.resource_status(document)
+  }
+
+  pub fn resource_status(&self, document: DocumentHandle) -> RuntimeResult<ResourceDocumentStatus> {
+    let entry = self.documents.get(&document).ok_or(RuntimeError::UnknownDocument(document))?;
+    let (resource_id, path) = match entry.resource {
+      Some(resource) => {
+        let resource_entry = self.resources.get(&resource).ok_or(RuntimeError::UnknownResource(resource))?;
+        (Some(resource.get()), Some(resource_entry.path().to_string_lossy().into_owned()))
+      },
+      None => (None, None),
+    };
+    Ok(ResourceDocumentStatus {
+      document_id: document.get(),
+      resource_id,
+      path,
+      dirty: entry.is_dirty(),
+      conflict: entry.has_conflict(),
+      deleted_on_disk: entry.external_change == ExternalChangeState::DeletedOnDisk,
+      external_change_pending: entry.external_change != ExternalChangeState::None,
+      readonly: entry.readonly,
+      disk_state: match entry.external_change {
+        ExternalChangeState::DeletedOnDisk => "deleted",
+        _ if entry.resource.is_none() => "new",
+        _ => "present",
+      },
+    })
+  }
+
   pub fn save(&mut self, document: DocumentHandle) -> RuntimeResult<()> {
+    self.save_with_conflict_policy(document, false)
+  }
+
+  pub fn save_overwrite(&mut self, document: DocumentHandle) -> RuntimeResult<()> {
+    self.save_with_conflict_policy(document, true)
+  }
+
+  fn save_with_conflict_policy(&mut self, document: DocumentHandle, overwrite_conflict: bool) -> RuntimeResult<()> {
     let entry = self
       .documents
       .get_mut(&document)
@@ -1325,7 +1378,7 @@ impl RuntimeSession {
       .path()
       .to_path_buf();
 
-    if entry.has_conflict() {
+    if entry.has_conflict() && !overwrite_conflict {
       return Err(RuntimeError::ResourceConflict { document });
     }
 
@@ -1333,6 +1386,11 @@ impl RuntimeSession {
     entry.save_baseline = Some(SaveBaseline { revision: entry.document.revision(), mtime: file_mtime(&path) });
     entry.external_change = ExternalChangeState::None;
     Ok(())
+  }
+
+  pub fn reload_surface_document(&mut self, surface: SurfaceHandle) -> RuntimeResult<()> {
+    let document = self.document_for_surface(surface).ok_or(RuntimeError::UnknownSurface(surface))?;
+    self.reload_document(document)
   }
 
   pub fn save_as(&mut self, document: DocumentHandle, path: PathBuf) -> RuntimeResult<ResourceId> {

@@ -16,7 +16,8 @@ const runtime = createRuntimeIpcClient({
   onMessage: (listener) => port.on("message", listener),
 });
 const initialCwd = typeof workerData?.cwd === "string" ? workerData.cwd : process.cwd();
-const editor = createEditorHost({ runtime, cwd: initialCwd, packageTargetAdapters: createPolicyPackageTargetAdapters() });
+const nativeDialogs = createNativeDialogClient(port);
+const editor = createEditorHost({ runtime, cwd: initialCwd, packageTargetAdapters: createPolicyPackageTargetAdapters(), nativeDialogs });
 const packageDiscovery = new ElectronPackageDiscovery(
   typeof workerData?.root === "string" ? workerData.root : process.cwd(),
   () => editor.cwd.current(),
@@ -183,6 +184,43 @@ interface SurfaceGuttersParams {
 interface SurfaceConfigureParams {
   viewport?: { firstRow: number; rowCount: number; firstCol: number; wrapWidth: number };
   metrics?: { cellWidthPx: number; rowHeightPx: number };
+}
+
+interface NativePromptRequest {
+  type: "native.prompt";
+  id: number;
+  level: "info" | "warning" | "critical";
+  message: string;
+  detail?: string;
+  actions: string[];
+}
+
+interface NativePromptResponse {
+  type: "native.promptResponse";
+  id: number;
+  action?: string;
+  error?: { message: string; stack?: string };
+}
+
+function createNativeDialogClient(port: NonNullable<typeof parentPort>) {
+  let nextId = 1;
+  const pending = new Map<number, { resolve(action: string | undefined): void; reject(error: Error): void }>();
+  port.on("message", (message: unknown) => {
+    if (!isObject(message) || message.type !== "native.promptResponse") return;
+    const response = message as unknown as NativePromptResponse;
+    const waiter = pending.get(response.id);
+    if (!waiter) return;
+    pending.delete(response.id);
+    if (response.error) waiter.reject(Object.assign(new Error(response.error.message), { stack: response.error.stack }));
+    else waiter.resolve(response.action);
+  });
+  return {
+    prompt(options: Omit<NativePromptRequest, "type" | "id">): Promise<string | undefined> {
+      const id = nextId++;
+      port.postMessage({ type: "native.prompt", id, ...options } satisfies NativePromptRequest);
+      return new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
+    },
+  };
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

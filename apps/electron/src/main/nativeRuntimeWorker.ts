@@ -176,7 +176,9 @@ async function dispatch(method: string, params: unknown = {}): Promise<unknown> 
     case "registers.write": { const p = params as Parameters<RuntimeApi["registers"]["write"]>[0]; session.writeRegister(p.name, p.values); return { ok: true }; }
     case "clipboard.read": { const p = params as Parameters<RuntimeApi["clipboard"]["read"]>[0]; return { value: session.readClipboard(p.kind) ?? null }; }
     case "clipboard.write": { const p = params as Parameters<RuntimeApi["clipboard"]["write"]>[0]; session.writeClipboard(p.value, p.kind); return { ok: true }; }
-    case "resources.save": { const p = params as Parameters<RuntimeApi["resources"]["save"]>[0]; session.saveSurfaceDocument(p.surfaceId); return { ok: true }; }
+    case "resources.status": { const p = params as Parameters<RuntimeApi["resources"]["status"]>[0]; return JSON.parse(session.readResourceStatusJson(p.surfaceId)); }
+    case "resources.save": { const p = params as Parameters<RuntimeApi["resources"]["save"]>[0]; session.saveSurfaceDocument(p.surfaceId, p.conflict === "overwrite"); return { ok: true }; }
+    case "resources.reload": { const p = params as Parameters<RuntimeApi["resources"]["reload"]>[0]; session.reloadSurfaceDocument(p.surfaceId); return { ok: true }; }
     default: throw new RuntimeWorkerError(`unknown runtime method ${method}`);
   }
 }

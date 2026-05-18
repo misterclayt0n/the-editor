@@ -1,5 +1,5 @@
 import { defineHostStore } from "@the-editor/editor";
-import type { CellGridMetrics, DocumentId, SurfaceId, Viewport } from "@the-editor/contracts/runtime";
+import type { CellGridMetrics, DocumentId, ResourceDocumentStatus, SurfaceId, Viewport } from "@the-editor/contracts/runtime";
 import type { BufferDecoration, EditorHost, GutterSnapshot, RoleSnapshot, WorkbenchPaneId } from "@the-editor/editor";
 import type { WorkbenchSessionState } from "@the-editor/editor/workbench";
 
@@ -16,6 +16,7 @@ export interface SurfacePaneViewState {
   lineCount?: number;
   gutters?: GutterSnapshot[];
   decorations?: BufferDecoration[];
+  resourceStatus?: ResourceDocumentStatus;
 }
 
 export interface DefaultEditorState {
@@ -126,6 +127,7 @@ export async function refreshWorkbenchSnapshot(editor: EditorHost, viewport?: Vi
     pane.lineCount = lineCount;
     pane.gutters = [];
     pane.decorations = [];
+    pane.resourceStatus = await editor.runtime.resources.status({ surfaceId: pane.surfaceId }).catch(() => undefined);
   }
 
   if (shouldRefreshSyntaxLegend(state)) {
@@ -202,6 +204,9 @@ function decoratePaneSnapshot(pane: Awaited<ReturnType<EditorHost["workbench"]["
           metrics: surface.metrics,
           path: surface.path,
           title: surface.title,
+          dirty: surface.resourceStatus?.dirty,
+          conflict: surface.resourceStatus?.conflict,
+          deletedOnDisk: surface.resourceStatus?.deletedOnDisk,
         }
         : undefined,
     };

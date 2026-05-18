@@ -40,7 +40,9 @@ export declare class NativeRuntimeSession {
   readSyntaxHighlightLegendJson(): string
   drainSyntaxWork(maxDocuments?: number | undefined | null, budgetMs?: number | undefined | null): number
   renderFrame(surfaceId: number, viewport: JsViewport, metrics: JsCellGridMetrics): JsRenderFrame
-  saveSurfaceDocument(surfaceId: number): void
+  readResourceStatusJson(surfaceId: number): string
+  saveSurfaceDocument(surfaceId: number, overwriteConflict?: boolean | undefined | null): void
+  reloadSurfaceDocument(surfaceId: number): void
   ensureSearchIndexJson(rootPath: string): string
   readSearchIndexStatusJson(indexId: number): string
   refreshSearchIndex(indexId: number): void

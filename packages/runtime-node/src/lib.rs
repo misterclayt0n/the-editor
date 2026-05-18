@@ -621,13 +621,34 @@ impl NativeRuntimeSession {
   }
 
   #[napi]
-  pub fn save_surface_document(&self, surface_id: u32) -> Result<()> {
+  pub fn read_resource_status_json(&self, surface_id: u32) -> Result<String> {
+    let runtime = self.lock()?;
+    let status = runtime
+      .resource_status_for_surface(surface_handle(surface_id)?)
+      .map_err(runtime_error)?;
+    serde_json::to_string(&status).map_err(json_error)
+  }
+
+  #[napi]
+  pub fn save_surface_document(&self, surface_id: u32, overwrite_conflict: Option<bool>) -> Result<()> {
     let mut runtime = self.lock()?;
     let surface = surface_handle(surface_id)?;
     let document = runtime
       .document_for_surface(surface)
       .ok_or_else(|| Error::from_reason(format!("unknown surface {surface_id}")))?;
-    runtime.save(document).map_err(runtime_error)
+    if overwrite_conflict.unwrap_or(false) {
+      runtime.save_overwrite(document).map_err(runtime_error)
+    } else {
+      runtime.save(document).map_err(runtime_error)
+    }
+  }
+
+  #[napi]
+  pub fn reload_surface_document(&self, surface_id: u32) -> Result<()> {
+    let mut runtime = self.lock()?;
+    runtime
+      .reload_surface_document(surface_handle(surface_id)?)
+      .map_err(runtime_error)
   }
 
   #[napi]

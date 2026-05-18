@@ -216,6 +216,7 @@ function App() {
         <UiErrorBoundary name="overlayModal">{overlayModal}</UiErrorBoundary>
         <UiErrorBoundary name="overlayFloating">{overlayFloating}</UiErrorBoundary>
         <UiErrorBoundary name="notifications">{uiRuntime.renderRole("notifications")}</UiErrorBoundary>
+        <UiErrorBoundary name="confirmPrompt">{uiRuntime.renderRole("confirmPrompt")}</UiErrorBoundary>
         <UiErrorBoundary name="inputPrompt">{uiRuntime.renderRole("inputPrompt")}</UiErrorBoundary>
         <UiErrorBoundary name="commandPalette">{uiRuntime.renderRole("commandPalette")}</UiErrorBoundary>
       </div>

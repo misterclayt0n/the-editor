@@ -61,6 +61,18 @@ export interface OkResult {
   ok: true;
 }
 
+export interface ResourceDocumentStatus {
+  documentId: DocumentId;
+  resourceId?: ResourceId;
+  path?: string;
+  dirty: boolean;
+  conflict: boolean;
+  deletedOnDisk: boolean;
+  externalChangePending: boolean;
+  readonly: boolean;
+  diskState: "new" | "present" | "deleted" | "unknown";
+}
+
 export type WorkspaceEntryKind = "file" | "directory" | "symlink";
 export type WorkspaceEntryChangeKind = "added" | "removed" | "modified";
 
@@ -410,6 +422,8 @@ export interface RuntimeApi {
     queryHunks(params: { surfaceId: SurfaceId; rootPath: string; relativePath: string }): Promise<{ hunks: VcsHunk[] }>;
   };
   resources: {
-    save(params: { surfaceId: SurfaceId }): Promise<OkResult>;
+    status(params: { surfaceId: SurfaceId }): Promise<ResourceDocumentStatus>;
+    save(params: { surfaceId: SurfaceId; conflict?: "fail" | "overwrite" }): Promise<OkResult>;
+    reload(params: { surfaceId: SurfaceId }): Promise<OkResult>;
   };
 }

@@ -25,16 +25,29 @@ import { ToolRegistry } from "./tools.js";
 import { WorkingDirectoryRegistry } from "./workingDirectory.js";
 import { WorkbenchController } from "./workbench.js";
 
+export interface NativePromptOptions {
+  level: "info" | "warning" | "critical";
+  message: string;
+  detail?: string;
+  actions: string[];
+}
+
+export interface NativeDialogProvider {
+  prompt(options: NativePromptOptions): Promise<string | undefined>;
+}
+
 export interface EditorHostOptions {
   runtime: RuntimeApi;
   cwd?: string;
   packageTargetAdapters?: PackageTargetAdapterMap;
+  nativeDialogs?: NativeDialogProvider;
 }
 
 const anonymousModuleId = moduleId("<anonymous>");
 
 export class EditorHost {
   readonly runtime: RuntimeApi;
+  readonly nativeDialogs?: NativeDialogProvider;
   readonly hooks = new Hooks();
   readonly contributions = new ContributionRegistry();
   readonly diagnostics = new DiagnosticStore(this);
@@ -65,6 +78,7 @@ export class EditorHost {
 
   constructor(options: EditorHostOptions) {
     this.runtime = options.runtime;
+    this.nativeDialogs = options.nativeDialogs;
     this.packages = new PackageRegistry(this, options.packageTargetAdapters);
     this.cwd = new WorkingDirectoryRegistry(this, options.cwd);
   }

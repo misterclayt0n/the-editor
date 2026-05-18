@@ -97,7 +97,9 @@ export class RuntimeIpcClient implements RuntimeApi {
   };
 
   readonly resources = {
+    status: (params: Parameters<RuntimeApi["resources"]["status"]>[0]) => this.request("resources.status", params) as ReturnType<RuntimeApi["resources"]["status"]>,
     save: (params: Parameters<RuntimeApi["resources"]["save"]>[0]) => this.request("resources.save", params) as ReturnType<RuntimeApi["resources"]["save"]>,
+    reload: (params: Parameters<RuntimeApi["resources"]["reload"]>[0]) => this.request("resources.reload", params) as ReturnType<RuntimeApi["resources"]["reload"]>,
   };
 
   private nextId = 1;

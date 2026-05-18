@@ -43,12 +43,14 @@ export function defaultWorkbench(): EditorModule {
       },
     });
 
-    editor.commands.register<{ paneId: WorkbenchPaneId | string }, void>({
+    editor.commands.register<{ paneId?: WorkbenchPaneId | string } | undefined, void>({
       id: commandId("workbench.closePane"),
       title: "Close Pane",
       hidden: true,
       async run(_ctx, args) {
-        await closePaneWithSavePrompt(editor, args.paneId);
+        const paneId = args?.paneId ?? editor.workbench.activePane()?.id;
+        if (!paneId) return;
+        await closePaneWithSavePrompt(editor, paneId);
       },
     });
 

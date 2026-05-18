@@ -133,7 +133,23 @@ function App() {
   }, []);
 
   useEffect(() => {
+    return window.theEditor.onAppCommand((event) => {
+      if (!isObject(event) || typeof event.id !== "string") return;
+      void window.theEditor.policyRequest("command.dispatch", { id: event.id, args: isObject(event.args) ? event.args : undefined }).catch((error) => {
+        console.error(error);
+      });
+    });
+  }, []);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "w" && !event.altKey && !event.shiftKey) {
+        event.preventDefault();
+        void window.theEditor.policyRequest("command.dispatch", { id: "workbench.closePane" }).catch((error) => {
+          console.error(error);
+        });
+        return;
+      }
       const paletteShortcut = commandPaletteShortcut(event);
       if (paletteShortcut) {
         event.preventDefault();

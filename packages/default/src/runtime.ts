@@ -9,6 +9,7 @@ import { defaultInputPrompt } from "./inputPrompt.js";
 import { defaultReload } from "./reload.js";
 import { defaultScratch } from "./scratch.js";
 import { defaultSave } from "./save.js";
+import { defaultSyntaxWork } from "./syntaxWork.js";
 import { defaultWorkbench } from "./workbench.js";
 import { defaultWindowCommands } from "./windowCommands.js";
 import { defaultWorkbenchControls } from "./workbenchControls.js";
@@ -26,6 +27,7 @@ const runtimeModule: EditorModule = async (editor) => {
   await defaultInputPrompt()(editor);
   await defaultGutters()(editor);
   await defaultWorkbench()(editor);
+  await defaultSyntaxWork()(editor);
   await defaultWindowCommands()(editor);
   await defaultWorkbenchControls()(editor);
   await defaultFileTree()(editor);

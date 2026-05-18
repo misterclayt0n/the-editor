@@ -33,6 +33,16 @@ async function createWindow(): Promise<void> {
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
     console.error("renderer process gone", details);
   });
+  mainWindow.webContents.on("before-input-event", (event, input) => {
+    const isCloseTab = input.type === "keyDown"
+      && input.key.toLowerCase() === "w"
+      && (process.platform === "darwin" ? input.meta : input.control)
+      && !input.alt
+      && !input.shift;
+    if (!isCloseTab) return;
+    event.preventDefault();
+    mainWindow?.webContents.send("app:command", { id: "workbench.closePane" });
+  });
 
   if (isDev) {
     await mainWindow.loadURL(process.env.THE_EDITOR_DEV_SERVER_URL!);

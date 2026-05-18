@@ -15,6 +15,7 @@ declare global {
       perfLogPath: string;
       perfLog(payload: { category: string; phase: string; data?: Record<string, unknown> }): void;
       onPolicyEvent(handler: (event: unknown) => void): () => void;
+      onAppCommand(handler: (event: unknown) => void): () => void;
       readExtensionFile(path: string): string;
       resolveExtensionPath(specifier: string, importerPath: string): string | null;
     };

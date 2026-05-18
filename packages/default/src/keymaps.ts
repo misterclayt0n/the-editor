@@ -278,6 +278,14 @@ export function defaultKeymaps(): EditorModule {
     });
 
     editor.keymaps.register({
+      id: "default.workbench.global",
+      scope: "global",
+      tree: keymap("Global", {
+        "M-w": "workbench.closePane",
+      }),
+    });
+
+    editor.keymaps.register({
       id: "default.helix.select",
       scope: "select",
       tree: keymap("Select mode", {

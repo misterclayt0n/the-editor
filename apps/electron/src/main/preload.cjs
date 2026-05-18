@@ -50,6 +50,11 @@ contextBridge.exposeInMainWorld("theEditor", {
     ipcRenderer.on("policy:event", listener);
     return () => ipcRenderer.off("policy:event", listener);
   },
+  onAppCommand(handler) {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on("app:command", listener);
+    return () => ipcRenderer.off("app:command", listener);
+  },
   readExtensionFile(filePath) {
     return fs.readFileSync(filePath, "utf8");
   },

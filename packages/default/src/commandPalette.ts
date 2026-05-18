@@ -1,5 +1,6 @@
 import { readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import os from "node:os";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import {
   commandId,
   commandPaletteRoleId,
@@ -274,7 +275,7 @@ export function defaultCommandPalette(): EditorModule {
             const command = editor.commands.get(item.command.id);
             const firstArg = command?.args?.[0];
             if (command && firstArg && !item.command.args) {
-              await enterArgumentFrame(editor, session, requestState, ++requestState.version, command, firstArg.name, firstArg.source);
+              await enterArgumentFrame(editor, session, requestState, ++requestState.version, command, firstArg.name, firstArg.source, initialArgumentQuery(editor, firstArg.source));
               return;
             }
             closePalette(editor, true);
@@ -379,7 +380,7 @@ function rankCommandItems(commands: Command[], query: string): CommandPaletteIte
 }
 
 function rankArgumentItems<T>(query: string, command: Command, name: string, items: CommandArgumentItem<T>[]): CommandPaletteItem[] {
-  return items
+  const ranked = items
     .map((arg) => ({
       item: {
         id: `${command.id}:${arg.id}`,
@@ -393,9 +394,15 @@ function rankArgumentItems<T>(query: string, command: Command, name: string, ite
         query: arg.query,
       } satisfies CommandPaletteItem,
       score: scoreCommandPaletteItem(query, arg),
-    }))
+    }));
+
+  if (ranked.every(({ item }) => item.icon?.kind === "file")) {
+    return ranked.sort((a, b) => comparePaletteItems(a.item, b.item)).map(({ item }) => item);
+  }
+
+  return ranked
     .filter(({ score }) => !query.trim() || score > 0)
-    .sort((a, b) => b.score - a.score || a.item.title.localeCompare(b.item.title))
+    .sort((a, b) => b.score - a.score || comparePaletteItems(a.item, b.item))
     .map(({ item }) => item);
 }
 
@@ -408,6 +415,71 @@ function scoreCommand(command: Command, query: string, item: CommandPaletteItem)
   return scoreCommandPaletteItem(query, item);
 }
 
+function comparePaletteItems(left: CommandPaletteItem, right: CommandPaletteItem): number {
+  const leftIsDirectory = isDirectoryPaletteItem(left);
+  const rightIsDirectory = isDirectoryPaletteItem(right);
+  if (leftIsDirectory !== rightIsDirectory) return leftIsDirectory ? -1 : 1;
+  return compareNaturalSegment(left.title.replace(/\/$/, ""), right.title.replace(/\/$/, ""));
+}
+
+function isDirectoryPaletteItem(item: CommandPaletteItem): boolean {
+  return item.icon?.kind === "file" && item.icon.entryKind === "directory";
+}
+
+function compareNaturalSegment(left: string, right: string): number {
+  const leftKey = naturalSegmentKey(left);
+  const rightKey = naturalSegmentKey(right);
+  const tokenComparison = compareNaturalTokens(leftKey.tokens, rightKey.tokens);
+  if (tokenComparison) return tokenComparison;
+  if (leftKey.lower !== rightKey.lower) return leftKey.lower < rightKey.lower ? -1 : 1;
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
+}
+
+function naturalSegmentKey(value: string): { lower: string; tokens: Array<string | number> } {
+  const lower = value.toLowerCase();
+  const tokens: Array<string | number> = [];
+  let tokenStart = 0;
+  let index = 0;
+  while (index < lower.length) {
+    while (index < lower.length && !isDigitCode(lower.charCodeAt(index))) index += 1;
+    if (index >= lower.length) break;
+    if (index > tokenStart) tokens.push(lower.slice(tokenStart, index));
+    let numberValue = 0;
+    while (index < lower.length && isDigitCode(lower.charCodeAt(index))) {
+      numberValue = numberValue * 10 + lower.charCodeAt(index) - 48;
+      index += 1;
+    }
+    tokens.push(numberValue);
+    tokenStart = index;
+  }
+  if (tokenStart < lower.length || !tokens.length) tokens.push(lower.slice(tokenStart));
+  return { lower, tokens };
+}
+
+function compareNaturalTokens(left: readonly (string | number)[], right: readonly (string | number)[]): number {
+  const tokenCount = Math.min(left.length, right.length);
+  for (let index = 0; index < tokenCount; index += 1) {
+    const leftToken = left[index];
+    const rightToken = right[index];
+    if (leftToken === rightToken) continue;
+    if (typeof leftToken === "number" && typeof rightToken === "number") return leftToken < rightToken ? -1 : 1;
+    const leftString = String(leftToken);
+    const rightString = String(rightToken);
+    if (leftString !== rightString) return leftString < rightString ? -1 : 1;
+  }
+  if (left.length !== right.length) return left.length < right.length ? -1 : 1;
+  return 0;
+}
+
+function isDigitCode(code: number): boolean {
+  return code >= 48 && code <= 57;
+}
+
+function initialArgumentQuery(editor: Parameters<EditorModule>[0], source: string): string {
+  return source === "files" || source === "directories" ? displayPathQuery(resolveFilePickerRoot(editor)) : "";
+}
+
 async function enterArgumentFrame(
   editor: Parameters<EditorModule>[0],
   session: InteractiveSessionController<CommandPaletteSessionState>,
@@ -416,10 +488,11 @@ async function enterArgumentFrame(
   command: Command,
   argumentName: string,
   argumentSource: string,
+  initialQuery = "",
 ): Promise<void> {
   session.updateState((state) => {
     state.stack.push(currentFrame(state));
-    state.query = "";
+    state.query = initialQuery;
     state.mode = "argument";
     state.commandId = command.id;
     state.commandTitle = command.title;
@@ -500,36 +573,97 @@ function pathArgumentItems(editor: Parameters<EditorModule>[0], query: string, a
 
 function pathPaletteItems(_editor: Parameters<EditorModule>[0], query: string, args: PathPaletteFrameArgs): CommandPaletteItem[] {
   const parsed = parsePathQuery(query);
-  const currentRoot = join(args.root, parsed.dir);
+  const currentRoot = resolvePathQueryRoot(args.root, parsed.dir);
+  const navigationItems = pathNavigationItems(currentRoot, args);
   const entries = listDirectoryEntries(currentRoot)
     .filter((entry) => args.mode === "both" || (args.mode === "file" ? !entry.isDirectory : entry.isDirectory))
     .map((entry): CommandPaletteItem => {
       const absolute = join(currentRoot, entry.name);
-      const relativePath = relative(args.baseRoot, absolute) || entry.name;
-      const displayTitle = entry.isDirectory ? `${entry.name}/` : entry.name;
-      const keywords = [entry.name, relativePath];
-      if (entry.isDirectory && args.mode !== "directory") {
-        return {
-          id: `path:${relativePath}`,
-          title: displayTitle,
-          detail: relativePath,
-          group: "Open File",
-          keywords,
-          icon: { kind: "file", path: absolute, entryKind: "directory" },
-          query: `${parsed.dir}${entry.name}/`,
-        };
-      }
-      return {
-        id: `path:${relativePath}`,
-        title: displayTitle,
-        detail: relativePath,
-        group: args.mode === "directory" ? "Directories" : "Open File",
-        keywords,
-        icon: { kind: "file", path: absolute, entryKind: entry.isDirectory ? "directory" : "file" },
-        command: { id: commandId(args.commandId), args: { [args.argumentName]: absolute } },
-      };
+      return pathEntryItem({
+        absolute,
+        args,
+        currentRoot,
+        displayTitle: entry.isDirectory ? `${entry.name}/` : entry.name,
+        entryKind: entry.isDirectory ? "directory" : "file",
+        name: entry.name,
+      });
     });
-  return entries.filter((item) => matchesCommandPaletteItem(parsed.leaf, item));
+  return [...navigationItems, ...entries.filter((item) => matchesCommandPaletteItem(parsed.leaf, item))];
+}
+
+function pathNavigationItems(currentRoot: string, args: PathPaletteFrameArgs): CommandPaletteItem[] {
+  const parent = resolve(currentRoot, "..");
+  if (parent === currentRoot) return [];
+  return [pathEntryItem({
+    absolute: parent,
+    args,
+    currentRoot,
+    displayTitle: "..",
+    entryKind: "directory",
+    name: "..",
+  })];
+}
+
+function pathEntryItem({
+  absolute,
+  args,
+  currentRoot,
+  displayTitle,
+  entryKind,
+  name,
+}: {
+  absolute: string;
+  args: PathPaletteFrameArgs;
+  currentRoot: string;
+  displayTitle: string;
+  entryKind: "file" | "directory";
+  name: string;
+}): CommandPaletteItem {
+  const relativePath = relative(args.baseRoot, absolute) || name;
+  const keywords = [name, relativePath];
+  if (entryKind === "directory" && args.mode !== "directory") {
+    return {
+      id: `path:${displayTitle}:${absolute}`,
+      title: displayTitle,
+      detail: absolute,
+      group: "Open File",
+      keywords,
+      icon: { kind: "file", path: absolute, entryKind: "directory" },
+      query: displayPathQuery(absolute),
+    };
+  }
+  return {
+    id: `path:${displayTitle}:${absolute}`,
+    title: displayTitle,
+    detail: absolute,
+    group: args.mode === "directory" ? "Directories" : "Open File",
+    keywords,
+    icon: { kind: "file", path: absolute, entryKind },
+    command: { id: commandId(args.commandId), args: { [args.argumentName]: absolute } },
+  };
+}
+
+function displayPathQuery(path: string): string {
+  const home = os.homedir();
+  const normalized = path.replace(/\\/g, "/").replace(/\/$/, "");
+  const display = home && (normalized === home || normalized.startsWith(`${home}/`))
+    ? `~${normalized.slice(home.length)}`
+    : normalized;
+  return `${display}/`;
+}
+
+function resolvePathQueryRoot(baseRoot: string, dir: string): string {
+  const expanded = expandHomeInQuery(dir);
+  if (isAbsolute(expanded)) return resolve(expanded);
+  return resolve(baseRoot, expanded);
+}
+
+function expandHomeInQuery(path: string): string {
+  const home = os.homedir();
+  if (!home) return path;
+  if (path === "~") return home;
+  if (path.startsWith("~/")) return join(home, path.slice(2));
+  return path;
 }
 
 function parsePathQuery(query: string): { dir: string; leaf: string } {
@@ -555,7 +689,7 @@ function listDirectoryEntries(root: string): Array<{ name: string; isDirectory: 
       }
     })
     .filter((entry): entry is { name: string; isDirectory: boolean } => Boolean(entry))
-    .sort((a, b) => Number(b.isDirectory) - Number(a.isDirectory) || a.name.localeCompare(b.name));
+    .sort((a, b) => Number(b.isDirectory) - Number(a.isDirectory) || compareNaturalSegment(a.name, b.name));
 }
 
 function paletteState(editor: Parameters<EditorModule>[0]): CommandPaletteStoredState {

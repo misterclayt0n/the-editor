@@ -696,12 +696,18 @@ function CommandPaletteOverlay({
 }) {
   const state = useUiSession<CommandPaletteSessionViewState>(sessions, sessionId);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [localQuery, setLocalQuery] = useState(state?.query ?? "");
 
   useEffect(() => {
     const input = inputRef.current;
     if (!input || !state) return;
     input.focus();
   }, [sessionId, state]);
+
+  useLayoutEffect(() => {
+    if (!state) return;
+    setLocalQuery((current) => current === state.query ? current : state.query);
+  }, [sessionId, state?.query]);
 
   if (!state) return null;
 
@@ -723,14 +729,15 @@ function CommandPaletteOverlay({
             void sessions.dispatch(sessionId, "back");
           }}
           spellCheck={false}
-          value={state.query}
+          value={localQuery}
           onKeyDown={(event) => {
-            if (event.key === "Backspace" && canGoBack && !state.query) {
+            if (event.key === "Backspace" && canGoBack && !localQuery) {
               event.preventDefault();
               void sessions.dispatch(sessionId, "back");
             }
           }}
           onValueChange={(query) => {
+            setLocalQuery(query);
             void sessions.dispatch(sessionId, "setQuery", { query });
           }}
         />

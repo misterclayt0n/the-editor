@@ -77,6 +77,7 @@ export function defaultScratch(): EditorModule {
       id: commandId("file.open"),
       title: "Open File",
       aliases: ["open", "o"],
+      category: "Files",
       palette: "topLevel",
       icon: { kind: "lucide", name: "file" },
       args: [{ name: "path", source: "files", required: true }],

@@ -86,7 +86,8 @@ export function defaultScratch(): EditorModule {
         const viewport = args.viewport ?? activePane?.viewport ?? state.surfaceViewport ?? defaultViewport();
         const metrics = activePane?.metrics ?? state.surfaceMetrics;
         const path = resolveFilePathFromWorkingDirectory(editor, args.path);
-        const existingPane = findOpenFilePane(editor, path);
+        const activeWorkbenchPane = editor.workbench.activePane();
+        const existingPane = findOpenFilePaneInActiveGroup(editor, path);
         if (existingPane) {
           editor.workbench.focusPane(existingPane.id);
           setEditorMode(editor, "normal");
@@ -98,7 +99,7 @@ export function defaultScratch(): EditorModule {
             await navigateSurfaceToLocation(editor, existingPane.surfaceId, { line: args.line, column: args.column, viewport: existingViewport });
           }
           await refreshActiveSurface(editor, existingViewport);
-          editor.workbench.invalidate("frame", "focus", "layout", "tabs");
+          editor.workbench.invalidate("frame", "focus", "layout", "tabs", "tools");
           return state;
         }
 
@@ -154,7 +155,7 @@ export function defaultScratch(): EditorModule {
           await navigateSurfaceToLocation(editor, surface.surfaceId, { line: args.line, column: args.column, viewport: nextViewport });
         }
         await refreshActiveSurface(editor, nextViewport);
-        editor.workbench.invalidate("frame", "focus", "layout", "tabs");
+        editor.workbench.invalidate("frame", "focus", "layout", "tabs", "tools");
         return state;
       },
     });
@@ -196,10 +197,13 @@ async function shouldReplaceInitialScratch(editor: EditorHost): Promise<boolean>
   return text.length === 0;
 }
 
-function findOpenFilePane(editor: EditorHost, path: string): Extract<WorkbenchPaneDescriptor, { kind: "surface" }> | undefined {
-  const item = editor.workbench.allItems().find((candidate) => candidate.kind === "surface" && candidate.path === path);
-  if (!item) return undefined;
-  return editor.workbench.findPanesForItem(item.id).find((pane): pane is Extract<WorkbenchPaneDescriptor, { kind: "surface" }> => pane.kind === "surface");
+function findOpenFilePaneInActiveGroup(editor: EditorHost, path: string): Extract<WorkbenchPaneDescriptor, { kind: "surface" }> | undefined {
+  const layout = editor.workbench.snapshotEditorLayout();
+  const activeGroup = layout.groups.find((group) => group.id === layout.activeGroupId)
+    ?? layout.groups.find((group) => group.activePaneId === layout.activePaneId);
+  if (!activeGroup) return undefined;
+  const activeGroupPaneIds = new Set(activeGroup.paneIds);
+  return layout.panes.find((pane): pane is Extract<WorkbenchPaneDescriptor, { kind: "surface" }> => pane.kind === "surface" && pane.path === path && activeGroupPaneIds.has(pane.id));
 }
 
 function fileTitle(path: string): string {

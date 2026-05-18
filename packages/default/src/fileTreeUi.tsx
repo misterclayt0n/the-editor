@@ -132,8 +132,13 @@ export function DefaultFileTree({
 
   useEffect(() => {
     latestSelectedRef.current = activePath;
+    for (const selectedPath of model.getSelectedPaths()) {
+      if (selectedPath !== activePath) model.getItem(selectedPath)?.deselect();
+    }
     if (!activePath) return;
-    model.getItem(activePath)?.select();
+    const item = model.getItem(activePath);
+    item?.select();
+    item?.focus();
   }, [activePath, treeRevision, model]);
 
   useEffect(() => {

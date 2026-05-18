@@ -1,13 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode, type RefObject } from "react";
-import type { RenderFrame, SurfaceId, Viewport } from "@the-editor/contracts/runtime";
+import type { SurfaceId } from "@the-editor/contracts/runtime";
 import type { BufferDecoration, CommandPaletteIcon, DiagnosticRecord, HealthDiagnosticEntry, NotificationEntry } from "@the-editor/editor";
-import {
-  SurfaceViewportController,
-  type SurfaceViewportControllerState,
-} from "@the-editor/editor/surfaceViewportController";
-import type { CanvasTextSurfaceStyleOptions } from "@the-editor/editor/textSurfaceCanvas";
 import { surfaceCursorAnchors, type SurfaceCursorAnchor } from "@the-editor/editor/cursorAnchors";
-import { resolveThemeStyleLoose, type ResolvedThemeDefinition } from "@the-editor/editor/themes";
 import type { EditorUiModule, UiSessionClient, WorkbenchSnapshot } from "@the-editor/editor/ui";
 import type { FileTreeToolState } from "./fileTree.js";
 import { diagnosticLocationLabel, diagnosticPrimaryLine } from "./diagnosticsShared.js";
@@ -21,7 +15,6 @@ import "./fileTree.css";
 import "./hover.css";
 import "./markdown.css";
 import "./inputPrompt.css";
-import "./picker.css";
 import "./workbenchUi.css";
 
 interface CommandPaletteItemView {
@@ -105,63 +98,6 @@ interface SignatureHelpRoleState {
   activeSignature?: number;
 }
 
-interface PickerItemView {
-  id: string;
-  title: string;
-  subtitle?: string;
-  detail?: string;
-}
-
-interface PickerPreviewViewRowState {
-  text: string;
-  lineNumber?: number | null;
-}
-
-interface PickerPreviewViewSyntaxSpan {
-  row: number;
-  startCol: number;
-  endCol: number;
-  kind: number;
-  scope?: string;
-}
-
-interface PickerPreviewViewState {
-  kind: "text" | "surface" | "empty";
-  title?: string;
-  detail?: string;
-  text?: string;
-  startLine?: number;
-  endLine?: number;
-  truncated?: boolean;
-  binary?: boolean;
-  rows?: PickerPreviewViewRowState[];
-  syntax?: PickerPreviewViewSyntaxSpan[];
-  activeLine?: number;
-  annotation?: { line: number; severity?: "error" | "warning" | "info" | "hint"; message: string };
-  path?: string;
-  frame?: RenderFrame;
-  viewport?: Viewport;
-  lineCount?: number;
-  syntaxLegend?: Record<number, string>;
-}
-
-interface PickerViewState {
-  visible: boolean;
-  sessionId?: string;
-}
-
-interface PickerSessionViewState {
-  providerId?: string;
-  title?: string;
-  query: string;
-  placeholder?: string;
-  selectedIndex: number;
-  items: PickerItemView[];
-  status?: { primary?: string; secondary?: string };
-  emptyText?: string;
-  preview?: PickerPreviewViewState | null;
-}
-
 interface StatuslineViewState {
   mode?: string;
   activePath?: string;
@@ -177,13 +113,6 @@ interface NotificationsViewState {
 
 const inspectorToolTypeId = "default.inspector";
 const defaultTabstripImplementationId = "default.tabstrip";
-const PICKER_PREVIEW_SURFACE_STYLE: CanvasTextSurfaceStyleOptions = {
-  paddingPx: 12,
-  fontSizePx: 13,
-  lineHeightPx: 19,
-  gutterReservePx: 88,
-};
-
 const uiModule: EditorUiModule = (host) => {
   host.roles.register<CommandPaletteViewState>({
     role: "commandPalette",
@@ -200,15 +129,6 @@ const uiModule: EditorUiModule = (host) => {
     render({ state, sessions }) {
       if (!state?.visible || !state.sessionId) return null;
       return <InputPromptOverlay sessionId={state.sessionId} sessions={sessions} />;
-    },
-  });
-
-  host.roles.register<PickerViewState>({
-    role: "picker",
-    implementationId: "default.picker",
-    render({ state, sessions, workbench }) {
-      if (!state?.visible || !state.sessionId) return null;
-      return <PickerOverlay sessionId={state.sessionId} sessions={sessions} workbench={workbench} />;
     },
   });
 
@@ -712,6 +632,7 @@ function CommandPaletteOverlay({
   if (!state) return null;
 
   const canGoBack = Boolean(state.stack?.length);
+  const needsFileIconSprite = state.items.some((item) => item.icon?.kind === "file");
 
   return (
     <CommandDialog
@@ -721,6 +642,7 @@ function CommandPaletteOverlay({
       }}
     >
       <Command shouldFilter={false}>
+        {needsFileIconSprite ? <span className="hidden" dangerouslySetInnerHTML={{ __html: commandPaletteFileIconSpriteSheet }} /> : null}
         <CommandInput
           ref={inputRef}
           placeholder={state.placeholder || "Type a command or search..."}
@@ -756,7 +678,10 @@ function CommandPaletteOverlay({
                     }}
                   >
                     <CommandPaletteIconView icon={item.icon} fallback={commandPaletteIconLabel(item)} />
-                    <span className="min-w-0 flex-1 truncate">{item.title}</span>
+                    <span className="min-w-0 flex flex-1 items-baseline gap-2 truncate">
+                      <span className="truncate">{item.title}</span>
+                      {item.detail ? <span className="min-w-0 truncate text-xs text-muted-foreground">{item.detail}</span> : null}
+                    </span>
                     {item.alias ? <CommandShortcut>{item.alias}</CommandShortcut> : null}
                     {item.keybinding ? <CommandShortcut>{item.keybinding}</CommandShortcut> : null}
                   </CommandItem>
@@ -820,7 +745,6 @@ function CommandPaletteIconView({ icon, fallback }: { icon?: CommandPaletteIcon;
     const color = resolved.token ? getBuiltInFileIconColor(resolved.token) : undefined;
     return (
       <span className="flex size-4 shrink-0 items-center justify-center" style={color ? { color } : undefined}>
-        <span className="hidden" dangerouslySetInnerHTML={{ __html: commandPaletteFileIconSpriteSheet }} />
         <svg aria-hidden="true" className="size-4">
           <use href={`#${resolved.name}`} />
         </svg>
@@ -849,502 +773,6 @@ function scrollActiveItemIntoView(container: HTMLDivElement | null, selector: st
   const active = container?.querySelector<HTMLElement>(selector);
   active?.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
-
-function PickerOverlay({
-  sessionId,
-  sessions,
-  workbench,
-}: {
-  sessionId: string;
-  sessions: UiSessionClient;
-  workbench: WorkbenchSnapshot;
-}) {
-  const state = useUiSession<PickerSessionViewState>(sessions, sessionId);
-  const previewSyntax = useMemo(
-    () => previewSyntaxByRow(state?.preview?.syntax ?? []),
-    [state?.preview?.syntax],
-  );
-  const previewTheme = workbench.theme?.active;
-  const syntaxLegend = workbench.syntaxLegend ?? {};
-  const inputRef = useRef<HTMLInputElement>(null);
-  const itemsRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const input = inputRef.current;
-    if (!input || !state) return;
-    input.focus();
-    const end = input.value.length;
-    input.setSelectionRange(end, end);
-  }, [sessionId]);
-
-  useLayoutEffect(() => {
-    if (!state) return;
-    scrollActiveItemIntoView(itemsRef.current, '.pickerItem[data-active="true"]');
-  }, [state?.items, state?.selectedIndex]);
-
-  if (!state) return null;
-
-  return (
-    <section className="pickerOverlay">
-      <div
-        className="pickerBackdrop"
-        onMouseDown={(event) => {
-          event.preventDefault();
-        }}
-        onClick={(event) => {
-          event.preventDefault();
-        }}
-      />
-      <div className="pickerViewport">
-        <div className="pickerShell">
-          <div className="pickerSurface">
-            <div className="pickerHeader">
-              <div className="pickerInputRow">
-                <CommandPaletteSearchIcon />
-                <input
-                  ref={inputRef}
-                  className="pickerInput"
-                  placeholder={state.placeholder || "Find files"}
-                  spellCheck={false}
-                  value={state.query}
-                  onChange={(event) => {
-                    void sessions.dispatch(sessionId, "setQuery", { query: event.target.value });
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "ArrowUp") {
-                      event.preventDefault();
-                      void sessions.dispatch(sessionId, "moveSelection", { delta: -1 });
-                      return;
-                    }
-                    if (event.key === "ArrowDown") {
-                      event.preventDefault();
-                      void sessions.dispatch(sessionId, "moveSelection", { delta: 1 });
-                      return;
-                    }
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      void sessions.dispatch(sessionId, "accept");
-                      return;
-                    }
-                    if (event.key === "Escape") {
-                      event.preventDefault();
-                      void sessions.dispatch(sessionId, "close");
-                    }
-                  }}
-                />
-                {state.title ? <span className="pickerTitleBadge">{state.title}</span> : null}
-              </div>
-            </div>
-            <div className="pickerBody">
-              <div ref={itemsRef} className="pickerResults">
-                {state.items.length ? state.items.map((item, index) => {
-                  const isActive = index === state.selectedIndex;
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className="pickerItem"
-                      data-active={isActive ? "true" : undefined}
-                      onMouseDown={(event) => {
-                        event.preventDefault();
-                      }}
-                      onClick={() => {
-                        void sessions.dispatch(sessionId, "selectIndex", { index }).then(() => sessions.dispatch(sessionId, "accept"));
-                      }}
-                    >
-                      <div className="pickerItemMain">
-                        <div className="pickerItemTitle">{item.title}</div>
-                        {item.subtitle ? <div className="pickerItemSubtitle">{item.subtitle}</div> : null}
-                      </div>
-                      {item.detail ? <div className="pickerItemDetail">{item.detail}</div> : null}
-                    </button>
-                  );
-                }) : <div className="pickerEmpty">{state.emptyText || "No results"}</div>}
-              </div>
-              <aside className="pickerPreviewPane">
-                {state.preview?.kind === "text" ? (
-                  <>
-                    <div className="pickerPreviewHeader">
-                      <div className="pickerPreviewTitle">{state.preview.title || "Preview"}</div>
-                      {state.preview.detail ? <div className="pickerPreviewDetail">{state.preview.detail}</div> : null}
-                    </div>
-                    {state.preview.binary ? (
-                      <div className="pickerPreviewEmpty">Binary file</div>
-                    ) : state.preview.rows?.length ? (
-                      <div className="pickerPreviewCode">
-                        {state.preview.rows.map((row, rowIndex) => {
-                          const active = row.lineNumber != null && row.lineNumber === state.preview?.activeLine;
-                          const annotation = row.lineNumber != null && row.lineNumber === state.preview?.annotation?.line ? state.preview.annotation : undefined;
-                          return (
-                            <div key={`${row.lineNumber ?? rowIndex}:${rowIndex}`} className="pickerPreviewCodeRow" data-active={active ? "true" : undefined}>
-                              <div className="pickerPreviewLineNumber">{row.lineNumber ?? ""}</div>
-                              <div className="pickerPreviewLineText">
-                                {renderPreviewLine(row.text, previewSyntax.get(rowIndex) ?? [], previewTheme, syntaxLegend)}
-                                {annotation ? <div className="pickerPreviewAnnotation" data-severity={annotation.severity ?? "error"}>{annotation.message}</div> : null}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <pre className="pickerPreviewText">{state.preview.text || ""}</pre>
-                    )}
-                  </>
-                ) : state.preview?.kind === "surface" ? (
-                  <PickerSurfacePreview preview={state.preview as PickerPreviewViewState & { kind: "surface" }} sessions={sessions} sessionId={sessionId} theme={workbench.theme} />
-                ) : state.preview?.kind === "empty" ? (
-                  <div className="pickerPreviewEmpty">{state.preview.detail || state.preview.title || "No preview"}</div>
-                ) : (
-                  <div className="pickerPreviewEmpty">No preview</div>
-                )}
-              </aside>
-            </div>
-            <div className="pickerFooter">
-              <span>{state.status?.primary ?? ""}</span>
-              <span>{state.status?.secondary ?? ""}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function PickerSurfacePreview({
-  preview,
-  sessions,
-  sessionId,
-  theme,
-}: {
-  preview: PickerPreviewViewState & { kind: "surface" };
-  sessions: UiSessionClient;
-  sessionId: string;
-  theme: WorkbenchSnapshot["theme"];
-}) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const selectionRef = useRef<HTMLPreElement>(null);
-  const controllerRef = useRef<SurfaceViewportController | null>(null);
-  if (!controllerRef.current) {
-    controllerRef.current = new SurfaceViewportController({
-      styleOptions: PICKER_PREVIEW_SURFACE_STYLE,
-      paintOptions: { showCursors: false },
-      overscanRows: 12,
-    });
-  }
-  const controller = controllerRef.current;
-  const controllerState = useSyncExternalStore(
-    (listener) => controller.subscribe(listener),
-    () => controller.snapshot(),
-    () => controller.snapshot(),
-  );
-  const selectablePreviewText = useMemo(
-    () => controllerState.frame?.rows.map((row) => row.text).join("\n") ?? "",
-    [controllerState.frame],
-  );
-  const rowOffsets = useMemo(() => {
-    const rows = controllerState.frame?.rows ?? [];
-    const offsets: number[] = [];
-    let offset = 0;
-    for (let index = 0; index < rows.length; index += 1) {
-      offsets.push(offset);
-      offset += rows[index]!.text.length;
-      if (index < rows.length - 1) offset += 1;
-    }
-    return offsets;
-  }, [controllerState.frame]);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const scrollElement = scrollRef.current;
-    if (!canvas || !scrollElement) return;
-    controller.attach(scrollElement, canvas);
-    return () => {
-      controller.detach();
-    };
-  }, [controller]);
-
-  useEffect(() => {
-    controller.setTheme(theme);
-  }, [controller, theme]);
-
-  useEffect(() => {
-    if (!preview.path) {
-      controller.setSource(null);
-      return;
-    }
-    controller.setSource({
-      key: `${sessionId}:${preview.path}:${preview.viewport?.firstRow ?? 0}:${(preview as { activeLine?: number }).activeLine ?? ""}`,
-      readFrame: async ({ viewport, metrics }) => {
-        const requestViewport = preview.viewport ? { ...viewport, firstRow: preview.viewport.firstRow } : viewport;
-        const result = await sessions.dispatch(sessionId, "readPreviewFrame", {
-          path: preview.path,
-          viewport: requestViewport,
-          metrics,
-        });
-        if (!isSurfaceFrameResult(result)) throw new Error("invalid surface preview frame result");
-        return result;
-      },
-    });
-  }, [controller, preview, sessionId, sessions]);
-
-  useEffect(() => {
-    const element = selectionRef.current;
-    const frame = controllerState.frame;
-    const selectionBackground = resolveThemeStyleLoose(theme.active ?? { styles: {} }, "ui.selection")?.bg ?? "#264f78";
-    const activeLineBackground = resolveThemeStyleLoose(theme.active ?? { styles: {} }, "ui.cursorline.primary", ["ui.cursorline"])?.bg ?? "rgba(120,120,120,0.18)";
-    const activeLine = (preview as { activeLine?: number }).activeLine;
-    if (!element || !frame) {
-      controller.setDecorations([]);
-      return;
-    }
-
-    const syncSelection = () => {
-      const selection = document.getSelection();
-      const offsets = readElementSelectionOffsets(element, selection);
-      controller.setDecorations([
-        ...buildPreviewActiveLineDecorations(frame.rows, activeLine, activeLineBackground),
-        ...buildPreviewSelectionDecorations(frame.rows, rowOffsets, offsets, selectionBackground),
-      ]);
-    };
-
-    syncSelection();
-    document.addEventListener("selectionchange", syncSelection);
-    return () => {
-      document.removeEventListener("selectionchange", syncSelection);
-      controller.setDecorations([]);
-    };
-  }, [controller, controllerState.frame, preview, rowOffsets, theme.active]);
-
-  return (
-    <>
-      <div className="pickerPreviewHeader">
-        <div className="pickerPreviewTitle">{preview.title || "Preview"}</div>
-        {preview.detail ? <div className="pickerPreviewDetail">{preview.detail}</div> : null}
-        <div className="pickerPreviewMeta">{surfacePreviewSummary(controllerState)}</div>
-      </div>
-      <div className="pickerPreviewViewport">
-        <div ref={scrollRef} className="pickerPreviewSurface">
-          <div className="pickerPreviewScrollSize" style={{ height: `${controllerState.scrollHeight}px` }} />
-        </div>
-        <div className="pickerPreviewCanvasViewport">
-          <canvas ref={canvasRef} className="pickerPreviewCanvas" />
-          {controllerState.status === "loading" && !controllerState.frame ? (
-            <div className="pickerPreviewLoading">Loading preview…</div>
-          ) : null}
-          {selectablePreviewText ? (
-            <pre
-              ref={selectionRef}
-              className="pickerPreviewSelectableText"
-              style={surfacePreviewSelectableStyle(controllerState)}
-              onWheel={(event) => {
-                const scrollElement = scrollRef.current;
-                if (!scrollElement) return;
-                event.preventDefault();
-                scrollElement.scrollTop += event.deltaY;
-                scrollElement.scrollLeft += event.deltaX;
-              }}
-            >
-              {selectablePreviewText}
-            </pre>
-          ) : null}
-        </div>
-        <PreviewScrollbar state={controllerState} />
-      </div>
-    </>
-  );
-}
-
-function readElementSelectionOffsets(element: HTMLElement, selection: Selection | null): { start: number; end: number } | undefined {
-  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return undefined;
-  const range = selection.getRangeAt(0);
-  if (!element.contains(range.startContainer) || !element.contains(range.endContainer)) return undefined;
-  const startRange = range.cloneRange();
-  startRange.selectNodeContents(element);
-  startRange.setEnd(range.startContainer, range.startOffset);
-  const endRange = range.cloneRange();
-  endRange.selectNodeContents(element);
-  endRange.setEnd(range.endContainer, range.endOffset);
-  const start = startRange.toString().length;
-  const end = endRange.toString().length;
-  return end > start ? { start, end } : undefined;
-}
-
-function buildPreviewActiveLineDecorations(
-  rows: readonly RenderFrame["rows"],
-  activeLine: number | undefined,
-  background: string,
-): BufferDecoration[] {
-  if (activeLine == null) return [];
-  const row = rows.find((candidate) => candidate.docLine != null && candidate.docLine + 1 === activeLine);
-  if (!row) return [];
-  return [{
-    kind: "range",
-    id: `preview-active-line:${activeLine}`,
-    surfaceRow: row.surfaceRow,
-    startCol: 0,
-    endCol: Math.max(1, row.text.length),
-    background,
-  }];
-}
-
-function buildPreviewSelectionDecorations(
-  rows: readonly RenderFrame["rows"],
-  rowOffsets: readonly number[],
-  offsets: { start: number; end: number } | undefined,
-  background: string,
-): BufferDecoration[] {
-  if (!offsets) return [];
-  const decorations: BufferDecoration[] = [];
-  for (let index = 0; index < rows.length; index += 1) {
-    const row = rows[index]!;
-    const rowStart = rowOffsets[index] ?? 0;
-    const rowEnd = rowStart + row.text.length;
-    const startCol = Math.max(0, offsets.start - rowStart);
-    const endCol = Math.min(row.text.length, offsets.end - rowStart);
-    if (offsets.start > rowEnd || offsets.end <= rowStart || endCol <= startCol) continue;
-    decorations.push({
-      kind: "range",
-      id: `preview-selection:${index}:${startCol}:${endCol}`,
-      surfaceRow: row.surfaceRow,
-      startCol,
-      endCol,
-      background,
-    });
-  }
-  return decorations;
-}
-
-function PreviewScrollbar({ state }: { state: SurfaceViewportControllerState }) {
-  const metrics = state.metrics;
-  const viewport = state.viewport;
-  if (!metrics || !viewport) return null;
-  const visibleHeight = viewport.rowCount * metrics.rowHeightPx + PICKER_PREVIEW_SURFACE_STYLE.paddingPx! * 2;
-  if (!(state.scrollHeight > visibleHeight + 1)) return null;
-  const maxScrollTop = Math.max(1, state.scrollHeight - visibleHeight);
-  const thumbHeight = Math.max(28, (visibleHeight / state.scrollHeight) * visibleHeight);
-  const thumbTop = (state.scrollTop / maxScrollTop) * Math.max(0, visibleHeight - thumbHeight);
-  return (
-    <div className="pickerPreviewScrollbar" aria-hidden="true">
-      <div
-        className="pickerPreviewScrollbarThumb"
-        style={{ height: `${thumbHeight}px`, transform: `translateY(${thumbTop}px)` }}
-      />
-    </div>
-  );
-}
-
-function surfacePreviewSelectableStyle(state: SurfaceViewportControllerState): CSSProperties | undefined {
-  const metrics = state.metrics;
-  const frameViewport = state.frameViewport;
-  if (!metrics || !frameViewport) return undefined;
-  const offsetXPx = Math.max(0, state.scrollLeft - frameViewport.firstCol * metrics.cellWidthPx);
-  const offsetYPx = Math.max(0, state.scrollTop - frameViewport.firstRow * metrics.rowHeightPx);
-  return {
-    transform: `translate(${-offsetXPx}px, ${-offsetYPx}px)`,
-  };
-}
-
-function surfacePreviewSummary(state: SurfaceViewportControllerState): string {
-  if (state.viewport && state.lineCount) {
-    const startLine = Math.min(state.lineCount, state.viewport.firstRow + 1);
-    const endLine = Math.min(state.lineCount, state.viewport.firstRow + state.viewport.rowCount);
-    return `Lines ${startLine}–${endLine} of ${state.lineCount}`;
-  }
-  if (state.lineCount) {
-    return state.lineCount === 1 ? "1 line" : `${state.lineCount} lines`;
-  }
-  return state.status === "loading" ? "Loading preview…" : "Preview";
-}
-
-function isSurfaceFrameResult(value: unknown): value is {
-  frame: RenderFrame;
-  viewport: Viewport;
-  lineCount: number;
-  syntaxLegend?: Record<number, string>;
-} {
-  if (!value || typeof value !== "object") return false;
-  const frame = (value as { frame?: unknown }).frame;
-  const viewport = (value as { viewport?: unknown }).viewport;
-  const lineCount = (value as { lineCount?: unknown }).lineCount;
-  return Boolean(frame)
-    && Boolean(viewport)
-    && typeof lineCount === "number";
-}
-
-function previewSyntaxByRow(spans: readonly PickerPreviewViewSyntaxSpan[]): Map<number, PickerPreviewViewSyntaxSpan[]> {
-  const rows = new Map<number, PickerPreviewViewSyntaxSpan[]>();
-  for (const span of spans) {
-    const list = rows.get(span.row) ?? [];
-    list.push(span);
-    rows.set(span.row, list);
-  }
-  for (const list of rows.values()) {
-    list.sort((a, b) => a.startCol - b.startCol || a.endCol - b.endCol || a.kind - b.kind);
-  }
-  return rows;
-}
-
-function renderPreviewLine(
-  text: string,
-  spans: readonly PickerPreviewViewSyntaxSpan[],
-  theme: ResolvedThemeDefinition | undefined,
-  syntaxLegend: Record<number, string>,
-) {
-  try {
-    const safeText = typeof text === "string" ? text : String(text ?? "");
-    if (!spans.length) return <>{safeText || " "}</>;
-    const cells = Array.from(safeText);
-    const parts: ReactNode[] = [];
-    let col = 0;
-
-    for (const span of spans) {
-      const start = Math.max(0, Math.min(cells.length, span.startCol));
-      const end = Math.max(start, Math.min(cells.length, span.endCol));
-      if (start > col) {
-        parts.push(<Fragment key={`plain:${col}-${start}`}>{cells.slice(col, start).join("") || " "}</Fragment>);
-      }
-      const chunk = cells.slice(start, end).join("");
-      if (chunk) {
-        parts.push(
-          <span
-            key={`syntax:${start}-${end}-${span.kind}`}
-            style={{ color: previewSyntaxColor(theme, span.scope ?? syntaxLegend[span.kind]) }}
-          >
-            {chunk}
-          </span>,
-        );
-      }
-      col = end;
-    }
-
-    if (col < cells.length) {
-      parts.push(<Fragment key={`plain:${col}-${cells.length}`}>{cells.slice(col).join("") || " "}</Fragment>);
-    }
-
-    return parts.length ? parts : <>{safeText || " "}</>;
-  } catch {
-    const safeText = typeof text === "string" ? text : String(text ?? "");
-    return <>{safeText || " "}</>;
-  }
-}
-
-function previewSyntaxColor(theme: ResolvedThemeDefinition | undefined, scope: unknown): string | undefined {
-  if (!theme) return undefined;
-  if (typeof scope !== "string") {
-    return resolveThemeStyleLoose(theme, "ui.text")?.fg;
-  }
-  return resolveThemeStyleLoose(theme, scope, fallbackSyntaxScopes[scope as keyof typeof fallbackSyntaxScopes] ?? "ui.text")?.fg
-    ?? resolveThemeStyleLoose(theme, "ui.text")?.fg;
-}
-
-const fallbackSyntaxScopes: Record<string, string> = {
-  keyword: "keyword",
-  type: "type",
-  variable: "variable",
-  string: "string",
-  comment: "comment",
-};
 
 function InputPromptOverlay({
   sessionId,

@@ -6,7 +6,6 @@ import { defaultGutters } from "./gutters.js";
 import { defaultFileTree } from "./fileTree.js";
 import { defaultInputPrompt } from "./inputPrompt.js";
 import { defaultKeymaps } from "./keymaps.js";
-import { defaultPicker } from "./picker.js";
 import interactionModule from "./interaction.js";
 import { defaultReload } from "./reload.js";
 import runtimeModule from "./runtime.js";
@@ -24,7 +23,6 @@ export {
   defaultFileTree,
   defaultInputPrompt,
   defaultKeymaps,
-  defaultPicker,
   defaultReload,
   defaultSave,
   defaultScratch,

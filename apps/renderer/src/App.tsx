@@ -134,9 +134,10 @@ function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (isCommandPaletteShortcut(event)) {
+      const paletteShortcut = commandPaletteShortcut(event);
+      if (paletteShortcut) {
         event.preventDefault();
-        void window.theEditor.policyRequest("command.dispatch", { id: "commandPalette.open" }).catch((error) => {
+        void window.theEditor.policyRequest("command.dispatch", { id: paletteShortcut }).catch((error) => {
           console.error(error);
         });
         return;
@@ -215,7 +216,6 @@ function App() {
         <UiErrorBoundary name="overlayModal">{overlayModal}</UiErrorBoundary>
         <UiErrorBoundary name="overlayFloating">{overlayFloating}</UiErrorBoundary>
         <UiErrorBoundary name="notifications">{uiRuntime.renderRole("notifications")}</UiErrorBoundary>
-        <UiErrorBoundary name="picker">{uiRuntime.renderRole("picker")}</UiErrorBoundary>
         <UiErrorBoundary name="inputPrompt">{uiRuntime.renderRole("inputPrompt")}</UiErrorBoundary>
         <UiErrorBoundary name="commandPalette">{uiRuntime.renderRole("commandPalette")}</UiErrorBoundary>
       </div>
@@ -1125,8 +1125,12 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
-function isCommandPaletteShortcut(event: KeyboardEvent): boolean {
-  return event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k";
+function commandPaletteShortcut(event: KeyboardEvent): string | undefined {
+  if (!event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return undefined;
+  const key = event.key.toLowerCase();
+  if (key === "k") return "commandPalette.open";
+  if (key === "p") return "commandPalette.openFiles";
+  return undefined;
 }
 
 function isEditableKeyEvent(event: KeyboardEvent): boolean {

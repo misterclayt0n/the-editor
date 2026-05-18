@@ -10,7 +10,7 @@ This document defines the target command palette and command invocation model.
 - No default command syntax uses `:`.
 - Keybindings are separate from command definitions.
 - Commands may define first-class argument flows.
-- The command palette is generic enough to become the foundation for future pickers, but picker migration is a later pass.
+- The command palette is the picker surface for commands, files, themes, and scoped providers.
 
 ## Command model
 
@@ -214,7 +214,9 @@ editor.commands.register({
 });
 ```
 
-Selecting `Open File` enters a `Files` picker. Path-like providers should prefer immediate children over flat recursive dumps. File rows dispatch the command. Directory rows can enter a provider-backed child frame, or for directory-only commands such as `cd`, typing a slash in the query narrows into that directory and selecting a directory dispatches the command.
+Selecting `Open File` enters a path argument frame. Path-like providers prefer immediate children over flat recursive dumps. File rows dispatch the command. Directory rows insert that directory into the prompt for file-opening flows; for directory-only commands such as `cd`, selecting a directory dispatches the command. Path frames include a `..` row for parent navigation.
+
+`Cmd+P` and `space f` open the file picker as a scoped command palette frame. This frame uses the runtime search index for recursive fuzzy file search, while slash/tilde/dot path queries fall back to the same immediate-child path browsing used by command arguments.
 
 Aliases remain searchable metadata for command discovery, but aliases are not an inline invocation language. Inputs such as `open App.tsx`, `theme gruvbox`, or `cd ~/code/foo` are not parsed specially by the palette.
 
@@ -379,17 +381,18 @@ CommandRegistry + argument providers
 
 If this looks bad or fights the existing styling system, consider adopting the full shadcn setup later.
 
-## Picker migration
+## File picker
 
-Do not migrate every picker in the first pass.
+The old dedicated file picker UI has been removed. File picking is a scoped command palette frame opened by `commandPalette.openFiles` / `file_picker`.
 
-Order:
+Behavior:
 
-1. command registry metadata: aliases + argument specs
-2. command palette resolver/session model
-3. new command palette UI
-4. file argument provider for `open` / `o`
-5. later migrate old pickers onto the same foundation
+- empty query lists indexed files from the current working directory
+- fuzzy queries such as `app.tsx` use the runtime search index
+- path-like queries such as `~/code/`, `../`, or `src/` use path browsing
+- selecting a file dispatches `file.open`
+- selecting a directory in path-browsing mode inserts that directory into the prompt
+- selecting `..` moves/selects the parent directory depending on the active command mode
 
 ## Extension model
 

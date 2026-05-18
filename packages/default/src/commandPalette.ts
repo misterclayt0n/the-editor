@@ -1,6 +1,7 @@
 import { readdirSync, statSync } from "node:fs";
+import type { SearchIndexId } from "@the-editor/contracts/runtime";
 import os from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   commandId,
   commandPaletteRoleId,
@@ -18,6 +19,7 @@ import {
   type InteractiveSessionId,
   defineHostStore,
 } from "@the-editor/editor";
+import { getDefaultState } from "./state.js";
 import { resolveFilePickerRoot } from "./workingDirectory.js";
 
 type PathPaletteMode = "file" | "directory" | "both";
@@ -47,6 +49,7 @@ interface CommandPaletteSessionState extends CommandPaletteFrameState {
 
 interface CommandPaletteStoredState {
   activeSessionId?: InteractiveSessionId;
+  fileSearchIndex?: { rootPath: string; indexId: SearchIndexId };
 }
 
 const commandPaletteImplementationId = roleImplementationId("default.commandPalette");
@@ -88,7 +91,7 @@ export function defaultCommandPalette(): EditorModule {
       },
     });
 
-    editor.commands.register<{ initialQuery?: string } | undefined, void>({
+    editor.commands.register<{ initialQuery?: string; frame?: CommandPaletteFrameTarget } | undefined, void>({
       id: commandId("commandPalette.open"),
       title: "Open Command Palette",
       aliases: ["commands"],
@@ -100,7 +103,40 @@ export function defaultCommandPalette(): EditorModule {
           : typeof (args as { initialQuery?: unknown } | undefined)?.initialQuery === "string"
             ? (args as { initialQuery: string }).initialQuery
             : "";
-        await openPalette(initialQuery);
+        const frame = typeof (args as { frame?: unknown } | undefined)?.frame === "object"
+          ? (args as { frame: CommandPaletteFrameTarget }).frame
+          : undefined;
+        await openPalette(initialQuery, frame);
+      },
+    });
+
+    editor.commands.register<{ query?: string } | undefined, void>({
+      id: commandId("commandPalette.openFiles"),
+      title: "Open File Picker",
+      aliases: ["file_picker", "goto_file"],
+      category: "Files",
+      palette: "topLevel",
+      icon: { kind: "lucide", name: "file" },
+      keywords: ["file", "picker", "open", "find", "fff"],
+      async run(_ctx, args) {
+        const root = resolveFilePickerRoot(editor);
+        await openPalette(typeof args?.query === "string" ? args.query : "", {
+          title: "Open File",
+          provider: "default.filePicker",
+          placeholder: "Search files...",
+          query: typeof args?.query === "string" ? args.query : "",
+          args: { root, baseRoot: root, mode: "both", commandId: "file.open", argumentName: "path" } satisfies PathPaletteFrameArgs,
+        });
+      },
+    });
+
+    editor.commands.register<void, void>({
+      id: commandId("file_picker"),
+      title: "Open File Picker",
+      hidden: true,
+      palette: "hidden",
+      async run() {
+        await editor.commands.dispatch({ id: commandId("commandPalette.openFiles") });
       },
     });
 
@@ -216,6 +252,17 @@ export function defaultCommandPalette(): EditorModule {
     });
 
     editor.palette.registerProvider<PathPaletteFrameArgs>({
+      id: "default.filePicker",
+      title: "Files",
+      visibility: "hidden",
+      async provide(ctx) {
+        const args = ctx.frame?.args;
+        if (!args) return [];
+        return filePickerItems(editor, ctx.query, args);
+      },
+    });
+
+    editor.palette.registerProvider<PathPaletteFrameArgs>({
       id: "default.paths",
       title: "Paths",
       visibility: "hidden",
@@ -226,10 +273,10 @@ export function defaultCommandPalette(): EditorModule {
       },
     });
 
-    async function openPalette(initialQuery = ""): Promise<void> {
+    async function openPalette(initialQuery = "", frame?: CommandPaletteFrameTarget): Promise<void> {
       closePalette(editor, false);
-      const query = typeof initialQuery === "string" ? initialQuery : "";
-      const requestState = { version: 0 };
+      const query = typeof initialQuery === "string" ? initialQuery : frame?.query ?? "";
+      const requestState: { version: number; timer?: ReturnType<typeof setTimeout> } = { version: 0 };
       const session = editor.sessions.create<CommandPaletteSessionState>({
         kind: "commandPalette",
         role: commandPaletteRoleId,
@@ -237,10 +284,12 @@ export function defaultCommandPalette(): EditorModule {
         moduleId,
         state: {
           query,
-          placeholder: "Type a command",
-          mode: "commands",
+          placeholder: frame?.placeholder ?? "Type a command",
+          mode: frame ? "argument" : "commands",
           items: [],
           stack: [],
+          commandTitle: frame?.title,
+          providerFrame: frame,
         },
         methods: {
           setQuery: async ({ session }, args) => {
@@ -250,6 +299,10 @@ export function defaultCommandPalette(): EditorModule {
             session.updateState((state) => {
               state.query = query;
             });
+            if (isFilePickerFrame(session.snapshot().state.providerFrame)) {
+              scheduleRefresh(session, requestState, 35);
+              return;
+            }
             await refresh(session, requestState, ++requestState.version);
           },
           acceptItem: async (_ctx, args) => {
@@ -296,11 +349,28 @@ export function defaultCommandPalette(): EditorModule {
       await refresh(session, requestState, ++requestState.version);
     }
 
+    function scheduleRefresh(
+      session: InteractiveSessionController<CommandPaletteSessionState>,
+      requestState: { version: number; timer?: ReturnType<typeof setTimeout> },
+      delayMs: number,
+    ): void {
+      if (requestState.timer) clearTimeout(requestState.timer);
+      const version = ++requestState.version;
+      requestState.timer = setTimeout(() => {
+        requestState.timer = undefined;
+        void refresh(session, requestState, version);
+      }, delayMs);
+    }
+
     async function refresh(
       session: InteractiveSessionController<CommandPaletteSessionState>,
-      requestState: { version: number },
+      requestState: { version: number; timer?: ReturnType<typeof setTimeout> },
       version: number,
     ): Promise<void> {
+      if (requestState.timer) {
+        clearTimeout(requestState.timer);
+        requestState.timer = undefined;
+      }
       const snapshot = session.snapshot().state;
       const resolved = await resolvePaletteItems(editor, snapshot);
       if (activeSessionId(editor) !== session.id || version !== requestState.version) return;
@@ -555,6 +625,57 @@ function currentFrame(state: CommandPaletteSessionState): CommandPaletteFrameSta
     argumentName: state.argumentName,
     providerFrame: state.providerFrame,
   };
+}
+
+async function filePickerItems(editor: Parameters<EditorModule>[0], query: string, args: PathPaletteFrameArgs): Promise<CommandPaletteItem[]> {
+  if (isPathLikeQuery(query)) return pathPaletteItems(editor, query || displayPathQuery(args.root), args);
+  const state = paletteState(editor);
+  const cached = state.fileSearchIndex?.rootPath === args.root ? state.fileSearchIndex : undefined;
+  const index = cached ?? await editor.runtime.search.ensureIndex({ rootPath: args.root });
+  state.fileSearchIndex = { rootPath: args.root, indexId: index.indexId };
+  const result = await editor.runtime.search.queryFiles({
+    indexId: index.indexId,
+    query,
+    limit: 200,
+    currentPath: activePath(editor),
+  });
+  if (result.scanning) scheduleFilePickerRefresh(editor, query);
+  return result.items.map((item): CommandPaletteItem => ({
+    id: `file:${item.path}`,
+    title: item.fileName,
+    detail: filePickerContext(item.relativePath),
+    group: "Files",
+    keywords: [item.fileName, item.relativePath, item.path],
+    icon: { kind: "file", path: item.path, entryKind: "file" },
+    command: { id: commandId(args.commandId), args: { [args.argumentName]: item.path } },
+  }));
+}
+
+function filePickerContext(relativePath: string): string | undefined {
+  const parent = dirname(relativePath);
+  return parent && parent !== "." ? parent : undefined;
+}
+
+function isPathLikeQuery(query: string): boolean {
+  return query.includes("/") || query.includes("\\") || query.startsWith("~") || query.startsWith(".");
+}
+
+function isFilePickerFrame(frame: CommandPaletteFrameTarget | undefined): boolean {
+  return frame?.provider === "default.filePicker";
+}
+
+function activePath(editor: Parameters<EditorModule>[0]): string | undefined {
+  return getDefaultState(editor).activePath;
+}
+
+function scheduleFilePickerRefresh(editor: Parameters<EditorModule>[0], query: string): void {
+  setTimeout(() => {
+    const sessionId = activeSessionId(editor);
+    if (!sessionId) return;
+    const snapshot = editor.sessions.snapshot<CommandPaletteSessionState>(sessionId);
+    if (!snapshot || snapshot.state.query !== query || !isFilePickerFrame(snapshot.state.providerFrame)) return;
+    void editor.sessions.dispatch(sessionId, "setQuery", { query });
+  }, 150);
 }
 
 function pathArgumentItems(editor: Parameters<EditorModule>[0], query: string, args: PathPaletteFrameArgs): CommandArgumentItem<string>[] {

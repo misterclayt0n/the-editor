@@ -5,7 +5,6 @@ import { defaultEditing } from "./editing.js";
 import { defaultGutters } from "./gutters.js";
 import { defaultFileTree } from "./fileTree.js";
 import { defaultInputPrompt } from "./inputPrompt.js";
-import { defaultPicker } from "./picker.js";
 import { defaultReload } from "./reload.js";
 import { defaultScratch } from "./scratch.js";
 import { defaultSave } from "./save.js";
@@ -23,7 +22,6 @@ const runtimeModule: EditorModule = async (editor) => {
   await defaultWorkingDirectory()(editor);
   await defaultCommandPalette()(editor);
   await defaultInputPrompt()(editor);
-  await defaultPicker()(editor);
   await defaultGutters()(editor);
   await defaultWorkbench()(editor);
   await defaultWindowCommands()(editor);

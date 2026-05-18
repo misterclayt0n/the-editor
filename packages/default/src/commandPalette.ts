@@ -258,6 +258,13 @@ export function defaultCommandPalette(): EditorModule {
             const snapshot = session.snapshot().state;
             const item = snapshot.items.find((candidate) => candidate.id === itemId);
             if (!item) return;
+            if (typeof item.query === "string") {
+              session.updateState((state) => {
+                state.query = item.query ?? "";
+              });
+              await refresh(session, requestState, ++requestState.version);
+              return;
+            }
             if (item.frame) {
               enterProviderFrame(session, item.frame);
               await refresh(session, requestState, ++requestState.version);
@@ -383,6 +390,7 @@ function rankArgumentItems<T>(query: string, command: Command, name: string, ite
         icon: arg.icon,
         command: arg.frame ? undefined : { id: command.id, args: { [name]: arg.value } },
         frame: arg.frame,
+        query: arg.query,
       } satisfies CommandPaletteItem,
       score: scoreCommandPaletteItem(query, arg),
     }))
@@ -486,6 +494,7 @@ function pathArgumentItems(editor: Parameters<EditorModule>[0], query: string, a
       keywords: item.keywords,
       icon: item.icon,
       frame: item.frame,
+      query: item.query,
     }));
 }
 
@@ -507,13 +516,7 @@ function pathPaletteItems(_editor: Parameters<EditorModule>[0], query: string, a
           group: "Open File",
           keywords,
           icon: { kind: "file", path: absolute, entryKind: "directory" },
-          frame: {
-            title: displayTitle,
-            provider: "default.paths",
-            placeholder: `Search ${displayTitle}`,
-            query: "",
-            args: { ...args, root: absolute },
-          },
+          query: `${parsed.dir}${entry.name}/`,
         };
       }
       return {

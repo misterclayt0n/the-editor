@@ -32,6 +32,7 @@ export interface CommandPaletteItem {
   icon?: CommandPaletteIcon;
   command?: CommandDispatch;
   frame?: CommandPaletteFrameTarget;
+  query?: string;
 }
 
 export interface CommandPaletteProviderContext<TArgs = unknown> {

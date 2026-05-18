@@ -23,6 +23,7 @@ export interface CommandArgumentItem<TValue = unknown> {
   keywords?: string[];
   icon?: CommandPaletteIcon;
   frame?: CommandPaletteFrameTarget;
+  query?: string;
 }
 
 export interface CommandArgumentProvider<TValue = unknown> {

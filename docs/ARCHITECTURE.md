@@ -413,7 +413,7 @@ Put something in `the-runtime` when it is any of the following:
 - LSP sessions and server lifecycle
 - per-server LSP transport actors and document-to-server mirrors
 - FFF/workspace search integration
-- file watching
+- file watching and workspace snapshots (see [HOT_RELOAD.md](HOT_RELOAD.md))
 - open/save/reload/persistence
 - git/VCS integration
 - clipboard integration

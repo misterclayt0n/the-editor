@@ -1313,7 +1313,7 @@ Strong `the-runtime` candidates:
 
 - FFF/global workspace text search
 - LSP sessions and server lifecycle
-- file watching and hot reload
+- file watching and file hot reload (see [HOT_RELOAD.md](HOT_RELOAD.md))
 - workspace/resource model enrichment
 - git/VCS integration
 
@@ -1325,7 +1325,7 @@ TypeScript should compose their UI/policy:
 workspace search picker
 LSP diagnostics panel
 code action picker
-reload conflict prompt
+file reload conflict prompt
 git statusline slot
 ```
 
@@ -1354,7 +1354,8 @@ Rust should own the impure/session/service work.
 - Normal visible `RenderFrame` payloads must not ride the general workbench/app snapshot.
 - React must not be in the text-paint hot path.
 - Canvas2D painter must sit behind a replaceable `SurfacePainter` adapter.
-- Hot reload is dispose-and-reactivate by module.
+- TypeScript module hot reload is dispose-and-reactivate by module.
+- File hot reload is a runtime workspace/resource service; TypeScript owns only its composable presentation and prompts.
 - Contributions must be tracked with provenance.
 - User modules are not second-class extensions; they are editor modules loaded dynamically.
 

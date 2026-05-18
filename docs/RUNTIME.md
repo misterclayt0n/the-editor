@@ -28,10 +28,11 @@ It is responsible for things like:
 - runtime-owned registries and handles
 - resource/document/surface attachment
 - file open/save lifecycle
+- file hot reload and workspace snapshots (see [HOT_RELOAD.md](HOT_RELOAD.md))
 - syntax asset loading
 - clipboard implementation
 - LSP session/process ownership
-- later: file watching, workspace search, git/VCS, background work
+- later: workspace search, git/VCS, background work
 
 It is **not** responsible for:
 - pure editor semantics
@@ -339,13 +340,10 @@ Required shape:
 The concrete redesign plan lives in [LSP.md](LSP.md).
 Completion-specific policy is defined in [COMPLETION.md](COMPLETION.md).
 
-### File watching
-File watching belongs in `the-runtime` architecturally, but should be deferred to phase 2.
+### File watching and hot reload
+File watching belongs in `the-runtime` architecturally and should be implemented as a runtime workspace/resource service, not as TypeScript-side polling.
 
-Reason:
-- not needed to validate the crate shape
-- reload/conflict policy gets messy quickly
-- better introduced once the base runtime model is solid
+The target design is defined in [HOT_RELOAD.md](HOT_RELOAD.md): runtime-owned workspace snapshots feed the file tree and open-document hot reload; clean documents reload through normal transactions; dirty externally-changed documents become conflicted and are presented by TypeScript.
 
 ### Async/event bus architecture
 The runtime may keep simple document/surface operations synchronous, but async service waits must not block editor state.

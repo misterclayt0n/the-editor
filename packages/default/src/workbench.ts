@@ -183,9 +183,10 @@ export function defaultWorkbench(): EditorModule {
       const activeWorkbenchPane = editor.workbench.activePane();
       if (activeWorkbenchPane?.kind !== "surface" || !activePane?.documentId) throw new Error("no active surface");
       const source = await editor.runtime.surfaces.readSelection({ surfaceId: activePane.surfaceId });
+      const splitViewport = { ...activePane.viewport, firstCol: 0 };
       const surface = await editor.runtime.surfaces.create({
         documentId: activePane.documentId,
-        viewport: activePane.viewport,
+        viewport: splitViewport,
       });
       if (activePane.metrics) {
         await editor.runtime.surfaces.setMetrics({
@@ -216,7 +217,7 @@ export function defaultWorkbench(): EditorModule {
         documentId: activePane.documentId,
         path: activePane.path,
         title: activePane.title,
-        viewport: activePane.viewport,
+        viewport: splitViewport,
         metrics: activePane.metrics,
       });
       await refreshActiveSurface(editor);

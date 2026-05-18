@@ -1,6 +1,6 @@
 import type { EditorHost, EditorModule } from "@the-editor/editor";
 import { commandId, defineHostStore } from "@the-editor/editor";
-import type { SurfaceSelectionRange } from "@the-editor/contracts/runtime";
+import type { SurfaceSelectionRange, Viewport } from "@the-editor/contracts/runtime";
 import type { WorkbenchPaneDescriptor, WorkbenchPaneId } from "@the-editor/editor/workbench";
 import { defaultViewport } from "./scratch.js";
 import { activeSurfacePane, getDefaultState, refreshActiveSurface, removeSurfacePaneState, upsertSurfacePaneState } from "./state.js";
@@ -152,7 +152,7 @@ async function transposeView(editor: EditorHost): Promise<void> {
 
 async function splitNewScratch(editor: EditorHost, direction: "right" | "down"): Promise<void> {
   const active = editor.workbench.activePane();
-  const viewport = activeSurfacePane(editor)?.viewport ?? getDefaultState(editor).surfaceViewport ?? defaultViewport();
+  const viewport = resetViewportScroll(activeSurfacePane(editor)?.viewport ?? getDefaultState(editor).surfaceViewport ?? defaultViewport());
   const document = await editor.runtime.documents.createScratch({ text: "" });
   const surface = await editor.runtime.surfaces.create({ documentId: document.documentId, viewport });
   const pane = editor.workbench.openSurface({
@@ -259,4 +259,8 @@ function distance(a: { x: number; y: number; w: number; h: number }, b: { x: num
 
 function oppositeDirection(direction: Direction): Direction {
   return direction === "left" ? "right" : direction === "right" ? "left" : direction === "up" ? "down" : "up";
+}
+
+function resetViewportScroll(viewport: Viewport): Viewport {
+  return { ...viewport, firstRow: 0, firstCol: 0 };
 }

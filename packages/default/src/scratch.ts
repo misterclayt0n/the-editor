@@ -30,7 +30,7 @@ export function defaultScratch(): EditorModule {
       async run(_ctx, args) {
         const state = getDefaultState(editor);
         const activePane = activeSurfacePane(editor);
-        const viewport = args?.viewport ?? activePane?.viewport ?? state.surfaceViewport ?? defaultViewport();
+        const viewport = args?.viewport ?? resetViewportScroll(activePane?.viewport ?? state.surfaceViewport ?? defaultViewport());
         const metrics = activePane?.metrics ?? state.surfaceMetrics;
         const document = await editor.runtime.documents.createScratch({
           text: args?.text ?? "",
@@ -84,7 +84,7 @@ export function defaultScratch(): EditorModule {
       async run(_ctx, args) {
         const state = getDefaultState(editor);
         const activePane = activeSurfacePane(editor);
-        const viewport = args.viewport ?? activePane?.viewport ?? state.surfaceViewport ?? defaultViewport();
+        const viewport = args.viewport ?? resetViewportScroll(activePane?.viewport ?? state.surfaceViewport ?? defaultViewport());
         const metrics = activePane?.metrics ?? state.surfaceMetrics;
         const path = resolveFilePathFromWorkingDirectory(editor, args.path);
         const activeWorkbenchPane = editor.workbench.activePane();
@@ -234,7 +234,11 @@ async function navigateSurfaceToLocation(
 
 function viewportForLocation(viewport: Viewport, line: number): Viewport {
   const firstRow = Math.max(0, line - 3);
-  return { ...viewport, firstRow };
+  return { ...viewport, firstRow, firstCol: 0 };
+}
+
+function resetViewportScroll(viewport: Viewport): Viewport {
+  return { ...viewport, firstRow: 0, firstCol: 0 };
 }
 
 function offsetForLineColumn(text: string, line: number, column = 1): number {

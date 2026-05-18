@@ -19,7 +19,7 @@ import "./style.css";
 const uiRuntime = new RendererPackageRuntime();
 const EDITOR_SURFACE_STYLE: CanvasTextSurfaceStyleOptions = {
   paddingPx: 8,
-  gutterReservePx: 88,
+  gutterReservePx: 44,
 };
 
 interface SurfacePaneSnapshotState {
@@ -679,6 +679,7 @@ function SurfaceEditorPane({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lastConfigRef = useRef<string>("");
   const latestConfigMetricsRef = useRef<CellGridMetrics | undefined>(paneState?.metrics);
+  const latestViewportRef = useRef<Viewport | undefined>(paneState?.viewport);
   const latestFrameRef = useRef<RenderFrame | undefined>(undefined);
   const latestDecorationsRef = useRef<BufferDecoration[]>([]);
   const latestGuttersRef = useRef<GutterSnapshot[]>([]);
@@ -694,6 +695,7 @@ function SurfaceEditorPane({
   const gutters = useMemo(() => [...providerGutters, ...frameGutters, ...(paneState?.gutters ?? [])], [frameGutters, paneState?.gutters, providerGutters]);
 
   latestFrameRef.current = renderFrame;
+  latestViewportRef.current = paneState?.viewport;
   latestDecorationsRef.current = decorations;
   latestGuttersRef.current = gutters;
   latestThemeRef.current = theme;
@@ -744,7 +746,16 @@ function SurfaceEditorPane({
 
     const configure = () => {
       raf = 0;
-      const config = configureCanvasTextSurface(canvas, EDITOR_SURFACE_STYLE);
+      const measuredConfig = configureCanvasTextSurface(canvas, EDITOR_SURFACE_STYLE);
+      const currentViewport = latestViewportRef.current;
+      const config = {
+        ...measuredConfig,
+        viewport: {
+          ...measuredConfig.viewport,
+          firstRow: currentViewport?.firstRow ?? measuredConfig.viewport.firstRow,
+          firstCol: currentViewport?.firstCol ?? measuredConfig.viewport.firstCol,
+        },
+      };
       latestConfigMetricsRef.current = config.metrics;
       surfaceCursorAnchors.set({
         surfaceId: pane.surfaceId,
@@ -866,7 +877,7 @@ function builtInFrameGutters(frame: RenderFrame | undefined, lineCount: number |
       order: 100,
       widthCells: width,
       paddingLeftPx: 0,
-      paddingRightPx: 22,
+      paddingRightPx: 12,
     },
     lines: rows.map((row) => ({
       id: `line:${row.surfaceRow}`,

@@ -195,10 +195,10 @@ function DefaultFileTab({
         title={path}
         className="workbenchFileTabButton"
       >
-        {conflict ? <span className="workbenchFileTabIndicator conflict" aria-hidden="true" /> : dirty ? <span className="workbenchFileTabIndicator dirty" aria-hidden="true" /> : null}
         <DefaultWorkbenchTabIcon icon={icon} />
         <span className="workbenchFileTabLabel">{label}</span>
       </button>
+      {conflict ? <span className="workbenchFileTabStatusLine conflict" aria-hidden="true" /> : dirty ? <span className="workbenchFileTabStatusLine dirty" aria-hidden="true" /> : null}
       {closeable ? (
         <>
           <div aria-hidden="true" className="workbenchFileTabCloseFade" />

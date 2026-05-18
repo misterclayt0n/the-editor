@@ -487,17 +487,22 @@
 }
 
 
-.workbenchFileTabIndicator {
-  border-radius: 999px;
-  flex: 0 0 auto;
-  height: 8px;
-  width: 8px;
+.workbenchFileTabStatusLine {
+  border-radius: 999px 999px 0 0;
+  bottom: 0;
+  height: 2px;
+  left: 8px;
+  pointer-events: none;
+  position: absolute;
+  right: 8px;
 }
 
-.workbenchFileTabIndicator.dirty {
+.workbenchFileTabStatusLine.dirty {
   background: var(--theme-accent-fg, #3b82f6);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--theme-accent-fg, #3b82f6) 72%, transparent);
 }
 
-.workbenchFileTabIndicator.conflict {
+.workbenchFileTabStatusLine.conflict {
   background: var(--theme-diagnostic-warning-fg, #f6c177);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--theme-diagnostic-warning-fg, #f6c177) 72%, transparent);
 }

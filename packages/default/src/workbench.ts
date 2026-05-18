@@ -1,5 +1,6 @@
 import type { EditorModule, KeyInput } from "@the-editor/editor";
 import { commandId, toDisposable, defineHostStore } from "@the-editor/editor";
+import { confirmPrompt } from "./confirmPrompt.js";
 import type {
   WorkbenchSessionState,
   WorkbenchSurfaceConfigureRequest,
@@ -47,11 +48,7 @@ export function defaultWorkbench(): EditorModule {
       title: "Close Pane",
       hidden: true,
       async run(_ctx, args) {
-        const pane = editor.workbench.findPane(args.paneId);
-        editor.workbench.closePane(args.paneId);
-        if (pane?.kind === "surface") removeSurfacePaneState(editor, pane.id);
-        await refreshActiveSurface(editor);
-        editor.workbench.invalidate("frame", "focus", "layout", "tools");
+        await closePaneWithSavePrompt(editor, args.paneId);
       },
     });
 
@@ -224,5 +221,65 @@ export function defaultWorkbench(): EditorModule {
       editor.workbench.invalidate("frame", "focus", "layout");
     }
   };
+}
+
+async function closePaneWithSavePrompt(editor: Parameters<EditorModule>[0], paneId: WorkbenchPaneId | string): Promise<void> {
+  const pane = editor.workbench.findPane(paneId);
+  if (!pane) return;
+
+  if (pane.kind === "surface") {
+    const status = await editor.runtime.resources.status({ surfaceId: pane.surfaceId }).catch(() => undefined);
+    if (status?.dirty && status.path) {
+      const label = status.path ?? pane.path ?? pane.title;
+      if (status.deletedOnDisk) {
+        const action = await confirmPrompt(editor, {
+          level: "warning",
+          message: `${label} has been deleted on disk and contains unsaved edits. Do you want to save it?`,
+          actions: ["Save", "Close", "Cancel"],
+        });
+        if (action === "Save") {
+          await editor.runtime.resources.save({ surfaceId: pane.surfaceId, conflict: "overwrite" });
+        } else if (action === "Close") {
+          // close without saving
+        } else {
+          return;
+        }
+      } else if (status.conflict) {
+        const action = await confirmPrompt(editor, {
+          level: "warning",
+          message: "This file has changed on disk since you started editing it. Do you want to overwrite it?",
+          actions: ["Overwrite", "Discard", "Cancel"],
+        });
+        if (action === "Overwrite") {
+          await editor.runtime.resources.save({ surfaceId: pane.surfaceId, conflict: "overwrite" });
+        } else if (action === "Discard") {
+          await editor.runtime.resources.reload({ surfaceId: pane.surfaceId });
+        } else {
+          return;
+        }
+      } else {
+        const action = await confirmPrompt(editor, {
+          level: "warning",
+          message: `${label} contains unsaved edits. Do you want to save it?`,
+          actions: ["Save", "Don't Save", "Cancel"],
+        });
+        if (action === "Save") {
+          await editor.runtime.resources.save({ surfaceId: pane.surfaceId });
+        } else if (action === "Don't Save") {
+          // close without saving
+        } else {
+          return;
+        }
+      }
+    }
+  }
+
+  if (pane.kind === "surface") {
+    await editor.runtime.surfaces.destroy({ surfaceId: pane.surfaceId }).catch(() => undefined);
+  }
+  editor.workbench.closePane(paneId);
+  if (pane.kind === "surface") removeSurfacePaneState(editor, pane.id);
+  await refreshActiveSurface(editor);
+  editor.workbench.invalidate("frame", "focus", "layout", "tabs", "tools");
 }
 

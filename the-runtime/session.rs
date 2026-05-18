@@ -1519,13 +1519,12 @@ impl RuntimeSession {
     {
       return;
     }
-    let Some(entry) = self.documents.get(&document) else {
+    let Some(entry) = self.documents.remove(&document) else {
       return;
     };
-    if entry.resource.is_some() {
-      return;
+    if let Some(resource) = entry.resource {
+      self.resource_documents.remove(&resource);
     }
-    self.documents.remove(&document);
     self.syntax_scheduler.document_touches.remove(&document);
   }
 }
@@ -1985,6 +1984,26 @@ mod tests {
     assert_eq!(entry.document.text().to_string(), "one\nlocal");
     assert!(entry.is_dirty());
     assert!(entry.has_conflict());
+  }
+
+  #[test]
+  fn destroying_last_surface_drops_resource_document_so_reopen_reads_disk() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("a.txt");
+    std::fs::write(&path, "disk\n").unwrap();
+
+    let mut runtime = RuntimeSession::default();
+    let document = runtime.open_file(&path).unwrap();
+    let surface = runtime.create_surface(document).unwrap();
+    runtime.apply_surface_edit(surface, the_lib::operation::Edit {
+      transaction: Transaction::insert_at(runtime.document(document).unwrap().text().len_chars(), runtime.document(document).unwrap().text().len_chars(), "memory").unwrap(),
+      selection: the_lib::selection::Selection::point(0),
+    }).unwrap();
+    runtime.destroy_surface(surface).unwrap();
+
+    let reopened = runtime.open_file(&path).unwrap();
+    assert_ne!(document, reopened);
+    assert_eq!(runtime.document(reopened).unwrap().text().to_string(), "disk\n");
   }
 
   #[test]

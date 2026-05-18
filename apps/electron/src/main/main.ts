@@ -36,7 +36,8 @@ async function createWindow(): Promise<void> {
   mainWindow.webContents.on("before-input-event", (event, input) => {
     const isCloseTab = input.type === "keyDown"
       && input.key.toLowerCase() === "w"
-      && (process.platform === "darwin" ? input.meta : input.control)
+      && input.meta
+      && !input.control
       && !input.alt
       && !input.shift;
     if (!isCloseTab) return;

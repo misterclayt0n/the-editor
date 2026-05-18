@@ -143,7 +143,7 @@ function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "w" && !event.altKey && !event.shiftKey) {
+      if (event.metaKey && !event.ctrlKey && event.key.toLowerCase() === "w" && !event.altKey && !event.shiftKey) {
         event.preventDefault();
         void window.theEditor.policyRequest("command.dispatch", { id: "workbench.closePane" }).catch((error) => {
           console.error(error);

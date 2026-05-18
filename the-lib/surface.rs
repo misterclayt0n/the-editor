@@ -398,6 +398,57 @@ impl Surface {
     Ok(())
   }
 
+  pub fn observe_document_transaction(
+    &mut self,
+    document: &Document,
+    before: ropey::Rope,
+    transaction: crate::transaction::Transaction,
+  ) -> Result<()> {
+    if transaction.changes().is_empty() {
+      return Ok(());
+    }
+
+    self.commit_undo_checkpoint()?;
+    let selection_before = self.selection.clone();
+    let selection_after = self.selection.clone().map(transaction.changes())?;
+    let change_extent =
+      summarize_text_change(transaction.changes().changes()).unwrap_or(TextChangeExtent {
+        start_old_char: before.len_chars(),
+        end_old_char:   before.len_chars(),
+        end_new_char:   before.len_chars(),
+      });
+    let start_line = before
+      .slice(..)
+      .char_to_line(change_extent.start_old_char.min(before.len_chars()));
+    let old_end_line = before
+      .slice(..)
+      .char_to_line(change_extent.end_old_char.min(before.len_chars()))
+      .max(start_line);
+    let new_text = document.text().slice(..);
+    let new_end_line = new_text
+      .char_to_line(change_extent.end_new_char.min(new_text.len_chars()))
+      .max(start_line.min(new_text.len_lines().saturating_sub(1)));
+    self.layout_index.note_text_change(TextChangeSummary {
+      start_line: start_line.min(new_text.len_lines().saturating_sub(1)),
+      old_end_line,
+      new_end_line,
+    });
+    self.pending_commit = Some(PendingHistoryCommit {
+      before,
+      transaction,
+      selection_before,
+      selection_after: selection_after.clone(),
+    });
+    self.commit_undo_checkpoint()?;
+    self.finish_selection_update(
+      document,
+      selection_after,
+      VisualGoals::new(),
+      RevealMode::Minimal,
+    );
+    Ok(())
+  }
+
   pub fn apply_motion_result(&mut self, document: &Document, result: MotionResult) -> Result<()> {
     validate_selection_bounds(&result.selection, document.text().len_chars())?;
 

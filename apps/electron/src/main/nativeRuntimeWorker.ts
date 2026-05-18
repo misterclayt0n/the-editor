@@ -46,6 +46,19 @@ async function dispatch(method: string, params: unknown = {}): Promise<unknown> 
       const p = params as Parameters<RuntimeApi["documents"]["createScratch"]>[0];
       return { documentId: session.createScratch(p.text ?? "") };
     }
+    case "workspace.addRoot": {
+      const p = params as Parameters<RuntimeApi["workspace"]["addRoot"]>[0];
+      return JSON.parse(session.addWorkspaceRootJson(p.path));
+    }
+    case "workspace.snapshot": {
+      const p = params as Parameters<RuntimeApi["workspace"]["snapshot"]>[0];
+      return JSON.parse(session.readWorkspaceSnapshotJson(p.rootId));
+    }
+    case "workspace.refreshRoot": {
+      const p = params as Parameters<RuntimeApi["workspace"]["refreshRoot"]>[0];
+      return JSON.parse(session.refreshWorkspaceRootJson(p.rootId));
+    }
+    case "workspace.refresh": return JSON.parse(session.refreshWorkspaceRootsJson());
     case "surfaces.create": {
       const p = params as Parameters<RuntimeApi["surfaces"]["create"]>[0];
       return { surfaceId: session.createSurface(p.documentId, p.viewport ?? null) };

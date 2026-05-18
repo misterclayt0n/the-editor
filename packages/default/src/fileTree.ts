@@ -1,7 +1,8 @@
-import { mkdir, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { basename, dirname, join, relative, sep } from "node:path";
+import type { WorkspaceRootId } from "@the-editor/contracts/runtime";
 import { commandId, matchesCommandPaletteItem, toolTypeId, type CommandPaletteItem, type EditorModule, defineHostStore } from "@the-editor/editor";
 import { syncWorkbenchActiveSurface, workbenchSnapshotState } from "./workbenchSnapshot.js";
 
@@ -29,6 +30,8 @@ interface FileTreeState {
   gitStatus: FileTreeGitStatusEntry[];
   loading: boolean;
   treeRevision: number;
+  workspaceRootId?: WorkspaceRootId;
+  pollTimer?: ReturnType<typeof setInterval>;
   loadPromise?: Promise<void>;
 }
 
@@ -201,7 +204,16 @@ export function defaultFileTree(): EditorModule {
     });
 
     ensureFileTreeLoaded(editor);
+    startFileTreeWatcher(editor);
     editor.workbench.openTool(fileTreeToolTypeId, { placement: { kind: "dock", root: "leftSidebar" }, focus: false });
+
+    return {
+      dispose() {
+        const state = fileTreeState(editor);
+        if (state.pollTimer) clearInterval(state.pollTimer);
+        state.pollTimer = undefined;
+      },
+    };
   };
 }
 
@@ -253,20 +265,49 @@ async function retargetOpenFilePanes(editor: Parameters<EditorModule>[0], source
 function refreshFileTree(editor: Parameters<EditorModule>[0]): void {
   const state = fileTreeState(editor);
   state.loading = true;
-  state.loadPromise = Promise.all([collectWorkspacePaths(state.rootPath), collectGitStatus(state.rootPath)])
-    .then(([paths, gitStatus]) => {
-      state.paths = paths;
-      state.gitStatus = gitStatus;
-      state.treeRevision += 1;
-      state.loading = false;
-      editor.workbench.invalidate("tools");
-    })
+  state.loadPromise = (async () => {
+    const root = state.workspaceRootId
+      ? await editor.runtime.workspace.snapshot({ rootId: state.workspaceRootId })
+      : await editor.runtime.workspace.addRoot({ path: state.rootPath });
+    state.workspaceRootId = root.rootId;
+    const gitStatus = await collectGitStatus(state.rootPath);
+    state.paths = workspacePaths(root.entries);
+    state.gitStatus = gitStatus;
+    state.treeRevision = root.revision;
+    state.loading = false;
+    editor.workbench.invalidate("tools");
+  })()
     .catch((error) => {
       state.loading = false;
       editor.notifications.error("fileTree", `failed to load file tree: ${error instanceof Error ? error.message : String(error)}`);
       editor.workbench.invalidate("tools", "notifications");
     });
   editor.workbench.invalidate("tools");
+}
+
+function startFileTreeWatcher(editor: Parameters<EditorModule>[0]): void {
+  const state = fileTreeState(editor);
+  if (state.pollTimer) return;
+  state.pollTimer = setInterval(() => {
+    void refreshWatchedFileTree(editor);
+  }, 750);
+}
+
+async function refreshWatchedFileTree(editor: Parameters<EditorModule>[0]): Promise<void> {
+  const state = fileTreeState(editor);
+  if (!state.workspaceRootId || state.loading) return;
+  try {
+    const changed = await editor.runtime.workspace.refreshRoot({ rootId: state.workspaceRootId });
+    if (!changed.changes.length && changed.revision === state.treeRevision) return;
+    const snapshot = await editor.runtime.workspace.snapshot({ rootId: state.workspaceRootId });
+    state.paths = workspacePaths(snapshot.entries);
+    state.gitStatus = await collectGitStatus(state.rootPath);
+    state.treeRevision = snapshot.revision;
+    editor.workbench.invalidate("frame", "tabs", "tools");
+  } catch (error) {
+    editor.notifications.error("fileTree", `failed to refresh file tree: ${error instanceof Error ? error.message : String(error)}`);
+    editor.workbench.invalidate("notifications");
+  }
 }
 
 const execFileAsync = promisify(execFile);
@@ -309,27 +350,11 @@ function gitStatusKind(xy: string): FileTreeGitStatusEntry["status"] {
   return "modified";
 }
 
-async function collectWorkspacePaths(rootPath: string): Promise<string[]> {
-  const paths: string[] = [];
-  await visit(rootPath);
-  return paths.sort((a, b) => a.localeCompare(b));
-
-  async function visit(dir: string): Promise<void> {
-    const entries = await readdir(dir, { withFileTypes: true });
-    entries.sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name));
-    for (const entry of entries) {
-      if (entry.name.startsWith(".") && entry.name !== ".env" && entry.name !== ".gitignore") continue;
-      if (entry.isDirectory() && ignoredDirectoryNames.has(entry.name)) continue;
-      const absolute = join(dir, entry.name);
-      const rel = normalizeTreePath(relative(rootPath, absolute));
-      if (entry.isDirectory()) {
-        paths.push(`${rel}/`);
-        await visit(absolute);
-      } else if (entry.isFile()) {
-        paths.push(rel);
-      }
-    }
-  }
+function workspacePaths(entries: Array<{ path: string; kind: string }>): string[] {
+  return entries
+    .filter((entry) => entry.kind === "file" || entry.kind === "directory")
+    .map((entry) => entry.kind === "directory" ? `${entry.path}/` : entry.path)
+    .sort((a, b) => a.localeCompare(b));
 }
 
 function normalizeTreePath(path: string): string {

@@ -4,6 +4,7 @@ pub mod resource;
 pub mod search;
 pub mod session;
 pub mod syntax;
+pub mod workspace;
 
 pub use clipboard::SystemClipboard;
 pub use resource::{
@@ -33,5 +34,14 @@ pub use session::{
 pub use syntax::{
   FilesystemSyntaxResources,
   RuntimeSyntax,
+};
+pub use workspace::{
+  WorkspaceEntriesChanged,
+  WorkspaceEntry,
+  WorkspaceEntryChange,
+  WorkspaceEntryKind,
+  WorkspaceManager,
+  WorkspaceRootId,
+  WorkspaceSnapshot,
 };
 pub use the_lib::operation::OperationSpec;

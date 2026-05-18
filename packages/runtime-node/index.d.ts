@@ -4,6 +4,10 @@ export declare class NativeRuntimeSession {
   constructor()
   createScratch(text: string): number
   openFile(path: string): number
+  addWorkspaceRootJson(path: string): string
+  readWorkspaceSnapshotJson(rootId: number): string
+  refreshWorkspaceRootJson(rootId: number): string
+  refreshWorkspaceRootsJson(): string
   createSurface(documentId: number, viewport?: JsViewport | undefined | null): number
   destroySurface(surfaceId: number): void
   loadSurfaceFile(surfaceId: number, path: string): void

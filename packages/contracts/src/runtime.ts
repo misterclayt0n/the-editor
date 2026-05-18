@@ -34,6 +34,8 @@ export type DocumentId = number & { readonly __brand: "DocumentId" };
 export type SurfaceId = number & { readonly __brand: "SurfaceId" };
 export type ResourceId = number & { readonly __brand: "ResourceId" };
 export type SearchIndexId = number & { readonly __brand: "SearchIndexId" };
+export type WorkspaceRootId = number & { readonly __brand: "WorkspaceRootId" };
+export type WorkspaceEntryId = number & { readonly __brand: "WorkspaceEntryId" };
 
 export interface Viewport {
   firstRow: number;
@@ -59,6 +61,35 @@ export interface OkResult {
   ok: true;
 }
 
+export type WorkspaceEntryKind = "file" | "directory" | "symlink";
+export type WorkspaceEntryChangeKind = "added" | "removed" | "modified";
+
+export interface WorkspaceEntry {
+  id: WorkspaceEntryId;
+  rootId: WorkspaceRootId;
+  path: string;
+  kind: WorkspaceEntryKind;
+  mtime?: number;
+}
+
+export interface WorkspaceEntryChange {
+  kind: WorkspaceEntryChangeKind;
+  entry: WorkspaceEntry;
+}
+
+export interface WorkspaceSnapshot {
+  rootId: WorkspaceRootId;
+  rootPath: string;
+  revision: number;
+  entries: WorkspaceEntry[];
+}
+
+export interface WorkspaceEntriesChanged {
+  rootId: WorkspaceRootId;
+  rootPath: string;
+  revision: number;
+  changes: WorkspaceEntryChange[];
+}
 
 export interface SurfaceOperation {
   name: string;
@@ -303,6 +334,12 @@ export interface RuntimeApi {
   documents: {
     openFile(params: { path: string }): Promise<DocumentOpened>;
     createScratch(params: { text?: string }): Promise<DocumentOpened>;
+  };
+  workspace: {
+    addRoot(params: { path: string }): Promise<WorkspaceSnapshot>;
+    snapshot(params: { rootId: WorkspaceRootId }): Promise<WorkspaceSnapshot>;
+    refreshRoot(params: { rootId: WorkspaceRootId }): Promise<WorkspaceEntriesChanged>;
+    refresh(params?: Record<string, never>): Promise<WorkspaceEntriesChanged[]>;
   };
   surfaces: {
     create(params: { documentId: DocumentId; viewport?: Viewport }): Promise<SurfaceCreated>;

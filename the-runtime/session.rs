@@ -13,11 +13,13 @@ use std::{
 
 use ropey::Rope;
 use the_lib::{
+  Tendril,
   clipboard::{
     ClipboardProvider,
     ClipboardType,
   },
   document::Document,
+  transaction::{Replacement, ReplacementOverlapPolicy, Span, Transaction},
   operation::{
     OperationAtom,
     OperationSpec,
@@ -69,6 +71,13 @@ use crate::{
     RuntimeSyntax,
     RuntimeSyntaxError,
   },
+  workspace::{
+    WorkspaceEntriesChanged,
+    WorkspaceManager,
+    WorkspaceRootId,
+    WorkspaceSnapshot,
+    metadata_mtime,
+  },
 };
 
 #[derive(
@@ -111,17 +120,43 @@ impl SurfaceHandle {
   }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SaveBaseline {
+  pub revision: u64,
+  pub mtime:    Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExternalChangeState {
+  None,
+  ChangedOnDisk,
+  DeletedOnDisk,
+}
+
+impl Default for ExternalChangeState {
+  fn default() -> Self {
+    Self::None
+  }
+}
+
 #[derive(Debug)]
 pub struct RuntimeDocument {
-  pub document:       Document,
-  pub resource:       Option<ResourceId>,
-  pub saved_revision: Option<u64>,
-  pub readonly:       bool,
+  pub document:        Document,
+  pub resource:        Option<ResourceId>,
+  pub save_baseline:   Option<SaveBaseline>,
+  pub readonly:        bool,
+  pub external_change: ExternalChangeState,
 }
 
 impl RuntimeDocument {
   pub fn is_dirty(&self) -> bool {
-    self.saved_revision != Some(self.document.revision())
+    self
+      .save_baseline
+      .is_none_or(|baseline| baseline.revision != self.document.revision())
+  }
+
+  pub fn has_conflict(&self) -> bool {
+    self.is_dirty() && self.external_change != ExternalChangeState::None
   }
 }
 
@@ -185,6 +220,9 @@ pub enum RuntimeError {
   Transaction(#[from] the_lib::transaction::TransactionError),
 
   #[error(transparent)]
+  Document(#[from] the_lib::document::DocumentError),
+
+  #[error(transparent)]
   Operation(#[from] the_lib::operation::OperationError),
 
   #[error(transparent)]
@@ -210,6 +248,12 @@ pub enum RuntimeError {
 
   #[error("document {document:?} is readonly")]
   ReadonlyDocument { document: DocumentHandle },
+
+  #[error("document {document:?} has changed on disk")]
+  ResourceConflict { document: DocumentHandle },
+
+  #[error(transparent)]
+  Workspace(#[from] crate::workspace::WorkspaceError),
 }
 
 pub type RuntimeResult<T> = std::result::Result<T, RuntimeError>;
@@ -220,6 +264,7 @@ pub struct RuntimeSession {
   registers:          Registers,
   syntax_scheduler:   SyntaxScheduler,
   search:             SearchManager,
+  workspace:          WorkspaceManager,
   next_resource_id:   u64,
   next_document_id:   u64,
   next_surface_id:    u64,
@@ -261,6 +306,7 @@ impl RuntimeSession {
       registers: Registers::new(),
       syntax_scheduler: SyntaxScheduler::default(),
       search: SearchManager::default(),
+      workspace: WorkspaceManager::default(),
       next_resource_id: 0,
       next_document_id: 0,
       next_surface_id: 0,
@@ -332,6 +378,28 @@ impl RuntimeSession {
   pub fn refresh_search_index(&self, index: SearchIndexHandle) -> RuntimeResult<()> {
     self.search.refresh(index)?;
     Ok(())
+  }
+
+  pub fn add_workspace_root(&mut self, root_path: &Path) -> RuntimeResult<WorkspaceSnapshot> {
+    Ok(self.workspace.add_root(root_path)?)
+  }
+
+  pub fn workspace_snapshot(&self, root: WorkspaceRootId) -> RuntimeResult<WorkspaceSnapshot> {
+    Ok(self.workspace.snapshot(root)?)
+  }
+
+  pub fn refresh_workspace_root(&mut self, root: WorkspaceRootId) -> RuntimeResult<WorkspaceEntriesChanged> {
+    let changed = self.workspace.refresh_root(root)?;
+    self.apply_workspace_changes(&changed)?;
+    Ok(changed)
+  }
+
+  pub fn refresh_workspace_roots(&mut self) -> RuntimeResult<Vec<WorkspaceEntriesChanged>> {
+    let changed = self.workspace.refresh_all()?;
+    for batch in &changed {
+      self.apply_workspace_changes(batch)?;
+    }
+    Ok(changed)
   }
 
   pub fn query_search_files(
@@ -683,6 +751,130 @@ impl RuntimeSession {
     Ok(result)
   }
 
+  fn apply_workspace_changes(&mut self, changed: &WorkspaceEntriesChanged) -> RuntimeResult<()> {
+    let root = PathBuf::from(&changed.root_path);
+    for change in &changed.changes {
+      let path = root.join(&change.entry.path);
+      if change.entry.kind == crate::workspace::WorkspaceEntryKind::Directory {
+        continue;
+      }
+      self.apply_path_disk_change(&path, matches!(change.kind, crate::workspace::WorkspaceEntryChangeKind::Removed))?;
+    }
+    Ok(())
+  }
+
+  fn apply_path_disk_change(&mut self, path: &Path, removed: bool) -> RuntimeResult<()> {
+    let normalized = match normalize_file_path(path) {
+      Ok(path) => path,
+      Err(_) if removed => dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
+      Err(err) => return Err(RuntimeError::Io(err)),
+    };
+    let Some(resource) = self.resource_paths.get(&normalized).copied() else {
+      return Ok(());
+    };
+    let Some(document) = self.resource_documents.get(&resource).copied() else {
+      return Ok(());
+    };
+
+    if removed || !normalized.exists() {
+      if let Some(entry) = self.documents.get_mut(&document) {
+        entry.external_change = ExternalChangeState::DeletedOnDisk;
+      }
+      return Ok(());
+    }
+
+    let disk_mtime = file_mtime(&normalized);
+    let already_accounted_for = self
+      .documents
+      .get(&document)
+      .and_then(|entry| entry.save_baseline)
+      .is_some_and(|baseline| baseline.mtime == disk_mtime);
+    if already_accounted_for {
+      return Ok(());
+    }
+
+    let is_dirty = self
+      .documents
+      .get(&document)
+      .ok_or(RuntimeError::UnknownDocument(document))?
+      .is_dirty();
+    if is_dirty {
+      if let Some(entry) = self.documents.get_mut(&document) {
+        entry.external_change = ExternalChangeState::ChangedOnDisk;
+      }
+      return Ok(());
+    }
+
+    self.reload_document_from_path(document, &normalized, disk_mtime)
+  }
+
+  pub fn reload_document(&mut self, document: DocumentHandle) -> RuntimeResult<()> {
+    let resource = self
+      .documents
+      .get(&document)
+      .ok_or(RuntimeError::UnknownDocument(document))?
+      .resource
+      .ok_or(RuntimeError::DocumentHasNoResource { document })?;
+    let path = self
+      .resources
+      .get(&resource)
+      .ok_or(RuntimeError::UnknownResource(resource))?
+      .path()
+      .to_path_buf();
+    let mtime = file_mtime(&path);
+    self.reload_document_from_path(document, &path, mtime)
+  }
+
+  fn reload_document_from_path(
+    &mut self,
+    document: DocumentHandle,
+    path: &Path,
+    mtime: Option<u64>,
+  ) -> RuntimeResult<()> {
+    let new_text = read_text_file(path)?;
+    let before = self
+      .documents
+      .get(&document)
+      .ok_or(RuntimeError::UnknownDocument(document))?
+      .document
+      .text()
+      .clone();
+    let transaction = transaction_for_text_reload(&before, &new_text)?;
+    if !transaction.changes().is_empty() {
+      {
+        let entry = self
+          .documents
+          .get_mut(&document)
+          .ok_or(RuntimeError::UnknownDocument(document))?;
+        entry.document.apply_transaction(&transaction)?;
+      }
+
+      let surfaces = self.surfaces_for_document(document);
+      for surface in surfaces {
+        let surface_ref = &mut self
+          .surfaces
+          .get_mut(&surface)
+          .ok_or(RuntimeError::UnknownSurface(surface))?
+          .surface;
+        let document_ref = &self
+          .documents
+          .get(&document)
+          .ok_or(RuntimeError::UnknownDocument(document))?
+          .document;
+        surface_ref.observe_document_transaction(document_ref, before.clone(), transaction.clone())?;
+      }
+      self.syntax_scheduler.touch_document(document);
+    }
+
+    let entry = self
+      .documents
+      .get_mut(&document)
+      .ok_or(RuntimeError::UnknownDocument(document))?;
+    entry.save_baseline = Some(SaveBaseline { revision: entry.document.revision(), mtime });
+    entry.external_change = ExternalChangeState::None;
+    Ok(())
+  }
+
   fn advance_document_syntax_with_budget(
     &mut self,
     document: DocumentHandle,
@@ -787,6 +979,7 @@ impl RuntimeSession {
     }
 
     let text = read_text_file(&normalized)?;
+    let mtime = file_mtime(&normalized);
     let mut document = Document::new(text);
     self
       .syntax
@@ -794,13 +987,14 @@ impl RuntimeSession {
 
     let resource = self.insert_or_get_resource(normalized.clone())?;
     let handle = DocumentHandle::next(&mut self.next_document_id);
-    let saved_revision = Some(document.revision());
+    let save_baseline = Some(SaveBaseline { revision: document.revision(), mtime });
 
     self.documents.insert(handle, RuntimeDocument {
       document,
       resource: Some(resource),
-      saved_revision,
+      save_baseline,
       readonly: false,
+      external_change: ExternalChangeState::None,
     });
     self.resource_documents.insert(resource, handle);
     self.syntax_scheduler.touch_document(handle);
@@ -810,10 +1004,11 @@ impl RuntimeSession {
   pub fn create_scratch(&mut self, text: Rope) -> RuntimeResult<DocumentHandle> {
     let handle = DocumentHandle::next(&mut self.next_document_id);
     self.documents.insert(handle, RuntimeDocument {
-      document:       Document::new(text),
-      resource:       None,
-      saved_revision: None,
-      readonly:       false,
+      document:        Document::new(text),
+      resource:        None,
+      save_baseline:   None,
+      readonly:        false,
+      external_change: ExternalChangeState::None,
     });
     self.syntax_scheduler.touch_document(handle);
     Ok(handle)
@@ -1092,13 +1287,14 @@ impl RuntimeSession {
     render.set_measurements(measurements);
     let mut preview_surface = Surface::new(&preview_document, render, viewport)?;
     preview_surface.set_viewport_reconcile_document(&preview_document, viewport);
-    let saved_revision = Some(preview_document.revision());
+    let save_baseline = Some(SaveBaseline { revision: preview_document.revision(), mtime: None });
 
     self.documents.insert(preview_handle, RuntimeDocument {
       document: preview_document,
       resource: None,
-      saved_revision,
+      save_baseline,
       readonly: true,
+      external_change: ExternalChangeState::None,
     });
     self.surfaces.insert(surface, RuntimeSurface {
       surface:  preview_surface,
@@ -1129,8 +1325,13 @@ impl RuntimeSession {
       .path()
       .to_path_buf();
 
+    if entry.has_conflict() {
+      return Err(RuntimeError::ResourceConflict { document });
+    }
+
     write_text_file(&path, entry.document.text())?;
-    entry.saved_revision = Some(entry.document.revision());
+    entry.save_baseline = Some(SaveBaseline { revision: entry.document.revision(), mtime: file_mtime(&path) });
+    entry.external_change = ExternalChangeState::None;
     Ok(())
   }
 
@@ -1171,7 +1372,8 @@ impl RuntimeSession {
       .get_mut(&document)
       .ok_or(RuntimeError::UnknownDocument(document))?;
     entry.resource = Some(resource);
-    entry.saved_revision = Some(entry.document.revision());
+    entry.save_baseline = Some(SaveBaseline { revision: entry.document.revision(), mtime: file_mtime(&normalized) });
+    entry.external_change = ExternalChangeState::None;
     self
       .syntax
       .activate_document(&mut entry.document, Some(&normalized));
@@ -1279,6 +1481,43 @@ fn truncate_string_at_char_boundary(text: &mut String, max_bytes: usize) {
     boundary -= 1;
   }
   text.truncate(boundary);
+}
+
+fn file_mtime(path: &Path) -> Option<u64> {
+  fs::metadata(path).ok().and_then(|metadata| metadata_mtime(&metadata))
+}
+
+fn transaction_for_text_reload(
+  old: &Rope,
+  new: &Rope,
+) -> std::result::Result<Transaction, the_lib::transaction::TransactionError> {
+  let old_len = old.len_chars();
+  let new_len = new.len_chars();
+  let mut prefix = 0;
+  while prefix < old_len && prefix < new_len && old.char(prefix) == new.char(prefix) {
+    prefix += 1;
+  }
+
+  let mut suffix = 0;
+  while suffix < old_len.saturating_sub(prefix)
+    && suffix < new_len.saturating_sub(prefix)
+    && old.char(old_len - 1 - suffix) == new.char(new_len - 1 - suffix)
+  {
+    suffix += 1;
+  }
+
+  let old_end = old_len - suffix;
+  let new_end = new_len - suffix;
+  if prefix == old_end && prefix == new_end {
+    return Ok(Transaction::empty(old_len));
+  }
+
+  let replacement = new.slice(prefix..new_end).to_string();
+  Transaction::from_replacements(
+    old_len,
+    vec![Replacement::replace(Span { start: prefix, end: old_end }, Tendril::from(replacement))],
+    ReplacementOverlapPolicy::Reject,
+  )
 }
 
 fn merge_range(ranges: &mut Vec<Range<usize>>, mut range: Range<usize>) {
@@ -1644,6 +1883,50 @@ mod tests {
       runtime.document(document).unwrap().text().to_string(),
       "hellohello"
     );
+  }
+
+  #[test]
+  fn workspace_refresh_reloads_clean_open_file() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("a.txt");
+    std::fs::write(&path, "one\n").unwrap();
+
+    let mut runtime = RuntimeSession::default();
+    let snapshot = runtime.add_workspace_root(temp.path()).unwrap();
+    let document = runtime.open_file(&path).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    std::fs::write(&path, "two\n").unwrap();
+
+    let changed = runtime.refresh_workspace_root(WorkspaceRootId::new(snapshot.root_id).unwrap()).unwrap();
+
+    assert!(!changed.changes.is_empty());
+    assert_eq!(runtime.document(document).unwrap().text().to_string(), "two\n");
+    assert!(!runtime.document_entry(document).unwrap().is_dirty());
+  }
+
+  #[test]
+  fn workspace_refresh_marks_dirty_open_file_conflicted_without_overwriting() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("a.txt");
+    std::fs::write(&path, "one\n").unwrap();
+
+    let mut runtime = RuntimeSession::default();
+    let snapshot = runtime.add_workspace_root(temp.path()).unwrap();
+    let document = runtime.open_file(&path).unwrap();
+    let surface = runtime.create_surface(document).unwrap();
+    runtime.apply_surface_edit(surface, the_lib::operation::Edit {
+      transaction: Transaction::insert_at(runtime.document(document).unwrap().text().len_chars(), runtime.document(document).unwrap().text().len_chars(), "local").unwrap(),
+      selection: the_lib::selection::Selection::point(5),
+    }).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    std::fs::write(&path, "external\n").unwrap();
+
+    runtime.refresh_workspace_root(WorkspaceRootId::new(snapshot.root_id).unwrap()).unwrap();
+
+    let entry = runtime.document_entry(document).unwrap();
+    assert_eq!(entry.document.text().to_string(), "one\nlocal");
+    assert!(entry.is_dirty());
+    assert!(entry.has_conflict());
   }
 
   #[test]

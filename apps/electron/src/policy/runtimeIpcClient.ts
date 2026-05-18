@@ -34,6 +34,13 @@ export class RuntimeIpcClient implements RuntimeApi {
     createScratch: (params: Parameters<RuntimeApi["documents"]["createScratch"]>[0]) => this.request("documents.createScratch", params) as ReturnType<RuntimeApi["documents"]["createScratch"]>,
   };
 
+  readonly workspace = {
+    addRoot: (params: Parameters<RuntimeApi["workspace"]["addRoot"]>[0]) => this.request("workspace.addRoot", params) as ReturnType<RuntimeApi["workspace"]["addRoot"]>,
+    snapshot: (params: Parameters<RuntimeApi["workspace"]["snapshot"]>[0]) => this.request("workspace.snapshot", params) as ReturnType<RuntimeApi["workspace"]["snapshot"]>,
+    refreshRoot: (params: Parameters<RuntimeApi["workspace"]["refreshRoot"]>[0]) => this.request("workspace.refreshRoot", params) as ReturnType<RuntimeApi["workspace"]["refreshRoot"]>,
+    refresh: (params: Parameters<RuntimeApi["workspace"]["refresh"]>[0] = {}) => this.request("workspace.refresh", params) as ReturnType<RuntimeApi["workspace"]["refresh"]>,
+  };
+
   readonly surfaces = {
     create: (params: Parameters<RuntimeApi["surfaces"]["create"]>[0]) => this.request("surfaces.create", params) as ReturnType<RuntimeApi["surfaces"]["create"]>,
     destroy: (params: Parameters<RuntimeApi["surfaces"]["destroy"]>[0]) => this.request("surfaces.destroy", params) as ReturnType<RuntimeApi["surfaces"]["destroy"]>,

@@ -17,6 +17,9 @@ import type {
   SurfaceOperation,
   SurfaceState,
   Viewport,
+  WorkspaceEntriesChanged,
+  WorkspaceRootId,
+  WorkspaceSnapshot,
 } from "@the-editor/contracts/runtime";
 
 class RuntimeBrokerError extends Error {
@@ -116,6 +119,13 @@ export class MainNativeRuntimeApi implements RuntimeApi {
   readonly documents = {
     openFile: async (params: { path: string }): Promise<DocumentOpened> => this.call("documents.openFile", params),
     createScratch: async (params: { text?: string }): Promise<DocumentOpened> => this.call("documents.createScratch", params),
+  };
+
+  readonly workspace = {
+    addRoot: async (params: { path: string }): Promise<WorkspaceSnapshot> => this.call("workspace.addRoot", params),
+    snapshot: async (params: { rootId: WorkspaceRootId }): Promise<WorkspaceSnapshot> => this.call("workspace.snapshot", params),
+    refreshRoot: async (params: { rootId: WorkspaceRootId }): Promise<WorkspaceEntriesChanged> => this.call("workspace.refreshRoot", params),
+    refresh: async (): Promise<WorkspaceEntriesChanged[]> => this.call("workspace.refresh", {}),
   };
 
   readonly surfaces = {

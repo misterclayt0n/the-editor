@@ -35,6 +35,7 @@ use the_runtime::{
   RuntimeSession,
   SearchIndexHandle,
   SurfaceHandle,
+  WorkspaceRootId,
 };
 
 #[napi(object)]
@@ -180,6 +181,34 @@ impl NativeRuntimeSession {
     let mut runtime = self.lock()?;
     let document = runtime.open_file(path.as_ref()).map_err(runtime_error)?;
     Ok(document.get() as u32)
+  }
+
+  #[napi]
+  pub fn add_workspace_root_json(&self, path: String) -> Result<String> {
+    let mut runtime = self.lock()?;
+    let snapshot = runtime.add_workspace_root(path.as_ref()).map_err(runtime_error)?;
+    serde_json::to_string(&snapshot).map_err(json_error)
+  }
+
+  #[napi]
+  pub fn read_workspace_snapshot_json(&self, root_id: u32) -> Result<String> {
+    let runtime = self.lock()?;
+    let snapshot = runtime.workspace_snapshot(workspace_root_id(root_id)?).map_err(runtime_error)?;
+    serde_json::to_string(&snapshot).map_err(json_error)
+  }
+
+  #[napi]
+  pub fn refresh_workspace_root_json(&self, root_id: u32) -> Result<String> {
+    let mut runtime = self.lock()?;
+    let changed = runtime.refresh_workspace_root(workspace_root_id(root_id)?).map_err(runtime_error)?;
+    serde_json::to_string(&changed).map_err(json_error)
+  }
+
+  #[napi]
+  pub fn refresh_workspace_roots_json(&self) -> Result<String> {
+    let mut runtime = self.lock()?;
+    let changed = runtime.refresh_workspace_roots().map_err(runtime_error)?;
+    serde_json::to_string(&changed).map_err(json_error)
   }
 
   #[napi]
@@ -1080,6 +1109,14 @@ fn clipboard_type(kind: &str) -> Result<the_lib::clipboard::ClipboardType> {
   }
 }
 
+fn workspace_root_id(id: u32) -> Result<WorkspaceRootId> {
+  WorkspaceRootId::new(u64::from(id)).ok_or_else(|| Error::from_reason("workspace root id must be non-zero"))
+}
+
 fn runtime_error(error: the_runtime::RuntimeError) -> Error {
+  Error::from_reason(error.to_string())
+}
+
+fn json_error(error: serde_json::Error) -> Error {
   Error::from_reason(error.to_string())
 }

@@ -14,11 +14,13 @@ import * as monaco from "monaco-editor";
 import { configureMonacoWorkers } from "./MonacoWorkers.js";
 
 const fail = (operation: string, cause: unknown) => new EditorEngineError({ operation, cause });
+
 const attempt = <A>(operation: string, evaluate: () => A) =>
   Effect.try({ try: evaluate, catch: (cause) => fail(operation, cause) });
 
 const toMonacoRange = (range: EditorRange) =>
   new monaco.Range(range.startLineNumber, range.startColumn, range.endLineNumber, range.endColumn);
+
 const fromSelection = (selection: monaco.Selection): EditorSelection => ({
   startLineNumber: selection.startLineNumber,
   startColumn: selection.startColumn,
@@ -29,6 +31,7 @@ const fromSelection = (selection: monaco.Selection): EditorSelection => ({
   positionLineNumber: selection.positionLineNumber,
   positionColumn: selection.positionColumn,
 });
+
 const toSelection = (selection: EditorSelection) =>
   new monaco.Selection(
     selection.selectionStartLineNumber,

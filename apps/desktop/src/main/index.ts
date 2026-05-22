@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, Menu } from "electron";
 import { Effect } from "effect";
 import { join } from "node:path";
 
@@ -22,6 +22,7 @@ const createWindow = Effect.sync(() => {
 });
 
 void app.whenReady().then(() => {
+  Menu.setApplicationMenu(null);
   Effect.runSync(createWindow);
 
   app.on("activate", () => {

@@ -23,7 +23,11 @@ export function ScratchEditor() {
         languageId: "typescript",
         value: scratchContent,
       });
-      const editor = yield* engine.mount({ element: host, model, theme: "vs-dark" });
+      const editor = yield* engine.mount({
+        element: host,
+        model,
+        theme: "vs-dark",
+      });
       yield* editor.focus;
       yield* Effect.never;
     }).pipe(Effect.scoped, Effect.provide(MonacoEditorEngineLive), Effect.runFork);

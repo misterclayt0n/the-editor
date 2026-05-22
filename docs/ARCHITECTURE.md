@@ -297,6 +297,8 @@ The engine interface should expose only the editor capabilities the product need
 
 The engine interface is Effect-based. Mounted editors and models are scoped resources, so disposal is automatic and deterministic.
 
+The v1 editor engine API is intentionally Monaco-adjacent, but Monaco types are not exported. We reserve the right to reshape this into a more The Editor-native API as packages demand it. This is a pragmatic starting point: Monaco's concepts are battle-tested, and a future custom engine can implement this surface without forcing product or extension code to import Monaco directly.
+
 Conceptually:
 
 ```ts

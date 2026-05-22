@@ -130,6 +130,7 @@ Tests:            Vitest + @effect/vitest
 E2E:              Playwright
 Benchmarks:       mitata + custom scenario CLIs
 Lint/format:      oxlint + oxfmt
+Editor engine:    Monaco first, behind an Effect service interface
 Native later:     N-API / napi-rs behind narrow package interfaces
 ```
 
@@ -147,7 +148,9 @@ Effect should be used by default for:
 - persistence and stores
 - extension lifecycle
 
-Direct synchronous TypeScript is still allowed where profiling or simplicity demands it, especially inside tight editor kernels such as rope operations, selection movement, viewport math, and paint preparation.
+Direct synchronous TypeScript is still allowed where profiling or simplicity demands it, especially inside tight editor-engine adapters, interaction routing, viewport math, and paint preparation.
+
+Monaco is the default v1 editor engine. It is an implementation detail behind `@the-editor/editor`'s engine interface, not the extension API and not the architecture itself.
 
 ---
 
@@ -210,12 +213,6 @@ apps/
     native menus/windows/dialogs/shell integration
 
 packages/
-  rope/
-    standalone rope implementation
-    publishable package
-    tests and benchmarks
-    optional native adapter later
-
   contracts/
     shared public types
     desktop bridge contracts
@@ -236,22 +233,17 @@ packages/
     contribution types
     role/tool contracts
 
-  core/
-    document
-    transaction
-    selection
-    movement
-    history
-    syntax-facing document metadata
-
   editor/
-    editor pane
-    editor view
-    layout
-    rendering
-    decorations
-    gutters
-    editor commands
+    engine-neutral editor API
+    EditorEngine Effect service contract
+    editor model/instance types
+    editor-facing commands, diagnostics, hovers, completions, decorations
+
+  editor-engine-monaco/
+    Monaco dependency
+    Monaco worker setup
+    MonacoEditorEngine implementation
+    translation between The Editor types and Monaco types
 
   workbench/
     layout tree
@@ -281,19 +273,64 @@ This layout separates stable editor concepts from application UI and default pro
 
 The default product is not hardwired into the kernel. It lives in `packages/default` as a package set.
 
-`packages/rope` is first-class because text storage is core to the editor and may be useful as a standalone NPM package.
+Custom text storage, a standalone rope package, and a native/custom editor engine are explicitly deferred. They remain valid future work, but v1 should prove the product shell and extension architecture on top of Monaco first.
 
 ---
 
-## 7. The core modules
+## 7. Editor engine
 
-The editor should have a small number of deep modules. A deep module exposes a small interface while hiding substantial implementation detail.
+The editor engine is replaceable. Monaco is the first implementation.
 
-### 7.1 Document
+The rest of The Editor talks to `@the-editor/editor`, not directly to Monaco. `@the-editor/editor-engine-monaco` adapts Monaco into our Effect service interface.
 
-The document module owns text truth.
+The engine interface should expose only the editor capabilities the product needs:
 
-It should answer questions like:
+- create and dispose models
+- mount and dispose editor instances
+- focus and layout editors
+- read and set selections/positions
+- apply text edits
+- reveal positions/ranges
+- register editor-adjacent providers
+- publish diagnostics/markers
+- observe content and selection changes
+
+The engine interface is Effect-based. Mounted editors and models are scoped resources, so disposal is automatic and deterministic.
+
+Conceptually:
+
+```ts
+interface EditorEngineService {
+  createModel(input: CreateModelInput): Effect.Effect<EditorModel, EditorEngineError, Scope.Scope>;
+  mount(input: MountEditorInput): Effect.Effect<EditorInstance, EditorEngineError, Scope.Scope>;
+  setDiagnostics(input: SetDiagnosticsInput): Effect.Effect<void, EditorEngineError>;
+  registerHoverProvider(
+    provider: HoverProvider,
+  ): Effect.Effect<Disposable, EditorEngineError, Scope.Scope>;
+  registerCompletionProvider(
+    provider: CompletionProvider,
+  ): Effect.Effect<Disposable, EditorEngineError, Scope.Scope>;
+}
+```
+
+Monaco is allowed to own v1 text-model details such as content storage, undo/redo, cursor machinery, rendering, IME behavior, and editor viewport implementation.
+
+The Editor owns product behavior around the engine:
+
+- workbench layout
+- commands
+- interaction profiles
+- roles and tools
+- custom hover/completion presentation
+- diagnostics projections
+- package lifecycle
+- user configuration
+
+### 7.1 Document/model
+
+For v1, Monaco models own text truth inside mounted editor documents.
+
+The editor API should still expose engine-neutral document/model operations such as:
 
 - How many lines are there?
 - What is the text of line N?
@@ -320,13 +357,13 @@ interface TextDocument {
 }
 ```
 
-The implementation may use a piece table, rope, gap buffer, or simpler line array initially. That choice is internal. Callers should not care.
+The implementation is Monaco-backed for v1. Callers should not know or care whether the backing engine is Monaco, a future custom engine, or a native-backed engine.
 
-The document module should not know about DOM, canvas, Electron, tabs, panes, scroll positions, or extensions.
+The document/model API should not expose DOM, canvas, Electron, tabs, panes, scroll positions, or Monaco internals.
 
-### 7.2 Transactions
+### 7.2 Edits and transactions
 
-Transactions are the only way text changes.
+Editor-facing text changes should flow through engine-neutral edit/transaction types, even when Monaco applies them internally.
 
 A transaction describes edits and metadata:
 
@@ -349,7 +386,7 @@ interface Transaction {
 }
 ```
 
-The transaction module should make invalid states hard to express:
+The editor API should make invalid states hard to express:
 
 - ranges are normalized
 - overlapping edits are rejected or canonicalized
@@ -358,7 +395,7 @@ The transaction module should make invalid states hard to express:
 
 ### 7.3 Selection
 
-The selection module owns cursor and selection semantics.
+The editor API owns engine-neutral selection types. Monaco owns the v1 low-level selection engine.
 
 It should support:
 
@@ -374,7 +411,7 @@ Selection is not just an array of ranges. Editor behavior depends on selection i
 
 ### 7.4 Movement
 
-The movement module owns text navigation.
+Interaction profiles and editor commands own product-level movement behavior. Monaco owns the v1 primitive cursor movement engine unless a command deliberately overrides it.
 
 It should answer:
 
@@ -390,12 +427,13 @@ Movement should be independent of rendering where possible, but it may need layo
 
 The key design rule:
 
-- model movement belongs in `packages/core/movement`
-- visual movement that depends on layout belongs near `EditorPane` / layout
+- product movement belongs in editor commands and interaction profiles
+- engine-specific movement belongs inside the active editor-engine adapter
+- syntax-aware movement can be implemented by packages using LSP symbols, Tree-sitter, or other syntax providers
 
 ### 7.5 History
 
-History owns undo/redo.
+Monaco owns v1 undo/redo mechanics. The Editor may still own product-level history policy where it sits above engine operations.
 
 It groups transactions according to editing intent, not merely time.
 
@@ -407,11 +445,11 @@ Examples:
 - delete-word is a group
 - auto-indent may be grouped with newline
 
-History should not be a global app service. It belongs to an editable buffer/editor model.
+History should not be a global app service. It belongs to the active editor model/engine instance, with product policy layered above when needed.
 
 ### 7.6 Syntax
 
-Syntax is background-enriched document metadata.
+Syntax is background-enriched document metadata. Monaco provides some v1 language features, but The Editor should keep syntax-derived product behavior engine-neutral.
 
 It may provide:
 
@@ -428,11 +466,11 @@ The editor must be able to paint plain text immediately and accept better syntax
 
 ```txt
 text change
-  -> document updates synchronously
-  -> editor paints immediately, possibly with stale tokens
-  -> syntax worker receives new version
-  -> syntax worker posts token update for version N
-  -> editor applies token update only if still relevant
+  -> engine model updates synchronously
+  -> editor paints immediately, possibly with stale metadata
+  -> syntax/LSP/Tree-sitter worker receives new version
+  -> worker posts metadata update for version N
+  -> editor applies metadata update only if still relevant
 ```
 
 Syntax updates are versioned and cancellable/latest-wins.
@@ -996,19 +1034,17 @@ A practical rebuild should happen in vertical slices.
 - Effect installed and used for kernel/service scaffolding
 - `apps/web` Vite renderer
 - `apps/desktop` Electron host/preload
-- `packages/rope` initial text storage package
-- document module
-- transaction module
-- selection module
-- movement basics
+- `packages/editor` engine-neutral EditorEngine service contract
+- `packages/editor-engine-monaco` Monaco adapter package
+- Monaco mounted in `apps/web`
+- Effect-scoped editor model/editor disposal
 - editor pane
-- DOM or canvas editor view
-- native scrolling
-- basic commands/keymaps
-- open an in-memory file
+- native Monaco scrolling/rendering
+- basic commands/keymaps routed through The Editor
+- open an in-memory Monaco model
 - type, delete, move, select
 
-No syntax. No VCS. No extension host isolation. No native modules.
+No custom text engine. No VCS. No extension host isolation. No native modules.
 
 ### Phase 2: Real files and workbench
 
@@ -1020,13 +1056,15 @@ No syntax. No VCS. No extension host isolation. No native modules.
 - default theme
 - default keymap
 
-### Phase 3: Syntax and decorations
+### Phase 3: Syntax, diagnostics, and decorations
 
-- syntax worker
-- token cache
-- viewport-prioritized highlighting
-- diagnostics/decorations registry
+- Monaco diagnostics/markers bridge
+- diagnostics store
+- decorations registry
 - gutters registry
+- custom hover role proof
+- custom completion role proof
+- optional syntax/LSP/Tree-sitter metadata workers
 
 ### Phase 4: Extensions/packages
 

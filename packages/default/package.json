@@ -19,8 +19,8 @@
   },
   "dependencies": {
     "@the-editor/contracts": "workspace:*",
-    "@the-editor/core": "workspace:*",
     "@the-editor/editor": "workspace:*",
+    "@the-editor/editor-engine-monaco": "workspace:*",
     "@the-editor/extensions": "workspace:*",
     "@the-editor/kernel": "workspace:*",
     "@the-editor/workbench": "workspace:*",

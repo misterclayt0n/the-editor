@@ -10,7 +10,6 @@
     { "path": "../../packages/contracts" },
     { "path": "../../packages/kernel" },
     { "path": "../../packages/extensions" },
-    { "path": "../../packages/core" },
     { "path": "../../packages/editor" },
     { "path": "../../packages/workbench" },
     { "path": "../../packages/default" }

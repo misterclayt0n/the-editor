@@ -13,7 +13,6 @@
   },
   "dependencies": {
     "@the-editor/contracts": "workspace:*",
-    "@the-editor/core": "workspace:*",
     "@the-editor/default": "workspace:*",
     "@the-editor/editor": "workspace:*",
     "@the-editor/extensions": "workspace:*",

@@ -5,15 +5,8 @@
     "declaration": true,
     "declarationMap": true,
     "noEmit": true,
-    "lib": ["ES2023"]
+    "lib": ["ES2023", "DOM", "DOM.Iterable"]
   },
   "files": [],
-  "references": [
-    {
-      "path": "../contracts"
-    },
-    {
-      "path": "../core"
-    }
-  ]
+  "references": [{ "path": "../contracts" }]
 }

@@ -19,7 +19,6 @@
   },
   "dependencies": {
     "@the-editor/contracts": "workspace:*",
-    "@the-editor/core": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

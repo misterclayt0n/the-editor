@@ -1,5 +1,5 @@
 {
-  "name": "@the-editor/core",
+  "name": "@the-editor/editor-engine-monaco",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -19,13 +19,15 @@
   },
   "dependencies": {
     "@the-editor/contracts": "workspace:*",
-    "@the-editor/rope": "workspace:*",
-    "effect": "catalog:"
+    "@the-editor/editor": "workspace:*",
+    "effect": "catalog:",
+    "monaco-editor": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
+    "vite": "catalog:",
     "vitest": "catalog:"
   }
 }

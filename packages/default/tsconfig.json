@@ -5,27 +5,15 @@
     "declaration": true,
     "declarationMap": true,
     "noEmit": true,
-    "lib": ["ES2023"]
+    "lib": ["ES2023", "DOM", "DOM.Iterable"]
   },
   "files": [],
   "references": [
-    {
-      "path": "../contracts"
-    },
-    {
-      "path": "../kernel"
-    },
-    {
-      "path": "../extensions"
-    },
-    {
-      "path": "../core"
-    },
-    {
-      "path": "../editor"
-    },
-    {
-      "path": "../workbench"
-    }
+    { "path": "../contracts" },
+    { "path": "../kernel" },
+    { "path": "../extensions" },
+    { "path": "../editor" },
+    { "path": "../editor-engine-monaco" },
+    { "path": "../workbench" }
   ]
 }

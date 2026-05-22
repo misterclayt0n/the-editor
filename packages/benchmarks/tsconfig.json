@@ -5,15 +5,8 @@
     "declaration": true,
     "declarationMap": true,
     "noEmit": true,
-    "lib": ["ES2023"]
+    "lib": ["ES2023", "DOM", "DOM.Iterable"]
   },
   "files": [],
-  "references": [
-    {
-      "path": "../rope"
-    },
-    {
-      "path": "../core"
-    }
-  ]
+  "references": [{ "path": "../editor" }, { "path": "../editor-engine-monaco" }]
 }

@@ -12,8 +12,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@the-editor/core": "workspace:*",
-    "@the-editor/rope": "workspace:*",
+    "@the-editor/editor": "workspace:*",
+    "@the-editor/editor-engine-monaco": "workspace:*",
     "effect": "catalog:",
     "mitata": "catalog:"
   },

@@ -172,20 +172,24 @@ The default distribution is a package set.
 For example:
 
 ```txt
-@the/editor-core
-@the/default-workbench
-@the/default-editor-view
-@the/default-file-tree
-@the/default-command-palette
-@the/default-statusline
-@the/default-interaction-helix
-@the/default-theme
-@the/default-language-basics
+@the-editor/kernel
+@the-editor/editor
+@the-editor/editor-engine-monaco
+@the-editor/workbench
+@the-editor/default-workbench
+@the-editor/default-file-tree
+@the-editor/default-command-palette
+@the-editor/default-statusline
+@the-editor/default-interaction-helix
+@the-editor/default-theme
+@the-editor/default-language-basics
 ```
 
 These packages may ship together, but architecturally they are still packages.
 
 This keeps the product honest: if a feature cannot be replaced, it should be because the kernel truly needs it, not because the default implementation was hardwired by accident.
+
+The default editor engine is Monaco. It is provided by `@the-editor/editor-engine-monaco` behind the engine-neutral APIs in `@the-editor/editor`. Extension packages should target The Editor APIs, not Monaco APIs. Monaco can be exposed later as an unstable escape hatch if a real extension needs it, but it is not the core extension contract.
 
 ---
 
@@ -969,7 +973,8 @@ Avoid these traps:
 - hardcoding the default package set as special
 - letting packages imperatively mutate global layout
 - coupling command semantics to one palette implementation
-- coupling interaction semantics to one editor view implementation
+- coupling interaction semantics to one editor engine implementation
+- exposing Monaco as the primary extension API
 - requiring file-watch HMR for reload to work
 - forcing every package to live entirely in one execution context
 - creating too many formal roles too early

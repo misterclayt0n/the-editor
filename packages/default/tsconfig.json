@@ -1,0 +1,31 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "declarationMap": true,
+    "noEmit": true,
+    "lib": ["ES2023"]
+  },
+  "files": [],
+  "references": [
+    {
+      "path": "../contracts"
+    },
+    {
+      "path": "../kernel"
+    },
+    {
+      "path": "../extensions"
+    },
+    {
+      "path": "../core"
+    },
+    {
+      "path": "../editor"
+    },
+    {
+      "path": "../workbench"
+    }
+  ]
+}

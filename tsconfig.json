@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.base.json",
+  "files": [],
+  "references": [
+    { "path": "./apps/web" },
+    { "path": "./apps/desktop" },
+    { "path": "./packages/rope" },
+    { "path": "./packages/contracts" },
+    { "path": "./packages/kernel" },
+    { "path": "./packages/extensions" },
+    { "path": "./packages/core" },
+    { "path": "./packages/editor" },
+    { "path": "./packages/workbench" },
+    { "path": "./packages/default" },
+    { "path": "./packages/benchmarks" }
+  ]
+}

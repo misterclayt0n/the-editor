@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": true,
+    "lib": ["ES2023", "DOM", "DOM.Iterable"]
+  },
+  "files": [],
+  "references": [
+    { "path": "../../packages/contracts" },
+    { "path": "../../packages/kernel" },
+    { "path": "../../packages/extensions" },
+    { "path": "../../packages/core" },
+    { "path": "../../packages/editor" },
+    { "path": "../../packages/workbench" },
+    { "path": "../../packages/default" }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "name": "@the-editor/benchmarks",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "scripts": {
+    "build": "echo 'No benchmark build yet.'",
+    "typecheck": "tsgo --noEmit --pretty",
+    "test": "vitest run --passWithNoTests",
+    "bench": "echo 'No benchmark scenarios yet.'",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@the-editor/core": "workspace:*",
+    "@the-editor/rope": "workspace:*",
+    "effect": "catalog:",
+    "mitata": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

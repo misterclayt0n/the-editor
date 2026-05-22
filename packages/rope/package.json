@@ -1,0 +1,31 @@
+{
+  "name": "@the-editor/rope",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "echo \"No sources to build yet.\"",
+    "dev": "echo \"No sources to watch yet.\"",
+    "typecheck": "tsgo --noEmit --pretty",
+    "test": "vitest run --passWithNoTests",
+    "bench": "echo 'No rope benchmarks yet.'",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "mitata": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

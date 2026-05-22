@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "echo \"No web app to build yet.\"",
+    "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsgo --noEmit --pretty",
     "test": "vitest run --passWithNoTests",
@@ -15,6 +15,7 @@
     "@the-editor/contracts": "workspace:*",
     "@the-editor/default": "workspace:*",
     "@the-editor/editor": "workspace:*",
+    "@the-editor/editor-engine-monaco": "workspace:*",
     "@the-editor/extensions": "workspace:*",
     "@the-editor/kernel": "workspace:*",
     "@the-editor/workbench": "workspace:*",

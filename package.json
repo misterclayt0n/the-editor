@@ -4,7 +4,9 @@
   "type": "module",
   "scripts": {
     "build": "turbo run build",
-    "dev": "turbo run dev --parallel",
+    "dev": "pnpm dev:desktop",
+    "dev:web": "pnpm --filter @the-editor/web dev",
+    "dev:desktop": "pnpm --filter @the-editor/web dev & until curl -fsS http://localhost:5173 >/dev/null; do sleep 0.2; done; pnpm --filter @the-editor/desktop build && pnpm --filter @the-editor/desktop start",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "test:e2e": "turbo run test:e2e",

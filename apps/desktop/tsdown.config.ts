@@ -10,12 +10,12 @@ const shared = {
 export default defineConfig([
   {
     ...shared,
-    entry: ["src/main/index.ts"],
+    entry: { main: "src/main/index.ts" },
     clean: true,
     noExternal: (id) => id.startsWith("@the-editor/"),
   },
   {
     ...shared,
-    entry: ["src/preload/index.ts"],
+    entry: { preload: "src/preload/index.ts" },
   },
 ]);

@@ -2,6 +2,10 @@ packages:
   - "apps/*"
   - "packages/*"
 
+onlyBuiltDependencies:
+  - electron
+  - esbuild
+
 catalog:
   effect: ^3.21.2
   "@effect/language-service": ^0.86.2

@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm run build --watch",
-    "build": "echo \"No desktop app to build yet.\"",
+    "build": "tsdown",
     "start": "electron dist-electron/main.cjs",
     "typecheck": "tsgo --noEmit --pretty",
     "test": "vitest run --passWithNoTests",

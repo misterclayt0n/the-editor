@@ -5,13 +5,10 @@
     "noEmit": true,
     "lib": ["ES2023", "DOM", "DOM.Iterable"]
   },
-  "files": [],
-  "references": [
-    { "path": "../../packages/contracts" },
-    { "path": "../../packages/kernel" },
-    { "path": "../../packages/extensions" },
-    { "path": "../../packages/editor" },
-    { "path": "../../packages/workbench" },
-    { "path": "../../packages/default" }
+  "include": [
+    "src",
+    "vite.config.ts",
+    "../../packages/editor/src",
+    "../../packages/editor-engine-monaco/src"
   ]
 }

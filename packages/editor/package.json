@@ -6,12 +6,12 @@
   "sideEffects": false,
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
     }
   },
   "scripts": {
-    "build": "echo \"No sources to build yet.\"",
+    "build": "tsdown src/index.ts --dts --format esm",
     "dev": "echo \"No sources to watch yet.\"",
     "typecheck": "tsgo --noEmit --pretty",
     "test": "vitest run --passWithNoTests",

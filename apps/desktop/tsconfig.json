@@ -5,6 +5,5 @@
     "noEmit": true,
     "lib": ["ES2023"]
   },
-  "files": [],
-  "references": [{ "path": "../../packages/contracts" }]
+  "include": ["src", "tsdown.config.ts"]
 }

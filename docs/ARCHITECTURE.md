@@ -7,6 +7,7 @@ The Editor is a TypeScript-first editor. Its architecture is designed around loc
 The goal is a simple, fast editor architecture:
 
 - TypeScript owns editor state, input, rendering, scrolling, layout, extension composition, and UI.
+- Effect is the default programming model for lifecycle, services, background work, package loading, and typed failures.
 - The hot path for typing, cursor movement, selection, scrolling, and paint is local and synchronous.
 - Workers and native code are optional background accelerators, never mandatory hops in the input-to-paint path.
 - Packages and extensions remain first-class.
@@ -113,26 +114,68 @@ Native code is not a place to hide application architecture. It must sit behind 
 
 ---
 
-## 4. Process model
+## 4. Technology choices
 
-The default app shape is Electron:
+The default stack is:
 
 ```txt
-Electron Main Process
-  - application lifecycle
-  - native windows
-  - menus
-  - filesystem/dialog privileges
-  - shell integration
-  - process supervision
+Runtime/app:      Electron + Node
+Renderer:         Chromium + React
+Package manager: pnpm
+Monorepo tasks:   Turbo
+TypeScript:       strict TypeScript, tsgo when it behaves, tsc as fallback
+Effect:           default model for services/lifecycle/background work
+Build:            tsdown for packages, Vite for the web app
+Tests:            Vitest + @effect/vitest
+E2E:              Playwright
+Benchmarks:       mitata + custom scenario CLIs
+Lint/format:      oxlint + oxfmt
+Native later:     N-API / napi-rs behind narrow package interfaces
+```
 
-Renderer Process
+Node/Electron is the runtime compatibility contract. Bun may be useful for experiments or scripts, but extension/runtime behavior should assume Node compatibility.
+
+Effect should be used by default for:
+
+- package activation, disposal, and reload
+- service layers
+- resource scopes
+- typed errors
+- filesystem/workspace services
+- worker supervision
+- background jobs
+- persistence and stores
+- extension lifecycle
+
+Direct synchronous TypeScript is still allowed where profiling or simplicity demands it, especially inside tight editor kernels such as rope operations, selection movement, viewport math, and paint preparation.
+
+---
+
+## 5. Process model
+
+The app is split into a generic web renderer and a desktop host:
+
+```txt
+apps/web
+  - generic renderer/product app
+  - React + Vite
   - workbench UI
   - editor panes
   - file tree
   - command dispatch
   - extension/package composition
   - local editor state
+  - can run in a browser-like environment
+
+apps/desktop
+  - Electron main and preload
+  - application lifecycle
+  - native windows
+  - menus
+  - filesystem/dialog privileges
+  - shell integration
+  - process supervision
+  - typed desktop bridge
 
 Web Workers / Worker Threads
   - syntax work
@@ -142,72 +185,111 @@ Web Workers / Worker Threads
   - other cancellable background jobs
 ```
 
+The web app should not import Electron directly. Desktop-only capabilities flow through a typed bridge defined in `packages/contracts` and implemented by `apps/desktop/preload`.
+
 The renderer is allowed to hold real editor state. This is intentional.
 
-The main process should not be the editor brain. It is the host for privileged OS capabilities and app lifecycle.
+The desktop app should not be the editor brain. It is the host for privileged OS capabilities and app lifecycle.
 
 ---
 
-## 5. Package layout
+## 6. Repository layout
 
-The exact package names may evolve, but the intended shape is:
+The intended shape is:
 
 ```txt
-apps/electron/
-  main/
-  renderer/
+apps/
+  web/
+    generic renderer/product app
+    React + Vite
+    no direct Electron imports
 
-packages/core/
-  document/
-  transaction/
-  selection/
-  movement/
-  history/
-  syntax/
-  workspace/
+  desktop/
+    Electron main process
+    Electron preload bridge
+    native menus/windows/dialogs/shell integration
 
-packages/editor/
-  editor-pane/
-  editor-view/
-  layout/
-  rendering/
-  decorations/
-  gutters/
-  commands/
+packages/
+  rope/
+    standalone rope implementation
+    publishable package
+    tests and benchmarks
+    optional native adapter later
 
-packages/workbench/
-  tabs/
-  panels/
-  command-palette/
-  file-tree/
-  status-bar/
-  layout/
+  contracts/
+    shared public types
+    desktop bridge contracts
+    protocol and manifest types
 
-packages/extensions/
-  extension-host/
-  registries/
-  contributions/
+  kernel/
+    package loading
+    contribution ownership
+    reload lifecycle
+    stores
+    command bus
+    Effect services/layers
 
-packages/default/
-  default commands
-  default keymaps
-  default themes
-  default language basics
-  default file tree behavior
+  extensions/
+    ExtensionContext
+    registries
+    package manifests
+    contribution types
+    role/tool contracts
 
-packages/contracts/
-  shared public types
+  core/
+    document
+    transaction
+    selection
+    movement
+    history
+    syntax-facing document metadata
+
+  editor/
+    editor pane
+    editor view
+    layout
+    rendering
+    decorations
+    gutters
+    editor commands
+
+  workbench/
+    layout tree
+    dock roots
+    focus model
+    input router
+    role/tool mounting coordination
+
+  default/
+    default package set
+    default commands
+    default keymaps/profile
+    default theme
+    default editor/file tree/palette/statusline implementations
+
+  benchmarks/
+    shared benchmark utilities
+    scenario runners
+    performance fixtures
+
+docs/
+  ARCHITECTURE.md
+  EXTENSIONS.md
 ```
 
 This layout separates stable editor concepts from application UI and default product behavior.
 
+The default product is not hardwired into the kernel. It lives in `packages/default` as a package set.
+
+`packages/rope` is first-class because text storage is core to the editor and may be useful as a standalone NPM package.
+
 ---
 
-## 6. The core modules
+## 7. The core modules
 
 The editor should have a small number of deep modules. A deep module exposes a small interface while hiding substantial implementation detail.
 
-### 6.1 Document
+### 7.1 Document
 
 The document module owns text truth.
 
@@ -242,7 +324,7 @@ The implementation may use a piece table, rope, gap buffer, or simpler line arra
 
 The document module should not know about DOM, canvas, Electron, tabs, panes, scroll positions, or extensions.
 
-### 6.2 Transactions
+### 7.2 Transactions
 
 Transactions are the only way text changes.
 
@@ -274,7 +356,7 @@ The transaction module should make invalid states hard to express:
 - positions are validated against a document version
 - application order is deterministic
 
-### 6.3 Selection
+### 7.3 Selection
 
 The selection module owns cursor and selection semantics.
 
@@ -290,7 +372,7 @@ It should support:
 
 Selection is not just an array of ranges. Editor behavior depends on selection invariants, anchor/head direction, and movement affinity.
 
-### 6.4 Movement
+### 7.4 Movement
 
 The movement module owns text navigation.
 
@@ -311,7 +393,7 @@ The key design rule:
 - model movement belongs in `packages/core/movement`
 - visual movement that depends on layout belongs near `EditorPane` / layout
 
-### 6.5 History
+### 7.5 History
 
 History owns undo/redo.
 
@@ -327,7 +409,7 @@ Examples:
 
 History should not be a global app service. It belongs to an editable buffer/editor model.
 
-### 6.6 Syntax
+### 7.6 Syntax
 
 Syntax is background-enriched document metadata.
 
@@ -355,7 +437,7 @@ text change
 
 Syntax updates are versioned and cancellable/latest-wins.
 
-### 6.7 Workspace
+### 7.7 Workspace
 
 Workspace owns project-level state:
 
@@ -370,9 +452,9 @@ Workspace state is not editor state. It can update asynchronously without blocki
 
 ---
 
-## 7. Editor modules
+## 8. Editor modules
 
-### 7.1 EditorPane
+### 8.1 EditorPane
 
 `EditorPane` is the central interactive editor module.
 
@@ -411,7 +493,7 @@ The pane is allowed to synchronously read the document for visible lines. This i
 
 No asynchronous view-model request is required for ordinary rendering.
 
-### 7.2 EditorView
+### 8.2 EditorView
 
 `EditorView` owns the actual browser rendering strategy.
 
@@ -439,7 +521,7 @@ const overscanned = expand(firstLine, lastLine, overscanLines);
 
 Then it asks the pane/document for exactly that range.
 
-### 7.3 Layout
+### 8.3 Layout
 
 Layout converts model positions into visual positions.
 
@@ -462,7 +544,7 @@ Over time, layout may support:
 
 The layout module must remain local and cacheable. It must not become a remote render service.
 
-### 7.4 Rendering
+### 8.4 Rendering
 
 Rendering paints visible editor content.
 
@@ -498,7 +580,7 @@ It is produced locally by `EditorPane`/`EditorView`.
 
 ---
 
-## 8. Editor composition
+## 9. Editor composition
 
 The editor is composed from a few explicit owners:
 
@@ -519,7 +601,7 @@ When a new module is proposed, ask:
 
 ---
 
-## 9. Rendering and scrolling
+## 10. Rendering and scrolling
 
 Scrolling is native browser scrolling.
 
@@ -545,7 +627,7 @@ If syntax/decorations/gutters are stale, paint stale information and update late
 
 ---
 
-## 10. Virtualization
+## 11. Virtualization
 
 The editor, file tree, diff viewer, panels, and any large list must virtualize.
 
@@ -576,7 +658,7 @@ For a diff viewer this means:
 
 ---
 
-## 11. Scheduling
+## 12. Scheduling
 
 Scheduling is part of architecture, not an afterthought.
 
@@ -629,7 +711,7 @@ Recommended scheduler primitives:
 
 ---
 
-## 12. Extensions and packages
+## 13. Extensions and packages
 
 The package/extension system is a core strength and should remain.
 
@@ -679,7 +761,7 @@ If isolation is needed later, an extension host worker/process can be introduced
 
 ---
 
-## 13. Commands and keymaps
+## 14. Commands and keymaps
 
 Commands are named operations.
 
@@ -718,7 +800,7 @@ Keymap resolution should be synchronous for normal editor input.
 
 ---
 
-## 14. Decorations and gutters
+## 15. Decorations and gutters
 
 Decorations are visual annotations over editor content.
 
@@ -755,7 +837,7 @@ Line numbers are special: they are built-in, cheap, and should be rendered direc
 
 ---
 
-## 15. Syntax highlighting
+## 16. Syntax highlighting
 
 Syntax highlighting should be progressive.
 
@@ -778,7 +860,7 @@ Full-document tokenization must not block input.
 
 ---
 
-## 16. File tree
+## 17. File tree
 
 The file tree should be TypeScript/data-structure driven.
 
@@ -799,7 +881,7 @@ The file tree model should be separate from the file tree view.
 
 ---
 
-## 17. Diff viewer
+## 18. Diff viewer
 
 The diff viewer should be TS-first and worker-friendly.
 
@@ -818,7 +900,7 @@ The visible UI should never wait for an entire diff to be highlighted.
 
 ---
 
-## 18. Filesystem and persistence
+## 19. Filesystem and persistence
 
 Filesystem access belongs behind workspace/resource modules.
 
@@ -836,7 +918,7 @@ Documents should not directly call Electron APIs.
 
 ---
 
-## 19. Testing strategy
+## 20. Testing strategy
 
 The architecture should be testable through module interfaces.
 
@@ -885,7 +967,7 @@ Performance is a feature. We should have targeted tests/benchmarks for:
 
 ---
 
-## 20. Performance invariants
+## 21. Performance invariants
 
 The following invariants should guide implementation reviews:
 
@@ -902,14 +984,19 @@ The following invariants should guide implementation reviews:
 
 ---
 
-## 21. Implementation phases
+## 22. Implementation phases
 
 A practical rebuild should happen in vertical slices.
 
 ### Phase 1: Minimal local editor
 
-- Electron shell
-- one renderer process
+- pnpm workspace
+- Turbo task graph
+- strict TypeScript config
+- Effect installed and used for kernel/service scaffolding
+- `apps/web` Vite renderer
+- `apps/desktop` Electron host/preload
+- `packages/rope` initial text storage package
 - document module
 - transaction module
 - selection module
@@ -969,7 +1056,7 @@ Only after profiling:
 
 ---
 
-## 22. Architectural warning signs
+## 23. Architectural warning signs
 
 If these appear, stop and revisit this document:
 
@@ -986,7 +1073,7 @@ If these appear, stop and revisit this document:
 
 ---
 
-## 23. Final principle
+## 24. Final principle
 
 The editor is a local TypeScript application with deep modules, native browser scrolling, virtualized rendering, and optional background workers.
 

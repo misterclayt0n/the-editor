@@ -43,9 +43,9 @@ const toSelection = (selection: EditorSelection) =>
 const makeModel = (model: monaco.editor.ITextModel, input: CreateModelInput): EditorModel => ({
   uri: input.uri,
   languageId: input.languageId,
-  getValue: attempt("model.getValue", () => model.getValue()),
+  getValue: () => attempt("model.getValue", () => model.getValue()),
   setValue: (value) => attempt("model.setValue", () => model.setValue(value)),
-  getLineCount: attempt("model.getLineCount", () => model.getLineCount()),
+  getLineCount: () => attempt("model.getLineCount", () => model.getLineCount()),
 });
 
 const makeEditor = (editor: monaco.editor.IStandaloneCodeEditor): EditorInstance => ({
@@ -72,7 +72,9 @@ const makeEditor = (editor: monaco.editor.IStandaloneCodeEditor): EditorInstance
   onDidChangeContent: (listener) =>
     Effect.acquireRelease(
       attempt("editor.onDidChangeModelContent", () => {
-        const disposable = editor.onDidChangeModelContent(() => listener());
+        const disposable = editor.onDidChangeModelContent(() =>
+          Effect.runFork(listener().pipe(Effect.orDie)),
+        );
         return { dispose: attempt("editor.contentListener.dispose", () => disposable.dispose()) };
       }),
       (disposable) => disposable.dispose.pipe(Effect.orDie),
@@ -81,7 +83,7 @@ const makeEditor = (editor: monaco.editor.IStandaloneCodeEditor): EditorInstance
     Effect.acquireRelease(
       attempt("editor.onDidChangeCursorSelection", () => {
         const disposable = editor.onDidChangeCursorSelection((event) =>
-          listener(fromSelection(event.selection)),
+          Effect.runFork(listener(fromSelection(event.selection)).pipe(Effect.orDie)),
         );
         return { dispose: attempt("editor.selectionListener.dispose", () => disposable.dispose()) };
       }),

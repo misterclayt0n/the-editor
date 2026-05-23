@@ -1,4 +1,5 @@
-import { Effect, Duration, Fiber, Ref, Scope } from "effect";
+import { NodeRuntime } from "@effect/platform-node";
+import { Data, Duration, Effect, Fiber, Ref, Scope } from "effect";
 import { spawn, type ChildProcess } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
@@ -12,29 +13,23 @@ interface WaitForDevServerOptions {
   readonly timeoutMs?: number;
 }
 
-export class DevServerTimeoutError extends Error {
-  override readonly name = "DevServerTimeoutError";
+export class DevServerTimeoutError extends Data.TaggedError("DevServerTimeoutError")<{
   readonly url: string;
-
-  constructor(url: string) {
-    super(`Timed out waiting for dev server at ${url}`);
-    this.url = url;
+}> {
+  override get message() {
+    return `Timed out waiting for dev server at ${this.url}`;
   }
 }
 
-export class ChildProcessError extends Error {
-  override readonly name = "ChildProcessError";
-  readonly label: string;
+export class ChildProcessError extends Data.TaggedError("ChildProcessError")<{
   readonly code: number | null;
+  readonly label: string;
   readonly signal: NodeJS.Signals | null;
-
-  constructor(label: string, code: number | null, signal: NodeJS.Signals | null) {
-    super(
-      `${label} exited with ${code == null ? `signal ${String(signal)}` : `code ${String(code)}`}`,
-    );
-    this.label = label;
-    this.code = code;
-    this.signal = signal;
+}> {
+  override get message() {
+    return `${this.label} exited with ${
+      this.code == null ? `signal ${String(this.signal)}` : `code ${String(this.code)}`
+    }`;
   }
 }
 
@@ -106,7 +101,7 @@ export function runChild(
             resume(Effect.void);
             return;
           }
-          resume(Effect.fail(new ChildProcessError(label, code, signal)));
+          resume(Effect.fail(new ChildProcessError({ label, code, signal })));
         });
       }),
     ),
@@ -127,7 +122,7 @@ export function runCommand(
             resume(Effect.void);
             return;
           }
-          resume(Effect.fail(new ChildProcessError(label, code, signal)));
+          resume(Effect.fail(new ChildProcessError({ label, code, signal })));
         });
       }),
     ),
@@ -160,7 +155,7 @@ export function waitForDevServer(
       if (yield* isReady(url, intervalMs)) return;
       yield* Effect.sleep(Duration.millis(intervalMs));
     }
-    return yield* Effect.fail(new DevServerTimeoutError(url));
+    return yield* Effect.fail(new DevServerTimeoutError({ url }));
   });
 }
 
@@ -209,12 +204,5 @@ function isMainModule(): boolean {
 }
 
 if (isMainModule()) {
-  Effect.runPromise(program).catch((error: unknown) => {
-    if (error instanceof Error) {
-      console.error(`[dev] ${error.message}`);
-    } else {
-      console.error("[dev] failed", error);
-    }
-    process.exitCode = 1;
-  });
+  NodeRuntime.runMain(program);
 }

@@ -49,9 +49,9 @@ export interface EditorDisposable {
 export interface EditorModel {
   readonly uri: EditorUri;
   readonly languageId: EditorLanguageId;
-  readonly getValue: Effect.Effect<string, EditorEngineError>;
+  readonly getValue: () => Effect.Effect<string, EditorEngineError>;
   readonly setValue: (value: string) => Effect.Effect<void, EditorEngineError>;
-  readonly getLineCount: Effect.Effect<number, EditorEngineError>;
+  readonly getLineCount: () => Effect.Effect<number, EditorEngineError>;
 }
 
 export interface EditorInstance {
@@ -64,10 +64,10 @@ export interface EditorInstance {
   readonly applyEdits: (edits: readonly TextEdit[]) => Effect.Effect<void, EditorEngineError>;
   readonly revealPosition: (position: EditorPosition) => Effect.Effect<void, EditorEngineError>;
   readonly onDidChangeContent: (
-    listener: () => void,
+    listener: () => Effect.Effect<void, EditorEngineError>,
   ) => Effect.Effect<EditorDisposable, EditorEngineError, Scope.Scope>;
   readonly onDidChangeSelection: (
-    listener: (selection: EditorSelection | undefined) => void,
+    listener: (selection: EditorSelection | undefined) => Effect.Effect<void, EditorEngineError>,
   ) => Effect.Effect<EditorDisposable, EditorEngineError, Scope.Scope>;
 }
 

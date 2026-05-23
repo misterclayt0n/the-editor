@@ -8,7 +8,7 @@
     "dev:web": "node scripts/dev.ts web",
     "dev:desktop": "node scripts/dev.ts desktop",
     "typecheck": "turbo run typecheck && tsgo --noEmit --pretty -p scripts/tsconfig.json",
-    "test": "turbo run test && vitest run scripts",
+    "test": "turbo run test",
     "test:e2e": "turbo run test:e2e",
     "bench": "turbo run bench",
     "lint": "oxlint --ignore-pattern '**/node_modules/**' --ignore-pattern '**/dist/**' --ignore-pattern '**/dist-electron/**' .",

@@ -4,8 +4,7 @@
     "composite": true,
     "noEmit": true,
     "lib": ["ES2023"],
-    "types": ["node"],
-    "allowImportingTsExtensions": true
+    "types": ["node"]
   },
   "include": ["./**/*.ts"]
 }

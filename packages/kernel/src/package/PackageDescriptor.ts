@@ -1,10 +1,9 @@
 import type { Effect, Scope } from "effect";
-import type { PackageError } from "../errors.js";
 import type { PackageId } from "../ids.js";
 import type { PackageContext } from "./PackageContext.js";
 
 export interface PackageModule {
-  readonly activate: (context: PackageContext) => Effect.Effect<void, PackageError, Scope.Scope>;
+  readonly activate: (context: PackageContext) => Effect.Effect<void, unknown, Scope.Scope>;
 }
 
 export interface PackageDescriptor {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Scope } from "effect";
 import {
+  ActivationId,
   ContributionId,
   PackageDependencyCycleError,
   PackageDependencyMissingError,
@@ -18,12 +19,13 @@ import {
 interface TestContribution extends IdentifiedContribution {
   readonly value: string;
 }
+const aid = (s: string) => ActivationId(s);
 const cid = (s: string) => ContributionId(s);
 const pid = (s: string) => PackageId(s);
 
 const descriptor = (
   id: string,
-  activate: (context: PackageContext) => Effect.Effect<void, any, Scope.Scope>,
+  activate: (context: PackageContext) => Effect.Effect<void, unknown, Scope.Scope>,
   dependencies?: readonly PackageId[],
 ): PackageDescriptor => ({
   id: pid(id),
@@ -38,7 +40,7 @@ describe("kernel", () => {
       const scope = yield* Scope.make();
       yield* registry
         .register(
-          { packageId: pid("pkg"), activationId: "pkg#1" as any },
+          { packageId: pid("pkg"), activationId: aid("pkg#1") },
           { id: cid("a"), value: "A" },
         )
         .pipe(Effect.provideService(Scope.Scope, scope));
@@ -124,12 +126,10 @@ describe("kernel", () => {
   it.effect("missing dependency", () =>
     Effect.gen(function* () {
       const runtime = yield* makePackageRuntime;
-      const exit = yield* runtime
-        .activateGraph([descriptor("B", () => Effect.void, [pid("A")])])
-        .pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit))
-        expect(exit.cause.toString()).toContain("PackageDependencyMissingError");
+      const error = yield* Effect.flip(
+        runtime.activateGraph([descriptor("B", () => Effect.void, [pid("A")])]),
+      );
+      expect(error).toBeInstanceOf(PackageDependencyMissingError);
       expect(yield* runtime.listPackages).toEqual([]);
     }),
   );
@@ -137,15 +137,13 @@ describe("kernel", () => {
   it.effect("cycle detection", () =>
     Effect.gen(function* () {
       const runtime = yield* makePackageRuntime;
-      const exit = yield* runtime
-        .activateGraph([
+      const error = yield* Effect.flip(
+        runtime.activateGraph([
           descriptor("A", () => Effect.void, [pid("B")]),
           descriptor("B", () => Effect.void, [pid("A")]),
-        ])
-        .pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit))
-        expect(exit.cause.toString()).toContain("PackageDependencyCycleError");
+        ]),
+      );
+      expect(error).toBeInstanceOf(PackageDependencyCycleError);
       expect(yield* runtime.listPackages).toEqual([]);
     }),
   );

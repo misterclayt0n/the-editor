@@ -2,7 +2,6 @@ export * from "./ids.js";
 export * from "./errors.js";
 export * from "./ownership.js";
 export * from "./registry/Registry.js";
-export * from "./registry/RegistryRuntime.js";
 export * from "./package/PackageDescriptor.js";
 export * from "./package/PackageContext.js";
 export * from "./package/PackageRuntime.js";

@@ -7,7 +7,6 @@ import {
   PackageNotFoundError,
   type PackageError,
 } from "../errors.js";
-import { makeRegistryRuntime, type RegistryRuntime } from "../registry/RegistryRuntime.js";
 import { makeStoreRuntime, type StoreRuntime } from "../store/StoreRuntime.js";
 import type { PackageDescriptor } from "./PackageDescriptor.js";
 
@@ -39,38 +38,49 @@ export interface PackageRuntime {
   readonly disposePackage: (packageId: PackageId) => Effect.Effect<void, PackageError>;
   readonly listPackages: Effect.Effect<readonly PackageSnapshot[]>;
   readonly getPackage: (packageId: PackageId) => Effect.Effect<PackageSnapshot | undefined>;
-  readonly registries: RegistryRuntime;
   readonly stores: StoreRuntime;
 }
 
 const sortGraph = (
   descriptors: readonly PackageDescriptor[],
-): Effect.Effect<readonly PackageDescriptor[], PackageError> =>
-  Effect.sync(() => {
+): Effect.Effect<readonly PackageDescriptor[], PackageDependencyCycleError | PackageDependencyMissingError> =>
+  Effect.gen(function* () {
     const byId = new Map(descriptors.map((d) => [d.id, d] as const));
-    const visiting = new Set<string>(),
-      visited = new Set<string>(),
-      out: PackageDescriptor[] = [];
-    const visit = (d: PackageDescriptor, stack: PackageId[]): void => {
-      if (visited.has(d.id)) return;
-      if (visiting.has(d.id))
-        throw new PackageDependencyCycleError({ packageIds: [...stack, d.id] });
-      visiting.add(d.id);
-      for (const dep of d.dependencies ?? []) {
-        const depD = byId.get(dep);
-        if (!depD) throw new PackageDependencyMissingError({ packageId: d.id, dependencyId: dep });
-        visit(depD, [...stack, d.id]);
+    const visiting = new Set<string>();
+    const visited = new Set<string>();
+    const out: PackageDescriptor[] = [];
+
+    const visit = (
+      descriptor: PackageDescriptor,
+      stack: readonly PackageId[],
+    ): PackageDependencyCycleError | PackageDependencyMissingError | undefined => {
+      if (visited.has(descriptor.id)) return undefined;
+      if (visiting.has(descriptor.id)) {
+        return new PackageDependencyCycleError({ packageIds: [...stack, descriptor.id] });
       }
-      visiting.delete(d.id);
-      visited.add(d.id);
-      out.push(d);
+      visiting.add(descriptor.id);
+      for (const dependencyId of descriptor.dependencies ?? []) {
+        const dependency = byId.get(dependencyId);
+        if (!dependency) {
+          return new PackageDependencyMissingError({ packageId: descriptor.id, dependencyId });
+        }
+        const error = visit(dependency, [...stack, descriptor.id]);
+        if (error) return error;
+      }
+      visiting.delete(descriptor.id);
+      visited.add(descriptor.id);
+      out.push(descriptor);
+      return undefined;
     };
-    for (const d of descriptors) visit(d, []);
+
+    for (const descriptor of descriptors) {
+      const error = visit(descriptor, []);
+      if (error) return yield* Effect.fail(error);
+    }
     return out;
-  }).pipe(Effect.catchAll((e) => Effect.fail(e as PackageError)));
+  });
 
 export const makePackageRuntime = Effect.gen(function* () {
-  const registries = makeRegistryRuntime();
   const stores = yield* makeStoreRuntime();
   const records = yield* Ref.make(new Map<string, ActiveRecord>());
   const snapshots = yield* Ref.make(new Map<string, PackageSnapshot>());
@@ -121,7 +131,6 @@ export const makePackageRuntime = Effect.gen(function* () {
         packageId: descriptor.id,
         activationId,
         owner: { packageId: descriptor.id, activationId },
-        registries,
         stores,
       };
       const result = yield* descriptor.module
@@ -178,7 +187,6 @@ export const makePackageRuntime = Effect.gen(function* () {
     disposePackage: dispose,
     listPackages: Ref.get(snapshots).pipe(Effect.map((m) => Array.from(m.values()))),
     getPackage: (id) => Ref.get(snapshots).pipe(Effect.map((m) => m.get(id))),
-    registries,
     stores,
   };
   return runtime;

@@ -5,7 +5,7 @@ import {
 } from "@the-editor/kernel";
 import { Effect, type Layer, type Scope } from "effect";
 import type { ExtensionContext } from "./ExtensionContext.js";
-import { makeExtensionContext } from "./ExtensionContext.js";
+import { makeExtensionContext, PackageActivationContext } from "./ExtensionContext.js";
 
 export interface DefinePackageOptions {
   readonly id: string;
@@ -50,7 +50,9 @@ export function definePackage<Requirements = never>(
   };
 }
 
-export function toPackageDescriptor(extensionPackage: ExtensionPackage<never>): PackageDescriptor;
+export function toPackageDescriptor(
+  extensionPackage: ExtensionPackage<never | PackageActivationContext>,
+): PackageDescriptor;
 export function toPackageDescriptor<Requirements>(
   extensionPackage: ExtensionPackage<Requirements>,
   layer: Layer.Layer<Requirements>,
@@ -64,7 +66,10 @@ export function toPackageDescriptor<Requirements>(
     ...(extensionPackage.dependencies ? { dependencies: extensionPackage.dependencies } : {}),
     module: {
       activate: (context) => {
-        const activation = extensionPackage.activate(makeExtensionContext(context));
+        const extensionContext = makeExtensionContext(context);
+        const activation = extensionPackage
+          .activate(extensionContext)
+          .pipe(Effect.provideService(PackageActivationContext, extensionContext));
         // Adapter boundary: the extension package preserves its extra requirements type,
         // while the kernel descriptor can only expose Scope. Host composition provides the
         // extra requirements here before handing the descriptor to the kernel.

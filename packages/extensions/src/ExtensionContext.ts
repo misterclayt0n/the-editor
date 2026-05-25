@@ -4,6 +4,7 @@ import type {
   PackageContext,
   PackageId,
 } from "@the-editor/kernel";
+import { Context } from "effect";
 import type { ExtensionContributionApi } from "./contributions.js";
 import { makeExtensionStoreApi, type ExtensionStoreApi } from "./stores.js";
 
@@ -17,6 +18,10 @@ export interface ExtensionContext extends ExtensionContextIdentity {
   readonly contributions: ExtensionContributionApi;
   readonly stores: ExtensionStoreApi;
 }
+
+export class PackageActivationContext extends Context.Tag(
+  "@the-editor/extensions/PackageActivationContext",
+)<PackageActivationContext, ExtensionContext>() {}
 
 export const makeExtensionContext = (context: PackageContext): ExtensionContext => ({
   packageId: context.packageId,

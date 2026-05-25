@@ -11,7 +11,7 @@ import {
   type IdentifiedContribution,
   type PackageId as KernelPackageId,
 } from "@the-editor/kernel";
-import { definePackage, toPackageDescriptor } from "../src/index.js";
+import { PackageActivationContext, definePackage, toPackageDescriptor } from "../src/index.js";
 
 interface TestContribution extends IdentifiedContribution {
   readonly value: string;
@@ -57,6 +57,36 @@ describe("extensions package authoring SDK", () => {
         | undefined;
       const pkg = definePackage("pkg", (ctx) =>
         Effect.sync(() => {
+          seen = {
+            packageId: ctx.packageId,
+            activationId: ctx.activationId,
+            owner: ctx.owner,
+          };
+        }),
+      );
+
+      yield* runtime.activateGraph([toPackageDescriptor(pkg)]);
+      const snapshot = yield* runtime.getPackage(pid("pkg"));
+
+      expect(seen?.packageId).toEqual(pid("pkg"));
+      expect(seen?.activationId).toEqual(snapshot?.activationId);
+      expect(seen?.owner).toEqual({ packageId: pid("pkg"), activationId: snapshot?.activationId });
+    }),
+  );
+
+  it.effect("package activation context is available as an Effect service", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makePackageRuntime;
+      let seen:
+        | {
+            readonly packageId: KernelPackageId;
+            readonly activationId: ActivationId;
+            readonly owner: ContributionOwner;
+          }
+        | undefined;
+      const pkg = definePackage("pkg", () =>
+        Effect.gen(function* () {
+          const ctx = yield* PackageActivationContext;
           seen = {
             packageId: ctx.packageId,
             activationId: ctx.activationId,

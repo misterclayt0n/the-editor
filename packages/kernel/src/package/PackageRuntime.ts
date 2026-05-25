@@ -1,4 +1,4 @@
-import { Context, Effect, Exit, Layer, Ref, Scope } from "effect";
+import { Context, Effect, Either, Exit, Layer, Ref, Scope } from "effect";
 import {
   makeContributionIndex,
   type ContributionIndex,
@@ -233,10 +233,9 @@ export const makePackageRuntime = Effect.gen(function* () {
           );
           continue;
         }
-        const result = yield* activateOne(descriptor).pipe(Effect.exit);
-        if (Exit.isFailure(result) && !firstFailure) {
-          const snapshot = (yield* Ref.get(snapshots)).get(id);
-          firstFailure = snapshot?.failure as PackageError | undefined;
+        const result = yield* activateOne(descriptor).pipe(Effect.either);
+        if (Either.isLeft(result) && !firstFailure) {
+          firstFailure = result.left;
         }
       }
       if (firstFailure) return yield* Effect.fail(firstFailure);

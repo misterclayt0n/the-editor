@@ -4,6 +4,7 @@ import {
   ActivationId,
   ContributionId,
   ContributionIndexDuplicateRecordError,
+  PackageActivationError,
   PackageDependencyCycleError,
   PackageDependencyMissingError,
   PackageId,
@@ -347,6 +348,231 @@ describe("kernel", () => {
       ]);
       expect(order).toEqual(["A", "B"]);
       expect((yield* runtime.listPackages).map((s) => s.status)).toEqual(["active", "active"]);
+    }),
+  );
+
+  it.effect("reloading dependency cascades dependents", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makePackageRuntime;
+      const order: string[] = [];
+      const mod = (id: string, dependencies?: readonly PackageId[]) =>
+        descriptor(
+          id,
+          () =>
+            Effect.gen(function* () {
+              order.push(`activate ${id}`);
+              yield* Effect.addFinalizer(() => Effect.sync(() => order.push(`dispose ${id}`)));
+            }),
+          dependencies,
+        );
+
+      yield* runtime.activateGraph([mod("B", [pid("A")]), mod("C"), mod("A")]);
+      const a1 = yield* runtime.getPackage(pid("A"));
+      const b1 = yield* runtime.getPackage(pid("B"));
+      const c1 = yield* runtime.getPackage(pid("C"));
+      order.length = 0;
+
+      yield* runtime.reloadPackage(pid("A"));
+      const a2 = yield* runtime.getPackage(pid("A"));
+      const b2 = yield* runtime.getPackage(pid("B"));
+      const c2 = yield* runtime.getPackage(pid("C"));
+
+      expect(order).toEqual(["dispose B", "dispose A", "activate A", "activate B"]);
+      expect(a2?.activationId).not.toEqual(a1?.activationId);
+      expect(b2?.activationId).not.toEqual(b1?.activationId);
+      expect(c2?.activationId).toEqual(c1?.activationId);
+    }),
+  );
+
+  it.effect("disposing dependency disposes transitive dependents", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makePackageRuntime;
+      const order: string[] = [];
+      const mod = (id: string, dependencies?: readonly PackageId[]) =>
+        descriptor(
+          id,
+          () =>
+            Effect.gen(function* () {
+              yield* Effect.addFinalizer(() => Effect.sync(() => order.push(id)));
+            }),
+          dependencies,
+        );
+
+      yield* runtime.activateGraph([
+        mod("C", [pid("B")]),
+        mod("B", [pid("A")]),
+        mod("D"),
+        mod("A"),
+      ]);
+      const d = yield* runtime.getPackage(pid("D"));
+      yield* runtime.disposePackage(pid("A"));
+
+      expect(order).toEqual(["C", "B", "A"]);
+      expect((yield* runtime.getPackage(pid("A")))?.status).toBe("disposed");
+      expect((yield* runtime.getPackage(pid("B")))?.status).toBe("disposed");
+      expect((yield* runtime.getPackage(pid("C")))?.status).toBe("disposed");
+      expect((yield* runtime.getPackage(pid("D")))?.status).toBe("active");
+      expect((yield* runtime.getPackage(pid("D")))?.activationId).toEqual(d?.activationId);
+    }),
+  );
+
+  it.effect("failed dependency blocks dependent activation", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makePackageRuntime;
+      const registry = yield* makeRegistry<TestContribution>(RegistryId("test.registry"), {
+        contributionIndex: runtime.contributionIndex,
+      });
+      let bRan = false;
+      const error = yield* Effect.flip(
+        runtime.activateGraph([
+          descriptor("A", (ctx) =>
+            Effect.gen(function* () {
+              yield* registry.register(ctx.owner, { id: cid("a"), value: "A" });
+              return yield* Effect.fail("boom");
+            }),
+          ),
+          descriptor("B", () => Effect.sync(() => (bRan = true)), [pid("A")]),
+        ]),
+      );
+
+      expect(error).toBeInstanceOf(PackageActivationError);
+      expect((yield* runtime.getPackage(pid("A")))?.status).toBe("failed");
+      const b = yield* runtime.getPackage(pid("B"));
+      expect(b?.status).toBe("blocked");
+      expect(b?.blockedBy).toEqual([pid("A")]);
+      expect(bRan).toBe(false);
+      expect(yield* registry.list).toEqual([]);
+      expect(yield* runtime.contributionIndex.list).toEqual([]);
+    }),
+  );
+
+  it.effect("reload dependency failure blocks dependents", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makePackageRuntime;
+      const registry = yield* makeRegistry<TestContribution>(RegistryId("test.registry"), {
+        contributionIndex: runtime.contributionIndex,
+      });
+      const order: string[] = [];
+      yield* runtime.activateGraph([
+        descriptor("A", (ctx) =>
+          Effect.gen(function* () {
+            yield* registry.register(ctx.owner, { id: cid("a"), value: "A" });
+            yield* Effect.addFinalizer(() => Effect.sync(() => order.push("dispose A")));
+          }),
+        ),
+        descriptor(
+          "B",
+          () =>
+            Effect.gen(function* () {
+              yield* Effect.addFinalizer(() => Effect.sync(() => order.push("dispose B")));
+            }),
+          [pid("A")],
+        ),
+      ]);
+
+      const error = yield* Effect.flip(
+        runtime.reloadPackage(
+          pid("A"),
+          descriptor("A", () => Effect.fail("boom")),
+        ),
+      );
+
+      expect(error).toBeInstanceOf(PackageActivationError);
+      expect(order).toEqual(["dispose B", "dispose A"]);
+      expect((yield* runtime.getPackage(pid("A")))?.status).toBe("failed");
+      expect((yield* runtime.getPackage(pid("B")))?.status).toBe("blocked");
+      expect(yield* registry.list).toEqual([]);
+      expect(yield* runtime.contributionIndex.list).toEqual([]);
+      yield* runtime.activateGraph([descriptor("C", () => Effect.void)]);
+      expect((yield* runtime.getPackage(pid("C")))?.status).toBe("active");
+    }),
+  );
+
+  it.effect("retry failed dependency activates blocked dependents", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makePackageRuntime;
+      const order: string[] = [];
+      yield* runtime
+        .activateGraph([
+          descriptor("A", () => Effect.fail("boom")),
+          descriptor("B", () => Effect.sync(() => order.push("activate B")), [pid("A")]),
+        ])
+        .pipe(Effect.exit);
+      const failedA = yield* runtime.getPackage(pid("A"));
+      expect(failedA?.status).toBe("failed");
+      expect((yield* runtime.getPackage(pid("B")))?.status).toBe("blocked");
+
+      yield* runtime.reloadPackage(
+        pid("A"),
+        descriptor("A", () => Effect.sync(() => order.push("activate A"))),
+      );
+      const activeA = yield* runtime.getPackage(pid("A"));
+      const activeB = yield* runtime.getPackage(pid("B"));
+
+      expect(order).toEqual(["activate A", "activate B"]);
+      expect(activeA?.status).toBe("active");
+      expect(activeB?.status).toBe("active");
+      expect(activeA?.activationId).not.toEqual(failedA?.activationId);
+    }),
+  );
+
+  it.effect("cascaded reload preserves unrelated packages", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makePackageRuntime;
+      const registry = yield* makeRegistry<TestContribution>(RegistryId("test.registry"), {
+        contributionIndex: runtime.contributionIndex,
+      });
+      yield* runtime.activateGraph([
+        descriptor("A", () => Effect.void),
+        descriptor("B", () => Effect.void, [pid("A")]),
+        descriptor("C", (ctx) =>
+          registry.register(ctx.owner, { id: cid("c"), value: "C" }).pipe(Effect.asVoid),
+        ),
+      ]);
+      const c = yield* runtime.getPackage(pid("C"));
+      const contributions = yield* registry.list;
+      yield* runtime.reloadPackage(pid("A"));
+
+      expect((yield* runtime.getPackage(pid("C")))?.activationId).toEqual(c?.activationId);
+      expect(yield* registry.list).toEqual(contributions);
+    }),
+  );
+
+  it.effect("store lifetimes are preserved across cascaded reload", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makePackageRuntime;
+      const packageStore: StoreDefinition<number> = {
+        id: StoreId("cascade.package"),
+        version: 1,
+        lifetime: "package",
+        initial: Effect.succeed(0),
+      };
+      const activationStore: StoreDefinition<number> = {
+        id: StoreId("cascade.activation"),
+        version: 1,
+        lifetime: "activation",
+        initial: Effect.succeed(0),
+      };
+      const seen: Array<readonly [number, number]> = [];
+      const b = descriptor(
+        "B",
+        (ctx) =>
+          Effect.gen(function* () {
+            const p = yield* ctx.stores.getOrCreate(packageStore, ctx);
+            const a = yield* ctx.stores.getOrCreate(activationStore, ctx);
+            seen.push([yield* p.get, yield* a.get]);
+            yield* p.set(1);
+            yield* a.set(1);
+          }),
+        [pid("A")],
+      );
+      yield* runtime.activateGraph([descriptor("A", () => Effect.void), b]);
+      yield* runtime.reloadPackage(pid("A"));
+
+      expect(seen).toEqual([
+        [0, 0],
+        [1, 0],
+      ]);
     }),
   );
 

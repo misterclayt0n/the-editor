@@ -36,26 +36,31 @@ export const makeRegistry = <A extends IdentifiedContribution>(
             contribution,
           };
           const key = contribution.id;
-          const inserted = yield* Ref.modify(entries, (map) => {
-            if (map.has(key)) return [false, map] as const;
-            const next = new Map(map);
-            next.set(key, owned);
-            return [true, next] as const;
-          });
-          if (!inserted) {
-            return yield* new RegistryDuplicateContributionError({
-              registryId: id,
-              contributionId: contribution.id,
-            });
-          }
-          const removeEntry = Ref.update(entries, (map) => {
-            const current = map.get(key);
-            if (current !== owned) return map;
-            const next = new Map(map);
-            next.delete(key);
-            return next;
-          });
-          yield* Effect.addFinalizer(() => removeEntry);
+          const removeEntry = yield* Effect.uninterruptible(
+            Effect.gen(function* () {
+              const inserted = yield* Ref.modify(entries, (map) => {
+                if (map.has(key)) return [false, map] as const;
+                const next = new Map(map);
+                next.set(key, owned);
+                return [true, next] as const;
+              });
+              if (!inserted) {
+                return yield* new RegistryDuplicateContributionError({
+                  registryId: id,
+                  contributionId: contribution.id,
+                });
+              }
+              const removeEntry = Ref.update(entries, (map) => {
+                const current = map.get(key);
+                if (current !== owned) return map;
+                const next = new Map(map);
+                next.delete(key);
+                return next;
+              });
+              yield* Effect.addFinalizer(() => removeEntry);
+              return removeEntry;
+            }),
+          );
           if (options.contributionIndex) {
             const indexResult = yield* options.contributionIndex
               .add({

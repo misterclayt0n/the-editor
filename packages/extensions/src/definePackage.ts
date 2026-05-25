@@ -22,11 +22,19 @@ export interface ExtensionPackage<Requirements = never> {
   readonly activate: PackageActivation<Requirements>;
 }
 
-export function definePackage<Requirements = never>(
+export function definePackage(
+  id: string,
+  activate: PackageActivation<never>,
+): ExtensionPackage<never>;
+export function definePackage(
+  options: DefinePackageOptions,
+  activate: PackageActivation<never>,
+): ExtensionPackage<never>;
+export function definePackage<Requirements>(
   id: string,
   activate: PackageActivation<Requirements>,
 ): ExtensionPackage<Requirements>;
-export function definePackage<Requirements = never>(
+export function definePackage<Requirements>(
   options: DefinePackageOptions,
   activate: PackageActivation<Requirements>,
 ): ExtensionPackage<Requirements>;
@@ -42,9 +50,7 @@ export function definePackage<Requirements = never>(
   };
 }
 
-export function toPackageDescriptor(
-  extensionPackage: ExtensionPackage<never | Scope.Scope>,
-): PackageDescriptor;
+export function toPackageDescriptor(extensionPackage: ExtensionPackage<never>): PackageDescriptor;
 export function toPackageDescriptor<Requirements>(
   extensionPackage: ExtensionPackage<Requirements>,
   layer: Layer.Layer<Requirements>,

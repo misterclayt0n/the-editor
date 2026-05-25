@@ -1,4 +1,4 @@
-import { Effect, Ref, type Scope } from "effect";
+import { Effect, Exit, Ref, type Scope } from "effect";
 import { RegistryDuplicateContributionError } from "../errors.js";
 import type { RegistryId } from "../ids.js";
 import type { ContributionIndex } from "../contribution/ContributionIndex.js";
@@ -36,25 +36,36 @@ export const makeRegistry = <A extends IdentifiedContribution>(
             contribution,
           };
           const key = contribution.id;
-          const alreadyRegistered = yield* Ref.get(entries).pipe(Effect.map((map) => map.has(key)));
-          if (alreadyRegistered) {
+          const inserted = yield* Ref.modify(entries, (map) => {
+            if (map.has(key)) return [false, map] as const;
+            const next = new Map(map);
+            next.set(key, owned);
+            return [true, next] as const;
+          });
+          if (!inserted) {
             return yield* new RegistryDuplicateContributionError({
               registryId: id,
               contributionId: contribution.id,
             });
           }
           if (options.contributionIndex) {
-            yield* options.contributionIndex.add({
-              owner,
-              registryId: id,
-              contributionId: contribution.id,
-            });
+            const indexResult = yield* options.contributionIndex
+              .add({
+                owner,
+                registryId: id,
+                contributionId: contribution.id,
+              })
+              .pipe(Effect.exit);
+            if (Exit.isFailure(indexResult)) {
+              yield* Ref.update(entries, (map) => {
+                if (map.get(key) !== owned) return map;
+                const next = new Map(map);
+                next.delete(key);
+                return next;
+              });
+              return yield* Effect.failCause(indexResult.cause);
+            }
           }
-          yield* Ref.update(entries, (map) => {
-            const next = new Map(map);
-            next.set(key, owned);
-            return next;
-          });
           yield* Effect.addFinalizer(() =>
             Ref.update(entries, (map) => {
               const current = map.get(key);

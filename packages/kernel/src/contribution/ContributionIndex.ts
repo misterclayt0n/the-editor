@@ -9,7 +9,7 @@ export interface ContributionRecord {
   readonly contributionId: ContributionId;
 }
 
-export type RegistryChange =
+export type ContributionIndexChange =
   | { readonly type: "added"; readonly record: ContributionRecord }
   | { readonly type: "removed"; readonly record: ContributionRecord };
 
@@ -23,7 +23,7 @@ export interface ContributionIndex {
     activationId: ActivationId,
   ) => Effect.Effect<readonly ContributionRecord[]>;
   readonly listByRegistry: (registryId: RegistryId) => Effect.Effect<readonly ContributionRecord[]>;
-  readonly changes: Effect.Effect<Queue.Dequeue<RegistryChange>, never, Scope.Scope>;
+  readonly changes: Effect.Effect<Queue.Dequeue<ContributionIndexChange>, never, Scope.Scope>;
 }
 
 const recordKey = (record: ContributionRecord): string =>
@@ -31,9 +31,10 @@ const recordKey = (record: ContributionRecord): string =>
 
 export const makeContributionIndex: Effect.Effect<ContributionIndex> = Effect.gen(function* () {
   const records = yield* Ref.make(new Map<string, ContributionRecord>());
-  const changes = yield* PubSub.unbounded<RegistryChange>();
+  const changes = yield* PubSub.unbounded<ContributionIndexChange>();
 
-  const publish = (change: RegistryChange) => PubSub.publish(changes, change).pipe(Effect.asVoid);
+  const publish = (change: ContributionIndexChange) =>
+    PubSub.publish(changes, change).pipe(Effect.asVoid);
 
   const listMatching = (predicate: (record: ContributionRecord) => boolean) =>
     Ref.get(records).pipe(Effect.map((map) => Array.from(map.values()).filter(predicate)));

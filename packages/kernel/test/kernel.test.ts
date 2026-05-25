@@ -7,6 +7,7 @@ import {
   PackageDependencyCycleError,
   PackageDependencyMissingError,
   PackageId,
+  RegistryDuplicateContributionError,
   RegistryId,
   StoreId,
   makeContributionIndex,
@@ -122,6 +123,36 @@ describe("kernel", () => {
         ),
       ).toEqual([cid("a1"), cid("a2")]);
       yield* Scope.close(scope, Exit.void);
+    }),
+  );
+
+  it.effect("same registry duplicate contribution is rejected", () =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry<TestContribution>(RegistryId("test.registry"));
+      const scopeA = yield* Scope.make();
+      const scopeB = yield* Scope.make();
+      yield* registry
+        .register(
+          { packageId: pid("pkg.a"), activationId: aid("pkg.a#1") },
+          { id: cid("same"), value: "A" },
+        )
+        .pipe(Effect.provideService(Scope.Scope, scopeA));
+
+      const error = yield* Effect.flip(
+        registry
+          .register(
+            { packageId: pid("pkg.b"), activationId: aid("pkg.b#1") },
+            { id: cid("same"), value: "B" },
+          )
+          .pipe(Effect.provideService(Scope.Scope, scopeB)),
+      );
+
+      expect(error).toBeInstanceOf(RegistryDuplicateContributionError);
+      expect((yield* registry.list).map((entry) => entry.contribution.value)).toEqual(["A"]);
+      yield* Scope.close(scopeB, Exit.void);
+      expect((yield* registry.list).map((entry) => entry.contribution.value)).toEqual(["A"]);
+      yield* Scope.close(scopeA, Exit.void);
+      expect(yield* registry.list).toEqual([]);
     }),
   );
 

@@ -14,7 +14,7 @@ export interface DefinePackageOptions {
 
 export type PackageActivation<Requirements = never> = (
   context: ExtensionContext,
-) => Effect.Effect<void, unknown, Scope.Scope | Requirements>;
+) => Effect.Effect<void, unknown, Scope.Scope | PackageActivationContext | Requirements>;
 
 export interface ExtensionPackage<Requirements = never> {
   readonly id: KernelPackageId;
@@ -50,9 +50,7 @@ export function definePackage<Requirements = never>(
   };
 }
 
-export function toPackageDescriptor(
-  extensionPackage: ExtensionPackage<never | PackageActivationContext>,
-): PackageDescriptor;
+export function toPackageDescriptor(extensionPackage: ExtensionPackage<never>): PackageDescriptor;
 export function toPackageDescriptor<Requirements>(
   extensionPackage: ExtensionPackage<Requirements>,
   layer: Layer.Layer<Requirements>,

@@ -12,28 +12,28 @@ export interface DefinePackageOptions {
   readonly dependencies?: readonly string[];
 }
 
-export type PackageActivation<R = Scope.Scope> = (
+export type PackageActivation<Requirements = never> = (
   context: ExtensionContext,
-) => Effect.Effect<void, unknown, R>;
+) => Effect.Effect<void, unknown, Scope.Scope | Requirements>;
 
-export interface ExtensionPackage<R = Scope.Scope> {
+export interface ExtensionPackage<Requirements = never> {
   readonly id: KernelPackageId;
   readonly dependencies?: readonly KernelPackageId[];
-  readonly activate: PackageActivation<R>;
+  readonly activate: PackageActivation<Requirements>;
 }
 
-export function definePackage<R = Scope.Scope>(
+export function definePackage<Requirements = never>(
   id: string,
-  activate: PackageActivation<R>,
-): ExtensionPackage<R>;
-export function definePackage<R = Scope.Scope>(
+  activate: PackageActivation<Requirements>,
+): ExtensionPackage<Requirements>;
+export function definePackage<Requirements = never>(
   options: DefinePackageOptions,
-  activate: PackageActivation<R>,
-): ExtensionPackage<R>;
-export function definePackage<R = Scope.Scope>(
+  activate: PackageActivation<Requirements>,
+): ExtensionPackage<Requirements>;
+export function definePackage<Requirements = never>(
   input: string | DefinePackageOptions,
-  activate: PackageActivation<R>,
-): ExtensionPackage<R> {
+  activate: PackageActivation<Requirements>,
+): ExtensionPackage<Requirements> {
   const options = typeof input === "string" ? { id: input } : input;
   return {
     id: PackageId(options.id),
@@ -42,16 +42,16 @@ export function definePackage<R = Scope.Scope>(
   };
 }
 
-export function toPackageDescriptor<R extends Scope.Scope>(
-  extensionPackage: ExtensionPackage<R>,
+export function toPackageDescriptor(
+  extensionPackage: ExtensionPackage<never | Scope.Scope>,
 ): PackageDescriptor;
-export function toPackageDescriptor<R>(
-  extensionPackage: ExtensionPackage<Scope.Scope | R>,
-  layer: Layer.Layer<R>,
+export function toPackageDescriptor<Requirements>(
+  extensionPackage: ExtensionPackage<Requirements>,
+  layer: Layer.Layer<Requirements>,
 ): PackageDescriptor;
-export function toPackageDescriptor<R>(
-  extensionPackage: ExtensionPackage<Scope.Scope | R>,
-  layer?: Layer.Layer<R>,
+export function toPackageDescriptor<Requirements>(
+  extensionPackage: ExtensionPackage<Requirements>,
+  layer?: Layer.Layer<Requirements>,
 ): PackageDescriptor {
   return {
     id: extensionPackage.id,
@@ -59,7 +59,7 @@ export function toPackageDescriptor<R>(
     module: {
       activate: (context) => {
         const activation = extensionPackage.activate(makeExtensionContext(context));
-        // Adapter boundary: the extension package preserves its required environment type,
+        // Adapter boundary: the extension package preserves its extra requirements type,
         // while the kernel descriptor can only expose Scope. Host composition provides the
         // extra requirements here before handing the descriptor to the kernel.
         return (layer ? Effect.provide(activation, layer) : activation) as Effect.Effect<

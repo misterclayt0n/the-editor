@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Context, Effect, Layer } from "effect";
 import {
   ContributionId,
   PackageId,
@@ -11,7 +11,7 @@ import {
   type IdentifiedContribution,
   type PackageId as KernelPackageId,
 } from "@the-editor/kernel";
-import { definePackage } from "../src/index.js";
+import { definePackage, toPackageDescriptor } from "../src/index.js";
 
 interface TestContribution extends IdentifiedContribution {
   readonly value: string;
@@ -20,18 +20,27 @@ interface TestContribution extends IdentifiedContribution {
 const cid = (value: string) => ContributionId(value);
 const pid = (value: string) => PackageId(value);
 
+class TestCapability extends Context.Tag("test/TestCapability")<
+  TestCapability,
+  { readonly value: Effect.Effect<number> }
+>() {}
+
 describe("extensions package authoring SDK", () => {
   it("definePackage simple form creates kernel descriptor", () => {
-    const descriptor = definePackage("user.config", () => Effect.void);
+    const pkg = definePackage("user.config", () => Effect.void);
+    const descriptor = toPackageDescriptor(pkg);
+    expect(pkg.id).toEqual(pid("user.config"));
     expect(descriptor.id).toEqual(pid("user.config"));
     expect(descriptor.dependencies).toBeUndefined();
   });
 
   it("definePackage options form brands dependencies", () => {
-    const descriptor = definePackage(
+    const pkg = definePackage(
       { id: "user.config", dependencies: ["foundation.a", "foundation.b"] },
       () => Effect.void,
     );
+    const descriptor = toPackageDescriptor(pkg);
+    expect(pkg.id).toEqual(pid("user.config"));
     expect(descriptor.id).toEqual(pid("user.config"));
     expect(descriptor.dependencies).toEqual([pid("foundation.a"), pid("foundation.b")]);
   });
@@ -46,7 +55,7 @@ describe("extensions package authoring SDK", () => {
             readonly owner: ContributionOwner;
           }
         | undefined;
-      const descriptor = definePackage("pkg", (ctx) =>
+      const pkg = definePackage("pkg", (ctx) =>
         Effect.sync(() => {
           seen = {
             packageId: ctx.packageId,
@@ -56,12 +65,34 @@ describe("extensions package authoring SDK", () => {
         }),
       );
 
-      yield* runtime.activateGraph([descriptor]);
+      yield* runtime.activateGraph([toPackageDescriptor(pkg)]);
       const snapshot = yield* runtime.getPackage(pid("pkg"));
 
       expect(seen?.packageId).toEqual(pid("pkg"));
       expect(seen?.activationId).toEqual(snapshot?.activationId);
       expect(seen?.owner).toEqual({ packageId: pid("pkg"), activationId: snapshot?.activationId });
+    }),
+  );
+
+  it.effect("package activation can require host-provided Effect services", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makePackageRuntime;
+      let seen: number | undefined;
+      const pkg = definePackage("pkg", () =>
+        Effect.gen(function* () {
+          const capability = yield* TestCapability;
+          seen = yield* capability.value;
+        }),
+      );
+      const descriptor = toPackageDescriptor(
+        pkg,
+        Layer.succeed(TestCapability, { value: Effect.succeed(42) }),
+      );
+
+      yield* runtime.activateGraph([descriptor]);
+
+      expect((yield* runtime.getPackage(pid("pkg")))?.status).toBe("active");
+      expect(seen).toBe(42);
     }),
   );
 
@@ -71,11 +102,11 @@ describe("extensions package authoring SDK", () => {
       const registry = yield* makeRegistry<TestContribution>(RegistryId("test.registry"), {
         contributionIndex: runtime.contributionIndex,
       });
-      const descriptor = definePackage("pkg", (ctx) =>
+      const pkg = definePackage("pkg", (ctx) =>
         ctx.contributions.register(registry, { id: cid("a"), value: "A" }).pipe(Effect.asVoid),
       );
 
-      yield* runtime.activateGraph([descriptor]);
+      yield* runtime.activateGraph([toPackageDescriptor(pkg)]);
       const snapshot = yield* runtime.getPackage(pid("pkg"));
       const registryItems = yield* registry.list;
       const records = yield* runtime.contributionIndex.list;
@@ -104,8 +135,8 @@ describe("extensions package authoring SDK", () => {
           ctx.contributions.register(registry, { id: cid(id), value: id }).pipe(Effect.asVoid),
         );
 
-      yield* runtime.activateGraph([descriptor("old")]);
-      yield* runtime.reloadPackage(pid("pkg"), descriptor("new"));
+      yield* runtime.activateGraph([toPackageDescriptor(descriptor("old"))]);
+      yield* runtime.reloadPackage(pid("pkg"), toPackageDescriptor(descriptor("new")));
 
       expect((yield* registry.list).map((item) => item.contributionId)).toEqual([cid("new")]);
     }),
@@ -115,7 +146,7 @@ describe("extensions package authoring SDK", () => {
     Effect.gen(function* () {
       const runtime = yield* makePackageRuntime;
       const seen: number[] = [];
-      const descriptor = definePackage("pkg", (ctx) =>
+      const pkg = definePackage("pkg", (ctx) =>
         Effect.gen(function* () {
           const store = yield* ctx.stores.package({
             id: "counter",
@@ -127,7 +158,7 @@ describe("extensions package authoring SDK", () => {
         }),
       );
 
-      yield* runtime.activateGraph([descriptor]);
+      yield* runtime.activateGraph([toPackageDescriptor(pkg)]);
       yield* runtime.reloadPackage(pid("pkg"));
       expect(seen).toEqual([0, 1]);
     }),
@@ -137,7 +168,7 @@ describe("extensions package authoring SDK", () => {
     Effect.gen(function* () {
       const runtime = yield* makePackageRuntime;
       const seen: number[] = [];
-      const descriptor = definePackage("pkg", (ctx) =>
+      const pkg = definePackage("pkg", (ctx) =>
         Effect.gen(function* () {
           const store = yield* ctx.stores.activation({
             id: "counter",
@@ -149,7 +180,7 @@ describe("extensions package authoring SDK", () => {
         }),
       );
 
-      yield* runtime.activateGraph([descriptor]);
+      yield* runtime.activateGraph([toPackageDescriptor(pkg)]);
       yield* runtime.reloadPackage(pid("pkg"));
       expect(seen).toEqual([0, 0]);
     }),
@@ -173,7 +204,7 @@ describe("extensions package authoring SDK", () => {
         }),
       );
 
-      yield* runtime.activateGraph([packageA, packageB]);
+      yield* runtime.activateGraph([toPackageDescriptor(packageA), toPackageDescriptor(packageB)]);
       expect(readByB).toBe(42);
     }),
   );

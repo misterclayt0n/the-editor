@@ -5,10 +5,7 @@
     "declaration": true,
     "declarationMap": true,
     "noEmit": true,
-    "lib": ["ES2023"],
-    "paths": {
-      "@the-editor/kernel": ["../kernel/src/index.ts"]
-    }
+    "lib": ["ES2023"]
   },
-  "include": ["src", "test", "../kernel/src"]
+  "include": ["src", "test"]
 }

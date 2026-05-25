@@ -6,19 +6,18 @@
   "sideEffects": false,
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
     }
   },
   "scripts": {
-    "build": "echo \"No sources to build yet.\"",
-    "dev": "echo \"No sources to watch yet.\"",
+    "build": "tsdown src/index.ts --dts --format esm",
+    "dev": "tsdown src/index.ts --dts --format esm --watch",
     "typecheck": "tsgo --noEmit --pretty",
     "test": "vitest run --passWithNoTests",
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@the-editor/contracts": "workspace:*",
     "@the-editor/kernel": "workspace:*",
     "effect": "catalog:"
   },

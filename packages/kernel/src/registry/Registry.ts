@@ -48,6 +48,14 @@ export const makeRegistry = <A extends IdentifiedContribution>(
               contributionId: contribution.id,
             });
           }
+          const removeEntry = Ref.update(entries, (map) => {
+            const current = map.get(key);
+            if (current !== owned) return map;
+            const next = new Map(map);
+            next.delete(key);
+            return next;
+          });
+          yield* Effect.addFinalizer(() => removeEntry);
           if (options.contributionIndex) {
             const indexResult = yield* options.contributionIndex
               .add({
@@ -57,24 +65,10 @@ export const makeRegistry = <A extends IdentifiedContribution>(
               })
               .pipe(Effect.exit);
             if (Exit.isFailure(indexResult)) {
-              yield* Ref.update(entries, (map) => {
-                if (map.get(key) !== owned) return map;
-                const next = new Map(map);
-                next.delete(key);
-                return next;
-              });
+              yield* removeEntry;
               return yield* Effect.failCause(indexResult.cause);
             }
           }
-          yield* Effect.addFinalizer(() =>
-            Ref.update(entries, (map) => {
-              const current = map.get(key);
-              if (current !== owned) return map;
-              const next = new Map(map);
-              next.delete(key);
-              return next;
-            }),
-          );
           return owned;
         }),
       list: Ref.get(entries).pipe(Effect.map((map) => Array.from(map.values()))),

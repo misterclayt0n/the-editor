@@ -8,7 +8,16 @@ export class RegistryDuplicateContributionError extends Data.TaggedError(
   readonly contributionId: ContributionId;
 }> {}
 
-export type RegistryError = RegistryDuplicateContributionError;
+export class ContributionIndexDuplicateRecordError extends Data.TaggedError(
+  "ContributionIndexDuplicateRecordError",
+)<{
+  readonly registryId: RegistryId;
+  readonly contributionId: ContributionId;
+}> {}
+
+export type ContributionIndexError = ContributionIndexDuplicateRecordError;
+
+export type RegistryError = RegistryDuplicateContributionError | ContributionIndexError;
 
 export class PackageDependencyMissingError extends Data.TaggedError(
   "PackageDependencyMissingError",

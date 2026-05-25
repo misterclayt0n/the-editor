@@ -1,8 +1,13 @@
 import { Effect, Ref, type Scope } from "effect";
 import { RegistryDuplicateContributionError } from "../errors.js";
 import type { RegistryId } from "../ids.js";
-import type { ContributionOwner, IdentifiedContribution, OwnedContribution } from "../ownership.js";
+import type { ContributionIndex } from "../contribution/ContributionIndex.js";
 import type { RegistryError } from "../errors.js";
+import type { ContributionOwner, IdentifiedContribution, OwnedContribution } from "../ownership.js";
+
+export interface RegistryOptions {
+  readonly contributionIndex?: ContributionIndex;
+}
 
 export interface Registry<A extends IdentifiedContribution> {
   readonly id: RegistryId;
@@ -16,6 +21,7 @@ export interface Registry<A extends IdentifiedContribution> {
 
 export const makeRegistry = <A extends IdentifiedContribution>(
   id: RegistryId,
+  options: RegistryOptions = {},
 ): Effect.Effect<Registry<A>> =>
   Effect.gen(function* () {
     const entries = yield* Ref.make(new Map<string, OwnedContribution<A>>());
@@ -30,17 +36,25 @@ export const makeRegistry = <A extends IdentifiedContribution>(
             contribution,
           };
           const key = contribution.id;
-          const ok = yield* Ref.modify(entries, (map) => {
-            if (map.has(key)) return [false, map] as const;
-            const next = new Map(map);
-            next.set(key, owned);
-            return [true, next] as const;
-          });
-          if (!ok)
+          const alreadyRegistered = yield* Ref.get(entries).pipe(Effect.map((map) => map.has(key)));
+          if (alreadyRegistered) {
             return yield* new RegistryDuplicateContributionError({
               registryId: id,
               contributionId: contribution.id,
             });
+          }
+          if (options.contributionIndex) {
+            yield* options.contributionIndex.add({
+              owner,
+              registryId: id,
+              contributionId: contribution.id,
+            });
+          }
+          yield* Ref.update(entries, (map) => {
+            const next = new Map(map);
+            next.set(key, owned);
+            return next;
+          });
           yield* Effect.addFinalizer(() =>
             Ref.update(entries, (map) => {
               const current = map.get(key);

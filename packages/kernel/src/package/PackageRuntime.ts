@@ -1,4 +1,8 @@
 import { Context, Effect, Exit, Layer, Ref, Scope } from "effect";
+import {
+  makeContributionIndex,
+  type ContributionIndex,
+} from "../contribution/ContributionIndex.js";
 import { ActivationId, type PackageId } from "../ids.js";
 import {
   PackageActivationError,
@@ -38,12 +42,16 @@ export interface PackageRuntime {
   readonly disposePackage: (packageId: PackageId) => Effect.Effect<void, PackageError>;
   readonly listPackages: Effect.Effect<readonly PackageSnapshot[]>;
   readonly getPackage: (packageId: PackageId) => Effect.Effect<PackageSnapshot | undefined>;
+  readonly contributionIndex: ContributionIndex;
   readonly stores: StoreRuntime;
 }
 
 const sortGraph = (
   descriptors: readonly PackageDescriptor[],
-): Effect.Effect<readonly PackageDescriptor[], PackageDependencyCycleError | PackageDependencyMissingError> =>
+): Effect.Effect<
+  readonly PackageDescriptor[],
+  PackageDependencyCycleError | PackageDependencyMissingError
+> =>
   Effect.gen(function* () {
     const byId = new Map(descriptors.map((d) => [d.id, d] as const));
     const visiting = new Set<string>();
@@ -81,6 +89,7 @@ const sortGraph = (
   });
 
 export const makePackageRuntime = Effect.gen(function* () {
+  const contributionIndex = yield* makeContributionIndex;
   const stores = yield* makeStoreRuntime();
   const records = yield* Ref.make(new Map<string, ActiveRecord>());
   const snapshots = yield* Ref.make(new Map<string, PackageSnapshot>());
@@ -187,6 +196,7 @@ export const makePackageRuntime = Effect.gen(function* () {
     disposePackage: dispose,
     listPackages: Ref.get(snapshots).pipe(Effect.map((m) => Array.from(m.values()))),
     getPackage: (id) => Ref.get(snapshots).pipe(Effect.map((m) => m.get(id))),
+    contributionIndex,
     stores,
   };
   return runtime;

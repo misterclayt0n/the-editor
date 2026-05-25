@@ -40,6 +40,7 @@ export interface MountEditorInput {
   readonly theme?: EditorTheme;
 }
 
+// TODO: This is bad, really really bad. Themes will be a first class concept loaded through extensions, they're not hard coded strings like this
 export type EditorTheme = "vs" | "vs-dark" | "hc-black" | string;
 
 export interface EditorDisposable {

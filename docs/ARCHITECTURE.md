@@ -220,10 +220,10 @@ packages/
 
   kernel/
     package loading
+    activation scopes
     contribution ownership
     reload lifecycle
-    stores
-    command bus
+    registry/store lifetime mechanics
     Effect services/layers
 
   extensions/
@@ -792,6 +792,12 @@ The editor should distinguish between:
 - core packages required for editor operation
 - default packages that provide product behavior
 - optional extensions installed by users
+
+### Kernel boundary
+
+The kernel owns package runtime mechanics, not product behavior.
+
+Commands, workbench layout, focus, input routing, interaction profile selection, themes, diagnostics, and similar application systems are derived from kernel primitives. They should be implemented as host-owned services, stores, registries, or packages, not as hardcoded kernel responsibilities.
 
 ### Extension execution
 

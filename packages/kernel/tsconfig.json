@@ -7,10 +7,5 @@
     "noEmit": true,
     "lib": ["ES2023"]
   },
-  "files": [],
-  "references": [
-    {
-      "path": "../contracts"
-    }
-  ]
+  "include": ["src", "test"]
 }

@@ -105,7 +105,7 @@ Stores make reload deterministic. State is not a random global bag.
 
 ## 3. Kernel responsibilities
 
-The kernel owns only what must survive package reload or coordinate multiple packages safely.
+The kernel owns only the mechanics required to load, unload, compose, persist, and recover packages safely.
 
 The kernel owns:
 
@@ -113,23 +113,21 @@ The kernel owns:
 - package activation
 - package disposal
 - explicit reload
+- activation scopes
 - contribution ownership tracking
-- command bus
 - registry lifetimes
-- workbench layout tree
-- focus model
-- input routing
-- active interaction profile selection
 - persistence mechanics
-- typed stores
-- failure recovery
-- minimal recovery UI
+- typed store lifetimes
+- package failure tracking
+- package recovery mechanics
 
-The kernel should not own product personality.
+The kernel does not own product behavior.
 
-The kernel should not decide what the command palette looks like, how the statusline is arranged, what interaction model is active, what the file tree feels like, or what tools users can mount.
+Command buses, workbench layout trees, focus models, input routers, active interaction profile selection, theme selection, diagnostics models, and similar application systems are not kernel concepts. They are host-owned services, stores, registries, or packages built on top of the kernel primitives.
 
-The kernel is the traffic cop, not the city.
+The kernel should not decide what the command palette looks like, how commands execute, how the statusline is arranged, what interaction model is active, what the file tree feels like, what theme is selected, or what tools users can mount.
+
+The kernel is the package runtime, not the product brain.
 
 ---
 
@@ -992,13 +990,13 @@ The target architecture is:
 small stable kernel
   + packages as the product
   + typed contributions
-  + host-owned registries
+  + host-owned registries and stores built on kernel primitives
   + replaceable roles
   + arbitrary tools
   + first-class interaction profiles
   + explicit reload lifecycle
   + typed stores
-  + host-owned focus/layout/input truth
+  + focus/layout/input systems derived outside the kernel
 ```
 
 This gives The Editor its identity:

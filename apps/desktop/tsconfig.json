@@ -1,9 +1,0 @@
-{
-  "extends": "../../tsconfig.base.json",
-  "compilerOptions": {
-    "composite": true,
-    "noEmit": true,
-    "lib": ["ES2023"]
-  },
-  "include": ["src", "tsdown.config.ts"]
-}

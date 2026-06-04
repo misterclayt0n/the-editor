@@ -2,15 +2,8 @@
   "extends": "./tsconfig.base.json",
   "files": [],
   "references": [
-    { "path": "./apps/web" },
-    { "path": "./apps/desktop" },
-    { "path": "./packages/contracts" },
     { "path": "./packages/kernel" },
     { "path": "./packages/extensions" },
-    { "path": "./packages/editor" },
-    { "path": "./packages/editor-engine-monaco" },
-    { "path": "./packages/workbench" },
-    { "path": "./packages/default" },
-    { "path": "./packages/benchmarks" }
+    { "path": "./packages/commands" }
   ]
 }

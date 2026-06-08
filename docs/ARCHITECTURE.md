@@ -34,6 +34,7 @@ After the purge, the repo intentionally keeps only the spine:
 packages/kernel      package runtime, ownership, registries, stores
 packages/extensions  package authoring helpers
 packages/commands    first package-backed product capability
+packages/engine      editor state primitives, starting with text storage/transactions
 docs/                architecture and extension docs
 ```
 
@@ -115,14 +116,14 @@ Commands
 Keymaps
   global/contextual input routing and modal composition
 
-Text document
-  text storage, edits, selections, undo/redo, line mapping
+Engine
+  text storage, transactions, document state, future selections/history/layout primitives
 
 Working copy
   URI-backed document lifecycle: open, dirty, save, revert, conflict
 
-Editor surface
-  viewport, scrolling, cursor/selection rendering, gutters, decorations, input capture
+Renderer/product layer
+  DOM/TUI/canvas drawing, CSS/components, input capture, viewport presentation, gutters/decorations UI
 
 Workbench session
   panes, tabs/items, splits, focus routing, active item, layout
@@ -154,7 +155,7 @@ keydown
   -> keymaps resolve command from context
   -> command applies synchronous text/editor transaction
   -> selection/history update
-  -> editor surface schedules paint
+  -> product renderer schedules paint
   -> visible rows render
 ```
 
@@ -173,32 +174,182 @@ Background systems produce updates. They do not gate input.
 
 ---
 
-## Text engine direction
+## Engine direction
 
-The editor should own its text engine.
+The editor should own its engine.
 
-The first real rebuild target should be a deep `text` module with a small interface and serious behavior behind it:
+The current engine starts with a deep text subsystem:
 
-- document creation from text
-- line access
+- immutable text snapshots
+- fast visible line/chunk extraction
 - offset/position mapping
 - transactions
-- multi-selection support
-- undo/redo
-- change ranges
-- decoration anchoring
-- diagnostic range anchoring
+- change descriptions
+- document state through an Effect-facing service
 
-Then build an editor surface on top:
+The next engine work should move upward deliberately:
 
-- virtualized visible lines
-- native scrolling
-- cursor rendering
-- selection rendering
-- gutters
-- decorations
-- basic input capture
-- command hooks
+- grapheme/character boundary primitives
+- visual position and line-column policy
+- selection values and selection state
+- history over transactions plus selection snapshots
+- editing primitives that product commands can compose
+
+Do not port old monolithic concepts blindly. In particular, avoid starting from a single `Surface` object that combines document state, selections, viewport, rendering, input, and product behavior. The engine should expose state primitives and operation libraries. Product packages decide how to assemble them.
+
+## Rendering philosophy
+
+Rendering should not live in the engine as DOM, CSS, React, terminal drawing, canvas drawing, widgets, or a fixed editor shell.
+
+The engine should eventually support rendering by producing snapshot-based layout information from editor state. The renderer/product layer owns the actual presentation.
+
+The intended split is:
+
+```txt
+engine
+  owns document snapshots, positions, line/chunk extraction, selection/history state,
+  and eventually generic layout/positioning calculations
+
+product renderer
+  owns DOM/TUI/canvas/React/Solid/etc, CSS, components, colors, widgets,
+  gutter visuals, diagnostic UI, completion UI, and event capture
+```
+
+A future layout API should be functional and snapshot-based: given the same document snapshot, viewport request, and anchored layout inputs, it returns the same positioned output. It should not mutate renderer state or call into UI code.
+
+The key abstraction should be generic geometry, not product semantics. The engine should not know what a diagnostic underline, breakpoint marker, clanker annotation, blame hint, or autocomplete widget is. It may know generic anchor kinds such as:
+
+- range anchor: an opaque payload attached to a text range
+- line anchor: an opaque payload attached to a document line
+- block anchor: an opaque payload that reserves rows before/after a line
+- inline/overlay anchor: an opaque payload attached to an offset, possibly with declared size
+
+A rough future shape could look like this:
+
+```ts
+type ViewportLayoutRequest<Payload = unknown> = {
+  readonly document: TextDocumentSnapshot;
+  readonly startLine: number;
+  readonly lineCount: number;
+  readonly tabSize: number;
+  readonly wrap: "none"; // later: soft wrap policy
+  readonly anchors: readonly LayoutAnchor<Payload>[];
+};
+
+type LayoutAnchor<Payload = unknown> =
+  | {
+      readonly kind: "range";
+      readonly id: string;
+      readonly from: number;
+      readonly to: number;
+      readonly payload: Payload;
+    }
+  | {
+      readonly kind: "line";
+      readonly id: string;
+      readonly line: number;
+      readonly payload: Payload;
+    }
+  | {
+      readonly kind: "block";
+      readonly id: string;
+      readonly afterLine: number;
+      readonly heightRows: number;
+      readonly payload: Payload;
+    }
+  | {
+      readonly kind: "overlay";
+      readonly id: string;
+      readonly at: number;
+      readonly payload: Payload;
+    };
+```
+
+The corresponding output should be positioning data, not UI elements:
+
+```ts
+type ViewportLayoutSnapshot<Payload = unknown> = {
+  readonly documentVersion: TextDocumentVersion;
+  readonly rows: readonly LayoutRow[];
+  readonly placements: readonly LayoutPlacement<Payload>[];
+};
+
+type LayoutRow =
+  | {
+      readonly kind: "text";
+      readonly row: number;
+      readonly line: number;
+      readonly from: number;
+      readonly to: number;
+      readonly chunks: readonly VisibleChunk[];
+    }
+  | {
+      readonly kind: "block";
+      readonly row: number;
+      readonly afterLine: number;
+      readonly heightRows: number;
+    };
+
+type LayoutPlacement<Payload = unknown> =
+  | {
+      readonly kind: "range";
+      readonly id: string;
+      readonly row: number;
+      readonly line: number;
+      readonly from: number;
+      readonly to: number;
+      readonly columnStart: number;
+      readonly columnEnd: number;
+      readonly payload: Payload;
+    }
+  | {
+      readonly kind: "line" | "block" | "overlay";
+      readonly id: string;
+      readonly row: number;
+      readonly payload: Payload;
+    };
+```
+
+A diagnostics package might supply anchors like this:
+
+```ts
+const anchors: LayoutAnchor[] = [
+  {
+    kind: "range",
+    id: "diag:underline:1",
+    from: diagnostic.from,
+    to: diagnostic.to,
+    payload: { type: "diagnosticUnderline", severity: "error" },
+  },
+  {
+    kind: "line",
+    id: "diag:gutter:1",
+    line: diagnostic.line,
+    payload: { type: "diagnosticMarker", severity: "error" },
+  },
+  {
+    kind: "block",
+    id: "diag:message:1",
+    afterLine: diagnostic.line,
+    heightRows: 1,
+    payload: { type: "diagnosticMessage", message: diagnostic.message },
+  },
+];
+```
+
+The engine maps these anchors to visible rows, document ranges, and columns. The payload remains product-owned. Renderers decide whether a payload becomes CSS, a TSX component, terminal cells, canvas marks, gutters, popovers, or nothing:
+
+```tsx
+function DiagnosticPlacement({ placement }: { placement: LayoutPlacement }) {
+  if (placement.payload?.type === "diagnosticMessage") {
+    return <DiagnosticBlock message={placement.payload.message} />;
+  }
+
+  return null;
+}
+```
+
+This keeps Monaco-style editor behavior from becoming hardcoded into the engine. The default product can be opinionated, but it should be opinionated through packages and renderers, not because the engine has a fixed shell.
 
 Do not start by building a full IDE. Start by making typing and movement correct, local, and fast.
 

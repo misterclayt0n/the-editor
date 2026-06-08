@@ -14,7 +14,7 @@
     "build": "tsdown src/index.ts --dts --format esm",
     "dev": "tsdown src/index.ts --dts --format esm --watch",
     "typecheck": "tsgo --noEmit --pretty",
-    "test": "vitest run test/text.test.ts test/transaction.test.ts test/effect.test.ts test/chars.test.ts test/grapheme.test.ts test/columns.test.ts --passWithNoTests",
+    "test": "vitest run test/text.test.ts test/transaction.test.ts test/effect.test.ts test/chars.test.ts test/grapheme.test.ts test/columns.test.ts test/line-ending.test.ts --passWithNoTests",
     "test:stress": "vitest run test/text.stress.test.ts --passWithNoTests",
     "bench": "node --expose-gc --import tsx src/text/bench.ts",
     "clean": "rm -rf dist"

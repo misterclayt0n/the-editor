@@ -156,7 +156,14 @@ const documentTx = Effect.runSync(Transaction.insertAt(3, 1, "X"));
 
 const transactionMap1000 = (): number => {
   let h = 0;
-  for (let i = 0; i < 1_000; i++) h = (h + transactionInsert.mapPosition(i % transactionBase.length, i % 2 === 0 ? "before" : "after")) >>> 0;
+  for (let i = 0; i < 1_000; i++)
+    h =
+      (h +
+        transactionInsert.mapPosition(
+          i % transactionBase.length,
+          i % 2 === 0 ? "before" : "after",
+        )) >>>
+      0;
   return h;
 };
 
@@ -168,7 +175,9 @@ const documentTransact = (): number => {
 
 const documentUpdate = (): number => {
   const doc = Effect.runSync(makeTextDocument("abc"));
-  const next = Effect.runSync(doc.update((buffer) => Transaction.insertAt(buffer.length, buffer.length, "!")));
+  const next = Effect.runSync(
+    doc.update((buffer) => Transaction.insertAt(buffer.length, buffer.length, "!")),
+  );
   return checksum(next.toString()) ^ Effect.runSync(doc.version);
 };
 
@@ -428,11 +437,14 @@ cases.push(
   },
   {
     name: "transaction/fromReplacements",
-    run: () => Effect.runSync(Transaction.fromReplacements(transactionBase.length, [
-      { from: 10, to: 20, text: "A" },
-      { from: 100, to: 100, text: "B" },
-      { from: 500, to: 520, text: "" },
-    ])).lengthAfter,
+    run: () =>
+      Effect.runSync(
+        Transaction.fromReplacements(transactionBase.length, [
+          { from: 10, to: 20, text: "A" },
+          { from: 100, to: 100, text: "B" },
+          { from: 500, to: 520, text: "" },
+        ]),
+      ).lengthAfter,
   },
   {
     name: "transaction/apply",
@@ -447,7 +459,11 @@ cases.push(
     run: () => Effect.runSync(transactionInsert.compose(transactionSecond)).lengthAfter,
   },
   { name: "transaction/mapPosition x1000", run: transactionMap1000 },
-  { name: "document/make", run: () => Effect.runSync(makeTextDocument("abc").pipe(Effect.flatMap((doc) => doc.version))) + 3 },
+  {
+    name: "document/make",
+    run: () =>
+      Effect.runSync(makeTextDocument("abc").pipe(Effect.flatMap((doc) => doc.version))) + 3,
+  },
   { name: "document/transact", run: documentTransact, samples: 15 },
   { name: "document/update", run: documentUpdate, samples: 15 },
   { name: "document/snapshot x100", run: documentSnapshot, samples: 15 },

@@ -5,6 +5,7 @@ export * from "./comment";
 export * from "./line-ending";
 export * from "./selection";
 export * from "./history";
+export * from "./indent";
 export * from "./search";
 export * from "./syntax-adapter";
 export * from "./match-brackets";

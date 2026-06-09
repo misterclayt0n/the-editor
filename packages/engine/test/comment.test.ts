@@ -1,6 +1,14 @@
 import { Effect } from "effect";
 import { describe, expect, test } from "vitest";
-import { InvalidCommentTokenError, Selection, SelectionRange, TextBuffer, toggleBlockComments, toggleLineComments, type Edit } from "../src/index";
+import {
+  InvalidCommentTokenError,
+  Selection,
+  SelectionRange,
+  TextBuffer,
+  toggleBlockComments,
+  toggleLineComments,
+  type Edit,
+} from "../src/index";
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runSync(effect);
 const apply = (buffer: TextBuffer, edit: Edit) => edit.transaction.apply(buffer).toString();
@@ -27,7 +35,9 @@ describe("comment", () => {
     const edit = run(toggleLineComments(buffer, Selection.single(0, buffer.length)));
     expect(apply(buffer, edit)).toBe("# first\n\n#   third");
     const commented = TextBuffer.fromString("// first\n\n    // second\n\n  // third");
-    const uncomment = run(toggleLineComments(commented, Selection.single(0, commented.length), "//"));
+    const uncomment = run(
+      toggleLineComments(commented, Selection.single(0, commented.length), "//"),
+    );
     expect(apply(commented, uncomment)).toBe("first\n\n    second\n\n  third");
   });
 
@@ -57,20 +67,28 @@ describe("comment", () => {
 
   test("block token sort prefers longest token", () => {
     const buffer = TextBuffer.fromString("/** x **/");
-    const edit = run(toggleBlockComments(buffer, Selection.single(0, buffer.length), [
-      { start: "/*", end: "*/" },
-      { start: "/**", end: "**/" },
-    ]));
+    const edit = run(
+      toggleBlockComments(buffer, Selection.single(0, buffer.length), [
+        { start: "/*", end: "*/" },
+        { start: "/**", end: "**/" },
+      ]),
+    );
     expect(apply(buffer, edit)).toBe("x");
   });
 
   test("multiple selections and invalid tokens", () => {
     const buffer = TextBuffer.fromString("a\nb");
-    const selection = Selection.create([SelectionRange.point(0), SelectionRange.point(2)], { normalize: false });
+    const selection = Selection.create([SelectionRange.point(0), SelectionRange.point(2)], {
+      normalize: false,
+    });
     const edit = run(toggleLineComments(buffer, selection, "//"));
     expect(apply(buffer, edit)).toBe("// a\n// b");
     expect(() => run(toggleLineComments(buffer, selection, ""))).toThrow(/invalid comment token/);
-    expect(() => run(toggleBlockComments(buffer, selection, [{ start: "", end: "*/" }]))).toThrow(/invalid comment token/);
-    expect(() => run(toggleBlockComments(buffer, selection, [{ start: "/*", end: "" }]))).toThrow(/invalid comment token/);
+    expect(() => run(toggleBlockComments(buffer, selection, [{ start: "", end: "*/" }]))).toThrow(
+      /invalid comment token/,
+    );
+    expect(() => run(toggleBlockComments(buffer, selection, [{ start: "/*", end: "" }]))).toThrow(
+      /invalid comment token/,
+    );
   });
 });

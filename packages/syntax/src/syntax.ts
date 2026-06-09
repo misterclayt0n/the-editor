@@ -1,6 +1,4 @@
 import Parser from "tree-sitter";
-import type { TextBuffer, Transaction } from "@the-editor/engine";
-
 export interface SyntaxText {
   readonly length: number;
   readonly sliceString: (from: number, to: number) => string;
@@ -9,14 +7,23 @@ export const syntaxTextFromString = (text: string): SyntaxText => ({
   length: text.length,
   sliceString: (from, to) => text.slice(from, to),
 });
-export const syntaxTextFromTextBuffer = (buffer: TextBuffer): SyntaxText => ({
-  length: buffer.length,
-  sliceString: (from, to) => buffer.sliceString(from, to),
-});
 const textAll = (text: SyntaxText): string => text.sliceString(0, text.length);
 const bytes = (s: string): number => Buffer.byteLength(s, "utf8");
 export type Point = { readonly row: number; readonly column: number };
 export type ByteRange = { readonly start: number; readonly end: number };
+// Native node-tree-sitter callback parsing uses JavaScript string indices for
+// input callbacks and SyntaxNode startIndex/endIndex. Public editor offsets are
+// also UTF-16 string indices, so syntax indices are identity-mapped to UTF-16.
+export type SyntaxIndex = number;
+export type SyntaxRange = { readonly start: SyntaxIndex; readonly end: SyntaxIndex };
+export function utf16OffsetToSyntaxIndex(text: SyntaxText, offset: number): SyntaxIndex {
+  assertOffset(text, offset);
+  return offset;
+}
+export function syntaxIndexToUtf16Offset(text: SyntaxText, index: SyntaxIndex): number {
+  assertOffset(text, index);
+  return index;
+}
 export function utf16OffsetToUtf8ByteOffset(text: SyntaxText, offset: number): number {
   assertOffset(text, offset);
   return bytes(text.sliceString(0, offset));
@@ -533,21 +540,33 @@ export class Syntax {
   rootNode() {
     return this.tree.rootNode;
   }
-  treeForByteRange(_s: number, _e: number) {
+  treeForSyntaxRange(_s: SyntaxIndex, _e: SyntaxIndex) {
     return this.tree;
   }
-  descendantForByteRange(s: number, e: number) {
+  descendantForSyntaxRange(s: SyntaxIndex, e: SyntaxIndex) {
     return this.tree.rootNode.descendantForIndex(s, e);
   }
-  namedDescendantForByteRange(s: number, e: number) {
+  namedDescendantForSyntaxRange(s: SyntaxIndex, e: SyntaxIndex) {
     return this.tree.rootNode.namedDescendantForIndex(s, e);
+  }
+  /** @deprecated Node tree-sitter indices are SyntaxIndex/UTF-16 offsets for callback input. */
+  treeForByteRange(s: number, e: number) {
+    return this.treeForSyntaxRange(s, e);
+  }
+  /** @deprecated Use descendantForSyntaxRange. */
+  descendantForByteRange(s: number, e: number) {
+    return this.descendantForSyntaxRange(s, e);
+  }
+  /** @deprecated Use namedDescendantForSyntaxRange. */
+  namedDescendantForByteRange(s: number, e: number) {
+    return this.namedDescendantForSyntaxRange(s, e);
   }
   walk() {
     return this.tree.walk();
   }
   scopesAt(_text: SyntaxText, utf16Offset: number) {
-    const b = utf16OffsetToUtf8ByteOffset(_text, utf16Offset);
-    const n = this.namedDescendantForByteRange(b, b);
+    const index = utf16OffsetToSyntaxIndex(_text, utf16Offset);
+    const n = this.namedDescendantForSyntaxRange(index, index);
     const out: string[] = [];
     let cur = n;
     while (cur) {
@@ -797,25 +816,18 @@ export function generateSyntaxEdits(
     if (e.start < last || e.end < e.start || e.end > oldText.length)
       throw new InvalidSyntaxEditError();
     last = e.end;
-    const startIndex = utf16OffsetToUtf8ByteOffset(oldText, e.start);
-    const oldEndIndex = utf16OffsetToUtf8ByteOffset(oldText, e.end);
+    const startIndex = utf16OffsetToSyntaxIndex(oldText, e.start);
+    const oldEndIndex = utf16OffsetToSyntaxIndex(oldText, e.end);
     const startPosition = utf16OffsetToPoint(oldText, e.start);
     return {
       startIndex,
       oldEndIndex,
-      newEndIndex: startIndex + bytes(e.text),
+      newEndIndex: startIndex + e.text.length,
       startPosition,
       oldEndPosition: utf16OffsetToPoint(oldText, e.end),
       newEndPosition: pointExtent(startPosition, e.text),
     };
   });
-}
-export function syntaxTextEditsFromTransaction(
-  transaction: Transaction,
-): readonly SyntaxTextEdit[] {
-  return transaction.changes
-    .toLegacyReplacements()
-    .map((r) => ({ start: r.from, end: r.to, text: r.text }));
 }
 export function prettyPrintTree(node: Parser.SyntaxNode, indent = ""): string {
   return `${indent}${node.type} [${node.startIndex}, ${node.endIndex}]\n${node.children.map((c) => prettyPrintTree(c, indent + "  ")).join("")}`;

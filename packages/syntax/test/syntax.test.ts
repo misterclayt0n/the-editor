@@ -1,6 +1,5 @@
 import { describe, expect, test } from "vitest";
 import Json from "tree-sitter-json";
-import { TextBuffer } from "@the-editor/engine";
 import {
   DuplicateExtensionError,
   HighlightKindId,
@@ -22,7 +21,6 @@ import {
   queryKindFilename,
   readQueryWithInherits,
   syntaxTextFromString,
-  syntaxTextFromTextBuffer,
   utf16OffsetToPoint,
   utf16OffsetToUtf8ByteOffset,
   utf8ByteOffsetToUtf16Offset,
@@ -56,7 +54,6 @@ describe("syntax text and offsets", () => {
     const text = syntaxTextFromString("aé\n😊b");
     expect(text.length).toBe("aé\n😊b".length);
     expect(text.sliceString(1, 2)).toBe("é");
-    expect(syntaxTextFromTextBuffer(TextBuffer.fromString("abc")).sliceString(1, 3)).toBe("bc");
     expect(utf16OffsetToUtf8ByteOffset(text, 2)).toBe(3);
     expect(utf8ByteOffsetToUtf16Offset(text, 3)).toBe(2);
     expect(utf16OffsetToPoint(text, 4)).toEqual({ row: 1, column: 4 });

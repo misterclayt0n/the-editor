@@ -210,15 +210,48 @@ export class HighlightQuery {
     readonly captureKinds: readonly (HighlightKindId | undefined)[],
   ) {}
 }
+export type IndentScope = "all" | "tail";
+export type IndentQueryPredicates = {
+  readonly notKindEq: readonly { readonly capture: string; readonly kind: string }[];
+  readonly sameLine?: {
+    readonly leftCapture: string;
+    readonly rightCapture: string;
+    readonly negated: boolean;
+  };
+  readonly oneLine?: { readonly capture: string; readonly negated: boolean };
+};
 export class IndentQuery {
-  constructor(readonly query: Parser.Query) {}
+  constructor(
+    readonly query: Parser.Query,
+    readonly properties: ReadonlyMap<number, IndentScope>,
+    readonly predicates: ReadonlyMap<number, IndentQueryPredicates>,
+    readonly indentCapture?: string,
+    readonly indentAlwaysCapture?: string,
+    readonly outdentCapture?: string,
+    readonly outdentAlwaysCapture?: string,
+    readonly alignCapture?: string,
+    readonly anchorCapture?: string,
+    readonly extendCapture?: string,
+    readonly extendPreventOnceCapture?: string,
+  ) {}
 }
+export type TagStripPredicate = { readonly capture: string; readonly pattern: string };
+export type TagSelectAdjacentPredicate = {
+  readonly leftCapture: string;
+  readonly rightCapture: string;
+};
 export class TagQuery {
-  constructor(readonly query: Parser.Query) {}
+  constructor(
+    readonly query: Parser.Query,
+    readonly stripPredicates: ReadonlyMap<number, readonly TagStripPredicate[]>,
+    readonly selectAdjacentPredicates: ReadonlyMap<number, readonly TagSelectAdjacentPredicate[]>,
+    readonly localPatterns: ReadonlySet<number>,
+  ) {}
 }
 export class RainbowQuery {
   constructor(
     readonly query: Parser.Query,
+    readonly includeChildrenPatterns: ReadonlySet<number>,
     readonly scopeCapture?: string,
     readonly bracketCapture?: string,
   ) {}
@@ -262,6 +295,150 @@ export class TextObjectQuery {
 const captureNamesFromQuery = (query: string): readonly string[] => [
   ...new Set([...query.matchAll(/@([A-Za-z0-9_.-]+)/g)].map((m) => m[1]!)),
 ];
+const captureName = (names: readonly string[], name: string): string | undefined =>
+  names.includes(name) ? name : undefined;
+type QueryAtom = { readonly type: "capture" | "string" | "symbol"; readonly value: string };
+type PredicateForm = { readonly name: string; readonly args: readonly QueryAtom[]; readonly start: number; readonly end: number };
+type TopLevelForm = { readonly start: number; readonly end: number; readonly predicates: readonly PredicateForm[] };
+const readStringAtom = (source: string, i: number): { value: string; end: number } => {
+  let out = "";
+  for (let p = i + 1; p < source.length; p++) {
+    const ch = source[p]!;
+    if (ch === "\\") {
+      out += source[p + 1] ?? "";
+      p++;
+    } else if (ch === '"') return { value: out, end: p + 1 };
+    else out += ch;
+  }
+  throw new QueryCompileError("unterminated query string");
+};
+const parsePredicate = (source: string, start: number, end: number): PredicateForm | undefined => {
+  let i = start + 1;
+  while (/\s/.test(source[i] ?? "")) i++;
+  if (source[i] !== "#") return undefined;
+  const nameStart = ++i;
+  while (i < end && !/[\s()]/.test(source[i]!)) i++;
+  const name = source.slice(nameStart, i);
+  const args: QueryAtom[] = [];
+  while (i < end - 1) {
+    while (/\s/.test(source[i] ?? "")) i++;
+    if (i >= end - 1) break;
+    const ch = source[i]!;
+    if (ch === '"') {
+      const s = readStringAtom(source, i);
+      args.push({ type: "string", value: s.value });
+      i = s.end;
+    } else {
+      const a = i;
+      while (i < end - 1 && !/[\s()]/.test(source[i]!)) i++;
+      const value = source.slice(a, i);
+      args.push({ type: value.startsWith("@") ? "capture" : "symbol", value: value.startsWith("@") ? value.slice(1) : value });
+    }
+  }
+  return { name, args, start, end };
+};
+const predicateSpansIn = (source: string, start: number, end: number): readonly { start: number; end: number }[] => {
+  const spans: { start: number; end: number }[] = [];
+  const stack: number[] = [];
+  let inString = false, escape = false, comment = false;
+  for (let i = start; i < end; i++) {
+    const ch = source[i]!;
+    if (comment) { if (ch === "\n") comment = false; continue; }
+    if (inString) { if (escape) escape = false; else if (ch === "\\") escape = true; else if (ch === '"') inString = false; continue; }
+    if (ch === ";") { comment = true; continue; }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === "(") stack.push(i);
+    else if (ch === ")") {
+      const s = stack.pop();
+      if (s === undefined) throw new QueryCompileError("unbalanced query parentheses");
+      if (source.slice(s + 1, i).trimStart().startsWith("#")) spans.push({ start: s, end: i + 1 });
+    }
+  }
+  if (stack.length) throw new QueryCompileError("unbalanced query parentheses");
+  return spans;
+};
+const matchingDelimiter = (source: string, start: number): number => {
+  const open = source[start]!;
+  const close = open === "(" ? ")" : "]";
+  let depth = 0, inString = false, escape = false, comment = false;
+  for (let i = start; i < source.length; i++) {
+    const ch = source[i]!;
+    if (comment) { if (ch === "\n") comment = false; continue; }
+    if (inString) { if (escape) escape = false; else if (ch === "\\") escape = true; else if (ch === '"') inString = false; continue; }
+    if (ch === ";") { comment = true; continue; }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === open) depth++;
+    else if (ch === close && --depth === 0) return i + 1;
+  }
+  throw new QueryCompileError("unbalanced query delimiters");
+};
+type QueryItem = { readonly type: "structural" | "predicate" | "capture" | "symbol"; readonly start: number; readonly end: number };
+const topLevelItems = (source: string): readonly QueryItem[] => {
+  const items: QueryItem[] = [];
+  for (let i = 0; i < source.length;) {
+    const ch = source[i]!;
+    if (/\s/.test(ch)) { i++; continue; }
+    if (ch === ";") { while (i < source.length && source[i] !== "\n") i++; continue; }
+    if (ch === "(" || ch === "[") {
+      const end = matchingDelimiter(source, i);
+      const isPredicate = ch === "(" && source.slice(i + 1, end - 1).trimStart().startsWith("#");
+      items.push({ type: isPredicate ? "predicate" : "structural", start: i, end });
+      i = end;
+      continue;
+    }
+    const start = i;
+    while (i < source.length && !/\s/.test(source[i]!) && source[i] !== ";" && source[i] !== "(" && source[i] !== "[") i++;
+    items.push({ type: source[start] === "@" ? "capture" : "symbol", start, end: i });
+  }
+  return items;
+};
+const queryForms = (source: string): readonly TopLevelForm[] => {
+  const forms: TopLevelForm[] = [];
+  let current: { start: number; end: number; spans: { start: number; end: number }[]; sawPredicate: boolean } | undefined;
+  const finish = () => {
+    if (!current) return;
+    forms.push({
+      start: current.start,
+      end: current.end,
+      predicates: current.spans.map((s) => parsePredicate(source, s.start, s.end)).filter((p): p is PredicateForm => !!p),
+    });
+    current = undefined;
+  };
+  for (const item of topLevelItems(source)) {
+    if (item.type === "structural") {
+      if (current) finish();
+      current = { start: item.start, end: item.end, spans: [...predicateSpansIn(source, item.start, item.end)], sawPredicate: false };
+    } else if (item.type === "capture" || item.type === "symbol") {
+      if (current) current.end = item.end;
+    } else if (item.type === "predicate") {
+      if (!current) continue;
+      current.end = item.end;
+      current.sawPredicate = true;
+      current.spans.push({ start: item.start, end: item.end });
+    }
+  }
+  finish();
+  return forms;
+};
+const stripSpans = (source: string, spans: readonly { start: number; end: number }[]): string => {
+  let out = source;
+  for (const s of [...spans].sort((a, b) => b.start - a.start)) out = `${out.slice(0, s.start)}${" ".repeat(s.end - s.start)}${out.slice(s.end)}`;
+  return out;
+};
+const capArg = (p: PredicateForm, i: number) => {
+  const a = p.args[i];
+  if (a?.type !== "capture") throw new QueryCompileError(`predicate #${p.name} expects capture argument ${i + 1}`);
+  return a.value;
+};
+const strArg = (p: PredicateForm, i: number) => {
+  const a = p.args[i];
+  if (a?.type !== "string") throw new QueryCompileError(`predicate #${p.name} expects string argument ${i + 1}`);
+  return a.value;
+};
+const checkArity = (p: PredicateForm, n: number) => { if (p.args.length !== n) throw new QueryCompileError(`predicate #${p.name} expects ${n} arguments`); };
+const compileQuery = (lang: unknown, source: string) => {
+  try { return new Parser.Query(lang as any, source); } catch (e) { throw new QueryCompileError(String(e)); }
+};
 export function readQueryWithInherits(
   languageId: string,
   read: (languageId: string) => string,
@@ -287,50 +464,98 @@ export function readQueryWithInherits(
 
 export class LanguageDefinition {
   private h?: HighlightQuery;
+  private indent?: IndentQuery;
+  private textObjects?: TextObjectQuery;
+  private tags?: TagQuery;
+  private rainbows?: RainbowQuery;
   constructor(readonly config: LanguageSyntaxConfig) {}
   grammar(registry: LanguageRegistry) {
     return registry.resources.language(grammarName(this.config));
   }
-  private compile(registry: LanguageRegistry, kind: QueryKind) {
+  private querySource(registry: LanguageRegistry, kind: QueryKind) {
+    return registry.queryText(this.config.name, kind);
+  }
+  private compileRawQuery(registry: LanguageRegistry, kind: QueryKind) {
     const lang = this.grammar(registry);
     if (!lang) return undefined;
-    const src = registry.queryText(this.config.name, kind);
+    const src = this.querySource(registry, kind);
     if (!src) return undefined;
-    try {
-      return new Parser.Query(lang as any, src);
-    } catch (e) {
-      throw new QueryCompileError(String(e));
-    }
+    return compileQuery(lang, src);
   }
   highlightQuery(registry: LanguageRegistry) {
     if (this.h) return this.h;
-    const q = this.compile(registry, "highlights");
+    const q = this.compileRawQuery(registry, "highlights");
     if (!q) return undefined;
-    {
-      const names = captureNamesFromQuery(registry.queryText(this.config.name, "highlights"));
-      this.h = new HighlightQuery(
-        q,
-        names,
-        names.map((n: string) => registry.vocabulary.intern(n)),
-      );
-    }
+    const names = captureNamesFromQuery(this.querySource(registry, "highlights"));
+    this.h = new HighlightQuery(q, names, names.map((n: string) => registry.vocabulary.intern(n)));
     return this.h;
   }
-  indentQuery(r: LanguageRegistry) {
-    const q = this.compile(r, "indents");
-    return q && new IndentQuery(q);
+  indentQuery(registry: LanguageRegistry) {
+    if (this.indent) return this.indent;
+    const lang = this.grammar(registry);
+    const src = this.querySource(registry, "indents");
+    if (!lang || !src) return undefined;
+    const forms = queryForms(src);
+    const properties = new Map<number, IndentScope>();
+    const predicates = new Map<number, IndentQueryPredicates>();
+    const strip: { start: number; end: number }[] = [];
+    for (let i = 0; i < forms.length; i++) for (const p of forms[i]!.predicates) {
+      const entry = () => predicates.get(i) ?? { notKindEq: [] };
+      if (p.name === "set!" && p.args[0]?.type === "symbol" && p.args[0].value === "scope") {
+        checkArity(p, 2); const scope = strArg(p, 1); if (scope !== "all" && scope !== "tail") throw new QueryCompileError(`unknown scope (#set! scope \"${scope}\")`); properties.set(i, scope); continue;
+      }
+      if (p.name === "not-kind-eq?") { checkArity(p, 2); const e = entry(); predicates.set(i, { ...e, notKindEq: [...e.notKindEq, { capture: capArg(p, 0), kind: strArg(p, 1) }] }); strip.push(p); }
+      else if (p.name === "same-line?" || p.name === "not-same-line?") { checkArity(p, 2); const e = entry(); predicates.set(i, { ...e, sameLine: { leftCapture: capArg(p, 0), rightCapture: capArg(p, 1), negated: p.name === "not-same-line?" } }); strip.push(p); }
+      else if (p.name === "one-line?" || p.name === "not-one-line?") { checkArity(p, 1); const e = entry(); predicates.set(i, { ...e, oneLine: { capture: capArg(p, 0), negated: p.name === "not-one-line?" } }); strip.push(p); }
+      else if (!["set!", "eq?", "not-eq?", "any-eq?", "any-not-eq?", "match?", "not-match?", "any-match?", "any-not-match?", "any-of?", "not-any-of?", "is?", "is-not?"].includes(p.name)) throw new QueryCompileError(`unknown indent predicate #${p.name}`);
+    }
+    const q = compileQuery(lang, stripSpans(src, strip));
+    const names = captureNamesFromQuery(src);
+    this.indent = new IndentQuery(q, properties, predicates, captureName(names, "indent"), captureName(names, "indent.always"), captureName(names, "outdent"), captureName(names, "outdent.always"), captureName(names, "align"), captureName(names, "anchor"), captureName(names, "extend"), captureName(names, "extend.prevent-once"));
+    return this.indent;
   }
   textObjectQuery(r: LanguageRegistry) {
-    const q = this.compile(r, "textobjects");
-    return q && new TextObjectQuery(q);
+    if (this.textObjects) return this.textObjects;
+    const q = this.compileRawQuery(r, "textobjects");
+    if (!q) return undefined;
+    this.textObjects = new TextObjectQuery(q);
+    return this.textObjects;
   }
-  tagQuery(r: LanguageRegistry) {
-    const q = this.compile(r, "tags");
-    return q && new TagQuery(q);
+  tagQuery(registry: LanguageRegistry) {
+    if (this.tags) return this.tags;
+    const lang = this.grammar(registry); const src = this.querySource(registry, "tags");
+    if (!lang || !src) return undefined;
+    const stripPredicates = new Map<number, TagStripPredicate[]>();
+    const selectAdjacentPredicates = new Map<number, TagSelectAdjacentPredicate[]>();
+    const localPatterns = new Set<number>();
+    const strip: { start: number; end: number }[] = [];
+    const forms = queryForms(src);
+    for (let i = 0; i < forms.length; i++) for (const p of forms[i]!.predicates) {
+      if (p.name === "strip!") { checkArity(p, 2); stripPredicates.set(i, [...(stripPredicates.get(i) ?? []), { capture: capArg(p, 0), pattern: strArg(p, 1) }]); strip.push(p); }
+      else if (p.name === "select-adjacent!") { checkArity(p, 2); selectAdjacentPredicates.set(i, [...(selectAdjacentPredicates.get(i) ?? []), { leftCapture: capArg(p, 0), rightCapture: capArg(p, 1) }]); strip.push(p); }
+      else if (p.name === "is?" && p.args.length === 1 && p.args[0]?.type === "symbol" && p.args[0].value === "local") localPatterns.add(i);
+      // Keep native JS-supported predicates in tag queries for compatibility;
+      // custom tag-only predicates above are stripped and normalized.
+      else if (!["set!", "eq?", "not-eq?", "any-eq?", "any-not-eq?", "match?", "not-match?", "any-match?", "any-not-match?", "any-of?", "not-any-of?", "is?", "is-not?"].includes(p.name)) throw new QueryCompileError(`unknown tag predicate #${p.name}`);
+    }
+    this.tags = new TagQuery(compileQuery(lang, stripSpans(src, strip)), stripPredicates, selectAdjacentPredicates, localPatterns);
+    return this.tags;
   }
-  rainbowQuery(r: LanguageRegistry) {
-    const q = this.compile(r, "rainbows");
-    return q && new RainbowQuery(q);
+  rainbowQuery(registry: LanguageRegistry) {
+    if (this.rainbows) return this.rainbows;
+    const lang = this.grammar(registry); const src = this.querySource(registry, "rainbows");
+    if (!lang || !src) return undefined;
+    const include = new Set<number>();
+    const forms = queryForms(src);
+    for (let i = 0; i < forms.length; i++) for (const p of forms[i]!.predicates) {
+      if (p.name === "set!" && p.args[0]?.type === "symbol" && p.args[0].value === "rainbow.include-children") { if (p.args.length !== 1) throw new QueryCompileError("property 'rainbow.include-children' does not take an argument"); include.add(i); }
+      else if (p.name === "set!" && p.args[0]?.type === "symbol" && p.args[0].value.startsWith("rainbow.")) throw new QueryCompileError(`unknown rainbow property ${p.args[0].value}`);
+      else if (!["set!", "eq?", "not-eq?", "any-eq?", "any-not-eq?", "match?", "not-match?", "any-match?", "any-not-match?", "any-of?", "not-any-of?", "is?", "is-not?"].includes(p.name)) throw new QueryCompileError(`unknown rainbow predicate #${p.name}`);
+    }
+    const q = compileQuery(lang, src);
+    const names = captureNamesFromQuery(src);
+    this.rainbows = new RainbowQuery(q, include, captureName(names, "rainbow.scope"), captureName(names, "rainbow.bracket"));
+    return this.rainbows;
   }
 }
 

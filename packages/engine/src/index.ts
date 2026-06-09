@@ -1,6 +1,7 @@
 export * from "./chars";
 export * from "./grapheme";
 export * from "./columns";
+export * from "./comment";
 export * from "./line-ending";
 export * from "./selection";
 export * from "./history";

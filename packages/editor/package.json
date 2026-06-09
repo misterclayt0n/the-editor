@@ -1,0 +1,31 @@
+{
+  "name": "@the-editor/editor",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsdown src/index.ts --dts --format esm",
+    "dev": "tsdown src/index.ts --dts --format esm --watch",
+    "typecheck": "tsgo --noEmit --pretty",
+    "test": "vitest run test/scope.test.ts test/snapshot.test.ts test/layout.test.ts --passWithNoTests",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@the-editor/engine": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsdown": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

@@ -1,5 +1,13 @@
 import { describe, expect, test } from "vitest";
-import { displayGrapheme, graphemeWidth, tabWidthAt } from "../src/index";
+import { syntaxTextFromString } from "@the-editor/syntax";
+import {
+  columnAtOffset,
+  displayGrapheme,
+  graphemeWidth,
+  offsetAtColumn,
+  tabWidthAt,
+  TextBuffer,
+} from "../src/index";
 
 describe("columns", () => {
   test("tabWidthAt", () => {
@@ -54,5 +62,32 @@ describe("columns", () => {
     expect(() => tabWidthAt(0.5, 4)).toThrow(RangeError);
     expect(() => tabWidthAt(0, 0)).toThrow(RangeError);
     expect(() => tabWidthAt(0, 1.5)).toThrow(RangeError);
+  });
+
+  test("columnAtOffset uses grapheme and tab widths", () => {
+    const text = TextBuffer.fromString("a\t😀b\nxx");
+    expect(columnAtOffset({ text, offset: 0, tabWidth: 4 })).toBe(0);
+    expect(columnAtOffset({ text, offset: 1, tabWidth: 4 })).toBe(1);
+    expect(columnAtOffset({ text, offset: 2, tabWidth: 4 })).toBe(4);
+    expect(columnAtOffset({ text, offset: 4, tabWidth: 4 })).toBe(6);
+    expect(columnAtOffset({ text, offset: 5, tabWidth: 4 })).toBe(7);
+    expect(columnAtOffset({ text, offset: 7, tabWidth: 4 })).toBe(1);
+  });
+
+  test("offsetAtColumn finds offsets with before and after bias", () => {
+    const text = TextBuffer.fromString("a\t😀b");
+    expect(offsetAtColumn({ text, line: 0, column: 0, tabWidth: 4 })).toBe(0);
+    expect(offsetAtColumn({ text, line: 0, column: 1, tabWidth: 4 })).toBe(1);
+    expect(offsetAtColumn({ text, line: 0, column: 2, tabWidth: 4, bias: "before" })).toBe(1);
+    expect(offsetAtColumn({ text, line: 0, column: 2, tabWidth: 4, bias: "after" })).toBe(2);
+    expect(offsetAtColumn({ text, line: 0, column: 5, tabWidth: 4, bias: "before" })).toBe(2);
+    expect(offsetAtColumn({ text, line: 0, column: 5, tabWidth: 4, bias: "after" })).toBe(4);
+    expect(offsetAtColumn({ text, line: 0, column: 99, tabWidth: 4 })).toBe(5);
+  });
+
+  test("column primitives also accept SyntaxText", () => {
+    const text = syntaxTextFromString("ab\n\tcd");
+    expect(columnAtOffset({ text, offset: 4, tabWidth: 4 })).toBe(4);
+    expect(offsetAtColumn({ text, line: 1, column: 5, tabWidth: 4 })).toBe(5);
   });
 });

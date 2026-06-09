@@ -10,6 +10,13 @@
  */
 
 import { codePointAt, codePointIsZeroWidthWhitespace } from "./chars";
+import { graphemeSegments } from "./grapheme";
+import type { SyntaxText } from "@the-editor/syntax";
+import type { TextBuffer } from "./text/buffer";
+
+export type ColumnText = SyntaxText | TextBuffer;
+
+export type OffsetBias = "before" | "after";
 
 export type DisplayGrapheme =
   | {
@@ -107,4 +114,98 @@ export function displayGrapheme(
     return { kind: "tab", text: "\t", width, displayText: " ".repeat(width) };
   }
   return { kind: "other", text: grapheme, width: graphemeWidth(grapheme), displayText: grapheme };
+}
+
+function assertColumn(column: number): void {
+  if (!Number.isInteger(column) || column < 0) {
+    throw new RangeError("column must be an integer >= 0");
+  }
+}
+
+function isTextBuffer(text: ColumnText): text is TextBuffer {
+  return "lineCount" in text && typeof (text as TextBuffer).lineRange === "function";
+}
+
+function lineCount(text: ColumnText): number {
+  if (isTextBuffer(text)) return text.lineCount;
+  let count = 1;
+  for (let i = 0; i < text.length; i++) if (text.sliceString(i, i + 1) === "\n") count++;
+  return count;
+}
+
+function lineRange(text: ColumnText, line: number): { readonly from: number; readonly to: number } {
+  const count = lineCount(text);
+  if (!Number.isInteger(line) || line < 0 || line >= count) {
+    throw new RangeError(`line ${line} is out of bounds for ${count} lines`);
+  }
+  if (isTextBuffer(text)) {
+    const range = text.lineRange(line);
+    return { from: range.from, to: range.to };
+  }
+  let current = 0;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text.sliceString(i, i + 1) !== "\n") continue;
+    if (current === line) {
+      const to = i > start && text.sliceString(i - 1, i) === "\r" ? i - 1 : i;
+      return { from: start, to };
+    }
+    current++;
+    start = i + 1;
+  }
+  return { from: start, to: text.length };
+}
+
+function lineIndexAtOffset(text: ColumnText, offset: number): number {
+  if (!Number.isInteger(offset) || offset < 0 || offset > text.length) {
+    throw new RangeError(`offset ${offset} is out of bounds for text length ${text.length}`);
+  }
+  if (isTextBuffer(text)) return text.lineRangeAt(offset).index;
+  let line = 0;
+  for (let i = 0; i < offset; i++) if (text.sliceString(i, i + 1) === "\n") line++;
+  return line;
+}
+
+export function columnAtOffset(args: {
+  readonly text: ColumnText;
+  readonly offset: number;
+  readonly tabWidth: number;
+  readonly line?: number;
+}): number {
+  assertTabArgs(0, args.tabWidth);
+  const line = args.line ?? lineIndexAtOffset(args.text, args.offset);
+  const range = lineRange(args.text, line);
+  const end = Math.max(range.from, Math.min(args.offset, range.to));
+  const lineText = args.text.sliceString(range.from, end);
+  let column = 0;
+  for (const segment of graphemeSegments(lineText)) {
+    column += displayGrapheme(segment.text, column, args.tabWidth).width;
+  }
+  return column;
+}
+
+export function offsetAtColumn(args: {
+  readonly text: ColumnText;
+  readonly line: number;
+  readonly column: number;
+  readonly tabWidth: number;
+  readonly bias?: OffsetBias;
+}): number {
+  assertTabArgs(0, args.tabWidth);
+  assertColumn(args.column);
+  const bias = args.bias ?? "before";
+  const range = lineRange(args.text, args.line);
+  const lineText = args.text.sliceString(range.from, range.to);
+  let visualColumn = 0;
+  for (const segment of graphemeSegments(lineText)) {
+    const width = displayGrapheme(segment.text, visualColumn, args.tabWidth).width;
+    const nextColumn = visualColumn + width;
+    if (args.column < nextColumn) {
+      if (args.column === visualColumn) return range.from + segment.from;
+      return bias === "after" ? range.from + segment.to : range.from + segment.from;
+    }
+    if (args.column === nextColumn) return range.from + segment.to;
+    visualColumn = nextColumn;
+  }
+  return range.to;
 }

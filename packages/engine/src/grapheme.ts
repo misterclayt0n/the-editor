@@ -12,13 +12,18 @@
  * handled here. See `columns.ts` for simple editor-cell approximations.
  */
 
-import Graphemer from "graphemer";
+import GraphemerImport from "graphemer";
 
 export type GraphemeSegment = {
   readonly from: number;
   readonly to: number;
   readonly text: string;
 };
+
+// graphemer ships CJS compiled with esModuleInterop, so under real ESM the
+// default import is the module object ({ default: class }), not the class.
+const Graphemer =
+  (GraphemerImport as unknown as { default?: typeof GraphemerImport }).default ?? GraphemerImport;
 
 const splitter = new Graphemer();
 

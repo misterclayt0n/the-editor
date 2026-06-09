@@ -10,7 +10,7 @@
     "lint:fix": "oxlint --ignore-pattern '**/node_modules/**' --ignore-pattern '**/dist/**' . --fix",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
-    "clean": "turbo run clean && rm -rf node_modules .turbo packages/*/dist"
+    "clean": "turbo run clean && rm -rf node_modules .turbo packages/*/dist apps/*/dist apps/*/dist-electron"
   },
   "dependencies": {
     "effect": "^3.21.2"

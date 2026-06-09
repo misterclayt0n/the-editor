@@ -1,0 +1,118 @@
+:root {
+  color-scheme: dark;
+  --bg: #161616;
+  --bg-editor: #1c1c1c;
+  --fg: #e6e6e6;
+  --fg-dim: #8a8a8a;
+  --caret: #f5f5f5;
+  --selection: rgba(86, 156, 214, 0.35);
+  --status-bg: #202020;
+  --border: #2c2c2c;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    system-ui,
+    sans-serif;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.editor {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  outline: none;
+  background: var(--bg-editor);
+  font-family: "SF Mono", Menlo, Monaco, "Cascadia Code", monospace;
+  font-size: 13px;
+  cursor: text;
+}
+
+.editor-measure {
+  position: absolute;
+  visibility: hidden;
+  white-space: pre;
+}
+
+.editor-scroller {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+}
+
+.editor-content {
+  position: relative;
+  min-width: 100%;
+  width: max-content;
+}
+
+.editor-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 20px;
+  line-height: 20px;
+  padding-left: 12px;
+  white-space: pre;
+  tab-size: 4;
+}
+
+.editor-caret {
+  position: absolute;
+  width: 2px;
+  background: var(--caret);
+  animation: caret-blink 1.06s steps(1) infinite;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.editor-caret-idle {
+  animation: none;
+  opacity: 0.4;
+}
+
+@keyframes caret-blink {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  50.01%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.editor-selection {
+  position: absolute;
+  background: var(--selection);
+  pointer-events: none;
+}
+
+.status-bar {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 12px;
+  background: var(--status-bg);
+  border-top: 1px solid var(--border);
+  color: var(--fg-dim);
+  font-size: 12px;
+  user-select: none;
+}

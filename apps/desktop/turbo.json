@@ -1,0 +1,20 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist-electron/**"]
+    },
+    "dev": {
+      "dependsOn": ["@the-editor/web#build", "@the-editor/editor#build", "@the-editor/engine#build"],
+      "cache": false,
+      "persistent": true
+    },
+    "start": {
+      "dependsOn": ["build", "@the-editor/web#build"],
+      "cache": false,
+      "persistent": true
+    }
+  }
+}

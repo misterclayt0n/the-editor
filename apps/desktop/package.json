@@ -1,0 +1,25 @@
+{
+  "name": "@the-editor/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist-electron/main.cjs",
+  "scripts": {
+    "dev": "node scripts/dev-electron.mjs",
+    "build": "tsdown",
+    "start": "node scripts/start-electron.mjs",
+    "typecheck": "tsgo --noEmit --pretty",
+    "test": "vitest run --passWithNoTests",
+    "clean": "rm -rf dist-electron"
+  },
+  "dependencies": {
+    "electron": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "productName": "The Editor"
+}

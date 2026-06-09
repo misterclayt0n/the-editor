@@ -15,7 +15,8 @@ import {
 import { OverlappingReplacement } from "../src/text/transaction";
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runSync(effect);
-const apply = (buffer: TextBuffer, edit: AutoPairsEdit) => edit.transaction.apply(buffer).toString();
+const apply = (buffer: TextBuffer, edit: AutoPairsEdit) =>
+  edit.transaction.apply(buffer).toString();
 const doc = (text: string) => TextBuffer.fromString(text);
 const heads = (selection: Selection) => selection.ranges.map((r) => r.head);
 const pairs = () =>
@@ -31,15 +32,23 @@ const pairs = () =>
 
 describe("auto pairs", () => {
   test("rejects empty pairs", () => {
-    expect(Effect.runSync(Effect.flip(AutoPairs.create([["", ")"]])))).toBeInstanceOf(EmptyOpenPairError);
-    expect(Effect.runSync(Effect.flip(AutoPairs.create([["(", ""]])))).toBeInstanceOf(EmptyClosePairError);
+    expect(Effect.runSync(Effect.flip(AutoPairs.create([["", ")"]])))).toBeInstanceOf(
+      EmptyOpenPairError,
+    );
+    expect(Effect.runSync(Effect.flip(AutoPairs.create([["(", ""]])))).toBeInstanceOf(
+      EmptyClosePairError,
+    );
   });
 
   test("invalid typed char", () => {
     const buffer = doc("");
     const selection = Selection.point(0);
-    expect(Effect.runSync(Effect.flip(editForTypedChar(buffer, selection, "")))).toBeInstanceOf(InvalidTypedCharacterError);
-    expect(Effect.runSync(Effect.flip(editForTypedChar(buffer, selection, "ab")))).toBeInstanceOf(InvalidTypedCharacterError);
+    expect(Effect.runSync(Effect.flip(editForTypedChar(buffer, selection, "")))).toBeInstanceOf(
+      InvalidTypedCharacterError,
+    );
+    expect(Effect.runSync(Effect.flip(editForTypedChar(buffer, selection, "ab")))).toBeInstanceOf(
+      InvalidTypedCharacterError,
+    );
   });
 
   test("inserts single-char pair and selection", () => {
@@ -94,7 +103,12 @@ describe("auto pairs", () => {
     let edit = run(editForTypedChar(buffer, Selection.point(2), '"', pairs()))!;
     expect(apply(buffer, edit)).toBe('""""""');
 
-    const ordered = run(AutoPairs.create([["ax", "yz"], ["ax", "yw"]]));
+    const ordered = run(
+      AutoPairs.create([
+        ["ax", "yz"],
+        ["ax", "yw"],
+      ]),
+    );
     buffer = doc("a");
     edit = run(editForTypedChar(buffer, Selection.point(1), "x", ordered))!;
     expect(apply(buffer, edit)).toBe("axyz");
@@ -145,7 +159,14 @@ describe("auto pairs", () => {
   test("overlapping backspace spans errors", () => {
     const buffer = doc('""""""');
     const selection = Selection.create([SelectionRange.point(1), SelectionRange.point(3)]);
-    const custom = run(AutoPairs.create([['"""', '"""'], ['"', '"']]));
-    expect(Effect.runSync(Effect.flip(editForBackspace(buffer, selection, custom)))).toBeInstanceOf(OverlappingReplacement);
+    const custom = run(
+      AutoPairs.create([
+        ['"""', '"""'],
+        ['"', '"'],
+      ]),
+    );
+    expect(Effect.runSync(Effect.flip(editForBackspace(buffer, selection, custom)))).toBeInstanceOf(
+      OverlappingReplacement,
+    );
   });
 });

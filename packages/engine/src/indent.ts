@@ -282,25 +282,54 @@ function getNodeEndLine(text: SyntaxText, node: SyntaxNode, newLinePos?: number)
   const line = lineIndexAtOffset(text, node.endIndex);
   return newLinePos !== undefined && node.endIndex > newLinePos ? line + 1 : line;
 }
-function isFirstInLine(args: { readonly node: SyntaxNode; readonly text: SyntaxText; readonly newLinePos?: number }): boolean {
+function isFirstInLine(args: {
+  readonly node: SyntaxNode;
+  readonly text: SyntaxText;
+  readonly newLinePos?: number;
+}): boolean {
   let start = lineStartOffset(args.text, lineIndexAtOffset(args.text, args.node.startIndex));
-  if (args.newLinePos !== undefined && start < args.newLinePos && args.newLinePos <= args.node.startIndex) start = args.newLinePos;
+  if (
+    args.newLinePos !== undefined &&
+    start < args.newLinePos &&
+    args.newLinePos <= args.node.startIndex
+  )
+    start = args.newLinePos;
   return /^\s*$/u.test(args.text.sliceString(start, args.node.startIndex));
 }
 function matchCapture(match: any, name?: string): SyntaxNode | undefined {
   return name ? match.captures?.find((c: any) => c.name === name)?.node : undefined;
 }
-function predicatesSatisfied(args: { readonly predicates?: IndentQueryPredicates; readonly match: any; readonly text: SyntaxText; readonly newLinePos?: number }): boolean {
+function predicatesSatisfied(args: {
+  readonly predicates?: IndentQueryPredicates;
+  readonly match: any;
+  readonly text: SyntaxText;
+  readonly newLinePos?: number;
+}): boolean {
   const pred = args.predicates;
   if (!pred) return true;
-  for (const p of pred.notKindEq) if (matchCapture(args.match, p.capture)?.type === p.kind) return false;
+  for (const p of pred.notKindEq)
+    if (matchCapture(args.match, p.capture)?.type === p.kind) return false;
   if (pred.sameLine) {
-    const a = matchCapture(args.match, pred.sameLine.leftCapture), b = matchCapture(args.match, pred.sameLine.rightCapture);
-    if (!a || !b || (getNodeStartLine(args.text, a, args.newLinePos) === getNodeStartLine(args.text, b, args.newLinePos)) === pred.sameLine.negated) return false;
+    const a = matchCapture(args.match, pred.sameLine.leftCapture),
+      b = matchCapture(args.match, pred.sameLine.rightCapture);
+    if (
+      !a ||
+      !b ||
+      (getNodeStartLine(args.text, a, args.newLinePos) ===
+        getNodeStartLine(args.text, b, args.newLinePos)) ===
+        pred.sameLine.negated
+    )
+      return false;
   }
   if (pred.oneLine) {
     const a = matchCapture(args.match, pred.oneLine.capture);
-    if (!a || (getNodeStartLine(args.text, a, args.newLinePos) === getNodeEndLine(args.text, a, args.newLinePos)) === pred.oneLine.negated) return false;
+    if (
+      !a ||
+      (getNodeStartLine(args.text, a, args.newLinePos) ===
+        getNodeEndLine(args.text, a, args.newLinePos)) ===
+        pred.oneLine.negated
+    )
+      return false;
   }
   return true;
 }
@@ -310,12 +339,33 @@ function defaultScope(type: IndentCaptureType): IndentScope {
 function pushMap<K, V>(map: Map<K, readonly V[]>, key: K, value: V) {
   map.set(key, [...(map.get(key) ?? []), value]);
 }
-function queryIndents(args: { readonly query: IndentQuery; readonly syntax: Syntax; readonly text: SyntaxText; readonly startIndex: number; readonly endIndex: number; readonly newLinePos?: number }): IndentQueryResult {
+function queryIndents(args: {
+  readonly query: IndentQuery;
+  readonly syntax: Syntax;
+  readonly text: SyntaxText;
+  readonly startIndex: number;
+  readonly endIndex: number;
+  readonly newLinePos?: number;
+}): IndentQueryResult {
   const indentCaptures = new Map<NodeKey, readonly InternalIndentCapture[]>();
   const extendCaptures = new Map<NodeKey, readonly ExtendCapture[]>();
-  const matches = (args.query.query as any).matches(args.syntax.rootNode(), { startIndex: args.startIndex, endIndex: args.endIndex, matchLimit: TREE_SITTER_MATCH_LIMIT }) as any[];
+  const matches = (args.query.query as any).matches(args.syntax.rootNode(), {
+    startIndex: args.startIndex,
+    endIndex: args.endIndex,
+    matchLimit: TREE_SITTER_MATCH_LIMIT,
+  }) as any[];
   for (const match of matches) {
-    if (!predicatesSatisfied({ ...(args.query.predicates.has(match.pattern) ? { predicates: args.query.predicates.get(match.pattern)! } : {}), match, text: args.text, ...(args.newLinePos !== undefined ? { newLinePos: args.newLinePos } : {}) })) continue;
+    if (
+      !predicatesSatisfied({
+        ...(args.query.predicates.has(match.pattern)
+          ? { predicates: args.query.predicates.get(match.pattern)! }
+          : {}),
+        match,
+        text: args.text,
+        ...(args.newLinePos !== undefined ? { newLinePos: args.newLinePos } : {}),
+      })
+    )
+      continue;
     const added: Array<[NodeKey, InternalIndentCapture]> = [];
     let anchor: SyntaxNode | undefined;
     for (const c of match.captures ?? []) {
@@ -327,33 +377,70 @@ function queryIndents(args: { readonly query: IndentQuery; readonly syntax: Synt
       else if (name === args.query.outdentCapture) captureType = { type: "outdent" };
       else if (name === args.query.outdentAlwaysCapture) captureType = { type: "outdentAlways" };
       else if (name === args.query.alignCapture) captureType = { type: "align", whitespace: "" };
-      else if (name === args.query.anchorCapture) { if (!anchor) anchor = node; continue; }
-      else if (name === args.query.extendCapture) { pushMap(extendCaptures, nodeKey(node), "extend"); continue; }
-      else if (name === args.query.extendPreventOnceCapture) { pushMap(extendCaptures, nodeKey(node), "preventOnce"); continue; }
-      else continue;
-      added.push([nodeKey(node), { captureType, scope: args.query.properties.get(match.pattern) ?? defaultScope(captureType) }]);
+      else if (name === args.query.anchorCapture) {
+        if (!anchor) anchor = node;
+        continue;
+      } else if (name === args.query.extendCapture) {
+        pushMap(extendCaptures, nodeKey(node), "extend");
+        continue;
+      } else if (name === args.query.extendPreventOnceCapture) {
+        pushMap(extendCaptures, nodeKey(node), "preventOnce");
+        continue;
+      } else continue;
+      added.push([
+        nodeKey(node),
+        {
+          captureType,
+          scope: args.query.properties.get(match.pattern) ?? defaultScope(captureType),
+        },
+      ]);
     }
     for (const [key, def] of added) {
       let captureType = def.captureType;
       if (captureType.type === "align") {
         if (!anchor) continue;
-        captureType = { type: "align", whitespace: args.text.sliceString(lineStartOffset(args.text, lineIndexAtOffset(args.text, anchor.startIndex)), anchor.startIndex) };
+        captureType = {
+          type: "align",
+          whitespace: args.text.sliceString(
+            lineStartOffset(args.text, lineIndexAtOffset(args.text, anchor.startIndex)),
+            anchor.startIndex,
+          ),
+        };
       }
       pushMap(indentCaptures, key, { captureType, scope: def.scope });
     }
   }
   return { indentCaptures, extendCaptures };
 }
-function extendNodes(args: { readonly node: SyntaxNode; readonly deepestPreceding: SyntaxNode; readonly extendCaptures: ReadonlyMap<NodeKey, readonly ExtendCapture[]>; readonly text: SyntaxText; readonly line: number; readonly tabWidth: number; readonly indentWidth: number }): SyntaxNode {
-  let node = args.node, deepest = args.deepestPreceding, stopExtend = false;
+function extendNodes(args: {
+  readonly node: SyntaxNode;
+  readonly deepestPreceding: SyntaxNode;
+  readonly extendCaptures: ReadonlyMap<NodeKey, readonly ExtendCapture[]>;
+  readonly text: SyntaxText;
+  readonly line: number;
+  readonly tabWidth: number;
+  readonly indentWidth: number;
+}): SyntaxNode {
+  let node = args.node,
+    deepest = args.deepestPreceding,
+    stopExtend = false;
   while (!sameNode(deepest, node)) {
-    let extendNode = false, nodeCaptured = false;
+    let extendNode = false,
+      nodeCaptured = false;
     for (const capture of args.extendCaptures.get(nodeKey(deepest)) ?? []) {
       if (capture === "preventOnce") stopExtend = true;
       else {
         nodeCaptured = true;
         if (lineIndexAtOffset(args.text, deepest.endIndex) === args.line) extendNode = true;
-        else if (indentLevelForLine(lineText(args.text, args.line), args.tabWidth, args.indentWidth) > indentLevelForLine(lineText(args.text, lineIndexAtOffset(args.text, deepest.startIndex)), args.tabWidth, args.indentWidth)) extendNode = true;
+        else if (
+          indentLevelForLine(lineText(args.text, args.line), args.tabWidth, args.indentWidth) >
+          indentLevelForLine(
+            lineText(args.text, lineIndexAtOffset(args.text, deepest.startIndex)),
+            args.tabWidth,
+            args.indentWidth,
+          )
+        )
+          extendNode = true;
       }
     }
     if (nodeCaptured && stopExtend) stopExtend = false;
@@ -363,16 +450,51 @@ function extendNodes(args: { readonly node: SyntaxNode; readonly deepestPrecedin
   }
   return node;
 }
-function lastChild(node: SyntaxNode): SyntaxNode | undefined { return node.childCount > 0 ? node.child(node.childCount - 1) : undefined; }
-function initIndentQuery(args: { readonly query: IndentQuery; readonly syntax: Syntax; readonly text: SyntaxText; readonly tabWidth: number; readonly indentWidth: number; readonly line: number; readonly pos: number; readonly newLinePos?: number }): { readonly node: SyntaxNode; readonly indentCaptures: Map<NodeKey, readonly InternalIndentCapture[]> } | undefined {
-  let node = (args.syntax.rootNode() as any).descendantForIndex?.(args.pos, args.pos) ?? (args.syntax as any).descendantForByteRange(args.pos, args.pos);
+function lastChild(node: SyntaxNode): SyntaxNode | undefined {
+  return node.childCount > 0 ? node.child(node.childCount - 1) : undefined;
+}
+function initIndentQuery(args: {
+  readonly query: IndentQuery;
+  readonly syntax: Syntax;
+  readonly text: SyntaxText;
+  readonly tabWidth: number;
+  readonly indentWidth: number;
+  readonly line: number;
+  readonly pos: number;
+  readonly newLinePos?: number;
+}):
+  | {
+      readonly node: SyntaxNode;
+      readonly indentCaptures: Map<NodeKey, readonly InternalIndentCapture[]>;
+    }
+  | undefined {
+  let node =
+    (args.syntax.rootNode() as any).descendantForIndex?.(args.pos, args.pos) ??
+    (args.syntax as any).descendantForByteRange(args.pos, args.pos);
   if (!node) return undefined;
   let deepestPreceding: SyntaxNode | undefined;
   for (const child of node.children ?? []) if (child.endIndex <= args.pos) deepestPreceding = child;
-  if (deepestPreceding) while (lastChild(deepestPreceding)) deepestPreceding = lastChild(deepestPreceding);
+  if (deepestPreceding)
+    while (lastChild(deepestPreceding)) deepestPreceding = lastChild(deepestPreceding);
   const startIndex = deepestPreceding ? Math.max(0, deepestPreceding.endIndex - 1) : args.pos;
-  const queryResult = queryIndents({ query: args.query, syntax: args.syntax, text: args.text, startIndex, endIndex: args.pos + 1, ...(args.newLinePos !== undefined ? { newLinePos: args.newLinePos } : {}) });
-  if (deepestPreceding) node = extendNodes({ node, deepestPreceding, extendCaptures: queryResult.extendCaptures, text: args.text, line: args.line, tabWidth: args.tabWidth, indentWidth: args.indentWidth });
+  const queryResult = queryIndents({
+    query: args.query,
+    syntax: args.syntax,
+    text: args.text,
+    startIndex,
+    endIndex: args.pos + 1,
+    ...(args.newLinePos !== undefined ? { newLinePos: args.newLinePos } : {}),
+  });
+  if (deepestPreceding)
+    node = extendNodes({
+      node,
+      deepestPreceding,
+      extendCaptures: queryResult.extendCaptures,
+      text: args.text,
+      line: args.line,
+      tabWidth: args.tabWidth,
+      indentWidth: args.indentWidth,
+    });
   return { node, indentCaptures: queryResult.indentCaptures };
 }
 
@@ -387,33 +509,58 @@ export function treeSitterIndentForPos(args: {
   readonly newLine: boolean;
 }): Indentation | undefined {
   const newLinePos = args.newLine ? args.pos : undefined;
-  const init = initIndentQuery({ query: args.query, syntax: args.syntax, text: args.text, tabWidth: args.tabWidth, indentWidth: args.indentWidth, line: args.line, pos: args.pos, ...(newLinePos !== undefined ? { newLinePos } : {}) });
+  const init = initIndentQuery({
+    query: args.query,
+    syntax: args.syntax,
+    text: args.text,
+    tabWidth: args.tabWidth,
+    indentWidth: args.indentWidth,
+    line: args.line,
+    pos: args.pos,
+    ...(newLinePos !== undefined ? { newLinePos } : {}),
+  });
   if (!init) return undefined;
   let node = init.node;
   const indentCaptures = new Map(init.indentCaptures);
-  let result = Indentation.empty(), indentForLine = Indentation.empty(), indentForLineBelow = Indentation.empty();
+  let result = Indentation.empty(),
+    indentForLine = Indentation.empty(),
+    indentForLineBelow = Indentation.empty();
   while (true) {
-    const first = isFirstInLine({ node, text: args.text, ...(newLinePos !== undefined ? { newLinePos } : {}) });
+    const first = isFirstInLine({
+      node,
+      text: args.text,
+      ...(newLinePos !== undefined ? { newLinePos } : {}),
+    });
     const defs = indentCaptures.get(nodeKey(node));
-    if (defs) for (const def of defs) {
-      if (def.scope === "all") {
-        if (first) indentForLine = indentForLine.addCapture(def.captureType);
-        else indentForLineBelow = indentForLineBelow.addCapture(def.captureType);
-      } else indentForLineBelow = indentForLineBelow.addCapture(def.captureType);
-    }
+    if (defs)
+      for (const def of defs) {
+        if (def.scope === "all") {
+          if (first) indentForLine = indentForLine.addCapture(def.captureType);
+          else indentForLineBelow = indentForLineBelow.addCapture(def.captureType);
+        } else indentForLineBelow = indentForLineBelow.addCapture(def.captureType);
+      }
     const parent = node.parent;
     if (parent) {
-      const nodeLine = getNodeStartLine(args.text, node, newLinePos), parentLine = getNodeStartLine(args.text, parent, newLinePos);
+      const nodeLine = getNodeStartLine(args.text, node, newLinePos),
+        parentLine = getNodeStartLine(args.text, parent, newLinePos);
       if (nodeLine !== parentLine) {
-        if (nodeLine < args.line + (args.newLine ? 1 : 0)) result = result.addLine(indentForLineBelow);
+        if (nodeLine < args.line + (args.newLine ? 1 : 0))
+          result = result.addLine(indentForLineBelow);
         if (nodeLine === parentLine + 1) indentForLineBelow = indentForLine;
-        else { result = result.addLine(indentForLine); indentForLineBelow = Indentation.empty(); }
+        else {
+          result = result.addLine(indentForLine);
+          indentForLineBelow = Indentation.empty();
+        }
         indentForLine = Indentation.empty();
       }
       node = parent;
     } else {
       const nodeStartLine = lineIndexAtOffset(args.text, node.startIndex);
-      if (nodeStartLine < args.line || (args.newLine && nodeStartLine === args.line && node.startIndex < args.pos)) result = result.addLine(indentForLineBelow);
+      if (
+        nodeStartLine < args.line ||
+        (args.newLine && nodeStartLine === args.line && node.startIndex < args.pos)
+      )
+        result = result.addLine(indentForLineBelow);
       result = result.addLine(indentForLine);
       break;
     }

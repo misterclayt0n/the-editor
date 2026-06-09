@@ -12,4 +12,5 @@ export * from "./match-brackets";
 export * from "./surround";
 export * from "./auto-pairs";
 export * from "./text-object";
+export * from "./object";
 export * from "./text/index";

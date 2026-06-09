@@ -10,4 +10,5 @@ export * from "./search";
 export * from "./syntax-adapter";
 export * from "./match-brackets";
 export * from "./surround";
+export * from "./auto-pairs";
 export * from "./text/index";

@@ -13,4 +13,6 @@ export * from "./surround";
 export * from "./auto-pairs";
 export * from "./text-object";
 export * from "./object";
+export * from "./clipboard";
+export * from "./registers";
 export * from "./text/index";

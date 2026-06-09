@@ -7,4 +7,5 @@ export * from "./history";
 export * from "./search";
 export * from "./syntax-adapter";
 export * from "./match-brackets";
+export * from "./surround";
 export * from "./text/index";

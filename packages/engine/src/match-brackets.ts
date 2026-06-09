@@ -75,7 +75,11 @@ function previousBoundaryText(text: SyntaxText, pos: number): number {
   const prev = text.sliceString(Math.max(0, pos - 2), pos);
   const last = prev.charCodeAt(prev.length - 1);
   const before = prev.length >= 2 ? prev.charCodeAt(prev.length - 2) : undefined;
-  return last >= 0xdc00 && last <= 0xdfff && before !== undefined && before >= 0xd800 && before <= 0xdbff
+  return last >= 0xdc00 &&
+    last <= 0xdfff &&
+    before !== undefined &&
+    before >= 0xd800 &&
+    before <= 0xdbff
     ? pos - 2
     : pos - 1;
 }

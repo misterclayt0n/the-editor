@@ -13,8 +13,8 @@ describe("layout viewport", () => {
       lineCount: 2,
     });
     expect(snapshot.rows).toEqual([
-      { kind: "text", row: 0, line: 1, from: 2, to: 4, text: "bb" },
-      { kind: "text", row: 1, line: 2, from: 5, to: 8, text: "ccc" },
+      { kind: "text", row: 0, line: 1, from: 2, to: 4, text: "bb", top: 1, left: 0, height: 1 },
+      { kind: "text", row: 1, line: 2, from: 5, to: 8, text: "ccc", top: 2, left: 0, height: 1 },
     ]);
   });
 
@@ -36,6 +36,7 @@ describe("layout viewport", () => {
         to: 4,
         columnStart: 1,
         columnEnd: 2,
+        rects: [{ top: 1, left: 1, width: 1, height: 1 }],
         payload: "p",
       },
     ]);
@@ -59,6 +60,7 @@ describe("layout viewport", () => {
         to: 4,
         columnStart: 1,
         columnEnd: 2,
+        rects: [{ top: 1, left: 1, width: 1, height: 1 }],
         payload: null,
       },
       {
@@ -70,6 +72,7 @@ describe("layout viewport", () => {
         to: 7,
         columnStart: 0,
         columnEnd: 2,
+        rects: [{ top: 2, left: 0, width: 2, height: 1 }],
         payload: null,
       },
     ]);
@@ -101,7 +104,15 @@ describe("layout viewport", () => {
       ["text", 4],
     ]);
     expect(snapshot.placements).toEqual([
-      { kind: "block", id: "b", row: 2, afterLine: 1, heightRows: 2, payload: "b" },
+      {
+        kind: "block",
+        id: "b",
+        row: 2,
+        afterLine: 1,
+        heightRows: 2,
+        rect: { top: 2, left: 0, width: 0, height: 2 },
+        payload: "b",
+      },
     ]);
   });
 
@@ -114,7 +125,69 @@ describe("layout viewport", () => {
       anchors: [{ kind: "overlay", id: "o", at: 6, payload: "o" }],
     });
     expect(snapshot.placements).toEqual([
-      { kind: "overlay", id: "o", row: 1, line: 2, at: 6, column: 1, payload: "o" },
+      {
+        kind: "overlay",
+        id: "o",
+        row: 1,
+        line: 2,
+        at: 6,
+        column: 1,
+        rect: { top: 2, left: 1, width: 1, height: 1 },
+        payload: "o",
+      },
+    ]);
+  });
+
+  test("layout rows and placements include render geometry from metrics", () => {
+    const snapshot = layoutViewport({
+      text: text("a\nbb"),
+      version: 1,
+      startLine: 0,
+      lineCount: 2,
+      lineHeight: 20,
+      charWidth: 10,
+      paddingTop: 5,
+      paddingLeft: 8,
+      anchors: [
+        { kind: "overlay", id: "caret", at: 3, payload: null },
+        { kind: "range", id: "sel", from: 2, to: 4, payload: null },
+      ],
+    });
+    expect(snapshot.rows[1]).toMatchObject({ kind: "text", top: 25, left: 8, height: 20 });
+    expect(snapshot.placements).toContainEqual(
+      expect.objectContaining({
+        kind: "overlay",
+        rect: { top: 25, left: 18, width: 1, height: 20 },
+      }),
+    );
+    expect(snapshot.placements).toContainEqual(
+      expect.objectContaining({
+        kind: "range",
+        rects: [{ top: 25, left: 8, width: 20, height: 20 }],
+      }),
+    );
+  });
+
+  test("range rects use visual columns for tabs and wide graphemes", () => {
+    const snapshot = layoutViewport({
+      text: text("a\t😀"),
+      version: 1,
+      startLine: 0,
+      lineCount: 1,
+      tabWidth: 4,
+      lineHeight: 20,
+      charWidth: 10,
+      paddingTop: 5,
+      paddingLeft: 8,
+      anchors: [{ kind: "range", id: "sel", from: 1, to: 4, payload: null }],
+    });
+    expect(snapshot.placements).toEqual([
+      expect.objectContaining({
+        kind: "range",
+        columnStart: 1,
+        columnEnd: 6,
+        rects: [{ top: 5, left: 18, width: 50, height: 20 }],
+      }),
     ]);
   });
 

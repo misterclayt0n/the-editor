@@ -29,7 +29,18 @@ export type ViewportLayoutRequest<Payload = unknown> = {
   readonly startLine: number;
   readonly lineCount: number;
   readonly tabWidth?: number;
+  readonly lineHeight?: number;
+  readonly charWidth?: number;
+  readonly paddingTop?: number;
+  readonly paddingLeft?: number;
   readonly anchors?: readonly LayoutAnchor<Payload>[];
+};
+
+export type LayoutRect = {
+  readonly top: number;
+  readonly left: number;
+  readonly width: number;
+  readonly height: number;
 };
 
 export type LayoutRow =
@@ -40,12 +51,18 @@ export type LayoutRow =
       readonly from: number;
       readonly to: number;
       readonly text: string;
+      readonly top: number;
+      readonly left: number;
+      readonly height: number;
     }
   | {
       readonly kind: "block";
       readonly row: number;
       readonly afterLine: number;
       readonly heightRows: number;
+      readonly top: number;
+      readonly left: number;
+      readonly height: number;
     };
 
 export type LayoutPlacement<Payload = unknown> =
@@ -58,6 +75,7 @@ export type LayoutPlacement<Payload = unknown> =
       readonly to: number;
       readonly columnStart: number;
       readonly columnEnd: number;
+      readonly rects: readonly LayoutRect[];
       readonly payload: Payload;
     }
   | {
@@ -73,6 +91,7 @@ export type LayoutPlacement<Payload = unknown> =
       readonly row: number;
       readonly afterLine: number;
       readonly heightRows: number;
+      readonly rect: LayoutRect;
       readonly payload: Payload;
     }
   | {
@@ -82,6 +101,7 @@ export type LayoutPlacement<Payload = unknown> =
       readonly line: number;
       readonly at: number;
       readonly column: number;
+      readonly rect: LayoutRect;
       readonly payload: Payload;
     };
 
@@ -100,6 +120,15 @@ export type HitTestResult = {
   readonly column: number;
   readonly offset: number;
 };
+
+export function layoutContentHeight(args: {
+  readonly text: TextBuffer;
+  readonly lineHeight: number;
+  readonly paddingTop?: number;
+  readonly paddingBottom?: number;
+}): number {
+  return (args.paddingTop ?? 0) + args.text.lineCount * args.lineHeight + (args.paddingBottom ?? args.paddingTop ?? 0);
+}
 
 export function hitTestTextPosition(args: {
   readonly text: TextBuffer;
@@ -181,19 +210,21 @@ function lineIndexAtOffset(text: TextBuffer, offset: number): number {
 }
 
 function columnAtOffset(text: TextBuffer, line: number, offset: number, tabWidth: number): number {
-  const r = lineRange(text, line);
-  const end = Math.max(r.from, Math.min(offset, r.to));
-  let col = 0;
-  for (const ch of text.sliceString(r.from, end)) {
-    col += ch === "\t" ? tabWidth - (col % tabWidth || 0) : 1;
-  }
-  return col;
+  return engineColumnAtOffset({ text, line, offset, tabWidth });
+}
+
+function textTop(line: number, lineHeight: number, paddingTop: number): number {
+  return paddingTop + line * lineHeight;
 }
 
 export function layoutViewport<Payload = unknown>(
   request: ViewportLayoutRequest<Payload>,
 ): ViewportLayoutSnapshot<Payload> {
   const tabWidth = request.tabWidth ?? 4;
+  const lineHeight = request.lineHeight ?? 1;
+  const charWidth = request.charWidth ?? 1;
+  const paddingTop = request.paddingTop ?? 0;
+  const paddingLeft = request.paddingLeft ?? 0;
   const anchors = request.anchors ?? [];
   const start = Math.max(0, request.startLine);
   const end = Math.min(request.text.lineCount, start + Math.max(0, request.lineCount));
@@ -211,12 +242,23 @@ export function layoutViewport<Payload = unknown>(
       from: r.from,
       to: r.to,
       text: request.text.sliceString(r.from, r.to),
+      top: textTop(line, lineHeight, paddingTop),
+      left: paddingLeft,
+      height: lineHeight,
     });
     row++;
     for (const anchor of anchors) {
       if (anchor.kind !== "block" || anchor.afterLine !== line || anchor.heightRows <= 0) continue;
       blockRowById.set(anchor.id, row);
-      rows.push({ kind: "block", row, afterLine: anchor.afterLine, heightRows: anchor.heightRows });
+      rows.push({
+        kind: "block",
+        row,
+        afterLine: anchor.afterLine,
+        heightRows: anchor.heightRows,
+        top: textTop(anchor.afterLine + 1, lineHeight, paddingTop),
+        left: paddingLeft,
+        height: anchor.heightRows * lineHeight,
+      });
       row += anchor.heightRows;
     }
   }
@@ -242,22 +284,36 @@ export function layoutViewport<Payload = unknown>(
           row,
           afterLine: anchor.afterLine,
           heightRows: anchor.heightRows,
+          rect: {
+            top: textTop(anchor.afterLine + 1, lineHeight, paddingTop),
+            left: paddingLeft,
+            width: 0,
+            height: anchor.heightRows * lineHeight,
+          },
           payload: anchor.payload,
         });
     } else if (anchor.kind === "overlay") {
       const at = Math.max(0, Math.min(request.text.length, anchor.at));
       const line = lineIndexAtOffset(request.text, at);
       const row = lineToRow.get(line);
-      if (row !== undefined)
+      if (row !== undefined) {
+        const column = columnAtOffset(request.text, line, at, tabWidth);
         placements.push({
           kind: "overlay",
           id: anchor.id,
           row,
           line,
           at,
-          column: columnAtOffset(request.text, line, at, tabWidth),
+          column,
+          rect: {
+            top: textTop(line, lineHeight, paddingTop),
+            left: paddingLeft + column * charWidth,
+            width: 1,
+            height: lineHeight,
+          },
           payload: anchor.payload,
         });
+      }
     } else {
       const from = Math.max(0, Math.min(request.text.length, anchor.from));
       const to = Math.max(0, Math.min(request.text.length, anchor.to));
@@ -271,6 +327,8 @@ export function layoutViewport<Payload = unknown>(
         const a = Math.max(from, lr.from),
           b = Math.min(to, lr.to);
         if (b < a) continue;
+        const columnStart = columnAtOffset(request.text, line, a, tabWidth);
+        const columnEnd = columnAtOffset(request.text, line, b, tabWidth);
         placements.push({
           kind: "range",
           id: anchor.id,
@@ -278,8 +336,16 @@ export function layoutViewport<Payload = unknown>(
           line,
           from: a,
           to: b,
-          columnStart: columnAtOffset(request.text, line, a, tabWidth),
-          columnEnd: columnAtOffset(request.text, line, b, tabWidth),
+          columnStart,
+          columnEnd,
+          rects: [
+            {
+              top: textTop(line, lineHeight, paddingTop),
+              left: paddingLeft + columnStart * charWidth,
+              width: Math.max(1, (columnEnd - columnStart) * charWidth),
+              height: lineHeight,
+            },
+          ],
           payload: anchor.payload,
         });
       }

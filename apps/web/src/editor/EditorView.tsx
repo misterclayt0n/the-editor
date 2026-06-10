@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { hitTestTextPosition, layoutViewport, type EditorSnapshot } from "@the-editor/editor";
+import {
+  hitTestTextPosition,
+  layoutContentHeight,
+  layoutViewport,
+  type EditorSnapshot,
+} from "@the-editor/editor";
 import { Selection } from "@the-editor/engine";
 import type { Chord } from "@the-editor/keymaps";
 import type { AppRuntime } from "../runtime";
@@ -50,14 +55,25 @@ export function EditorView({ runtime, onSnapshot, onPending }: EditorViewProps) 
 
     const scroller = scrollerRef.current;
     if (!scroller) return;
-    const caretLine = next.text.lineRangeAt(next.selection.primary.head).index;
-    const caretTop = PADDING_TOP + caretLine * LINE_HEIGHT;
+    const caretLayout = layoutViewport({
+      text: next.text,
+      version: next.version,
+      startLine: 0,
+      lineCount: next.text.lineCount,
+      lineHeight: LINE_HEIGHT,
+      charWidth,
+      paddingTop: PADDING_TOP,
+      paddingLeft: PADDING_LEFT,
+      tabWidth: TAB_WIDTH,
+      anchors: [{ kind: "overlay", id: "caret", at: next.selection.primary.head, payload: null }],
+    });
+    const caretTop = caretLayout.placements.find((placement) => placement.kind === "overlay")?.rect.top ?? 0;
     if (caretTop < scroller.scrollTop) {
       scroller.scrollTop = caretTop;
     } else if (caretTop + LINE_HEIGHT > scroller.scrollTop + scroller.clientHeight) {
       scroller.scrollTop = caretTop + LINE_HEIGHT - scroller.clientHeight;
     }
-  }, [runtime]);
+  }, [runtime, charWidth]);
 
   // The renderer is a notification consumer: commands mutate the document and
   // publish invalidation batches; each batch triggers one snapshot re-read.
@@ -98,10 +114,19 @@ export function EditorView({ runtime, onSnapshot, onPending }: EditorViewProps) 
     [runtime, charWidth],
   );
 
-  const totalLines = snapshot.text.lineCount;
   const startLine = Math.max(
     0,
-    Math.floor((scrollTop - PADDING_TOP) / LINE_HEIGHT) - OVERSCAN_LINES,
+    hitTestTextPosition({
+      text: snapshot.text,
+      x: 0,
+      y: scrollTop,
+      lineHeight: LINE_HEIGHT,
+      charWidth,
+      paddingLeft: PADDING_LEFT,
+      paddingTop: PADDING_TOP,
+      tabWidth: TAB_WIDTH,
+      bias: "before",
+    }).line - OVERSCAN_LINES,
   );
   const visibleLines = Math.ceil(viewportHeight / LINE_HEIGHT) + OVERSCAN_LINES * 2;
 
@@ -113,6 +138,10 @@ export function EditorView({ runtime, onSnapshot, onPending }: EditorViewProps) 
       startLine,
       lineCount: visibleLines,
       tabWidth: TAB_WIDTH,
+      lineHeight: LINE_HEIGHT,
+      charWidth,
+      paddingTop: PADDING_TOP,
+      paddingLeft: PADDING_LEFT,
       anchors: [
         { kind: "overlay", id: "caret", at: primary.head, payload: null },
         ...snapshot.selection.ranges
@@ -126,7 +155,7 @@ export function EditorView({ runtime, onSnapshot, onPending }: EditorViewProps) 
           })),
       ],
     });
-  }, [snapshot, startLine, visibleLines]);
+  }, [snapshot, startLine, visibleLines, charWidth]);
 
   return (
     <div
@@ -146,25 +175,29 @@ export function EditorView({ runtime, onSnapshot, onPending }: EditorViewProps) 
       >
         <div
           className="editor-content"
-          style={{ height: PADDING_TOP * 2 + totalLines * LINE_HEIGHT }}
+          style={{
+            height: layoutContentHeight({
+              text: snapshot.text,
+              lineHeight: LINE_HEIGHT,
+              paddingTop: PADDING_TOP,
+            }),
+          }}
           onMouseDown={handleMouseDown}
         >
           {layout.placements.map((placement) => {
             if (placement.kind === "range") {
-              const left = PADDING_LEFT + placement.columnStart * charWidth;
-              const width = Math.max((placement.columnEnd - placement.columnStart) * charWidth, 4);
-              return (
+              return placement.rects.map((rect, rectIndex) => (
                 <div
-                  key={`${placement.id}-${placement.line}`}
+                  key={`${placement.id}-${placement.line}-${rectIndex}`}
                   className="editor-selection"
                   style={{
-                    top: PADDING_TOP + placement.line * LINE_HEIGHT,
-                    left,
-                    width,
-                    height: LINE_HEIGHT,
+                    top: rect.top,
+                    left: rect.left,
+                    width: Math.max(rect.width, 4),
+                    height: rect.height,
                   }}
                 />
-              );
+              ));
             }
             if (placement.kind === "overlay" && placement.id === "caret") {
               return (
@@ -172,9 +205,9 @@ export function EditorView({ runtime, onSnapshot, onPending }: EditorViewProps) 
                   key={`caret-${placement.at}-${snapshot.version}`}
                   className={focused ? "editor-caret" : "editor-caret editor-caret-idle"}
                   style={{
-                    top: PADDING_TOP + placement.line * LINE_HEIGHT,
-                    left: PADDING_LEFT + placement.column * charWidth,
-                    height: LINE_HEIGHT,
+                    top: placement.rect.top,
+                    left: placement.rect.left,
+                    height: placement.rect.height,
                   }}
                 />
               );
@@ -186,7 +219,7 @@ export function EditorView({ runtime, onSnapshot, onPending }: EditorViewProps) 
               <div
                 key={row.line}
                 className="editor-row"
-                style={{ top: PADDING_TOP + row.line * LINE_HEIGHT }}
+                style={{ top: row.top, left: row.left, height: row.height }}
               >
                 {row.text}
               </div>

@@ -1,11 +1,17 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
+  DocumentInvalidated,
+  SelectionInvalidated,
+  hasInvalidation,
   hitTestTextPosition,
   layoutContentHeight,
   layoutViewport,
+  type EditorNotification,
   type EditorSnapshot,
+  type LayoutPlacement,
+  type LayoutRow,
 } from "@the-editor/editor";
-import { Selection } from "@the-editor/engine";
+import { Selection, type TextBuffer } from "@the-editor/engine";
 import type { Chord } from "@the-editor/keymaps";
 import type { AppRuntime } from "../runtime";
 
@@ -21,8 +27,85 @@ type EditorViewProps = {
   readonly onPending?: (chords: ReadonlyArray<Chord>) => void;
 };
 
+type TextRenderState = {
+  readonly text: TextBuffer;
+  readonly version: number;
+};
+
+type SelectionRenderState = {
+  readonly selection: Selection;
+};
+
+const TextLayer = memo(function TextLayer({ rows }: { readonly rows: readonly LayoutRow[] }) {
+  return rows.map((row) =>
+    row.kind === "text" ? (
+      <div
+        key={row.line}
+        className="editor-row"
+        style={{ top: row.top, left: row.left, height: row.height }}
+      >
+        {row.text}
+      </div>
+    ) : null,
+  );
+});
+
+const SelectionLayer = memo(function SelectionLayer({
+  placements,
+}: {
+  readonly placements: readonly LayoutPlacement<null>[];
+}) {
+  return placements.map((placement) => {
+    if (placement.kind !== "range") return null;
+    return placement.rects.map((rect, rectIndex) => (
+      <div
+        key={`${placement.id}-${placement.line}-${rectIndex}`}
+        className="editor-selection"
+        style={{
+          top: rect.top,
+          left: rect.left,
+          width: Math.max(rect.width, 4),
+          height: rect.height,
+        }}
+      />
+    ));
+  });
+});
+
+const CaretLayer = memo(function CaretLayer({
+  placements,
+  focused,
+  version,
+}: {
+  readonly placements: readonly LayoutPlacement<null>[];
+  readonly focused: boolean;
+  readonly version: number;
+}) {
+  return placements.map((placement) => {
+    if (placement.kind !== "overlay" || placement.id !== "caret") return null;
+    return (
+      <div
+        key={`caret-${placement.at}-${version}`}
+        className={focused ? "editor-caret" : "editor-caret editor-caret-idle"}
+        style={{
+          top: placement.rect.top,
+          left: placement.rect.left,
+          height: placement.rect.height,
+        }}
+      />
+    );
+  });
+});
+
 export function EditorView({ runtime, onSnapshot, onPending }: EditorViewProps) {
-  const [snapshot, setSnapshot] = useState<EditorSnapshot>(() => runtime.snapshot());
+  const initial = useMemo(() => runtime.snapshot(), [runtime]);
+  const [textState, setTextState] = useState<TextRenderState>(() => ({
+    text: initial.text,
+    version: initial.version,
+  }));
+  const [selectionState, setSelectionState] = useState<SelectionRenderState>(() => ({
+    selection: initial.selection,
+  }));
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
   const [charWidth, setCharWidth] = useState(8);
@@ -46,13 +129,10 @@ export function EditorView({ runtime, onSnapshot, onPending }: EditorViewProps) 
   }, []);
 
   useEffect(() => {
-    onSnapshot?.(snapshot);
-  }, [snapshot, onSnapshot]);
+    onSnapshot?.(initial);
+  }, [initial, onSnapshot]);
 
-  const refresh = useCallback(() => {
-    const next = runtime.snapshot();
-    setSnapshot(next);
-
+  const revealCaret = useCallback((next: EditorSnapshot) => {
     const scroller = scrollerRef.current;
     if (!scroller) return;
     const caretLayout = layoutViewport({
@@ -73,13 +153,26 @@ export function EditorView({ runtime, onSnapshot, onPending }: EditorViewProps) 
     } else if (caretTop + LINE_HEIGHT > scroller.scrollTop + scroller.clientHeight) {
       scroller.scrollTop = caretTop + LINE_HEIGHT - scroller.clientHeight;
     }
-  }, [runtime, charWidth]);
+  }, [charWidth]);
 
-  // The renderer is a notification consumer: commands mutate the document and
-  // publish invalidation batches; each batch triggers one snapshot re-read.
-  // Payloads are hints only, so dropped batches (sliding bus) are harmless —
-  // every refresh reads the full current truth.
-  useEffect(() => runtime.subscribe(() => refresh()), [runtime, refresh]);
+  const refresh = useCallback(
+    (notification: EditorNotification) => {
+      const documentChanged = hasInvalidation(notification, DocumentInvalidated);
+      const selectionChanged = hasInvalidation(notification, SelectionInvalidated);
+      if (!documentChanged && !selectionChanged) return;
+
+      const next = runtime.snapshot();
+      if (documentChanged) setTextState({ text: next.text, version: next.version });
+      if (documentChanged || selectionChanged) setSelectionState({ selection: next.selection });
+      revealCaret(next);
+      onSnapshot?.(next);
+    },
+    [runtime, revealCaret, onSnapshot],
+  );
+
+  // The renderer is a notification consumer: document invalidations update text
+  // layout state; selection-only invalidations update only overlay/caret state.
+  useEffect(() => runtime.subscribe((notification) => refresh(notification)), [runtime, refresh]);
 
   // The whole input path: chord -> keymap resolution -> command execution.
   // The switch statement this replaces lives on as keybindings in the
@@ -117,7 +210,7 @@ export function EditorView({ runtime, onSnapshot, onPending }: EditorViewProps) 
   const startLine = Math.max(
     0,
     hitTestTextPosition({
-      text: snapshot.text,
+      text: textState.text,
       x: 0,
       y: scrollTop,
       lineHeight: LINE_HEIGHT,
@@ -130,11 +223,28 @@ export function EditorView({ runtime, onSnapshot, onPending }: EditorViewProps) 
   );
   const visibleLines = Math.ceil(viewportHeight / LINE_HEIGHT) + OVERSCAN_LINES * 2;
 
-  const layout = useMemo(() => {
-    const primary = snapshot.selection.primary;
+  const textLayout = useMemo(
+    () =>
+      layoutViewport({
+        text: textState.text,
+        version: textState.version,
+        startLine,
+        lineCount: visibleLines,
+        tabWidth: TAB_WIDTH,
+        lineHeight: LINE_HEIGHT,
+        charWidth,
+        paddingTop: PADDING_TOP,
+        paddingLeft: PADDING_LEFT,
+        anchors: [],
+      }),
+    [textState.text, textState.version, startLine, visibleLines, charWidth],
+  );
+
+  const overlayLayout = useMemo(() => {
+    const primary = selectionState.selection.primary;
     return layoutViewport({
-      text: snapshot.text,
-      version: snapshot.version,
+      text: textState.text,
+      version: textState.version,
       startLine,
       lineCount: visibleLines,
       tabWidth: TAB_WIDTH,
@@ -144,7 +254,7 @@ export function EditorView({ runtime, onSnapshot, onPending }: EditorViewProps) 
       paddingLeft: PADDING_LEFT,
       anchors: [
         { kind: "overlay", id: "caret", at: primary.head, payload: null },
-        ...snapshot.selection.ranges
+        ...selectionState.selection.ranges
           .filter((range) => !range.isCollapsed)
           .map((range, index) => ({
             kind: "range" as const,
@@ -155,7 +265,7 @@ export function EditorView({ runtime, onSnapshot, onPending }: EditorViewProps) 
           })),
       ],
     });
-  }, [snapshot, startLine, visibleLines, charWidth]);
+  }, [textState.text, textState.version, selectionState.selection, startLine, visibleLines, charWidth]);
 
   return (
     <div
@@ -177,54 +287,20 @@ export function EditorView({ runtime, onSnapshot, onPending }: EditorViewProps) 
           className="editor-content"
           style={{
             height: layoutContentHeight({
-              text: snapshot.text,
+              text: textState.text,
               lineHeight: LINE_HEIGHT,
               paddingTop: PADDING_TOP,
             }),
           }}
           onMouseDown={handleMouseDown}
         >
-          {layout.placements.map((placement) => {
-            if (placement.kind === "range") {
-              return placement.rects.map((rect, rectIndex) => (
-                <div
-                  key={`${placement.id}-${placement.line}-${rectIndex}`}
-                  className="editor-selection"
-                  style={{
-                    top: rect.top,
-                    left: rect.left,
-                    width: Math.max(rect.width, 4),
-                    height: rect.height,
-                  }}
-                />
-              ));
-            }
-            if (placement.kind === "overlay" && placement.id === "caret") {
-              return (
-                <div
-                  key={`caret-${placement.at}-${snapshot.version}`}
-                  className={focused ? "editor-caret" : "editor-caret editor-caret-idle"}
-                  style={{
-                    top: placement.rect.top,
-                    left: placement.rect.left,
-                    height: placement.rect.height,
-                  }}
-                />
-              );
-            }
-            return null;
-          })}
-          {layout.rows.map((row) =>
-            row.kind === "text" ? (
-              <div
-                key={row.line}
-                className="editor-row"
-                style={{ top: row.top, left: row.left, height: row.height }}
-              >
-                {row.text}
-              </div>
-            ) : null,
-          )}
+          <SelectionLayer placements={overlayLayout.placements} />
+          <CaretLayer
+            placements={overlayLayout.placements}
+            focused={focused}
+            version={textState.version}
+          />
+          <TextLayer rows={textLayout.rows} />
         </div>
       </div>
     </div>

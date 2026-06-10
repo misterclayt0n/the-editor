@@ -61,11 +61,8 @@ body {
 
 .editor-row {
   position: absolute;
-  left: 0;
-  right: 0;
   height: 20px;
   line-height: 20px;
-  padding-left: 12px;
   white-space: pre;
   tab-size: 4;
 }

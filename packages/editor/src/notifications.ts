@@ -151,8 +151,28 @@ export const makeEditorNotifications = (options?: {
  * The two truths an editor scope owns. Payloads are staleness hints only;
  * consumers re-read TextDocument / SelectionState.
  */
+
+/**
+ * One changed span: [fromA, toA) in the old document was replaced by
+ * [fromB, toB) in the new one. Structurally compatible with the engine's
+ * ChangeRange so producers can pass `transaction.changes.desc().ranges`
+ * straight through.
+ */
+export type DocumentChangeRange = {
+  readonly fromA: number;
+  readonly toA: number;
+  readonly fromB: number;
+  readonly toB: number;
+};
+
 export type DocumentInvalidation = {
   readonly version: number;
+  /**
+   * Changed spans for this version bump, when the producer knows them.
+   * Consumers that miss a batch (serial gap) or see no ranges must fall back
+   * to treating the whole document as dirty.
+   */
+  readonly changes?: ReadonlyArray<DocumentChangeRange>;
 };
 
 export const DocumentInvalidated = makeInvalidationTopic<DocumentInvalidation>(

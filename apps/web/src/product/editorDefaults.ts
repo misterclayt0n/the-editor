@@ -48,7 +48,10 @@ const applyResult = (result: CommandResult | undefined) =>
       yield* selectionState.set(result.selection);
       const version = yield* document.version;
       yield* notifications.publish([
-        invalidate(DocumentInvalidated, { version }),
+        invalidate(DocumentInvalidated, {
+          version,
+          changes: result.transaction.changes.desc().ranges,
+        }),
         invalidate(SelectionInvalidated),
       ]);
     } else {

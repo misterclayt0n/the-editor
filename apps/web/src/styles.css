@@ -47,22 +47,64 @@ body {
   white-space: pre;
 }
 
-.editor-scroller {
+/*
+ * Owned scrolling: no native scroller exists. The viewport clips; the
+ * content element (the rendered window of rows) is positioned with a
+ * transform driven by the scroll model; the scrollbar is our own widget.
+ */
+.editor-viewport {
   position: absolute;
   inset: 0;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .editor-content {
-  position: relative;
+  position: absolute;
+  top: 0;
+  left: 0;
   min-width: 100%;
-  width: max-content;
+  will-change: transform;
+}
+
+/* Overlay host (selections); sits behind the in-flow text rows. */
+.editor-layer {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+}
+
+/* Rows stack in normal flow; child i = line windowStart + i. */
+.editor-rows {
+  display: block;
+}
+
+.editor-scrollbar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  z-index: 5;
+}
+
+.editor-scrollbar-thumb {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  min-height: 32px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.editor-scrollbar-thumb:hover,
+.editor-scrollbar-thumb:active {
+  background: rgba(255, 255, 255, 0.3);
 }
 
 .editor-row {
-  position: absolute;
   height: 20px;
   line-height: 20px;
+  padding-left: 12px;
   white-space: pre;
   tab-size: 4;
 }
@@ -102,6 +144,7 @@ body {
   color: var(--fg-dim);
   opacity: 0.75;
 }
+
 
 .editor-decoration {
   position: absolute;

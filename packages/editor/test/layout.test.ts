@@ -15,25 +15,25 @@ describe("layout viewport", () => {
     expect(snapshot.rows).toEqual([
       {
         kind: "text",
-        row: 0,
+        row: 1,
         line: 1,
         from: 2,
         to: 4,
         text: "bb",
         segments: [{ kind: "text", from: 0, to: 2, text: "bb" }],
-        top: 0,
+        top: 1,
         left: 0,
         height: 1,
       },
       {
         kind: "text",
-        row: 1,
+        row: 2,
         line: 2,
         from: 5,
         to: 8,
         text: "ccc",
         segments: [{ kind: "text", from: 0, to: 3, text: "ccc" }],
-        top: 1,
+        top: 2,
         left: 0,
         height: 1,
       },
@@ -52,13 +52,13 @@ describe("layout viewport", () => {
       {
         kind: "range",
         id: "r",
-        row: 0,
+        row: 1,
         line: 1,
         from: 3,
         to: 4,
         columnStart: 1,
         columnEnd: 2,
-        rects: [{ top: 0, left: 1, width: 1, height: 1 }],
+        rects: [{ top: 1, left: 1, width: 1, height: 1 }],
         payload: "p",
       },
     ]);
@@ -76,25 +76,25 @@ describe("layout viewport", () => {
       {
         kind: "range",
         id: "r",
-        row: 0,
+        row: 1,
         line: 1,
         from: 3,
         to: 4,
         columnStart: 1,
         columnEnd: 2,
-        rects: [{ top: 0, left: 1, width: 1, height: 1 }],
+        rects: [{ top: 1, left: 1, width: 1, height: 1 }],
         payload: null,
       },
       {
         kind: "range",
         id: "r",
-        row: 1,
+        row: 2,
         line: 2,
         from: 5,
         to: 7,
         columnStart: 0,
         columnEnd: 2,
-        rects: [{ top: 1, left: 0, width: 2, height: 1 }],
+        rects: [{ top: 2, left: 0, width: 2, height: 1 }],
         payload: null,
       },
     ]);
@@ -108,7 +108,7 @@ describe("layout viewport", () => {
       lineCount: 2,
       anchors: [{ kind: "line", id: "l", line: 2, payload: 1 }],
     });
-    expect(snapshot.placements).toEqual([{ kind: "line", id: "l", row: 1, line: 2, payload: 1 }]);
+    expect(snapshot.placements).toEqual([{ kind: "line", id: "l", row: 2, line: 2, payload: 1 }]);
   });
 
   test("block rows insert and shift later rows", () => {
@@ -150,11 +150,11 @@ describe("layout viewport", () => {
       {
         kind: "overlay",
         id: "o",
-        row: 1,
+        row: 2,
         line: 2,
         at: 6,
         column: 1,
-        rect: { top: 1, left: 1, width: 1, height: 1 },
+        rect: { top: 2, left: 1, width: 1, height: 1 },
         payload: "o",
       },
     ]);
@@ -384,6 +384,51 @@ describe("layout viewport", () => {
     });
     expect(snapshot.placements.find((p) => p.kind === "block")).toMatchObject({ row: 1, rect: { top: 10, left: 0, width: 0, height: 10 } });
     expect(snapshot.placements.find((p) => p.kind === "overlay")).toMatchObject({ row: 2, rect: { top: 20, left: 0, width: 1, height: 10 } });
+  });
+
+  test("mid-document windows produce absolute geometry", () => {
+    const snapshot = layoutViewport({
+      text: text("a\nb\nc\nd"),
+      version: 1,
+      startLine: 2,
+      lineCount: 2,
+      lineHeight: 10,
+      paddingTop: 4,
+      anchors: [{ kind: "overlay", id: "caret", at: 6, payload: null }],
+    });
+    expect(
+      snapshot.rows.map((r) => [r.kind === "text" ? r.line : -1, r.row, r.top]),
+    ).toEqual([
+      [2, 2, 24],
+      [3, 3, 34],
+    ]);
+    expect(snapshot.placements[0]).toMatchObject({
+      kind: "overlay",
+      line: 3,
+      rect: expect.objectContaining({ top: 34 }),
+    });
+  });
+
+  test("block rows above the window shift it down", () => {
+    const widgets = [{ id: "w", afterLine: 0, heightRows: 3 }];
+    const snapshot = layoutViewport({
+      text: text("a\nb\nc\nd"),
+      version: 1,
+      startLine: 2,
+      lineCount: 2,
+      lineHeight: 10,
+      visuals: { blockWidgets: widgets },
+    });
+    expect(snapshot.rows.map((r) => [r.kind, r.row, r.top])).toEqual([
+      ["text", 5, 50],
+      ["text", 6, 60],
+    ]);
+    // The widget itself is outside the window, so it produces no output.
+    expect(snapshot.blockWidgets).toEqual([]);
+    // Window tops line up with the full content height coordinate space.
+    expect(layoutContentHeight({ text: text("a\nb\nc\nd"), lineHeight: 10, blockWidgets: widgets })).toBe(
+      70,
+    );
   });
 
   test("hit testing converts viewport pixels to text position", () => {

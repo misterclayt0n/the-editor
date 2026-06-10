@@ -3,21 +3,7 @@ import type { EditorSnapshot } from "@the-editor/editor";
 import { formatChords, type Chord } from "@the-editor/keymaps";
 import { AppRuntime } from "./runtime";
 import { EditorView } from "./editor/EditorView";
-
-const SAMPLE = `// The Editor — workbench + commands + keymaps slice
-//
-// Every keystroke now flows: chord -> keymap -> scoped command -> transaction.
-// The defaults are an ordinary package (see src/product/editorDefaults.ts);
-// a user package activated later could rebind all of it.
-//
-// Type, move with arrows/Home/End (shift extends), Enter/Backspace/Delete/Tab.
-
-function hello(name: string): string {
-\treturn \`hello, \${name}\`;
-}
-
-hello("world");
-`;
+import { makeBenchmarkText } from "./benchmarkText";
 
 export function App() {
   // The runtime is an external resource, so the owning effect creates AND
@@ -28,7 +14,7 @@ export function App() {
   const [pending, setPending] = useState<ReadonlyArray<Chord>>([]);
 
   useEffect(() => {
-    const booted = AppRuntime.boot(SAMPLE);
+    const booted = AppRuntime.boot(makeBenchmarkText());
     setRuntime(booted);
     setSnapshot(booted.snapshot());
     return () => {

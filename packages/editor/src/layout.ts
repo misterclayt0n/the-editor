@@ -444,7 +444,13 @@ export function layoutViewport<Payload = unknown>(
   ]
     .filter((b) => b.heightRows > 0)
     .sort((a, b) => a.afterLine - b.afterLine || a.index - b.index);
-  let row = 0;
+  // All geometry is document-absolute: a row's `top` is its offset inside the
+  // full content box (the same coordinate space as layoutContentHeight and
+  // hitTestTextPosition), so the renderer can place viewport rows directly
+  // without knowing what lies outside the window. Block rows that sit entirely
+  // above the window shift the whole window down.
+  let row = start;
+  for (const b of blockItems) if (b.afterLine < start) row += b.heightRows;
   for (let line = start; line < end; line++) {
     const r = request.text.lineRange(line),
       rowText = request.text.sliceString(r.from, r.to);

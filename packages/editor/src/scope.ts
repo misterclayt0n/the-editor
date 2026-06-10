@@ -17,6 +17,7 @@ import {
   EditorScopeId,
   type EditorScopeId as EditorScopeIdType,
 } from "./services";
+import { EditorNotifications, makeEditorNotifications } from "./notifications";
 
 let nextScopeId = 1;
 
@@ -50,12 +51,16 @@ export function makeEditorScope(input: CreateEditorScopeInput = {}): Effect.Effe
     });
     const registers = input.registers ?? Registers.create();
     const clipboard = input.clipboard ?? new NoClipboard();
+    // The notification bus is per editor scope: its PubSub shuts down (ending
+    // all consumer streams) when the scope closes.
+    const notifications = yield* Scope.extend(makeEditorNotifications(), scope);
     const context = Context.empty().pipe(
       Context.add(ActiveEditorScopeId, id),
       Context.add(TextDocument, textDocument),
       Context.add(SelectionState, selectionState),
       Context.add(ActiveRegisters, registers),
       Context.add(ActiveClipboard, clipboard),
+      Context.add(EditorNotifications, notifications),
     ) as Context.Context<any>;
     return { id, scope, context } satisfies EditorScope;
   });

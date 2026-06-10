@@ -7,7 +7,11 @@
       "outputs": ["dist-electron/**"]
     },
     "dev": {
-      "dependsOn": ["@the-editor/web#build", "@the-editor/editor#build", "@the-editor/engine#build"],
+      "dependsOn": [
+        "@the-editor/web#build",
+        "@the-editor/editor#build",
+        "@the-editor/engine#build"
+      ],
       "cache": false,
       "persistent": true
     },

@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { layoutViewport, type EditorSnapshot } from "@the-editor/editor";
 import { Selection } from "@the-editor/engine";
 import type { EditorSession } from "./session";
@@ -86,14 +79,19 @@ export function EditorView({ session, onSnapshot }: EditorViewProps) {
     }
   }, [session]);
 
+  // The renderer is a notification consumer: commands mutate the session and
+  // publish invalidation batches; each batch triggers one snapshot re-read.
+  // Payloads are hints only, so dropped batches (sliding bus) are harmless —
+  // every refresh reads the full current truth.
+  useEffect(() => session.subscribe(() => refresh()), [session, refresh]);
+
   const dispatch = useCallback(
     (result: CommandResult | undefined) => {
       if (!result) return;
       if (result.transaction) session.apply(result.transaction, result.selection);
       else session.setSelection(result.selection);
-      refresh();
     },
-    [session, refresh],
+    [session],
   );
 
   const handleKeyDown = useCallback(
@@ -163,7 +161,10 @@ export function EditorView({ session, onSnapshot }: EditorViewProps) {
   );
 
   const totalLines = snapshot.text.lineCount;
-  const startLine = Math.max(0, Math.floor((scrollTop - PADDING_TOP) / LINE_HEIGHT) - OVERSCAN_LINES);
+  const startLine = Math.max(
+    0,
+    Math.floor((scrollTop - PADDING_TOP) / LINE_HEIGHT) - OVERSCAN_LINES,
+  );
   const visibleLines = Math.ceil(viewportHeight / LINE_HEIGHT) + OVERSCAN_LINES * 2;
 
   const layout = useMemo(() => {
@@ -190,7 +191,13 @@ export function EditorView({ session, onSnapshot }: EditorViewProps) {
   }, [snapshot, startLine, visibleLines]);
 
   return (
-    <div className="editor" tabIndex={0} onKeyDown={handleKeyDown} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}>
+    <div
+      className="editor"
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+    >
       <span ref={measureRef} className="editor-measure" aria-hidden>
         {"0".repeat(100)}
       </span>

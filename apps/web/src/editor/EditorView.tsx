@@ -8,6 +8,8 @@ import {
   layoutViewport,
   type EditorNotification,
   type EditorSnapshot,
+  type LayoutBlockWidget,
+  type LayoutDecoration,
   type LayoutPlacement,
   type LayoutRow,
 } from "@the-editor/editor";
@@ -44,10 +46,67 @@ const TextLayer = memo(function TextLayer({ rows }: { readonly rows: readonly La
         className="editor-row"
         style={{ top: row.top, left: row.left, height: row.height }}
       >
-        {row.text}
+        {row.segments.length === 0
+          ? row.text
+          : row.segments.map((segment, index) =>
+              segment.kind === "text" ? (
+                <span key={index} className={segment.className} style={segment.style}>
+                  {segment.text}
+                </span>
+              ) : (
+                <span
+                  key={index}
+                  className={segment.className ?? "editor-virtual-text"}
+                  style={segment.style}
+                >
+                  {segment.text}
+                </span>
+              ),
+            )}
       </div>
     ) : null,
   );
+});
+
+const DecorationLayer = memo(function DecorationLayer({
+  decorations,
+  layers,
+}: {
+  readonly decorations: readonly LayoutDecoration[];
+  readonly layers: readonly string[];
+}) {
+  return decorations
+    .filter((decoration) => layers.includes(decoration.layer))
+    .flatMap((decoration, decorationIndex) =>
+      decoration.rects.map((rect, rectIndex) => (
+        <div
+          key={`${decoration.layer}-${decorationIndex}-${rectIndex}`}
+          className={[
+            "editor-decoration",
+            `editor-decoration-${decoration.layer}`,
+            decoration.className,
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          style={{ ...rect, ...decoration.style }}
+        />
+      )),
+    );
+});
+
+const BlockWidgetLayer = memo(function BlockWidgetLayer({
+  widgets,
+}: {
+  readonly widgets: readonly LayoutBlockWidget[];
+}) {
+  return widgets.map((widget) => (
+    <div
+      key={widget.id}
+      className="editor-block-widget"
+      data-widget-id={widget.id}
+      style={widget.rect}
+    />
+  ));
 });
 
 const SelectionLayer = memo(function SelectionLayer({
@@ -132,28 +191,32 @@ export function EditorView({ runtime, onSnapshot, onPending }: EditorViewProps) 
     onSnapshot?.(initial);
   }, [initial, onSnapshot]);
 
-  const revealCaret = useCallback((next: EditorSnapshot) => {
-    const scroller = scrollerRef.current;
-    if (!scroller) return;
-    const caretLayout = layoutViewport({
-      text: next.text,
-      version: next.version,
-      startLine: 0,
-      lineCount: next.text.lineCount,
-      lineHeight: LINE_HEIGHT,
-      charWidth,
-      paddingTop: PADDING_TOP,
-      paddingLeft: PADDING_LEFT,
-      tabWidth: TAB_WIDTH,
-      anchors: [{ kind: "overlay", id: "caret", at: next.selection.primary.head, payload: null }],
-    });
-    const caretTop = caretLayout.placements.find((placement) => placement.kind === "overlay")?.rect.top ?? 0;
-    if (caretTop < scroller.scrollTop) {
-      scroller.scrollTop = caretTop;
-    } else if (caretTop + LINE_HEIGHT > scroller.scrollTop + scroller.clientHeight) {
-      scroller.scrollTop = caretTop + LINE_HEIGHT - scroller.clientHeight;
-    }
-  }, [charWidth]);
+  const revealCaret = useCallback(
+    (next: EditorSnapshot) => {
+      const scroller = scrollerRef.current;
+      if (!scroller) return;
+      const caretLayout = layoutViewport({
+        text: next.text,
+        version: next.version,
+        startLine: 0,
+        lineCount: next.text.lineCount,
+        lineHeight: LINE_HEIGHT,
+        charWidth,
+        paddingTop: PADDING_TOP,
+        paddingLeft: PADDING_LEFT,
+        tabWidth: TAB_WIDTH,
+        anchors: [{ kind: "overlay", id: "caret", at: next.selection.primary.head, payload: null }],
+      });
+      const caretTop =
+        caretLayout.placements.find((placement) => placement.kind === "overlay")?.rect.top ?? 0;
+      if (caretTop < scroller.scrollTop) {
+        scroller.scrollTop = caretTop;
+      } else if (caretTop + LINE_HEIGHT > scroller.scrollTop + scroller.clientHeight) {
+        scroller.scrollTop = caretTop + LINE_HEIGHT - scroller.clientHeight;
+      }
+    },
+    [charWidth],
+  );
 
   const refresh = useCallback(
     (notification: EditorNotification) => {
@@ -265,7 +328,14 @@ export function EditorView({ runtime, onSnapshot, onPending }: EditorViewProps) 
           })),
       ],
     });
-  }, [textState.text, textState.version, selectionState.selection, startLine, visibleLines, charWidth]);
+  }, [
+    textState.text,
+    textState.version,
+    selectionState.selection,
+    startLine,
+    visibleLines,
+    charWidth,
+  ]);
 
   return (
     <div
@@ -294,13 +364,16 @@ export function EditorView({ runtime, onSnapshot, onPending }: EditorViewProps) 
           }}
           onMouseDown={handleMouseDown}
         >
+          <DecorationLayer decorations={textLayout.decorations} layers={["background"]} />
           <SelectionLayer placements={overlayLayout.placements} />
+          <BlockWidgetLayer widgets={textLayout.blockWidgets} />
+          <TextLayer rows={textLayout.rows} />
+          <DecorationLayer decorations={textLayout.decorations} layers={["underline", "outline"]} />
           <CaretLayer
             placements={overlayLayout.placements}
             focused={focused}
             version={textState.version}
           />
-          <TextLayer rows={textLayout.rows} />
         </div>
       </div>
     </div>

@@ -63,13 +63,20 @@ describe("normalization", () => {
 
   test("keeps different-direction nesting and clamps active", () => {
     const a: Arrangement = {
-      tiles: split("row", [stack("a", [1, 2], 9), 1], [split("column", [stack("b", [3]), 1], [stack("c", [4]), 1]), 1]),
+      tiles: split(
+        "row",
+        [stack("a", [1, 2], 9), 1],
+        [split("column", [stack("b", [3]), 1], [stack("c", [4]), 1]), 1],
+      ),
       overlays: [],
     };
     const normalized = normalizeArrangement(a);
     expect(normalized.tiles).toMatchObject({
       kind: "split",
-      children: [{ tile: stack("a", [1, 2], 1), weight: 1 }, { tile: { kind: "split", direction: "column" }, weight: 1 }],
+      children: [
+        { tile: stack("a", [1, 2], 1), weight: 1 },
+        { tile: { kind: "split", direction: "column" }, weight: 1 },
+      ],
     });
   });
 

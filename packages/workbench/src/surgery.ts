@@ -51,7 +51,10 @@ export function placeInStack(
     ...arrangement,
     tiles: mapStacks(arrangement.tiles!, (stack) => {
       if (stack.id !== slotId) return stack;
-      const index = Math.max(0, Math.min(stack.panels.length, options?.index ?? stack.panels.length));
+      const index = Math.max(
+        0,
+        Math.min(stack.panels.length, options?.index ?? stack.panels.length),
+      );
       const panels = [...stack.panels.slice(0, index), panelId, ...stack.panels.slice(index)];
       const activate = options?.activate ?? true;
       const active = activate ? index : stack.active >= index ? stack.active + 1 : stack.active;

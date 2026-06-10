@@ -98,6 +98,35 @@ body {
   pointer-events: none;
 }
 
+.editor-virtual-text {
+  color: var(--fg-dim);
+  opacity: 0.75;
+}
+
+.editor-decoration {
+  position: absolute;
+  pointer-events: none;
+}
+
+.editor-decoration-background {
+  background: rgba(86, 156, 214, 0.16);
+}
+
+.editor-decoration-underline {
+  border-bottom: 1px wavy currentColor;
+}
+
+.editor-decoration-outline {
+  outline: 1px solid currentColor;
+}
+
+.editor-block-widget {
+  position: absolute;
+  left: 0;
+  right: 0;
+  pointer-events: auto;
+}
+
 .status-bar {
   display: flex;
   justify-content: space-between;

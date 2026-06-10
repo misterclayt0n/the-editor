@@ -1,4 +1,50 @@
-import { columnAtOffset as engineColumnAtOffset, offsetAtColumn, type TextBuffer } from "@the-editor/engine";
+import {
+  columnAtOffset as engineColumnAtOffset,
+  offsetAtColumn,
+  type TextBuffer,
+} from "@the-editor/engine";
+
+export type EditorVisualOwner = string;
+export type TextStyleRun = {
+  readonly from: number;
+  readonly to: number;
+  readonly className?: string;
+  readonly style?: Readonly<Record<string, string>>;
+  readonly priority?: number;
+  readonly owner?: EditorVisualOwner;
+};
+export type DecorationLayer = "background" | "underline" | "outline";
+export type RangeDecoration = {
+  readonly from: number;
+  readonly to: number;
+  readonly layer: DecorationLayer;
+  readonly className?: string;
+  readonly style?: Readonly<Record<string, string>>;
+  readonly priority?: number;
+  readonly owner?: EditorVisualOwner;
+};
+export type VirtualTextAffinity = "before" | "after";
+export type VirtualText = {
+  readonly at: number;
+  readonly text: string;
+  readonly affinity?: VirtualTextAffinity;
+  readonly className?: string;
+  readonly style?: Readonly<Record<string, string>>;
+  readonly priority?: number;
+  readonly owner?: EditorVisualOwner;
+};
+export type BlockWidget = {
+  readonly id: string;
+  readonly afterLine: number;
+  readonly heightRows: number;
+  readonly owner?: EditorVisualOwner;
+};
+export type EditorVisualsSnapshot = {
+  readonly textStyles?: readonly TextStyleRun[];
+  readonly rangeDecorations?: readonly RangeDecoration[];
+  readonly virtualText?: readonly VirtualText[];
+  readonly blockWidgets?: readonly BlockWidget[];
+};
 
 export type LayoutAnchor<Payload = unknown> =
   | {
@@ -34,15 +80,33 @@ export type ViewportLayoutRequest<Payload = unknown> = {
   readonly paddingTop?: number;
   readonly paddingLeft?: number;
   readonly anchors?: readonly LayoutAnchor<Payload>[];
+  readonly visuals?: EditorVisualsSnapshot;
 };
-
 export type LayoutRect = {
   readonly top: number;
   readonly left: number;
   readonly width: number;
   readonly height: number;
 };
-
+export type LayoutInlineSegment =
+  | {
+      readonly kind: "text";
+      readonly from: number;
+      readonly to: number;
+      readonly text: string;
+      readonly className?: string;
+      readonly style?: Readonly<Record<string, string>>;
+      readonly owners?: readonly EditorVisualOwner[];
+    }
+  | {
+      readonly kind: "virtual-text";
+      readonly at: number;
+      readonly text: string;
+      readonly affinity: VirtualTextAffinity;
+      readonly className?: string;
+      readonly style?: Readonly<Record<string, string>>;
+      readonly owner?: EditorVisualOwner;
+    };
 export type LayoutRow =
   | {
       readonly kind: "text";
@@ -51,6 +115,7 @@ export type LayoutRow =
       readonly from: number;
       readonly to: number;
       readonly text: string;
+      readonly segments: readonly LayoutInlineSegment[];
       readonly top: number;
       readonly left: number;
       readonly height: number;
@@ -64,7 +129,6 @@ export type LayoutRow =
       readonly left: number;
       readonly height: number;
     };
-
 export type LayoutPlacement<Payload = unknown> =
   | {
       readonly kind: "range";
@@ -104,21 +168,77 @@ export type LayoutPlacement<Payload = unknown> =
       readonly rect: LayoutRect;
       readonly payload: Payload;
     };
-
+export type LayoutDecoration = {
+  readonly layer: DecorationLayer;
+  readonly from: number;
+  readonly to: number;
+  readonly rects: readonly LayoutRect[];
+  readonly className?: string;
+  readonly style?: Readonly<Record<string, string>>;
+  readonly priority?: number;
+  readonly owner?: EditorVisualOwner;
+};
+export type LayoutBlockWidget = {
+  readonly id: string;
+  readonly afterLine: number;
+  readonly row: number;
+  readonly rect: LayoutRect;
+  readonly owner?: EditorVisualOwner;
+};
 export type ViewportLayoutSnapshot<Payload = unknown> = {
   readonly version: number;
   readonly startLine: number;
   readonly lineCount: number;
   readonly rows: readonly LayoutRow[];
   readonly placements: readonly LayoutPlacement<Payload>[];
+  readonly decorations: readonly LayoutDecoration[];
+  readonly blockWidgets: readonly LayoutBlockWidget[];
 };
-
 export type HitTestBias = "before" | "after" | "nearest";
-
 export type HitTestResult = {
   readonly line: number;
   readonly column: number;
   readonly offset: number;
+};
+
+const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+const priority = (x: { readonly priority?: number }) => x.priority ?? 0;
+function lineRange(text: TextBuffer, line: number): { from: number; to: number } {
+  const r = text.lineRange(line);
+  return { from: r.from, to: r.to };
+}
+function lineIndexAtOffset(text: TextBuffer, offset: number): number {
+  return text.lineRangeAt(clamp(offset, 0, text.length)).index;
+}
+function columnAtOffset(text: TextBuffer, line: number, offset: number, tabWidth: number): number {
+  return engineColumnAtOffset({ text, line, offset, tabWidth });
+}
+function rowTop(row: number, lineHeight: number, paddingTop: number): number {
+  return paddingTop + row * lineHeight;
+}
+function rectForLine(
+  text: TextBuffer,
+  line: number,
+  visualRow: number,
+  from: number,
+  to: number,
+  m: Metrics,
+): LayoutRect {
+  const a = columnAtOffset(text, line, from, m.tabWidth),
+    b = columnAtOffset(text, line, to, m.tabWidth);
+  return {
+    top: rowTop(visualRow, m.lineHeight, m.paddingTop),
+    left: m.paddingLeft + a * m.charWidth,
+    width: Math.max(1, (b - a) * m.charWidth),
+    height: m.lineHeight,
+  };
+}
+type Metrics = {
+  tabWidth: number;
+  lineHeight: number;
+  charWidth: number;
+  paddingTop: number;
+  paddingLeft: number;
 };
 
 export function layoutContentHeight(args: {
@@ -126,8 +246,16 @@ export function layoutContentHeight(args: {
   readonly lineHeight: number;
   readonly paddingTop?: number;
   readonly paddingBottom?: number;
+  readonly blockWidgets?: readonly BlockWidget[];
 }): number {
-  return (args.paddingTop ?? 0) + args.text.lineCount * args.lineHeight + (args.paddingBottom ?? args.paddingTop ?? 0);
+  const blockRows = (args.blockWidgets ?? [])
+    .filter((w) => w.heightRows > 0 && w.afterLine >= 0 && w.afterLine < args.text.lineCount)
+    .reduce((n, w) => n + w.heightRows, 0);
+  return (
+    (args.paddingTop ?? 0) +
+    (args.text.lineCount + blockRows) * args.lineHeight +
+    (args.paddingBottom ?? args.paddingTop ?? 0)
+  );
 }
 
 export function hitTestTextPosition(args: {
@@ -141,14 +269,15 @@ export function hitTestTextPosition(args: {
   readonly tabWidth: number;
   readonly bias?: HitTestBias;
 }): HitTestResult {
-  const lineHeight = Math.max(Number.EPSILON, args.lineHeight);
-  const charWidth = Math.max(Number.EPSILON, args.charWidth);
-  const line = Math.max(
+  const lineHeight = Math.max(Number.EPSILON, args.lineHeight),
+    charWidth = Math.max(Number.EPSILON, args.charWidth);
+  const line = clamp(
+    Math.floor((args.y - args.paddingTop) / lineHeight),
     0,
-    Math.min(args.text.lineCount - 1, Math.floor((args.y - args.paddingTop) / lineHeight)),
+    args.text.lineCount - 1,
   );
-  const rawColumn = Math.max(0, (args.x - args.paddingLeft) / charWidth);
-  const bias = args.bias ?? "before";
+  const rawColumn = Math.max(0, (args.x - args.paddingLeft) / charWidth),
+    bias = args.bias ?? "before";
   if (bias === "nearest") {
     const beforeOffset = offsetAtColumn({
       text: args.text,
@@ -164,24 +293,13 @@ export function hitTestTextPosition(args: {
       tabWidth: args.tabWidth,
       bias: "after",
     });
-    const beforeColumn = engineColumnAtOffset({
-      text: args.text,
-      line,
-      offset: beforeOffset,
-      tabWidth: args.tabWidth,
-    });
-    const afterColumn = engineColumnAtOffset({
-      text: args.text,
-      line,
-      offset: afterOffset,
-      tabWidth: args.tabWidth,
-    });
+    const beforeColumn = columnAtOffset(args.text, line, beforeOffset, args.tabWidth),
+      afterColumn = columnAtOffset(args.text, line, afterOffset, args.tabWidth);
     const offset =
       Math.abs(rawColumn - beforeColumn) < Math.abs(afterColumn - rawColumn)
         ? beforeOffset
         : afterOffset;
-    const column = offset === beforeOffset ? beforeColumn : afterColumn;
-    return { line, column, offset };
+    return { line, column: offset === beforeOffset ? beforeColumn : afterColumn, offset };
   }
   const targetColumn = bias === "before" ? Math.floor(rawColumn) : Math.ceil(rawColumn);
   const offset = offsetAtColumn({
@@ -191,49 +309,145 @@ export function hitTestTextPosition(args: {
     tabWidth: args.tabWidth,
     bias,
   });
-  const column = engineColumnAtOffset({
-    text: args.text,
-    line,
-    offset,
-    tabWidth: args.tabWidth,
-  });
-  return { line, column, offset };
+  return { line, column: columnAtOffset(args.text, line, offset, args.tabWidth), offset };
 }
 
-function lineRange(text: TextBuffer, line: number): { from: number; to: number } {
-  const r = text.lineRange(line);
-  return { from: r.from, to: r.to };
+function normalizeRange(
+  from: number,
+  to: number,
+  length: number,
+): { from: number; to: number } | undefined {
+  const a = clamp(from, 0, length),
+    b = clamp(to, 0, length);
+  return b > a ? { from: a, to: b } : undefined;
 }
-
-function lineIndexAtOffset(text: TextBuffer, offset: number): number {
-  return text.lineRangeAt(Math.max(0, Math.min(text.length, offset))).index;
-}
-
-function columnAtOffset(text: TextBuffer, line: number, offset: number, tabWidth: number): number {
-  return engineColumnAtOffset({ text, line, offset, tabWidth });
-}
-
-function textTop(line: number, lineHeight: number, paddingTop: number): number {
-  return paddingTop + line * lineHeight;
+function styleSegments(
+  text: TextBuffer,
+  rowFrom: number,
+  rowTo: number,
+  rowText: string,
+  runs: readonly TextStyleRun[] = [],
+  virtuals: readonly VirtualText[] = [],
+): readonly LayoutInlineSegment[] {
+  const activeRuns = runs
+    .map((run, index) => ({ run, index, range: normalizeRange(run.from, run.to, text.length) }))
+    .filter(
+      (x): x is { run: TextStyleRun; index: number; range: { from: number; to: number } } =>
+        !!x.range && x.range.to > rowFrom && x.range.from < rowTo,
+    );
+  const vts = virtuals
+    .map((vt, index) => ({ vt, index, at: clamp(vt.at, 0, text.length) }))
+    .filter((x) => x.at >= rowFrom && x.at <= rowTo)
+    .sort(
+      (a, b) =>
+        a.at - b.at ||
+        ((a.vt.affinity ?? "after") === "before" ? -1 : 1) -
+          ((b.vt.affinity ?? "after") === "before" ? -1 : 1) ||
+        priority(a.vt) - priority(b.vt) ||
+        a.index - b.index,
+    );
+  const cuts = new Set<number>([0, rowTo - rowFrom]);
+  for (const x of activeRuns) {
+    cuts.add(clamp(x.range.from, rowFrom, rowTo) - rowFrom);
+    cuts.add(clamp(x.range.to, rowFrom, rowTo) - rowFrom);
+  }
+  for (const x of vts) cuts.add(x.at - rowFrom);
+  const orderedCuts = [...cuts].sort((a, b) => a - b);
+  const segments: LayoutInlineSegment[] = [];
+  const pushVirtuals = (local: number, affinity: VirtualTextAffinity) => {
+    for (const x of vts)
+      if (x.at - rowFrom === local && (x.vt.affinity ?? "after") === affinity)
+        segments.push({
+          kind: "virtual-text",
+          at: local,
+          text: x.vt.text,
+          affinity,
+          ...(x.vt.className ? { className: x.vt.className } : {}),
+          ...(x.vt.style ? { style: x.vt.style } : {}),
+          ...(x.vt.owner ? { owner: x.vt.owner } : {}),
+        });
+  };
+  for (let i = 0; i < orderedCuts.length - 1; i++) {
+    const from = orderedCuts[i]!,
+      to = orderedCuts[i + 1]!;
+    pushVirtuals(from, "before");
+    if (to > from) {
+      const docFrom = rowFrom + from,
+        docTo = rowFrom + to;
+      const act = activeRuns
+        .filter((x) => x.range.from < docTo && x.range.to > docFrom)
+        .sort((a, b) => priority(a.run) - priority(b.run) || a.index - b.index);
+      const className =
+        act
+          .map((x) => x.run.className)
+          .filter(Boolean)
+          .join(" ") || undefined;
+      const style = Object.assign({}, ...act.map((x) => x.run.style ?? {}));
+      const owners = [...new Set(act.map((x) => x.run.owner).filter((x): x is string => !!x))];
+      segments.push({
+        kind: "text",
+        from,
+        to,
+        text: rowText.slice(from, to),
+        ...(className ? { className } : {}),
+        ...(Object.keys(style).length ? { style } : {}),
+        ...(owners.length ? { owners } : {}),
+      });
+    }
+    pushVirtuals(from, "after");
+  }
+  const endLocal = rowTo - rowFrom;
+  pushVirtuals(endLocal, "before");
+  pushVirtuals(endLocal, "after");
+  return segments.length
+    ? segments
+    : [{ kind: "text", from: 0, to: rowText.length, text: rowText }];
 }
 
 export function layoutViewport<Payload = unknown>(
   request: ViewportLayoutRequest<Payload>,
 ): ViewportLayoutSnapshot<Payload> {
-  const tabWidth = request.tabWidth ?? 4;
-  const lineHeight = request.lineHeight ?? 1;
-  const charWidth = request.charWidth ?? 1;
-  const paddingTop = request.paddingTop ?? 0;
-  const paddingLeft = request.paddingLeft ?? 0;
-  const anchors = request.anchors ?? [];
-  const start = Math.max(0, request.startLine);
-  const end = Math.min(request.text.lineCount, start + Math.max(0, request.lineCount));
-  const rows: LayoutRow[] = [];
-  const lineToRow = new Map<number, number>();
-  const blockRowById = new Map<string, number>();
+  const m: Metrics = {
+    tabWidth: request.tabWidth ?? 4,
+    lineHeight: request.lineHeight ?? 1,
+    charWidth: request.charWidth ?? 1,
+    paddingTop: request.paddingTop ?? 0,
+    paddingLeft: request.paddingLeft ?? 0,
+  };
+  const anchors = request.anchors ?? [],
+    visuals = request.visuals ?? {};
+  const start = Math.max(0, request.startLine),
+    end = Math.min(request.text.lineCount, start + Math.max(0, request.lineCount));
+  const rows: LayoutRow[] = [],
+    lineToRow = new Map<number, number>(),
+    blockRowById = new Map<string, number>(),
+    widgetByRow = new Map<string, number>();
+  const blockItems = [
+    ...anchors
+      .filter((a): a is Extract<LayoutAnchor<Payload>, { kind: "block" }> => a.kind === "block")
+      .map((a, index) => ({
+        type: "anchor" as const,
+        id: a.id,
+        afterLine: a.afterLine,
+        heightRows: a.heightRows,
+        index,
+        payload: a.payload,
+      })),
+    ...(visuals.blockWidgets ?? []).map((w, index) => ({
+      type: "widget" as const,
+      id: w.id,
+      afterLine: w.afterLine,
+      heightRows: w.heightRows,
+      index,
+      owner: w.owner,
+    })),
+  ]
+    .filter((b) => b.heightRows > 0)
+    .sort((a, b) => a.afterLine - b.afterLine || a.index - b.index);
   let row = 0;
   for (let line = start; line < end; line++) {
-    const r = request.text.lineRange(line);
+    const r = request.text.lineRange(line),
+      rowText = request.text.sliceString(r.from, r.to);
     lineToRow.set(line, row);
     rows.push({
       kind: "text",
@@ -241,26 +455,35 @@ export function layoutViewport<Payload = unknown>(
       line,
       from: r.from,
       to: r.to,
-      text: request.text.sliceString(r.from, r.to),
-      top: textTop(line, lineHeight, paddingTop),
-      left: paddingLeft,
-      height: lineHeight,
+      text: rowText,
+      segments: styleSegments(
+        request.text,
+        r.from,
+        r.to,
+        rowText,
+        visuals.textStyles,
+        visuals.virtualText,
+      ),
+      top: rowTop(row, m.lineHeight, m.paddingTop),
+      left: m.paddingLeft,
+      height: m.lineHeight,
     });
     row++;
-    for (const anchor of anchors) {
-      if (anchor.kind !== "block" || anchor.afterLine !== line || anchor.heightRows <= 0) continue;
-      blockRowById.set(anchor.id, row);
-      rows.push({
-        kind: "block",
-        row,
-        afterLine: anchor.afterLine,
-        heightRows: anchor.heightRows,
-        top: textTop(anchor.afterLine + 1, lineHeight, paddingTop),
-        left: paddingLeft,
-        height: anchor.heightRows * lineHeight,
-      });
-      row += anchor.heightRows;
-    }
+    for (const b of blockItems)
+      if (b.afterLine === line) {
+        if (b.type === "anchor") blockRowById.set(b.id, row);
+        else widgetByRow.set(b.id, row);
+        rows.push({
+          kind: "block",
+          row,
+          afterLine: b.afterLine,
+          heightRows: b.heightRows,
+          top: rowTop(row, m.lineHeight, m.paddingTop),
+          left: m.paddingLeft,
+          height: b.heightRows * m.lineHeight,
+        });
+        row += b.heightRows;
+      }
   }
 
   const placements: LayoutPlacement<Payload>[] = [];
@@ -285,19 +508,19 @@ export function layoutViewport<Payload = unknown>(
           afterLine: anchor.afterLine,
           heightRows: anchor.heightRows,
           rect: {
-            top: textTop(anchor.afterLine + 1, lineHeight, paddingTop),
-            left: paddingLeft,
+            top: rowTop(row, m.lineHeight, m.paddingTop),
+            left: m.paddingLeft,
             width: 0,
-            height: anchor.heightRows * lineHeight,
+            height: anchor.heightRows * m.lineHeight,
           },
           payload: anchor.payload,
         });
     } else if (anchor.kind === "overlay") {
-      const at = Math.max(0, Math.min(request.text.length, anchor.at));
-      const line = lineIndexAtOffset(request.text, at);
-      const row = lineToRow.get(line);
+      const at = clamp(anchor.at, 0, request.text.length),
+        line = lineIndexAtOffset(request.text, at),
+        row = lineToRow.get(line);
       if (row !== undefined) {
-        const column = columnAtOffset(request.text, line, at, tabWidth);
+        const column = columnAtOffset(request.text, line, at, m.tabWidth);
         placements.push({
           kind: "overlay",
           id: anchor.id,
@@ -306,50 +529,129 @@ export function layoutViewport<Payload = unknown>(
           at,
           column,
           rect: {
-            top: textTop(line, lineHeight, paddingTop),
-            left: paddingLeft + column * charWidth,
+            top: rowTop(row, m.lineHeight, m.paddingTop),
+            left: m.paddingLeft + column * m.charWidth,
             width: 1,
-            height: lineHeight,
+            height: m.lineHeight,
           },
           payload: anchor.payload,
         });
       }
     } else {
-      const from = Math.max(0, Math.min(request.text.length, anchor.from));
-      const to = Math.max(0, Math.min(request.text.length, anchor.to));
-      if (to <= from) continue;
-      const first = lineIndexAtOffset(request.text, from);
-      const last = lineIndexAtOffset(request.text, Math.max(from, to - 1));
+      addRangePlacement(request.text, start, end, lineToRow, m, anchor, placements);
+    }
+  }
+  const decorations = layoutDecorations(
+    request.text,
+    start,
+    end,
+    lineToRow,
+    m,
+    visuals.rangeDecorations ?? [],
+  );
+  const blockWidgets = (visuals.blockWidgets ?? []).flatMap((w): LayoutBlockWidget[] => {
+    const row = widgetByRow.get(w.id);
+    return row === undefined || w.heightRows <= 0
+      ? []
+      : [
+          {
+            id: w.id,
+            afterLine: w.afterLine,
+            row,
+            rect: {
+              top: rowTop(row, m.lineHeight, m.paddingTop),
+              left: m.paddingLeft,
+              width: 0,
+              height: w.heightRows * m.lineHeight,
+            },
+            ...(w.owner ? { owner: w.owner } : {}),
+          },
+        ];
+  });
+  return {
+    version: request.version,
+    startLine: start,
+    lineCount: end - start,
+    rows,
+    placements,
+    decorations,
+    blockWidgets,
+  };
+}
+
+function addRangePlacement<Payload>(
+  text: TextBuffer,
+  start: number,
+  end: number,
+  lineToRow: Map<number, number>,
+  m: Metrics,
+  anchor: Extract<LayoutAnchor<Payload>, { kind: "range" }>,
+  out: LayoutPlacement<Payload>[],
+) {
+  const range = normalizeRange(anchor.from, anchor.to, text.length);
+  if (!range) return;
+  const first = lineIndexAtOffset(text, range.from),
+    last = lineIndexAtOffset(text, Math.max(range.from, range.to - 1));
+  for (let line = Math.max(start, first); line <= Math.min(end - 1, last); line++) {
+    const row = lineToRow.get(line);
+    if (row === undefined) continue;
+    const lr = lineRange(text, line),
+      a = Math.max(range.from, lr.from),
+      b = Math.min(range.to, lr.to);
+    if (b < a) continue;
+    const columnStart = columnAtOffset(text, line, a, m.tabWidth),
+      columnEnd = columnAtOffset(text, line, b, m.tabWidth);
+    out.push({
+      kind: "range",
+      id: anchor.id,
+      row,
+      line,
+      from: a,
+      to: b,
+      columnStart,
+      columnEnd,
+      rects: [rectForLine(text, line, row, a, b, m)],
+      payload: anchor.payload,
+    });
+  }
+}
+function layoutDecorations(
+  text: TextBuffer,
+  start: number,
+  end: number,
+  lineToRow: Map<number, number>,
+  m: Metrics,
+  decorations: readonly RangeDecoration[],
+): readonly LayoutDecoration[] {
+  const layerOrder: Record<DecorationLayer, number> = { background: 0, underline: 1, outline: 2 };
+  return decorations
+    .flatMap((dec, index) => {
+      const range = normalizeRange(dec.from, dec.to, text.length);
+      if (!range) return [];
+      const rects: LayoutRect[] = [];
+      const first = lineIndexAtOffset(text, range.from),
+        last = lineIndexAtOffset(text, Math.max(range.from, range.to - 1));
       for (let line = Math.max(start, first); line <= Math.min(end - 1, last); line++) {
         const row = lineToRow.get(line);
         if (row === undefined) continue;
-        const lr = lineRange(request.text, line);
-        const a = Math.max(from, lr.from),
-          b = Math.min(to, lr.to);
-        if (b < a) continue;
-        const columnStart = columnAtOffset(request.text, line, a, tabWidth);
-        const columnEnd = columnAtOffset(request.text, line, b, tabWidth);
-        placements.push({
-          kind: "range",
-          id: anchor.id,
-          row,
-          line,
-          from: a,
-          to: b,
-          columnStart,
-          columnEnd,
-          rects: [
-            {
-              top: textTop(line, lineHeight, paddingTop),
-              left: paddingLeft + columnStart * charWidth,
-              width: Math.max(1, (columnEnd - columnStart) * charWidth),
-              height: lineHeight,
-            },
-          ],
-          payload: anchor.payload,
-        });
+        const lr = lineRange(text, line),
+          a = Math.max(range.from, lr.from),
+          b = Math.min(range.to, lr.to);
+        if (b >= a) rects.push(rectForLine(text, line, row, a, b, m));
       }
-    }
-  }
-  return { version: request.version, startLine: start, lineCount: end - start, rows, placements };
+      return rects.length
+        ? [
+            { ...dec, from: range.from, to: range.to, rects, _index: index } as LayoutDecoration & {
+              _index: number;
+            },
+          ]
+        : [];
+    })
+    .sort(
+      (a, b) =>
+        layerOrder[a.layer] - layerOrder[b.layer] ||
+        priority(a) - priority(b) ||
+        a._index - b._index,
+    )
+    .map(({ _index, ...d }) => d);
 }

@@ -99,16 +99,13 @@ export const makeKeymaps = (
           command: definition.command,
           scope: definition.scope ?? SurfaceScope.global,
           ...(definition.args !== undefined ? { args: definition.args } : {}),
-          ...(definition.description !== undefined
-            ? { description: definition.description }
-            : {}),
+          ...(definition.description !== undefined ? { description: definition.description } : {}),
         });
       });
 
     return {
       register,
-      registerAll: (definitions) =>
-        Effect.forEach(definitions, register, { concurrency: 1 }),
+      registerAll: (definitions) => Effect.forEach(definitions, register, { concurrency: 1 }),
       bindings: registry.list,
       handleKey: (chord) =>
         Effect.gen(function* () {

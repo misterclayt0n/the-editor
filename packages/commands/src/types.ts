@@ -16,9 +16,7 @@ export interface CommandInvocation {
  * is provided. A handler that needs TextDocument simply `yield*`s it — it can
  * only run where the focused surface supplies one.
  */
-export type CommandHandler = (
-  invocation: CommandInvocation,
-) => Effect.Effect<void, unknown, any>;
+export type CommandHandler = (invocation: CommandInvocation) => Effect.Effect<void, unknown, any>;
 
 export interface CommandDefinition {
   readonly title?: string;

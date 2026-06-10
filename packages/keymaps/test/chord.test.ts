@@ -11,7 +11,13 @@ import {
 
 describe("chord parsing", () => {
   test("single keys and modifiers", () => {
-    expect(parseChord("a")).toEqual({ key: "a", ctrl: false, alt: false, shift: false, meta: false });
+    expect(parseChord("a")).toEqual({
+      key: "a",
+      ctrl: false,
+      alt: false,
+      shift: false,
+      meta: false,
+    });
     expect(parseChord("ctrl+s")).toMatchObject({ key: "s", ctrl: true });
     expect(parseChord("cmd+shift+p")).toMatchObject({ key: "p", meta: true, shift: true });
     expect(parseChord("Ctrl+W")).toMatchObject({ key: "w", ctrl: true });
@@ -48,7 +54,10 @@ describe("chord parsing", () => {
 });
 
 describe("keyboard events", () => {
-  const event = (key: string, mods: Partial<Record<"ctrlKey" | "altKey" | "shiftKey" | "metaKey", boolean>> = {}) => ({
+  const event = (
+    key: string,
+    mods: Partial<Record<"ctrlKey" | "altKey" | "shiftKey" | "metaKey", boolean>> = {},
+  ) => ({
     key,
     ctrlKey: mods.ctrlKey ?? false,
     altKey: mods.altKey ?? false,

@@ -124,9 +124,7 @@ export class AppRuntime {
       case "none":
         if (isTextInputChord(chord) && event.key.length === 1) {
           Effect.runSync(
-            this.commands
-              .execute("editor.insertText", { text: event.key })
-              .pipe(Effect.orDie),
+            this.commands.execute("editor.insertText", { text: event.key }).pipe(Effect.orDie),
           );
           return "handled";
         }

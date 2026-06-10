@@ -97,7 +97,9 @@ export const makeWorkbench = (
         const focused = yield* focusCell.get;
         if (Option.isSome(focused) && findSlot(arrangement, focused.value)) return;
         const history = yield* Ref.get(focusHistory);
-        const liveIndex = history.findLastIndex((slot) => findSlot(arrangement, slot) !== undefined);
+        const liveIndex = history.findLastIndex(
+          (slot) => findSlot(arrangement, slot) !== undefined,
+        );
         const next = liveIndex === -1 ? Option.none<SlotId>() : Option.some(history[liveIndex]!);
         yield* Ref.set(focusHistory, liveIndex === -1 ? [] : history.slice(0, liveIndex));
         yield* focusCell.set(next);

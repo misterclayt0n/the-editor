@@ -43,7 +43,12 @@ describe("resolver", () => {
 
   test("multi-chord sequences go pending, then match", () => {
     const bindings = [binding("ctrl+w h", "focus.left")];
-    const first = resolveKey({ bindings, focus: editorFocus, pending: [], chord: parseChord("ctrl+w") });
+    const first = resolveKey({
+      bindings,
+      focus: editorFocus,
+      pending: [],
+      chord: parseChord("ctrl+w"),
+    });
     expect(first._tag).toBe("pending");
     const second = resolveKey({
       bindings,
@@ -67,13 +72,23 @@ describe("resolver", () => {
 
   test("prefixes win over exact matches (leader keys are never consumed early)", () => {
     const bindings = [binding("ctrl+w", "kill"), binding("ctrl+w h", "focus.left")];
-    const result = resolveKey({ bindings, focus: editorFocus, pending: [], chord: parseChord("ctrl+w") });
+    const result = resolveKey({
+      bindings,
+      focus: editorFocus,
+      pending: [],
+      chord: parseChord("ctrl+w"),
+    });
     expect(result._tag).toBe("pending");
   });
 
   test("scope filters candidates: kind bindings need matching focus", () => {
     const bindings = [binding("j", "tree.next", SurfaceScope.surface(Tree))];
-    const inEditor = resolveKey({ bindings, focus: editorFocus, pending: [], chord: parseChord("j") });
+    const inEditor = resolveKey({
+      bindings,
+      focus: editorFocus,
+      pending: [],
+      chord: parseChord("j"),
+    });
     expect(inEditor).toEqual({ _tag: "none" });
     const inTree = resolveKey({
       bindings,
@@ -90,13 +105,23 @@ describe("resolver", () => {
       binding("x", "editor.x", SurfaceScope.surface(Editor)),
       binding("x", "panel.x", SurfaceScope.panel(editorFocus.id)),
     ];
-    const result = resolveKey({ bindings, focus: editorFocus, pending: [], chord: parseChord("x") });
+    const result = resolveKey({
+      bindings,
+      focus: editorFocus,
+      pending: [],
+      chord: parseChord("x"),
+    });
     expect(result).toMatchObject({ _tag: "match", binding: { command: "panel.x" } });
   });
 
   test("later registration shadows earlier within a layer (user config wins)", () => {
     const bindings = [binding("ctrl+p", "default.palette"), binding("ctrl+p", "my.palette")];
-    const result = resolveKey({ bindings, focus: editorFocus, pending: [], chord: parseChord("ctrl+p") });
+    const result = resolveKey({
+      bindings,
+      focus: editorFocus,
+      pending: [],
+      chord: parseChord("ctrl+p"),
+    });
     expect(result).toMatchObject({ _tag: "match", binding: { command: "my.palette" } });
   });
 

@@ -61,7 +61,8 @@ export function parseChord(input: string): Chord {
     const isLast = i === tokens.length - 1;
     const modifier = MODIFIER_ALIASES[token.toLowerCase()];
     if (!isLast) {
-      if (!modifier) throw new InvalidKeysError({ keys: input, reason: `unknown modifier "${token}"` });
+      if (!modifier)
+        throw new InvalidKeysError({ keys: input, reason: `unknown modifier "${token}"` });
       chord[modifier] = true;
     } else if (modifier && tokens.length === 1) {
       throw new InvalidKeysError({ keys: input, reason: "chord has no key" });
@@ -69,13 +70,17 @@ export function parseChord(input: string): Chord {
       chord.key = normalizeKeyName(token);
     }
   }
-  if (chord.key.length === 0) throw new InvalidKeysError({ keys: input, reason: "chord has no key" });
+  if (chord.key.length === 0)
+    throw new InvalidKeysError({ keys: input, reason: "chord has no key" });
   return chord;
 }
 
 /** Parse a whitespace-separated key sequence: "ctrl+w h" → [ctrl+w, h]. */
 export function parseKeys(input: string): ReadonlyArray<Chord> {
-  const parts = input.trim().split(/\s+/).filter((part) => part.length > 0);
+  const parts = input
+    .trim()
+    .split(/\s+/)
+    .filter((part) => part.length > 0);
   if (parts.length === 0) throw new InvalidKeysError({ keys: input, reason: "empty sequence" });
   return parts.map(parseChord);
 }

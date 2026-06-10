@@ -30,9 +30,7 @@ const withWorkbench = <A>(
   body: (wb: Workbench.Service) => Effect.Effect<A, unknown>,
   options?: Parameters<typeof makeWorkbench>[0],
 ): A =>
-  Effect.runSync(
-    Effect.scoped(Effect.flatMap(makeWorkbench(options), body)) as Effect.Effect<A>,
-  );
+  Effect.runSync(Effect.scoped(Effect.flatMap(makeWorkbench(options), body)) as Effect.Effect<A>);
 
 const openTiled = (wb: Workbench.Service, kind = Editor) =>
   Effect.gen(function* () {
@@ -103,9 +101,7 @@ describe("workbench", () => {
   });
 
   test("setFocus on a nonexistent slot fails", () => {
-    const error = withWorkbench((wb) =>
-      wb.setFocus("nope" as SlotId).pipe(Effect.flip),
-    );
+    const error = withWorkbench((wb) => wb.setFocus("nope" as SlotId).pipe(Effect.flip));
     expect(error).toBeInstanceOf(SlotNotFoundError);
   });
 
@@ -203,9 +199,7 @@ describe("workbench", () => {
   test("focusedContext falls back to base when nothing is focused", () => {
     const value = withWorkbench(
       (wb) =>
-        Effect.map(wb.focusedContext, (ctx) =>
-          Context.get(ctx as Context.Context<Marker>, Marker),
-        ),
+        Effect.map(wb.focusedContext, (ctx) => Context.get(ctx as Context.Context<Marker>, Marker)),
       { baseContext: Context.make(Marker, "base") as Context.Context<never> },
     );
     expect(value).toBe("base");
@@ -233,7 +227,12 @@ describe("workbench", () => {
     const scope = Effect.runSync(Scope.make());
     const wb = Effect.runSync(Scope.extend(makeWorkbench(), scope));
     const panel = Effect.runSync(wb.createPanel({ kind: Editor }));
-    Effect.runSync(Scope.addFinalizer(panel.scope, Effect.sync(() => (finalized = true))));
+    Effect.runSync(
+      Scope.addFinalizer(
+        panel.scope,
+        Effect.sync(() => (finalized = true)),
+      ),
+    );
     await Effect.runPromise(Scope.close(scope, undefined as never));
     expect(finalized).toBe(true);
   });

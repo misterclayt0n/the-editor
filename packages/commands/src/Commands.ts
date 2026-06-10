@@ -112,10 +112,9 @@ export const makeCommands = (
         const context = yield* contextFor(panel);
         const result = yield* command.contribution
           .run({ id, args })
-          .pipe(
-            Effect.provide(context as Context.Context<any>),
-            Effect.exit,
-          ) as Effect.Effect<Exit.Exit<void, unknown>>;
+          .pipe(Effect.provide(context as Context.Context<any>), Effect.exit) as Effect.Effect<
+          Exit.Exit<void, unknown>
+        >;
         if (Exit.isFailure(result)) {
           return yield* new CommandExecutionError({ commandId: id, cause: result.cause });
         }

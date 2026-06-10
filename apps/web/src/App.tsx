@@ -1,13 +1,16 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { EditorSnapshot } from "@the-editor/editor";
-import { EditorSession } from "./editor/session";
+import { formatChords, type Chord } from "@the-editor/keymaps";
+import { AppRuntime } from "./runtime";
 import { EditorView } from "./editor/EditorView";
 
-const SAMPLE = `// The Editor — first vertical slice
+const SAMPLE = `// The Editor — workbench + commands + keymaps slice
 //
-// Type printable characters, Enter, Backspace, Delete, Tab.
-// Move with arrow keys, Home/End. Shift extends the selection.
-// Click to place the caret.
+// Every keystroke now flows: chord -> keymap -> scoped command -> transaction.
+// The defaults are an ordinary package (see src/product/editorDefaults.ts);
+// a user package activated later could rebind all of it.
+//
+// Type, move with arrows/Home/End (shift extends), Enter/Backspace/Delete/Tab.
 
 function hello(name: string): string {
 \treturn \`hello, \${name}\`;
@@ -17,22 +20,38 @@ hello("world");
 `;
 
 export function App() {
-  const session = useMemo(() => EditorSession.create(SAMPLE), []);
-  const [snapshot, setSnapshot] = useState<EditorSnapshot>(() => session.snapshot());
+  // The runtime is an external resource, so the owning effect creates AND
+  // disposes it: under React StrictMode's mount -> cleanup -> remount cycle,
+  // each mount gets a fresh runtime instead of reusing a disposed one.
+  const [runtime, setRuntime] = useState<AppRuntime | null>(null);
+  const [snapshot, setSnapshot] = useState<EditorSnapshot | null>(null);
+  const [pending, setPending] = useState<ReadonlyArray<Chord>>([]);
 
-  useEffect(() => () => session.dispose(), [session]);
+  useEffect(() => {
+    const booted = AppRuntime.boot(SAMPLE);
+    setRuntime(booted);
+    setSnapshot(booted.snapshot());
+    return () => {
+      setRuntime(null);
+      booted.dispose();
+    };
+  }, []);
 
   const handleSnapshot = useCallback((next: EditorSnapshot) => setSnapshot(next), []);
+  const handlePending = useCallback((chords: ReadonlyArray<Chord>) => setPending(chords), []);
+
+  if (runtime === null || snapshot === null) return <div className="app" />;
 
   const head = snapshot.selection.primary.head;
   const line = snapshot.text.lineRangeAt(head);
 
   return (
     <div className="app">
-      <EditorView session={session} onSnapshot={handleSnapshot} />
+      <EditorView runtime={runtime} onSnapshot={handleSnapshot} onPending={handlePending} />
       <div className="status-bar">
         <span>
           Ln {line.index + 1}, Col {head - line.from + 1}
+          {pending.length > 0 ? ` · ${formatChords(pending)} …` : ""}
         </span>
         <span>
           {snapshot.text.length} chars · v{snapshot.version}

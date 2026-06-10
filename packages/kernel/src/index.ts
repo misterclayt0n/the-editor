@@ -8,3 +8,4 @@ export * from "./package/PackageContext.js";
 export * from "./package/PackageRuntime.js";
 export * from "./store/StoreDefinition.js";
 export * from "./store/StoreRuntime.js";
+export * from "./state/StateCell.js";

@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@the-editor/engine": "workspace:*",
+    "@the-editor/kernel": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

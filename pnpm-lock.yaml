@@ -115,12 +115,27 @@ importers:
 
   apps/web:
     dependencies:
+      '@the-editor/commands':
+        specifier: workspace:*
+        version: link:../../packages/commands
       '@the-editor/editor':
         specifier: workspace:*
         version: link:../../packages/editor
       '@the-editor/engine':
         specifier: workspace:*
         version: link:../../packages/engine
+      '@the-editor/extensions':
+        specifier: workspace:*
+        version: link:../../packages/extensions
+      '@the-editor/kernel':
+        specifier: workspace:*
+        version: link:../../packages/kernel
+      '@the-editor/keymaps':
+        specifier: workspace:*
+        version: link:../../packages/keymaps
+      '@the-editor/workbench':
+        specifier: workspace:*
+        version: link:../../packages/workbench
       effect:
         specifier: 'catalog:'
         version: 3.21.2
@@ -158,6 +173,9 @@ importers:
       '@the-editor/kernel':
         specifier: workspace:*
         version: link:../kernel
+      '@the-editor/workbench':
+        specifier: workspace:*
+        version: link:../workbench
       effect:
         specifier: 'catalog:'
         version: 3.21.2
@@ -180,6 +198,9 @@ importers:
       '@the-editor/engine':
         specifier: workspace:*
         version: link:../engine
+      '@the-editor/kernel':
+        specifier: workspace:*
+        version: link:../kernel
       effect:
         specifier: 'catalog:'
         version: 3.21.2
@@ -275,6 +296,37 @@ importers:
         specifier: 'catalog:'
         version: 3.2.4(@types/node@24.12.4)(lightningcss@1.32.0)(tsx@4.22.4)
 
+  packages/keymaps:
+    dependencies:
+      '@the-editor/extensions':
+        specifier: workspace:*
+        version: link:../extensions
+      '@the-editor/kernel':
+        specifier: workspace:*
+        version: link:../kernel
+      '@the-editor/workbench':
+        specifier: workspace:*
+        version: link:../workbench
+      effect:
+        specifier: 'catalog:'
+        version: 3.21.2
+    devDependencies:
+      '@effect/vitest':
+        specifier: 'catalog:'
+        version: 0.29.0(effect@3.21.2)(vitest@3.2.4(@types/node@24.12.4)(lightningcss@1.32.0)(tsx@4.22.4))
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.12.4
+      tsdown:
+        specifier: 'catalog:'
+        version: 0.20.3(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(@typescript/native-preview@7.0.0-dev.20260522.1)(typescript@5.9.3)
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 3.2.4(@types/node@24.12.4)(lightningcss@1.32.0)(tsx@4.22.4)
+
   packages/syntax:
     dependencies:
       tree-sitter:
@@ -293,6 +345,28 @@ importers:
       tsx:
         specifier: 'catalog:'
         version: 4.22.4
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 3.2.4(@types/node@24.12.4)(lightningcss@1.32.0)(tsx@4.22.4)
+
+  packages/workbench:
+    dependencies:
+      '@the-editor/kernel':
+        specifier: workspace:*
+        version: link:../kernel
+      effect:
+        specifier: 'catalog:'
+        version: 3.21.2
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.12.4
+      tsdown:
+        specifier: 'catalog:'
+        version: 0.20.3(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(@typescript/native-preview@7.0.0-dev.20260522.1)(typescript@5.9.3)
       typescript:
         specifier: 'catalog:'
         version: 5.9.3

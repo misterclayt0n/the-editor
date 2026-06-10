@@ -20,6 +20,7 @@
   "dependencies": {
     "@the-editor/extensions": "workspace:*",
     "@the-editor/kernel": "workspace:*",
+    "@the-editor/workbench": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

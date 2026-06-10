@@ -1,34 +1,11 @@
 /**
- * Observable state cells.
- *
- * Events and state are different things. The notification fabric
- * (`notifications.ts`) transports discrete facts; a StateCell holds a current
- * value plus a stream of changes, for facts that *are* values (active editor,
- * theme, configuration, ...). Backed by SubscriptionRef; the ref is hidden so
- * the implementation can change without touching consumers.
- *
- * Subscribing to `changes` emits the current value immediately, then every
- * subsequent value — subscribers never need a separate initial read.
+ * Editor-owned observable state. The generic StateCell mechanism lives in
+ * `@the-editor/kernel`; this module only mints the editor-specific cells.
  */
 
-import { Context, Effect, Layer, Option, Ref, Stream, SubscriptionRef } from "effect";
+import { Context, Layer, Option } from "effect";
+import { makeStateCell, type StateCell } from "@the-editor/kernel";
 import type { EditorScopeId } from "./services";
-
-export interface StateCell<A> {
-  readonly get: Effect.Effect<A>;
-  readonly set: (value: A) => Effect.Effect<void>;
-  readonly update: (f: (value: A) => A) => Effect.Effect<A>;
-  /** Current value immediately, then every change. */
-  readonly changes: Stream.Stream<A>;
-}
-
-export const makeStateCell = <A>(initial: A): Effect.Effect<StateCell<A>> =>
-  Effect.map(SubscriptionRef.make(initial), (ref) => ({
-    get: Ref.get(ref),
-    set: (value: A) => Ref.set(ref, value),
-    update: (f: (value: A) => A) => Ref.updateAndGet(ref, f),
-    changes: ref.changes,
-  }));
 
 /**
  * Workspace-level "which editor scope has focus" state. This lives *above*

@@ -1,17 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { layoutViewport, type EditorSnapshot } from "@the-editor/editor";
 import { Selection } from "@the-editor/engine";
-import type { EditorSession } from "./session";
-import type { CommandResult } from "./commands";
-import {
-  deleteBackward,
-  deleteForward,
-  insertNewline,
-  insertText,
-  moveHorizontal,
-  moveLineEdge,
-  moveVertical,
-} from "./commands";
+import type { Chord } from "@the-editor/keymaps";
+import type { AppRuntime } from "../runtime";
 
 const LINE_HEIGHT = 20;
 const TAB_WIDTH = 4;
@@ -20,8 +11,9 @@ const PADDING_TOP = 8;
 const OVERSCAN_LINES = 4;
 
 type EditorViewProps = {
-  readonly session: EditorSession;
+  readonly runtime: AppRuntime;
   readonly onSnapshot?: (snapshot: EditorSnapshot) => void;
+  readonly onPending?: (chords: ReadonlyArray<Chord>) => void;
 };
 
 function offsetForVisualColumn(lineText: string, targetColumn: number): number {
@@ -36,8 +28,8 @@ function offsetForVisualColumn(lineText: string, targetColumn: number): number {
   return lineText.length;
 }
 
-export function EditorView({ session, onSnapshot }: EditorViewProps) {
-  const [snapshot, setSnapshot] = useState<EditorSnapshot>(() => session.snapshot());
+export function EditorView({ runtime, onSnapshot, onPending }: EditorViewProps) {
+  const [snapshot, setSnapshot] = useState<EditorSnapshot>(() => runtime.snapshot());
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
   const [charWidth, setCharWidth] = useState(8);
@@ -65,7 +57,7 @@ export function EditorView({ session, onSnapshot }: EditorViewProps) {
   }, [snapshot, onSnapshot]);
 
   const refresh = useCallback(() => {
-    const next = session.snapshot();
+    const next = runtime.snapshot();
     setSnapshot(next);
 
     const scroller = scrollerRef.current;
@@ -77,73 +69,31 @@ export function EditorView({ session, onSnapshot }: EditorViewProps) {
     } else if (caretTop + LINE_HEIGHT > scroller.scrollTop + scroller.clientHeight) {
       scroller.scrollTop = caretTop + LINE_HEIGHT - scroller.clientHeight;
     }
-  }, [session]);
+  }, [runtime]);
 
-  // The renderer is a notification consumer: commands mutate the session and
+  // The renderer is a notification consumer: commands mutate the document and
   // publish invalidation batches; each batch triggers one snapshot re-read.
   // Payloads are hints only, so dropped batches (sliding bus) are harmless —
   // every refresh reads the full current truth.
-  useEffect(() => session.subscribe(() => refresh()), [session, refresh]);
+  useEffect(() => runtime.subscribe(() => refresh()), [runtime, refresh]);
 
-  const dispatch = useCallback(
-    (result: CommandResult | undefined) => {
-      if (!result) return;
-      if (result.transaction) session.apply(result.transaction, result.selection);
-      else session.setSelection(result.selection);
-    },
-    [session],
-  );
-
+  // The whole input path: chord -> keymap resolution -> command execution.
+  // The switch statement this replaces lives on as keybindings in the
+  // editor-defaults package.
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
-      const current = session.snapshot();
-
-      switch (event.key) {
-        case "Enter":
-          dispatch(insertNewline(current));
-          break;
-        case "Backspace":
-          dispatch(deleteBackward(current));
-          break;
-        case "Delete":
-          dispatch(deleteForward(current));
-          break;
-        case "Tab":
-          dispatch(insertText(current, "\t"));
-          break;
-        case "ArrowLeft":
-          dispatch(moveHorizontal(current, -1, event.shiftKey));
-          break;
-        case "ArrowRight":
-          dispatch(moveHorizontal(current, 1, event.shiftKey));
-          break;
-        case "ArrowUp":
-          dispatch(moveVertical(current, -1, event.shiftKey));
-          break;
-        case "ArrowDown":
-          dispatch(moveVertical(current, 1, event.shiftKey));
-          break;
-        case "Home":
-          dispatch(moveLineEdge(current, "start", event.shiftKey));
-          break;
-        case "End":
-          dispatch(moveLineEdge(current, "end", event.shiftKey));
-          break;
-        default:
-          if (event.key.length === 1) dispatch(insertText(current, event.key));
-          else return;
-      }
-      event.preventDefault();
+      const outcome = runtime.handleKeyboardEvent(event.nativeEvent);
+      onPending?.(runtime.pendingChords());
+      if (outcome !== "passthrough") event.preventDefault();
     },
-    [session, dispatch],
+    [runtime, onPending],
   );
 
   const handleMouseDown = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
       const content = event.currentTarget;
       const rect = content.getBoundingClientRect();
-      const current = session.snapshot();
+      const current = runtime.snapshot();
       const line = Math.max(
         0,
         Math.min(
@@ -155,9 +105,9 @@ export function EditorView({ session, onSnapshot }: EditorViewProps) {
       const lineText = current.text.sliceString(range.from, range.to);
       const column = Math.max(0, (event.clientX - rect.left - PADDING_LEFT) / charWidth);
       const offset = range.from + offsetForVisualColumn(lineText, column);
-      dispatch({ selection: Selection.point(offset) });
+      runtime.setSelection(Selection.point(offset));
     },
-    [session, dispatch, charWidth],
+    [runtime, charWidth],
   );
 
   const totalLines = snapshot.text.lineCount;

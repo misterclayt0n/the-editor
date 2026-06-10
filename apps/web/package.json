@@ -12,8 +12,13 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@the-editor/commands": "workspace:*",
     "@the-editor/editor": "workspace:*",
     "@the-editor/engine": "workspace:*",
+    "@the-editor/extensions": "workspace:*",
+    "@the-editor/kernel": "workspace:*",
+    "@the-editor/keymaps": "workspace:*",
+    "@the-editor/workbench": "workspace:*",
     "effect": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:"

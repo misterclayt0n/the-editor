@@ -1,4 +1,4 @@
-import type { TextBuffer } from "@the-editor/engine";
+import { columnAtOffset as engineColumnAtOffset, offsetAtColumn, type TextBuffer } from "@the-editor/engine";
 
 export type LayoutAnchor<Payload = unknown> =
   | {
@@ -92,6 +92,84 @@ export type ViewportLayoutSnapshot<Payload = unknown> = {
   readonly rows: readonly LayoutRow[];
   readonly placements: readonly LayoutPlacement<Payload>[];
 };
+
+export type HitTestBias = "before" | "after" | "nearest";
+
+export type HitTestResult = {
+  readonly line: number;
+  readonly column: number;
+  readonly offset: number;
+};
+
+export function hitTestTextPosition(args: {
+  readonly text: TextBuffer;
+  readonly x: number;
+  readonly y: number;
+  readonly lineHeight: number;
+  readonly charWidth: number;
+  readonly paddingLeft: number;
+  readonly paddingTop: number;
+  readonly tabWidth: number;
+  readonly bias?: HitTestBias;
+}): HitTestResult {
+  const lineHeight = Math.max(Number.EPSILON, args.lineHeight);
+  const charWidth = Math.max(Number.EPSILON, args.charWidth);
+  const line = Math.max(
+    0,
+    Math.min(args.text.lineCount - 1, Math.floor((args.y - args.paddingTop) / lineHeight)),
+  );
+  const rawColumn = Math.max(0, (args.x - args.paddingLeft) / charWidth);
+  const bias = args.bias ?? "before";
+  if (bias === "nearest") {
+    const beforeOffset = offsetAtColumn({
+      text: args.text,
+      line,
+      column: Math.floor(rawColumn),
+      tabWidth: args.tabWidth,
+      bias: "before",
+    });
+    const afterOffset = offsetAtColumn({
+      text: args.text,
+      line,
+      column: Math.ceil(rawColumn),
+      tabWidth: args.tabWidth,
+      bias: "after",
+    });
+    const beforeColumn = engineColumnAtOffset({
+      text: args.text,
+      line,
+      offset: beforeOffset,
+      tabWidth: args.tabWidth,
+    });
+    const afterColumn = engineColumnAtOffset({
+      text: args.text,
+      line,
+      offset: afterOffset,
+      tabWidth: args.tabWidth,
+    });
+    const offset =
+      Math.abs(rawColumn - beforeColumn) < Math.abs(afterColumn - rawColumn)
+        ? beforeOffset
+        : afterOffset;
+    const column = offset === beforeOffset ? beforeColumn : afterColumn;
+    return { line, column, offset };
+  }
+  const targetColumn = bias === "before" ? Math.floor(rawColumn) : Math.ceil(rawColumn);
+  const offset = offsetAtColumn({
+    text: args.text,
+    line,
+    column: targetColumn,
+    tabWidth: args.tabWidth,
+    bias,
+  });
+  const column = engineColumnAtOffset({
+    text: args.text,
+    line,
+    offset,
+    tabWidth: args.tabWidth,
+  });
+  return { line, column, offset };
+}
 
 function lineRange(text: TextBuffer, line: number): { from: number; to: number } {
   const r = text.lineRange(line);

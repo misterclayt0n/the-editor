@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { layoutViewport, type EditorSnapshot } from "@the-editor/editor";
+import { hitTestTextPosition, layoutViewport, type EditorSnapshot } from "@the-editor/editor";
 import { Selection } from "@the-editor/engine";
 import type { Chord } from "@the-editor/keymaps";
 import type { AppRuntime } from "../runtime";
@@ -15,18 +15,6 @@ type EditorViewProps = {
   readonly onSnapshot?: (snapshot: EditorSnapshot) => void;
   readonly onPending?: (chords: ReadonlyArray<Chord>) => void;
 };
-
-function offsetForVisualColumn(lineText: string, targetColumn: number): number {
-  let column = 0;
-  let offset = 0;
-  for (const ch of lineText) {
-    const advance = ch === "\t" ? TAB_WIDTH - (column % TAB_WIDTH) : 1;
-    if (column + advance / 2 > targetColumn) return offset;
-    column += advance;
-    offset += ch.length;
-  }
-  return lineText.length;
-}
 
 export function EditorView({ runtime, onSnapshot, onPending }: EditorViewProps) {
   const [snapshot, setSnapshot] = useState<EditorSnapshot>(() => runtime.snapshot());
@@ -94,18 +82,18 @@ export function EditorView({ runtime, onSnapshot, onPending }: EditorViewProps) 
       const content = event.currentTarget;
       const rect = content.getBoundingClientRect();
       const current = runtime.snapshot();
-      const line = Math.max(
-        0,
-        Math.min(
-          current.text.lineCount - 1,
-          Math.floor((event.clientY - rect.top - PADDING_TOP) / LINE_HEIGHT),
-        ),
-      );
-      const range = current.text.lineRange(line);
-      const lineText = current.text.sliceString(range.from, range.to);
-      const column = Math.max(0, (event.clientX - rect.left - PADDING_LEFT) / charWidth);
-      const offset = range.from + offsetForVisualColumn(lineText, column);
-      runtime.setSelection(Selection.point(offset));
+      const hit = hitTestTextPosition({
+        text: current.text,
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top,
+        lineHeight: LINE_HEIGHT,
+        charWidth,
+        paddingLeft: PADDING_LEFT,
+        paddingTop: PADDING_TOP,
+        tabWidth: TAB_WIDTH,
+        bias: "nearest",
+      });
+      runtime.setSelection(Selection.point(hit.offset));
     },
     [runtime, charWidth],
   );

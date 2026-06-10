@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { TextBuffer } from "@the-editor/engine";
-import { layoutViewport } from "../src/index";
+import { hitTestTextPosition, layoutViewport } from "../src/index";
 
 const text = (s: string) => TextBuffer.fromString(s);
 
@@ -116,6 +116,113 @@ describe("layout viewport", () => {
     expect(snapshot.placements).toEqual([
       { kind: "overlay", id: "o", row: 1, line: 2, at: 6, column: 1, payload: "o" },
     ]);
+  });
+
+  test("hit testing converts viewport pixels to text position", () => {
+    const buffer = text("a\nbb\nccc");
+    expect(
+      hitTestTextPosition({
+        text: buffer,
+        x: 18,
+        y: 25,
+        lineHeight: 20,
+        charWidth: 10,
+        paddingLeft: 8,
+        paddingTop: 5,
+        tabWidth: 4,
+        bias: "nearest",
+      }),
+    ).toEqual({ line: 1, column: 1, offset: 3 });
+  });
+
+  test("nearest hit testing chooses closest boundary inside tabs", () => {
+    const buffer = text("a\tb");
+    expect(
+      hitTestTextPosition({
+        text: buffer,
+        x: 22,
+        y: 0,
+        lineHeight: 20,
+        charWidth: 10,
+        paddingLeft: 0,
+        paddingTop: 0,
+        tabWidth: 4,
+        bias: "nearest",
+      }),
+    ).toEqual({ line: 0, column: 1, offset: 1 });
+    expect(
+      hitTestTextPosition({
+        text: buffer,
+        x: 34,
+        y: 0,
+        lineHeight: 20,
+        charWidth: 10,
+        paddingLeft: 0,
+        paddingTop: 0,
+        tabWidth: 4,
+        bias: "nearest",
+      }),
+    ).toEqual({ line: 0, column: 4, offset: 2 });
+  });
+
+  test("nearest hit testing chooses closest boundary inside wide graphemes", () => {
+    const buffer = text("a😀b");
+    expect(
+      hitTestTextPosition({
+        text: buffer,
+        x: 14,
+        y: 0,
+        lineHeight: 20,
+        charWidth: 10,
+        paddingLeft: 0,
+        paddingTop: 0,
+        tabWidth: 4,
+        bias: "nearest",
+      }),
+    ).toEqual({ line: 0, column: 1, offset: 1 });
+    expect(
+      hitTestTextPosition({
+        text: buffer,
+        x: 26,
+        y: 0,
+        lineHeight: 20,
+        charWidth: 10,
+        paddingLeft: 0,
+        paddingTop: 0,
+        tabWidth: 4,
+        bias: "nearest",
+      }),
+    ).toEqual({ line: 0, column: 3, offset: 3 });
+  });
+
+  test("hit testing supports before/after bias and clamps lines", () => {
+    const buffer = text("a\nb\tc");
+    expect(
+      hitTestTextPosition({
+        text: buffer,
+        x: -100,
+        y: -100,
+        lineHeight: 20,
+        charWidth: 10,
+        paddingLeft: 8,
+        paddingTop: 5,
+        tabWidth: 4,
+        bias: "before",
+      }),
+    ).toEqual({ line: 0, column: 0, offset: 0 });
+    expect(
+      hitTestTextPosition({
+        text: buffer,
+        x: 33,
+        y: 25,
+        lineHeight: 20,
+        charWidth: 10,
+        paddingLeft: 8,
+        paddingTop: 5,
+        tabWidth: 4,
+        bias: "after",
+      }),
+    ).toEqual({ line: 1, column: 4, offset: 4 });
   });
 
   test("out-of-viewport anchors are ignored", () => {

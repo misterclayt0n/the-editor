@@ -11,6 +11,7 @@
 import { Context, Effect, Exit, Scope } from "effect";
 import { Registers, Selection, TextBuffer, type ClipboardProvider } from "@the-editor/engine";
 import type { EditorScopeId as EditorScopeIdType } from "./services";
+import type { FileSystemPort } from "./files";
 import { closeWorkspaceScope, DocumentRegistry, makeWorkspaceScope } from "./workspace";
 import { makeViewScope, type ViewScope } from "./view";
 import type { DocumentScope, WorkspaceScope } from "./workspace";
@@ -21,6 +22,7 @@ export type CreateEditorScopeInput = {
   readonly selection?: Selection;
   readonly clipboard?: ClipboardProvider;
   readonly registers?: Registers;
+  readonly fileSystem?: FileSystemPort.Service;
 };
 
 export interface EditorScope {
@@ -42,6 +44,7 @@ export function makeEditorScope(input: CreateEditorScopeInput = {}): Effect.Effe
     const workspace = yield* makeWorkspaceScope({
       ...(input.registers ? { registers: input.registers } : {}),
       ...(input.clipboard ? { clipboard: input.clipboard } : {}),
+      ...(input.fileSystem ? { fileSystem: input.fileSystem } : {}),
     });
     const registry = Context.get(
       workspace.context as Context.Context<DocumentRegistry>,

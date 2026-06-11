@@ -46,6 +46,7 @@ import {
 } from "./notifications";
 import { ActiveEditor } from "./state";
 import { EditorVisuals, makeEditorVisuals } from "./visuals";
+import { Files, FileSystemPort, makeFiles } from "./files";
 
 let nextWorkspaceId = 1;
 let nextDocumentId = 1;
@@ -99,6 +100,11 @@ export type CreateWorkspaceInput = {
   readonly roots?: ReadonlyArray<string>;
   readonly registers?: Registers;
   readonly clipboard?: ClipboardProvider;
+  /**
+   * Platform file system. When present, the workspace context gains the
+   * Files service (capability gating: no port, no Files).
+   */
+  readonly fileSystem?: FileSystemPort.Service;
 };
 
 export interface WorkspaceScope {
@@ -191,7 +197,7 @@ export function makeWorkspaceScope(
       ),
     );
 
-    workspaceContext = Context.empty().pipe(
+    let context = Context.empty().pipe(
       Context.add(ActiveWorkspaceId, id),
       Context.add(WorkspaceNotifications, bus),
       Context.add(WorkspaceRoots, roots),
@@ -200,6 +206,14 @@ export function makeWorkspaceScope(
       Context.add(ActiveClipboard, clipboard),
       Context.add(DocumentRegistry, registry),
     ) as Context.Context<any>;
+    if (input.fileSystem !== undefined) {
+      const files = yield* makeFiles(input.fileSystem, registry);
+      context = context.pipe(
+        Context.add(FileSystemPort, input.fileSystem),
+        Context.add(Files, files),
+      ) as Context.Context<any>;
+    }
+    workspaceContext = context;
 
     return { id, scope, context: workspaceContext } satisfies WorkspaceScope;
   });

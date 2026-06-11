@@ -33,22 +33,32 @@ import {
 } from "@the-editor/workbench";
 import {
   closeEditorScope,
+  closeViewScope,
   DocumentNotifications,
+  DocumentRegistry,
   editorSnapshot,
   EditorVisuals,
+  Files,
+  FileSystemPort,
   makeEditorScope,
+  makeViewScope,
   provideEditorScope,
   setSelection,
   ViewNotifications,
+  WorkspaceNotifications,
   type EditorNotification,
   type EditorScope,
   type EditorSnapshot,
+  type FileSyncStatus,
   type NotificationBus,
   type VisualsSnapshot,
 } from "@the-editor/editor";
-import { TextDocument, type Selection } from "@the-editor/engine";
+import { Option } from "effect";
+import { type Selection } from "@the-editor/engine";
 import { editorDefaults, EditorSurface } from "./product/editorDefaults";
 import { lineNumbers } from "./product/lineNumbers";
+import { filesPackage, HostFileActions } from "./product/files";
+import { createFileSystemPort } from "./platform/fs";
 import { MountHub } from "./editor/mounts";
 
 export type KeyOutcome = "handled" | "pending" | "passthrough";
@@ -56,18 +66,28 @@ export type KeyOutcome = "handled" | "pending" | "passthrough";
 export class AppRuntime {
   /** Widget mount contract: renderer announces containers, products portal in. */
   readonly mounts = new MountHub();
+  /** Host UI hooks: a different document is now active (remount the view). */
+  onDocumentSwitched?: () => void;
+  /** Host UI hooks: file sync state changed (refresh status surfaces). */
+  onFileStateChanged?: () => void;
 
   private constructor(
     private readonly scope: Scope.CloseableScope,
-    private readonly editor: EditorScope,
-    readonly panel: Panel,
+    private editor: EditorScope,
+    private currentPanel: Panel,
     readonly workbench: Workbench.Service,
     readonly commands: Commands.Service,
     readonly keymaps: Keymaps.Service,
   ) {}
 
+  get panel(): Panel {
+    return this.currentPanel;
+  }
+
   static boot(initialText: string): AppRuntime {
-    return Effect.runSync(
+    const fileSystem = createFileSystemPort();
+    let instance!: AppRuntime;
+    instance = Effect.runSync(
       Effect.gen(function* () {
         const scope = yield* Scope.make();
         const runtime = yield* makePackageRuntime;
@@ -75,7 +95,10 @@ export class AppRuntime {
         const commands = yield* makeCommands(runtime.contributionIndex, { workbench });
         const keymaps = yield* makeKeymaps(runtime.contributionIndex, { workbench });
 
-        const editor = yield* makeEditorScope({ text: initialText });
+        const editor = yield* makeEditorScope({
+          text: initialText,
+          ...(fileSystem ? { fileSystem } : {}),
+        });
         const panel = yield* workbench.createPanel({
           kind: EditorSurface,
           context: editor.context,
@@ -86,28 +109,108 @@ export class AppRuntime {
         const arrangement = yield* workbench.arrangement;
         yield* workbench.setFocus(collectSlots(arrangement)[0]!.id).pipe(Effect.orDie);
 
-        // Single-document world: the initial document's services are handed
-        // to packages directly. Multi-document routing (via the registry +
-        // ActiveEditor) comes when products need it.
-        const documentContext = editor.document.context;
+        // Packages get WORKSPACE-level services and react to the document
+        // set themselves (see lineNumbers). Per-document services flow to
+        // commands through the focused panel's view context.
+        const workspaceContext = editor.workspace.context;
         const services = Layer.mergeAll(
           Layer.succeed(Commands, commands),
           Layer.succeed(Keymaps, keymaps),
           Layer.succeed(Workbench, workbench),
-          Layer.succeed(EditorVisuals, Context.get(documentContext, EditorVisuals)),
-          Layer.succeed(DocumentNotifications, Context.get(documentContext, DocumentNotifications)),
-          Layer.succeed(TextDocument, Context.get(documentContext, TextDocument)),
+          Layer.succeed(DocumentRegistry, Context.get(workspaceContext, DocumentRegistry)),
+          Layer.succeed(
+            WorkspaceNotifications,
+            Context.get(workspaceContext, WorkspaceNotifications),
+          ),
+          Layer.succeed(HostFileActions, {
+            save: () => void instance.saveActiveFile(),
+            open: () => void instance.openFileViaDialog(),
+          }),
         );
         yield* runtime
           .activateGraph([
             toPackageDescriptor(editorDefaults, services),
             toPackageDescriptor(lineNumbers, services),
+            toPackageDescriptor(filesPackage, services),
           ])
           .pipe(Effect.orDie);
 
         return new AppRuntime(scope, editor, panel, workbench, commands, keymaps);
       }),
     );
+    return instance;
+  }
+
+  /** Path + sync status of the active document, when file-bound. */
+  fileInfo(): { path: string; status: FileSyncStatus } | null {
+    const files = Context.getOption(this.editor.workspace.context, Files);
+    if (Option.isNone(files)) return null;
+    const binding = Effect.runSync(files.value.bindingFor(this.editor.document.id));
+    return Option.isNone(binding)
+      ? null
+      : { path: binding.value.path, status: binding.value.status };
+  }
+
+  /** Open a path into the active editor area (replacing the current view). */
+  async openPath(path: string): Promise<void> {
+    const files = Context.getOption(this.editor.workspace.context, Files);
+    if (Option.isNone(files)) return;
+    const document = await Effect.runPromise(files.value.openPath(path));
+    if (document.id === this.editor.document.id) return;
+    const previous = {
+      document: this.editor.document,
+      view: this.editor.view,
+      panel: this.currentPanel,
+    };
+    const view = await Effect.runPromise(makeViewScope(document));
+    const workbench = this.workbench;
+    const panel = Effect.runSync(
+      Effect.gen(function* () {
+        const created = yield* workbench.createPanel({
+          kind: EditorSurface,
+          context: view.context,
+        });
+        yield* workbench
+          .updateArrangement((a) => ({ ...a, tiles: makeStack([created.id]) }))
+          .pipe(Effect.orDie);
+        const arrangement = yield* workbench.arrangement;
+        yield* workbench.setFocus(collectSlots(arrangement)[0]!.id).pipe(Effect.orDie);
+        yield* workbench.closePanel(previous.panel.id).pipe(Effect.ignore);
+        return created;
+      }),
+    );
+    this.editor = {
+      ...this.editor,
+      id: view.id,
+      context: view.context,
+      document,
+      view,
+    };
+    this.currentPanel = panel;
+    Effect.runSync(closeViewScope(previous.view));
+    // Drop the unbound scratch document the app booted with.
+    const previousBinding = Effect.runSync(files.value.bindingFor(previous.document.id));
+    if (Option.isNone(previousBinding)) {
+      const registry = Context.get(this.editor.workspace.context, DocumentRegistry);
+      Effect.runSync(registry.close(previous.document.id));
+    }
+    this.onDocumentSwitched?.();
+  }
+
+  async openFileViaDialog(): Promise<void> {
+    const port = Context.getOption(this.editor.workspace.context, FileSystemPort);
+    if (Option.isNone(port)) return;
+    const picked = await Effect.runPromise(port.value.pickFile());
+    if (Option.isSome(picked)) await this.openPath(picked.value);
+  }
+
+  async saveActiveFile(): Promise<void> {
+    const files = Context.getOption(this.editor.workspace.context, Files);
+    if (Option.isNone(files)) return;
+    await Effect.runPromise(
+      files.value.save(this.editor.document.id).pipe(Effect.catchAll(() => Effect.void)),
+    );
+    this.onFileStateChanged?.();
   }
 
   dispose(): void {

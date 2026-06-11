@@ -41,6 +41,7 @@ import {
   layoutViewport,
   payloadsOf,
   SelectionInvalidated,
+  FileSyncInvalidated,
   VisualsInvalidated,
   type AnchoredBlockWidget,
   type DocumentChangeRange,
@@ -436,7 +437,15 @@ export class EditorRenderer {
     const doc = hasInvalidation(notification, DocumentInvalidated);
     const sel = hasInvalidation(notification, SelectionInvalidated);
     const vis = hasInvalidation(notification, VisualsInvalidated);
-    if (!doc && !sel && !vis) return;
+    if (!doc && !sel && !vis) {
+      // Not render-relevant, but file sync transitions refresh host
+      // surfaces (status bar) through the snapshot callback. Fresh object:
+      // hosts may bail on identical references.
+      if (hasInvalidation(notification, FileSyncInvalidated)) {
+        this.options.onSnapshot?.(this.runtime.snapshot());
+      }
+      return;
+    }
     if (doc) {
       this.docDirty = true;
       if (this.pendingChangeSets !== null) {

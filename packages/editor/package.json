@@ -14,7 +14,7 @@
     "build": "tsdown src/index.ts --dts --format esm",
     "dev": "tsdown src/index.ts --dts --format esm --watch",
     "typecheck": "tsgo --noEmit --pretty",
-    "test": "vitest run test/scope.test.ts test/snapshot.test.ts test/layout.test.ts test/notifications.test.ts test/state.test.ts test/visuals.test.ts test/geometry.test.ts test/workspace.test.ts --passWithNoTests",
+    "test": "vitest run test/scope.test.ts test/snapshot.test.ts test/layout.test.ts test/notifications.test.ts test/state.test.ts test/visuals.test.ts test/geometry.test.ts test/workspace.test.ts test/files.test.ts --passWithNoTests",
     "clean": "rm -rf dist"
   },
   "dependencies": {

@@ -59,8 +59,32 @@ export function mapOffsetThroughChanges(
 }
 
 /**
- * Apply a transaction to the current document, optionally moving the
- * committing view's selection in the same logical step.
+ * Apply a transaction at DOCUMENT level: no view is involved. This is the
+ * entry for document-scoped writers — file reloads, formatters, LSP
+ * workspace edits. Every view of the document reacts through the published
+ * change ranges (rows re-render, selections map via the view sync fibers).
+ */
+export const commitDocumentTransaction = (
+  transaction: Transaction,
+): Effect.Effect<void, TextError, TextDocument | EditorVisuals | DocumentNotifications> =>
+  Effect.gen(function* () {
+    const document = yield* TextDocument;
+    const visuals = yield* EditorVisuals;
+    const documentBus = yield* DocumentNotifications;
+    yield* document.transact(transaction);
+    yield* visuals.mapChanges(transaction.changes.desc());
+    const version = yield* document.version;
+    yield* documentBus.publish([
+      invalidate(DocumentInvalidated, {
+        version,
+        changes: transaction.changes.desc().ranges,
+      }),
+    ]);
+  });
+
+/**
+ * Apply a transaction from a VIEW, optionally moving the committing view's
+ * selection in the same logical step.
  */
 export const commitTransaction = (
   transaction: Transaction,

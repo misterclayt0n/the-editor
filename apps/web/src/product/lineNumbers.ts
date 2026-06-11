@@ -7,18 +7,25 @@
  * engine and renderer never learn what a "line number" is — disable this
  * package and contribute your own band to replace the gutter entirely.
  *
- * It also exercises the lifecycle: the band's width follows the document's
- * digit count, updated through the contribution handle when the line count
- * crosses a power of ten.
+ * It is document-lifecycle aware: it attaches to every document in the
+ * workspace (current and future, via DocumentsChanged) and each band's
+ * width follows its document's digit count. Contributions are tied to the
+ * DOCUMENT scope, so they retract naturally when the document closes —
+ * before its bus shuts down (LIFO finalizers).
  */
 
-import { Effect, Stream } from "effect";
+import { Context, Effect, Option, Scope, Stream } from "effect";
 import { definePackage } from "@the-editor/extensions";
 import {
   DocumentInvalidated,
   DocumentNotifications,
+  DocumentRegistry,
+  DocumentsChanged,
   EditorVisuals,
   hasInvalidation,
+  payloadsOf,
+  WorkspaceNotifications,
+  type DocumentScope,
   type EditorVisualSet,
 } from "@the-editor/editor";
 import { TextDocument } from "@the-editor/engine";
@@ -37,29 +44,55 @@ const band = (lineCount: number): EditorVisualSet => ({
   ],
 });
 
-export const lineNumbers = definePackage("the-editor/line-numbers", () =>
+const attach = (document: DocumentScope) =>
   Effect.gen(function* () {
-    const visuals = yield* EditorVisuals;
-    const notifications = yield* DocumentNotifications;
-    const document = yield* TextDocument;
-
-    const initial = yield* document.snapshot;
-    let width = digits(initial.buffer.lineCount);
-    const handle = yield* visuals.contribute(
-      "the-editor/line-numbers",
-      band(initial.buffer.lineCount),
+    const visuals = Context.get(
+      document.context as Context.Context<EditorVisuals>,
+      EditorVisuals,
+    );
+    const text = Context.get(document.context as Context.Context<TextDocument>, TextDocument);
+    const bus = Context.get(
+      document.context as Context.Context<DocumentNotifications>,
+      DocumentNotifications,
     );
 
-    // Track digit-count changes; the handle update flows through the same
-    // invalidation pipeline as any extension's.
-    yield* Stream.runForEach(notifications.notifications, (notification) =>
+    const initial = yield* text.snapshot;
+    let width = digits(initial.buffer.lineCount);
+    const handle = yield* visuals
+      .contribute("the-editor/line-numbers", band(initial.buffer.lineCount))
+      .pipe(Scope.extend(document.scope));
+
+    // Width follows the document's digit count; the fiber ends with the
+    // document's bus.
+    yield* Effect.forkDaemon(
+      Stream.runForEach(bus.notifications, (notification) =>
+        Effect.gen(function* () {
+          if (!hasInvalidation(notification, DocumentInvalidated)) return;
+          const snapshot = yield* text.snapshot;
+          const next = digits(snapshot.buffer.lineCount);
+          if (next !== width) {
+            width = next;
+            yield* handle.update(band(snapshot.buffer.lineCount));
+          }
+        }),
+      ),
+    );
+  });
+
+export const lineNumbers = definePackage("the-editor/line-numbers", () =>
+  Effect.gen(function* () {
+    const registry = yield* DocumentRegistry;
+    const workspaceBus = yield* WorkspaceNotifications;
+
+    for (const document of yield* registry.list) {
+      yield* attach(document);
+    }
+    yield* Stream.runForEach(workspaceBus.notifications, (notification) =>
       Effect.gen(function* () {
-        if (!hasInvalidation(notification, DocumentInvalidated)) return;
-        const snapshot = yield* document.snapshot;
-        const next = digits(snapshot.buffer.lineCount);
-        if (next !== width) {
-          width = next;
-          yield* handle.update(band(snapshot.buffer.lineCount));
+        for (const payload of payloadsOf(notification, DocumentsChanged)) {
+          if (payload.opened === undefined) continue;
+          const document = yield* registry.get(payload.opened);
+          if (Option.isSome(document)) yield* attach(document.value);
         }
       }),
     ).pipe(Effect.forkScoped);

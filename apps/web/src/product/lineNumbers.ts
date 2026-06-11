@@ -16,7 +16,7 @@ import { Effect, Stream } from "effect";
 import { definePackage } from "@the-editor/extensions";
 import {
   DocumentInvalidated,
-  EditorNotifications,
+  DocumentNotifications,
   EditorVisuals,
   hasInvalidation,
   type EditorVisualSet,
@@ -40,7 +40,7 @@ const band = (lineCount: number): EditorVisualSet => ({
 export const lineNumbers = definePackage("the-editor/line-numbers", () =>
   Effect.gen(function* () {
     const visuals = yield* EditorVisuals;
-    const notifications = yield* EditorNotifications;
+    const notifications = yield* DocumentNotifications;
     const document = yield* TextDocument;
 
     const initial = yield* document.snapshot;

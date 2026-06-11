@@ -33,19 +33,20 @@ import {
 } from "@the-editor/workbench";
 import {
   closeEditorScope,
-  EditorNotifications,
+  DocumentNotifications,
   editorSnapshot,
   EditorVisuals,
-  invalidate,
   makeEditorScope,
   provideEditorScope,
-  SelectionInvalidated,
+  setSelection,
+  ViewNotifications,
   type EditorNotification,
   type EditorScope,
   type EditorSnapshot,
+  type NotificationBus,
   type VisualsSnapshot,
 } from "@the-editor/editor";
-import { SelectionState, TextDocument, type Selection } from "@the-editor/engine";
+import { TextDocument, type Selection } from "@the-editor/engine";
 import { editorDefaults, EditorSurface } from "./product/editorDefaults";
 import { lineNumbers } from "./product/lineNumbers";
 import { MountHub } from "./editor/mounts";
@@ -85,15 +86,17 @@ export class AppRuntime {
         const arrangement = yield* workbench.arrangement;
         yield* workbench.setFocus(collectSlots(arrangement)[0]!.id).pipe(Effect.orDie);
 
-        // Single-editor world: editor-scope services are handed to packages
-        // directly. Multi-editor routing (via ActiveEditor) comes later.
+        // Single-document world: the initial document's services are handed
+        // to packages directly. Multi-document routing (via the registry +
+        // ActiveEditor) comes when products need it.
+        const documentContext = editor.document.context;
         const services = Layer.mergeAll(
           Layer.succeed(Commands, commands),
           Layer.succeed(Keymaps, keymaps),
           Layer.succeed(Workbench, workbench),
-          Layer.succeed(EditorVisuals, Context.get(editor.context, EditorVisuals)),
-          Layer.succeed(EditorNotifications, Context.get(editor.context, EditorNotifications)),
-          Layer.succeed(TextDocument, Context.get(editor.context, TextDocument)),
+          Layer.succeed(EditorVisuals, Context.get(documentContext, EditorVisuals)),
+          Layer.succeed(DocumentNotifications, Context.get(documentContext, DocumentNotifications)),
+          Layer.succeed(TextDocument, Context.get(documentContext, TextDocument)),
         );
         yield* runtime
           .activateGraph([
@@ -161,26 +164,28 @@ export class AppRuntime {
 
   /** Host pointer gesture: place the caret. Not a command (yet). */
   setSelection(selection: Selection): void {
-    this.runInEditor(
-      Effect.gen(function* () {
-        const selectionState = yield* SelectionState;
-        const notifications = yield* EditorNotifications;
-        yield* selectionState.set(selection);
-        yield* notifications.publish([invalidate(SelectionInvalidated)]);
-      }),
-    );
+    this.runInEditor(setSelection(selection));
   }
 
-  /** Consume the editor's notification stream; returns unsubscribe. */
-  subscribe(listener: (notification: EditorNotification) => void): () => void {
-    const consume = Effect.flatMap(EditorNotifications, (notifications) =>
-      Stream.runForEach(notifications.notifications, (notification) =>
-        Effect.sync(() => listener(notification)),
-      ),
-    );
-    const fiber = Effect.runFork(provideEditorScope(this.editor, consume));
+  /**
+   * Consume this editor's notification streams; returns unsubscribe.
+   * Sources are tagged because serials are per bus: the document bus is
+   * shared by every view of the document, the view bus is this view's own.
+   */
+  subscribe(
+    listener: (notification: EditorNotification, source: "document" | "view") => void,
+  ): () => void {
+    const consume = (bus: NotificationBus, source: "document" | "view") =>
+      Stream.runForEach(bus.notifications, (notification) =>
+        Effect.sync(() => listener(notification, source)),
+      );
+    const documentBus = Context.get(this.editor.context, DocumentNotifications);
+    const viewBus = Context.get(this.editor.context, ViewNotifications);
+    const documentFiber = Effect.runFork(consume(documentBus, "document"));
+    const viewFiber = Effect.runFork(consume(viewBus, "view"));
     return () => {
-      Effect.runFork(Fiber.interrupt(fiber));
+      Effect.runFork(Fiber.interrupt(documentFiber));
+      Effect.runFork(Fiber.interrupt(viewFiber));
     };
   }
 

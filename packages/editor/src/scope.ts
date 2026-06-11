@@ -1,26 +1,19 @@
-import { Context, Effect, Exit, Scope } from "effect";
-import {
-  makeSelectionState,
-  makeTextDocument,
-  NoClipboard,
-  Registers,
-  Selection,
-  SelectionState,
-  TextBuffer,
-  TextDocument,
-  type ClipboardProvider,
-} from "@the-editor/engine";
-import {
-  ActiveClipboard,
-  ActiveEditorScopeId,
-  ActiveRegisters,
-  EditorScopeId,
-  type EditorScopeId as EditorScopeIdType,
-} from "./services";
-import { EditorNotifications, makeEditorNotifications } from "./notifications";
-import { EditorVisuals, makeEditorVisuals } from "./visuals";
+/**
+ * Editor scope: compatibility sugar over the real hierarchy.
+ *
+ * The actual structure is workspace ⊃ document ⊃ view (see workspace.ts and
+ * view.ts). `makeEditorScope` builds a private workspace with one document
+ * and one view and hands back the view context — the shape a single
+ * standalone editor (and most tests) wants. New code that needs splits,
+ * shared documents, or files should talk to the workspace directly.
+ */
 
-let nextScopeId = 1;
+import { Context, Effect, Exit, Scope } from "effect";
+import { Registers, Selection, TextBuffer, type ClipboardProvider } from "@the-editor/engine";
+import type { EditorScopeId as EditorScopeIdType } from "./services";
+import { closeWorkspaceScope, DocumentRegistry, makeWorkspaceScope } from "./workspace";
+import { makeViewScope, type ViewScope } from "./view";
+import type { DocumentScope, WorkspaceScope } from "./workspace";
 
 export type CreateEditorScopeInput = {
   readonly id?: string | EditorScopeIdType;
@@ -32,45 +25,50 @@ export type CreateEditorScopeInput = {
 
 export interface EditorScope {
   readonly id: EditorScopeIdType;
+  /** Closing this closes the whole private workspace beneath the editor. */
   readonly scope: Scope.CloseableScope;
+  /** The view context: view + document + workspace services. */
   readonly context: Context.Context<any>;
+  readonly workspace: WorkspaceScope;
+  readonly document: DocumentScope;
+  readonly view: ViewScope;
 }
 
-function inputId(id: string | EditorScopeIdType | undefined): EditorScopeIdType {
-  return typeof id === "string"
-    ? EditorScopeId.make(id)
-    : (id ?? EditorScopeId.make(`editor:${nextScopeId++}`));
-}
+let nextEditorId = 1;
 
 export function makeEditorScope(input: CreateEditorScopeInput = {}): Effect.Effect<EditorScope> {
   return Effect.gen(function* () {
-    const id = inputId(input.id);
-    const scope = yield* Scope.make();
-    const textDocument = yield* makeTextDocument(input.text ?? "").pipe(Effect.orDie);
-    const selectionState = yield* makeSelectionState({
-      selection: input.selection ?? Selection.point(0),
+    const id = input.id ?? `editor:${nextEditorId++}`;
+    const workspace = yield* makeWorkspaceScope({
+      ...(input.registers ? { registers: input.registers } : {}),
+      ...(input.clipboard ? { clipboard: input.clipboard } : {}),
     });
-    const registers = input.registers ?? Registers.create();
-    const clipboard = input.clipboard ?? new NoClipboard();
-    // The notification bus is per editor scope: its PubSub shuts down (ending
-    // all consumer streams) when the scope closes.
-    const notifications = yield* Scope.extend(makeEditorNotifications(), scope);
-    const visuals = yield* makeEditorVisuals(notifications);
-    const context = Context.empty().pipe(
-      Context.add(ActiveEditorScopeId, id),
-      Context.add(TextDocument, textDocument),
-      Context.add(SelectionState, selectionState),
-      Context.add(ActiveRegisters, registers),
-      Context.add(ActiveClipboard, clipboard),
-      Context.add(EditorNotifications, notifications),
-      Context.add(EditorVisuals, visuals),
-    ) as Context.Context<any>;
-    return { id, scope, context } satisfies EditorScope;
+    const registry = Context.get(
+      workspace.context as Context.Context<DocumentRegistry>,
+      DocumentRegistry,
+    );
+    const document = yield* registry.open({
+      ...(input.text !== undefined ? { text: input.text } : {}),
+    });
+    const view = yield* makeViewScope(document, {
+      id,
+      ...(input.selection ? { selection: input.selection } : {}),
+    });
+    // The view dies with the workspace.
+    yield* Scope.addFinalizer(workspace.scope, Scope.close(view.scope, Exit.void));
+    return {
+      id: view.id,
+      scope: workspace.scope,
+      context: view.context,
+      workspace,
+      document,
+      view,
+    } satisfies EditorScope;
   });
 }
 
 export function closeEditorScope(editor: EditorScope): Effect.Effect<void> {
-  return Scope.close(editor.scope, Exit.void);
+  return closeWorkspaceScope(editor.workspace);
 }
 
 export function provideEditorScope<A, E, R>(

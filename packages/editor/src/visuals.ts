@@ -31,7 +31,7 @@ import {
   type VirtualText,
   type VirtualTextAffinity,
 } from "./layout";
-import { EditorNotifications, invalidate, makeInvalidationTopic } from "./notifications";
+import { invalidate, makeInvalidationTopic, type NotificationBus } from "./notifications";
 
 export type TextStyleSpec = {
   readonly className?: string;
@@ -239,7 +239,7 @@ function buildSnapshot(state: State): VisualsSnapshot {
 }
 
 export const makeEditorVisuals = (
-  notifications: EditorNotifications.Service,
+  notifications: NotificationBus,
 ): Effect.Effect<EditorVisuals.Service> =>
   Effect.gen(function* () {
     const state = yield* Ref.make<State>({

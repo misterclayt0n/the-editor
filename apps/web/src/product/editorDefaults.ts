@@ -13,15 +13,11 @@ import { Commands } from "@the-editor/commands";
 import { Keymaps } from "@the-editor/keymaps";
 import { SurfaceKind, SurfaceScope } from "@the-editor/workbench";
 import {
-  DocumentInvalidated,
+  commitTransaction,
   editorSnapshot,
-  EditorNotifications,
-  EditorVisuals,
-  invalidate,
-  SelectionInvalidated,
+  setSelection,
   type EditorSnapshot,
 } from "@the-editor/editor";
-import { SelectionState, TextDocument } from "@the-editor/engine";
 import {
   deleteBackward,
   deleteForward,
@@ -37,31 +33,18 @@ export const EditorSurface = SurfaceKind("the-editor/editor");
 
 const editorScope = SurfaceScope.surface(EditorSurface);
 
-/** Apply a pure command result through the focused panel's editor services. */
+/**
+ * Apply a pure command result through the focused panel's view context.
+ * All mutation flows through the editor package's commit path — product
+ * code never touches buses or visuals directly.
+ */
 const applyResult = (result: CommandResult | undefined) =>
   Effect.gen(function* () {
     if (!result) return;
-    const selectionState = yield* SelectionState;
-    const notifications = yield* EditorNotifications;
     if (result.transaction) {
-      const document = yield* TextDocument;
-      const visuals = yield* EditorVisuals;
-      yield* document.transact(result.transaction).pipe(Effect.orDie);
-      // Slide every contributed visual through the edit before anyone is
-      // notified: owners never run on the keystroke path.
-      yield* visuals.mapChanges(result.transaction.changes.desc());
-      yield* selectionState.set(result.selection);
-      const version = yield* document.version;
-      yield* notifications.publish([
-        invalidate(DocumentInvalidated, {
-          version,
-          changes: result.transaction.changes.desc().ranges,
-        }),
-        invalidate(SelectionInvalidated),
-      ]);
+      yield* commitTransaction(result.transaction, result.selection).pipe(Effect.orDie);
     } else {
-      yield* selectionState.set(result.selection);
-      yield* notifications.publish([invalidate(SelectionInvalidated)]);
+      yield* setSelection(result.selection);
     }
   });
 

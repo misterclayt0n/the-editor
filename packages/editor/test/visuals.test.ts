@@ -3,7 +3,8 @@ import { describe, expect, test } from "vitest";
 import { RangeSet, TextBuffer, Transaction } from "@the-editor/engine";
 import {
   closeEditorScope,
-  EditorNotifications,
+  type NotificationBus,
+  DocumentNotifications,
   EditorVisuals,
   hasInvalidation,
   makeEditorScope,
@@ -18,7 +19,7 @@ const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runSync(effect);
 const withEditor = <A>(
   f: (ctx: {
     visuals: EditorVisuals.Service;
-    notifications: EditorNotifications.Service;
+    notifications: NotificationBus;
   }) => Effect.Effect<A, never, Scope.Scope>,
 ) =>
   Effect.gen(function* () {
@@ -27,7 +28,7 @@ const withEditor = <A>(
       editor,
       Effect.gen(function* () {
         const visuals = yield* EditorVisuals;
-        const notifications = yield* EditorNotifications;
+        const notifications = yield* DocumentNotifications;
         return yield* Effect.scoped(f({ visuals, notifications }));
       }),
     );

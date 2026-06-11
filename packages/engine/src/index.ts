@@ -17,3 +17,4 @@ export * from "./clipboard";
 export * from "./registers";
 export * from "./text/index";
 export * from "./rangeset";
+export * from "./diff";

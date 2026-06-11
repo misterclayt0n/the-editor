@@ -355,7 +355,9 @@ export class EditorRenderer {
     this.resizeObserver = new ResizeObserver(() => queueRender(this.renderPass));
     this.resizeObserver.observe(this.viewport);
 
-    this.unsubscribe = runtime.subscribe((notification) => this.onNotification(notification));
+    this.unsubscribe = runtime.subscribe((notification, source) =>
+      this.onNotification(notification, source),
+    );
 
     queueRender(this.renderPass);
   }
@@ -430,7 +432,7 @@ export class EditorRenderer {
     this.setScroll(this.scrollY, ratio * this.maxScrollX());
   }
 
-  private onNotification(notification: EditorNotification): void {
+  private onNotification(notification: EditorNotification, source: "document" | "view"): void {
     const doc = hasInvalidation(notification, DocumentInvalidated);
     const sel = hasInvalidation(notification, SelectionInvalidated);
     const vis = hasInvalidation(notification, VisualsInvalidated);
@@ -438,6 +440,8 @@ export class EditorRenderer {
     if (doc) {
       this.docDirty = true;
       if (this.pendingChangeSets !== null) {
+        // Serials are per bus; document/visuals invalidations ride the
+        // document bus, so the gap check tracks that bus only.
         const gap = this.lastSerial !== 0 && notification.serial > this.lastSerial + 1;
         const payloads = payloadsOf(notification, DocumentInvalidated);
         if (gap || payloads.some((payload) => payload.changes === undefined)) {
@@ -460,9 +464,11 @@ export class EditorRenderer {
     }
     if (sel) {
       this.selDirty = true;
-      this.revealCaretPending = true;
+      // Reveal only follows deliberate caret moves on this view's own bus,
+      // not selection drift mapped through other views' edits.
+      if (source === "view") this.revealCaretPending = true;
     }
-    this.lastSerial = notification.serial;
+    if (source === "document") this.lastSerial = notification.serial;
     queueRender(this.renderPass);
   }
 

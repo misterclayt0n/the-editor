@@ -3,7 +3,7 @@ import { describe, expect, test } from "vitest";
 import {
   closeEditorScope,
   DocumentInvalidated,
-  EditorNotifications,
+  DocumentNotifications,
   hasInvalidation,
   invalidate,
   InvalidInvalidationTopicIdError,
@@ -18,7 +18,7 @@ import {
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runSync(effect);
 const runAsync = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
 
-const service = Effect.flatMap(EditorNotifications, (notifications) =>
+const service = Effect.flatMap(DocumentNotifications, (notifications) =>
   Effect.succeed(notifications),
 );
 

@@ -1,13 +1,16 @@
 /**
- * Editor notification fabric: scoped, batched, serialized invalidation pub/sub.
+ * Notification fabric: scoped, batched, serialized invalidation pub/sub.
  *
  * This module owns the *mechanism* only: typed topics, notification batches,
  * monotonic serials, and scoped fan-out. It deliberately has no vocabulary of
- * product concepts. Whoever owns a piece of state mints the topic for it; this
- * package mints topics for exactly the two truths an editor scope owns
- * (document and selection). Decorations, configuration, diagnostics, and
- * friends belong to their owners (packages/services), never to this union of
- * one.
+ * product concepts. Whoever owns a piece of state mints the topic for it.
+ *
+ * There is one bus per scope, mirroring the scope hierarchy:
+ *
+ * - WorkspaceNotifications: workspace truths (the document set, roots).
+ * - DocumentNotifications: document truths (text, document-anchored
+ *   visuals). Shared by every view of the document.
+ * - ViewNotifications: view truths (selection). Private to one view.
  *
  * Rules of the fabric:
  *
@@ -16,6 +19,7 @@
  * - Delivery is sliding: a slow consumer drops the oldest batches instead of
  *   backpressuring the input path. Consumers that track deltas must detect
  *   serial gaps (serial > last + 1) and fall back to a full re-read.
+ *   Serials are PER BUS — never compare serials across buses.
  * - Publishing never suspends, so it is safe on the synchronous hot path.
  */
 
@@ -102,33 +106,46 @@ export function payloadsOf<Payload>(
     .map((invalidation) => invalidation.payload as Payload);
 }
 
-export class EditorNotifications extends Context.Tag("@the-editor/editor/EditorNotifications")<
-  EditorNotifications,
-  EditorNotifications.Service
->() {}
-
-export namespace EditorNotifications {
-  export interface Service {
-    /** Publish one batch. Never suspends; an empty batch is a no-op. */
-    readonly publish: (invalidations: ReadonlyArray<Invalidation>) => Effect.Effect<void>;
-    /**
-     * Stream of notification batches. Every run of the stream is an
-     * independent subscription that sees batches published after it starts
-     * and ends when the owning editor scope closes.
-     */
-    readonly notifications: Stream.Stream<EditorNotification>;
-    /** Serial of the most recently published batch (0 before any publish). */
-    readonly serial: Effect.Effect<number>;
-  }
+export interface NotificationBus {
+  /** Publish one batch. Never suspends; an empty batch is a no-op. */
+  readonly publish: (invalidations: ReadonlyArray<Invalidation>) => Effect.Effect<void>;
+  /**
+   * Stream of notification batches. Every run of the stream is an
+   * independent subscription that sees batches published after it starts
+   * and ends when the owning scope closes.
+   */
+  readonly notifications: Stream.Stream<EditorNotification>;
+  /** Serial of the most recently published batch (0 before any publish). */
+  readonly serial: Effect.Effect<number>;
 }
 
-export const makeEditorNotifications = (options?: {
+/** Document truths: text changes, document-anchored visuals. One per document. */
+export class DocumentNotifications extends Context.Tag("@the-editor/editor/DocumentNotifications")<
+  DocumentNotifications,
+  NotificationBus
+>() {}
+
+/** View truths: selection, view-local visuals. One per view. */
+export class ViewNotifications extends Context.Tag("@the-editor/editor/ViewNotifications")<
+  ViewNotifications,
+  NotificationBus
+>() {}
+
+/** Workspace truths: the document set, roots. One per workspace. */
+export class WorkspaceNotifications extends Context.Tag(
+  "@the-editor/editor/WorkspaceNotifications",
+)<WorkspaceNotifications, NotificationBus>() {}
+
+export const makeNotificationBus = (options?: {
   readonly capacity?: number;
-}): Effect.Effect<EditorNotifications.Service, never, Scope.Scope> =>
+}): Effect.Effect<NotificationBus, never, Scope.Scope> =>
   Effect.gen(function* () {
+    // Shutdown is fire-and-forget: closing a scope must never suspend on
+    // consumer teardown (the fabric is non-blocking end to end), so scope
+    // closes stay runSync-safe. Consumer streams end momentarily after.
     const pubsub = yield* Effect.acquireRelease(
       PubSub.sliding<EditorNotification>(options?.capacity ?? DEFAULT_CAPACITY),
-      PubSub.shutdown,
+      (hub) => Effect.forkDaemon(PubSub.shutdown(hub)),
     );
     const serialRef = yield* Ref.make(0);
 
@@ -144,12 +161,12 @@ export const makeEditorNotifications = (options?: {
       publish,
       notifications: Stream.fromPubSub(pubsub),
       serial: Ref.get(serialRef),
-    } satisfies EditorNotifications.Service;
+    } satisfies NotificationBus;
   });
 
 /**
- * The two truths an editor scope owns. Payloads are staleness hints only;
- * consumers re-read TextDocument / SelectionState.
+ * Core truths and their buses. Payloads are staleness hints only; consumers
+ * re-read TextDocument / SelectionState.
  */
 
 /**

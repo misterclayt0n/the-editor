@@ -14,7 +14,7 @@
     "build": "tsdown src/index.ts --dts --format esm",
     "dev": "tsdown src/index.ts --dts --format esm --watch",
     "typecheck": "tsgo --noEmit --pretty",
-    "test": "vitest run test/text.test.ts test/transaction.test.ts test/effect.test.ts test/chars.test.ts test/grapheme.test.ts test/columns.test.ts test/line-ending.test.ts test/selection.test.ts test/history.test.ts test/search.test.ts test/match-brackets.test.ts test/surround.test.ts test/comment.test.ts test/indent.test.ts test/auto-pairs.test.ts test/text-object.test.ts test/object.test.ts test/clipboard.test.ts test/registers.test.ts test/rangeset.test.ts --passWithNoTests",
+    "test": "vitest run test/text.test.ts test/transaction.test.ts test/effect.test.ts test/chars.test.ts test/grapheme.test.ts test/columns.test.ts test/line-ending.test.ts test/selection.test.ts test/history.test.ts test/search.test.ts test/match-brackets.test.ts test/surround.test.ts test/comment.test.ts test/indent.test.ts test/auto-pairs.test.ts test/text-object.test.ts test/object.test.ts test/clipboard.test.ts test/registers.test.ts test/rangeset.test.ts test/diff.test.ts --passWithNoTests",
     "test:stress": "vitest run test/text.stress.test.ts --passWithNoTests",
     "bench": "node --expose-gc --import tsx src/text/bench.ts",
     "clean": "rm -rf dist"

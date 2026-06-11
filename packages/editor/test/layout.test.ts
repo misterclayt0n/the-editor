@@ -362,12 +362,30 @@ describe("layout viewport", () => {
         { kind: "range", id: "r", from: 2, to: 3, payload: null },
       ],
     });
-    expect(snapshot.rows.find((row) => row.kind === "text" && row.line === 1)).toMatchObject({ row: 3, top: 30 });
-    expect(snapshot.blockWidgets[0]).toMatchObject({ row: 1, rect: { top: 10, left: 0, width: 0, height: 20 } });
-    expect(snapshot.placements.find((p) => p.kind === "overlay")).toMatchObject({ rect: { top: 30, left: 0, width: 1, height: 10 } });
-    expect(snapshot.placements.find((p) => p.kind === "range")).toMatchObject({ rects: [{ top: 30, left: 0, width: 5, height: 10 }] });
-    expect(snapshot.decorations[0]).toMatchObject({ rects: [{ top: 30, left: 0, width: 5, height: 10 }] });
-    expect(layoutContentHeight({ text: text("a\nb\nc"), lineHeight: 10, blockWidgets: [{ id: "w", afterLine: 0, heightRows: 2 }] })).toBe(50);
+    expect(snapshot.rows.find((row) => row.kind === "text" && row.line === 1)).toMatchObject({
+      row: 3,
+      top: 30,
+    });
+    expect(snapshot.blockWidgets[0]).toMatchObject({
+      row: 1,
+      rect: { top: 10, left: 0, width: 0, height: 20 },
+    });
+    expect(snapshot.placements.find((p) => p.kind === "overlay")).toMatchObject({
+      rect: { top: 30, left: 0, width: 1, height: 10 },
+    });
+    expect(snapshot.placements.find((p) => p.kind === "range")).toMatchObject({
+      rects: [{ top: 30, left: 0, width: 5, height: 10 }],
+    });
+    expect(snapshot.decorations[0]).toMatchObject({
+      rects: [{ top: 30, left: 0, width: 5, height: 10 }],
+    });
+    expect(
+      layoutContentHeight({
+        text: text("a\nb\nc"),
+        lineHeight: 10,
+        blockWidgets: [{ id: "w", afterLine: 0, heightRows: 2 }],
+      }),
+    ).toBe(50);
   });
 
   test("existing block anchors use visual row geometry", () => {
@@ -382,8 +400,14 @@ describe("layout viewport", () => {
         { kind: "overlay", id: "o", at: 2, payload: null },
       ],
     });
-    expect(snapshot.placements.find((p) => p.kind === "block")).toMatchObject({ row: 1, rect: { top: 10, left: 0, width: 0, height: 10 } });
-    expect(snapshot.placements.find((p) => p.kind === "overlay")).toMatchObject({ row: 2, rect: { top: 20, left: 0, width: 1, height: 10 } });
+    expect(snapshot.placements.find((p) => p.kind === "block")).toMatchObject({
+      row: 1,
+      rect: { top: 10, left: 0, width: 0, height: 10 },
+    });
+    expect(snapshot.placements.find((p) => p.kind === "overlay")).toMatchObject({
+      row: 2,
+      rect: { top: 20, left: 0, width: 1, height: 10 },
+    });
   });
 
   test("mid-document windows produce absolute geometry", () => {
@@ -396,9 +420,7 @@ describe("layout viewport", () => {
       paddingTop: 4,
       anchors: [{ kind: "overlay", id: "caret", at: 6, payload: null }],
     });
-    expect(
-      snapshot.rows.map((r) => [r.kind === "text" ? r.line : -1, r.row, r.top]),
-    ).toEqual([
+    expect(snapshot.rows.map((r) => [r.kind === "text" ? r.line : -1, r.row, r.top])).toEqual([
       [2, 2, 24],
       [3, 3, 34],
     ]);
@@ -426,9 +448,9 @@ describe("layout viewport", () => {
     // The widget itself is outside the window, so it produces no output.
     expect(snapshot.blockWidgets).toEqual([]);
     // Window tops line up with the full content height coordinate space.
-    expect(layoutContentHeight({ text: text("a\nb\nc\nd"), lineHeight: 10, blockWidgets: widgets })).toBe(
-      70,
-    );
+    expect(
+      layoutContentHeight({ text: text("a\nb\nc\nd"), lineHeight: 10, blockWidgets: widgets }),
+    ).toBe(70);
   });
 
   test("hit testing converts viewport pixels to text position", () => {

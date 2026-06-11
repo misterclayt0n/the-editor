@@ -1,64 +1,60 @@
 /**
- * EditorRenderer: the vanilla-DOM rendering hot path, with OWNED SCROLLING.
+ * EditorRenderer: the vanilla-DOM rendering hot path, with OWNED SCROLLING
+ * and the visuals pipeline.
  *
- * There is no native scroller. A scroll model (plain numbers) is driven by a
- * non-passive wheel listener and a custom scrollbar; the rendered window of
- * rows is positioned with a transform. This is the Monaco/VSCode model, and
- * it is the conclusion of a long investigation (chrome traces + compositor
- * video of real input):
+ * Scrolling (the result of a long traced investigation): there is no native
+ * scroller. A scroll model is driven by a non-passive wheel listener and a
+ * custom scrollbar (pointer capture); the rendered window of in-flow rows is
+ * positioned with a transform. Scroll offset and content commit atomically
+ * each frame, so nothing can race raster — every artifact class we measured
+ * with native scrolling (throttled commits, checkerboard, nested-runloop
+ * starvation) is structurally absent. Never reintroduce native scrolling,
+ * sticky clamps, or scroll throttles here.
  *
- * - With NATIVE scrolling, the compositor scrolls ahead while Chromium
- *   throttles main-thread commits to ~100-160ms during the gesture (and
- *   macOS native-scrollbar drags run a nested event loop that can starve
- *   the main thread for seconds). Every commit then races raster, drawing
- *   50-220ms of missing-tile (checkerboard) frames — perceived as flicker
- *   and blank text. Clamping tricks (pierre's inverse sticky) require
- *   compositor-promoted layers, whose tiles die on every content shift; we
- *   exhausted that whole design space.
- * - With OWNED scrolling, the visual scroll position only moves when we
- *   draw: content and offset update atomically in the same frame, commits
- *   run at full display rate (nothing throttles them — there is no native
- *   scroll), and a raster gap cannot exceed one frame. Every synthetic test
- *   we ever ran (which is exactly this regime: JS-paced scrolling) was
- *   artifact-free at any speed; this makes real input take that path.
- * - Wheel momentum needs no simulation: macOS delivers momentum as wheel
- *   events. The custom scrollbar uses ordinary pointer capture, so thumb
- *   drags are plain mousemove events at full rate — no nested run loop.
+ * Visuals (the extensibility contract): everything anchored to text — text
+ * styles, decorations, virtual text, block widgets, gutter bands — comes
+ * from the EditorVisuals service as windowed queries over engine RangeSets.
+ * The per-frame budget is O(window + log totalVisuals) regardless of how
+ * much extensions contribute:
  *
- * Rendering: a window of lines around the viewport, rows in NORMAL FLOW
- * (children of the content element; child i = line windowStart + i),
- * edge-trimmed on slides so retained rows get zero writes. The content
- * element is translated to (windowTop - scrollY). Caret/selection overlays
- * are window-local absolute elements. Per-line dirty tracking from
- * DocumentInvalidated change ranges rewrites only touched rows; structural
- * edits rebuild the window. Edits above the viewport adjust the scroll
- * model so visible text holds still.
- *
- * Syntax highlighting is intentionally absent: it will be a worker-owned
- * tree-sitter document (Zed's parse-async/query-windowed model, see
- * packages/syntax SyntaxState) feeding TextStyleRuns into layoutViewport's
- * visuals — applied by rewriting affected rows.
+ * - Pure scrolling renders nothing new and queries nothing.
+ * - Window slides query only the new window's offsets.
+ * - VisualsInvalidated{changes} feeds the same per-row dirty machinery as
+ *   document edits: only touched rows rewrite.
+ * - Block widgets reserve integer rows; the renderer creates a mount element
+ *   of exactly that size when the widget enters the window and announces it
+ *   on the MountHub. Extension content portals in on its own schedule — a
+ *   slow extension shows a stale/empty box, never scroll jank.
+ * - Gutter bands are width reservations; the band layer is x-pinned (it
+ *   never gets the horizontal transform) and its cells rebuild only when
+ *   the window or the bands change.
+ * - ALL vertical geometry goes through GeometryModel (line↔y with widget
+ *   prefix sums). No line-arithmetic shortcuts: they break the moment one
+ *   widget exists.
  */
 
 import {
+  GeometryModel,
   DocumentInvalidated,
   hasInvalidation,
   hitTestTextPosition,
-  layoutContentHeight,
   layoutViewport,
   payloadsOf,
   SelectionInvalidated,
+  VisualsInvalidated,
+  type AnchoredBlockWidget,
   type DocumentChangeRange,
   type EditorNotification,
   type EditorSnapshot,
   type LayoutInlineSegment,
+  type ResolvedGutterBand,
   type ViewportLayoutSnapshot,
+  type VisualsSnapshot,
 } from "@the-editor/editor";
-import { Selection } from "@the-editor/engine";
+import { Selection, type TextBuffer } from "@the-editor/engine";
 import type { Chord } from "@the-editor/keymaps";
 import type { AppRuntime } from "../runtime";
 import { cancelRender, queueRender } from "./frame";
-import { RenderDebug } from "./debug";
 
 const LINE_HEIGHT = 20;
 const TAB_WIDTH = 4;
@@ -71,11 +67,17 @@ const WINDOW_SLACK_PX = 300;
 /** Extra horizontal room past the longest rendered line. */
 const H_SCROLL_PAD = 48;
 const SCROLLBAR_MIN_THUMB = 32;
+/** Inner padding inside gutter band cells, px. */
+const BAND_CELL_PAD = 8;
 
 export type EditorRendererOptions = {
   readonly onSnapshot?: (snapshot: EditorSnapshot) => void;
   readonly onPending?: (chords: ReadonlyArray<Chord>) => void;
 };
+
+type OffsetRange = { readonly from: number; readonly to: number };
+
+type ResolvedBand = ResolvedGutterBand & { readonly x: number; readonly widthPx: number };
 
 /** Map an offset forward through one transaction's change ranges. */
 function mapOffset(changes: ReadonlyArray<DocumentChangeRange>, pos: number): number {
@@ -89,6 +91,18 @@ function mapOffset(changes: ReadonlyArray<DocumentChangeRange>, pos: number): nu
     return range.fromB;
   }
   return pos + diff;
+}
+
+function visualColumn(text: string): number {
+  let column = 0;
+  for (const ch of text) {
+    if (ch === "\t") {
+      column += TAB_WIDTH - (column % TAB_WIDTH);
+    } else {
+      column++;
+    }
+  }
+  return column;
 }
 
 function renderRowContent(el: HTMLDivElement, segments: readonly LayoutInlineSegment[]): void {
@@ -108,7 +122,9 @@ function renderRowContent(el: HTMLDivElement, segments: readonly LayoutInlineSeg
     const span = document.createElement("span");
     span.textContent = segment.text;
     const className =
-      segment.kind === "virtual-text" ? (segment.className ?? "editor-virtual-text") : segment.className;
+      segment.kind === "virtual-text"
+        ? (segment.className ?? "editor-virtual-text")
+        : segment.className;
     if (className) span.className = className;
     if (segment.style) {
       for (const [key, value] of Object.entries(segment.style)) {
@@ -123,11 +139,16 @@ function renderRowContent(el: HTMLDivElement, segments: readonly LayoutInlineSeg
 export class EditorRenderer {
   private readonly viewport: HTMLDivElement;
   private readonly contentEl: HTMLDivElement;
-  private readonly rowLayer: HTMLDivElement;
+  private readonly decoBgLayer: HTMLDivElement;
   private readonly selectionLayer: HTMLDivElement;
+  private readonly rowLayer: HTMLDivElement;
+  private readonly decoFgLayer: HTMLDivElement;
   private readonly caretEl: HTMLDivElement;
-  private readonly scrollbar: HTMLDivElement;
-  private readonly thumb: HTMLDivElement;
+  private readonly bandHost: HTMLDivElement;
+  private readonly vScrollbar: HTMLDivElement;
+  private readonly vThumb: HTMLDivElement;
+  private readonly hScrollbar: HTMLDivElement;
+  private readonly hThumb: HTMLDivElement;
   private readonly measureEl: HTMLSpanElement;
   private readonly resizeObserver: ResizeObserver;
   private readonly unsubscribe: () => void;
@@ -138,15 +159,22 @@ export class EditorRenderer {
     if (outcome !== "passthrough") event.preventDefault();
   };
   private readonly handleMouseDown = (event: MouseEvent) => {
-    if (event.target === this.thumb || this.scrollbar.contains(event.target as Node)) return;
+    if (
+      this.vScrollbar.contains(event.target as Node) ||
+      this.hScrollbar.contains(event.target as Node)
+    )
+      return;
     const rect = this.viewport.getBoundingClientRect();
+    // Vertical geometry goes through the model (widget-aware); the column
+    // resolver gets a synthetic widget-less y for the resolved line.
+    const line = this.geometry.lineAt(event.clientY - rect.top + this.scrollY);
     const hit = hitTestTextPosition({
       text: this.snapshot.text,
       x: event.clientX - rect.left + this.scrollX,
-      y: event.clientY - rect.top + this.scrollY,
+      y: PADDING_TOP + line * LINE_HEIGHT + 1,
       lineHeight: LINE_HEIGHT,
       charWidth: this.charWidth,
-      paddingLeft: PADDING_LEFT,
+      paddingLeft: this.textOriginX,
       paddingTop: PADDING_TOP,
       tabWidth: TAB_WIDTH,
       bias: "nearest",
@@ -155,8 +183,6 @@ export class EditorRenderer {
   };
   private readonly handleFocus = () => this.caretEl.classList.remove("editor-caret-idle");
   private readonly handleBlur = () => this.caretEl.classList.add("editor-caret-idle");
-  // Owned scroll: consume wheel deltas (momentum arrives as events from the
-  // OS). Non-passive so the page never natively scrolls.
   private readonly handleWheel = (event: WheelEvent) => {
     if (event.ctrlKey || event.metaKey) return; // zoom gestures stay native
     event.preventDefault();
@@ -164,52 +190,87 @@ export class EditorRenderer {
       event.deltaMode === 1 ? LINE_HEIGHT : event.deltaMode === 2 ? this.viewportHeight : 1;
     this.setScroll(this.scrollY + event.deltaY * scale, this.scrollX + event.deltaX * scale);
   };
-  private readonly handleThumbDown = (event: PointerEvent) => {
+  private readonly handleVThumbDown = (event: PointerEvent) => {
     event.preventDefault();
-    this.thumb.setPointerCapture(event.pointerId);
-    this.dragOffset = event.clientY - this.thumb.getBoundingClientRect().top;
+    this.vThumb.setPointerCapture(event.pointerId);
+    this.vDragOffset = event.clientY - this.vThumb.getBoundingClientRect().top;
   };
-  private readonly handleThumbMove = (event: PointerEvent) => {
-    if (this.dragOffset === null) return;
-    this.scrollToThumbPosition(event.clientY - this.dragOffset);
+  private readonly handleVThumbMove = (event: PointerEvent) => {
+    if (this.vDragOffset === null) return;
+    this.scrollToVThumbPosition(event.clientY - this.vDragOffset);
   };
-  private readonly handleThumbUp = (event: PointerEvent) => {
-    this.dragOffset = null;
-    this.thumb.releasePointerCapture(event.pointerId);
+  private readonly handleVThumbUp = (event: PointerEvent) => {
+    this.vDragOffset = null;
+    this.vThumb.releasePointerCapture(event.pointerId);
   };
-  private readonly handleTrackDown = (event: PointerEvent) => {
-    if (event.target === this.thumb) return;
+  private readonly handleVTrackDown = (event: PointerEvent) => {
+    if (event.target === this.vThumb) return;
     event.preventDefault();
-    // Jump so the thumb centers on the pointer, then drag from there.
-    this.dragOffset = this.thumbHeight() / 2;
-    this.thumb.setPointerCapture(event.pointerId);
-    this.scrollToThumbPosition(event.clientY - this.dragOffset);
+    this.vDragOffset = this.vThumbHeight() / 2;
+    this.vThumb.setPointerCapture(event.pointerId);
+    this.scrollToVThumbPosition(event.clientY - this.vDragOffset);
+  };
+  private readonly handleHThumbDown = (event: PointerEvent) => {
+    event.preventDefault();
+    this.hThumb.setPointerCapture(event.pointerId);
+    this.hDragOffset = event.clientX - this.hThumb.getBoundingClientRect().left;
+  };
+  private readonly handleHThumbMove = (event: PointerEvent) => {
+    if (this.hDragOffset === null) return;
+    this.scrollToHThumbPosition(event.clientX - this.hDragOffset);
+  };
+  private readonly handleHThumbUp = (event: PointerEvent) => {
+    this.hDragOffset = null;
+    this.hThumb.releasePointerCapture(event.pointerId);
+  };
+  private readonly handleHTrackDown = (event: PointerEvent) => {
+    if (event.target === this.hThumb) return;
+    event.preventDefault();
+    this.hDragOffset = this.hThumbWidth() / 2;
+    this.hThumb.setPointerCapture(event.pointerId);
+    this.scrollToHThumbPosition(event.clientX - this.hDragOffset);
   };
 
   private snapshot: EditorSnapshot;
+  private visuals: VisualsSnapshot | null = null;
+  private widgets: AnchoredBlockWidget[] = [];
+  private geometry: GeometryModel;
+  private bands: ResolvedBand[] = [];
+  private bandsKey = "";
+  private textOriginX = PADDING_LEFT;
   private scrollY = 0;
   private scrollX = 0;
   private windowStart = 0;
   private windowEnd = 0;
+  /** line → rowLayer child index; null means identity (no widgets in window). */
+  private rowIndexByLine: Map<number, number> | null = null;
+  private windowHasWidgets = false;
+  /** Live widget mount elements by widget id (identity survives rebuilds). */
+  private readonly mountEls = new Map<string, HTMLDivElement>();
   private maxRowChars = 0;
   private contentHeightPx = 0;
   private charWidth = 8;
   private viewportHeight = 0;
   private viewportWidth = 0;
   private lastLineCount: number;
-  private dragOffset: number | null = null;
+  private vDragOffset: number | null = null;
+  private hDragOffset: number | null = null;
   private lastTransform = "";
-  private lastThumbCss = "";
-  private anchor: { line: number; offset: number } | null = null;
+  private lastBandTransform = "";
+  private lastVThumbCss = "";
+  private lastHThumbCss = "";
+  private anchor: { offset: number; topPx: number } | null = null;
   private lastSerial = 0;
   private docDirty = false;
   private selDirty = false;
+  private visualsDirty = true;
+  /** Offset ranges from VisualsInvalidated; null = unknown, rebuild window. */
+  private pendingVisualChanges: OffsetRange[] | null = [];
   /** Change sets since the last frame; null = unknown, treat window as dirty. */
   private pendingChangeSets: DocumentChangeRange[][] | null = [];
   private revealCaretPending = false;
   private overlaysDirty = true;
   private disposed = false;
-  private readonly debug: RenderDebug | null;
 
   constructor(
     private readonly root: HTMLElement,
@@ -218,6 +279,7 @@ export class EditorRenderer {
   ) {
     this.snapshot = runtime.snapshot();
     this.lastLineCount = this.snapshot.text.lineCount;
+    this.geometry = new GeometryModel(this.lastLineCount, LINE_HEIGHT, PADDING_TOP);
 
     this.measureEl = document.createElement("span");
     this.measureEl.className = "editor-measure";
@@ -228,40 +290,64 @@ export class EditorRenderer {
     this.viewport.className = "editor-viewport";
     this.contentEl = document.createElement("div");
     this.contentEl.className = "editor-content";
-    this.rowLayer = document.createElement("div");
-    this.rowLayer.className = "editor-rows";
+    this.decoBgLayer = document.createElement("div");
+    this.decoBgLayer.className = "editor-layer";
     this.selectionLayer = document.createElement("div");
     this.selectionLayer.className = "editor-layer";
+    this.rowLayer = document.createElement("div");
+    this.rowLayer.className = "editor-rows";
+    this.rowLayer.style.paddingLeft = `${this.textOriginX}px`;
+    this.decoFgLayer = document.createElement("div");
+    this.decoFgLayer.className = "editor-layer editor-layer-fg";
     this.caretEl = document.createElement("div");
     this.caretEl.className = "editor-caret editor-caret-idle";
     this.caretEl.style.display = "none";
-    this.scrollbar = document.createElement("div");
-    this.scrollbar.className = "editor-scrollbar";
-    this.thumb = document.createElement("div");
-    this.thumb.className = "editor-scrollbar-thumb";
+    this.bandHost = document.createElement("div");
+    this.bandHost.className = "editor-bands";
+    this.vScrollbar = document.createElement("div");
+    this.vScrollbar.className = "editor-scrollbar editor-scrollbar-vertical";
+    this.vThumb = document.createElement("div");
+    this.vThumb.className = "editor-scrollbar-thumb editor-scrollbar-thumb-vertical";
+    this.hScrollbar = document.createElement("div");
+    this.hScrollbar.className = "editor-scrollbar editor-scrollbar-horizontal";
+    this.hThumb = document.createElement("div");
+    this.hThumb.className = "editor-scrollbar-thumb editor-scrollbar-thumb-horizontal";
 
-    this.contentEl.append(this.selectionLayer, this.rowLayer, this.caretEl);
-    this.scrollbar.append(this.thumb);
-    this.viewport.append(this.contentEl);
-    root.append(this.measureEl, this.viewport, this.scrollbar);
+    this.contentEl.append(
+      this.decoBgLayer,
+      this.selectionLayer,
+      this.rowLayer,
+      this.decoFgLayer,
+      this.caretEl,
+    );
+    this.vScrollbar.append(this.vThumb);
+    this.hScrollbar.append(this.hThumb);
+    this.viewport.append(this.contentEl, this.bandHost);
+    root.append(this.measureEl, this.viewport, this.vScrollbar, this.hScrollbar);
 
     this.measureCharWidth();
-    // Re-measure once webfonts settle; a wrong width skews hit testing.
     document.fonts?.ready.then(() => {
       if (this.disposed) return;
       this.measureCharWidth();
       this.overlaysDirty = true;
+      this.visualsDirty = true; // band widths derive from charWidth
       queueRender(this.renderPass);
     });
 
     this.viewport.addEventListener("wheel", this.handleWheel, { passive: false });
     this.viewport.addEventListener("mousedown", this.handleMouseDown);
-    this.thumb.addEventListener("pointerdown", this.handleThumbDown);
-    this.thumb.addEventListener("pointermove", this.handleThumbMove);
-    this.thumb.addEventListener("pointerup", this.handleThumbUp);
-    this.scrollbar.addEventListener("pointerdown", this.handleTrackDown);
-    this.scrollbar.addEventListener("pointermove", this.handleThumbMove);
-    this.scrollbar.addEventListener("pointerup", this.handleThumbUp);
+    this.vThumb.addEventListener("pointerdown", this.handleVThumbDown);
+    this.vThumb.addEventListener("pointermove", this.handleVThumbMove);
+    this.vThumb.addEventListener("pointerup", this.handleVThumbUp);
+    this.vScrollbar.addEventListener("pointerdown", this.handleVTrackDown);
+    this.vScrollbar.addEventListener("pointermove", this.handleVThumbMove);
+    this.vScrollbar.addEventListener("pointerup", this.handleVThumbUp);
+    this.hThumb.addEventListener("pointerdown", this.handleHThumbDown);
+    this.hThumb.addEventListener("pointermove", this.handleHThumbMove);
+    this.hThumb.addEventListener("pointerup", this.handleHThumbUp);
+    this.hScrollbar.addEventListener("pointerdown", this.handleHTrackDown);
+    this.hScrollbar.addEventListener("pointermove", this.handleHThumbMove);
+    this.hScrollbar.addEventListener("pointerup", this.handleHThumbUp);
     root.addEventListener("keydown", this.handleKeyDown);
     root.addEventListener("focus", this.handleFocus);
     root.addEventListener("blur", this.handleBlur);
@@ -271,37 +357,11 @@ export class EditorRenderer {
 
     this.unsubscribe = runtime.subscribe((notification) => this.onNotification(notification));
 
-    const isDev =
-      typeof location !== "undefined" &&
-      (location.hostname === "localhost" || location.hostname === "127.0.0.1");
-    this.debug = isDev
-      ? new RenderDebug(
-          this.viewport,
-          () => [this.contentEl],
-          () => ({
-            windowStart: this.windowStart,
-            windowEnd: this.windowEnd,
-            windowTopPx: PADDING_TOP + this.windowStart * LINE_HEIGHT,
-            windowHeightPx: (this.windowEnd - this.windowStart) * LINE_HEIGHT,
-          }),
-          () => this.scrollY,
-        )
-      : null;
-    this.debug?.start();
-    if (isDev) {
-      (window as unknown as Record<string, unknown>).__editorScroll = {
-        get: () => ({ y: this.scrollY, x: this.scrollX }),
-        set: (y: number, x = 0) => this.setScroll(y, x),
-        max: () => this.maxScrollY(),
-      };
-    }
-
     queueRender(this.renderPass);
   }
 
   dispose(): void {
     this.disposed = true;
-    this.debug?.stop();
     cancelRender(this.renderPass);
     this.unsubscribe();
     this.resizeObserver.disconnect();
@@ -310,9 +370,12 @@ export class EditorRenderer {
     this.root.removeEventListener("keydown", this.handleKeyDown);
     this.root.removeEventListener("focus", this.handleFocus);
     this.root.removeEventListener("blur", this.handleBlur);
+    for (const id of this.mountEls.keys()) this.runtime.mounts.unmounted(id);
+    this.mountEls.clear();
     this.measureEl.remove();
     this.viewport.remove();
-    this.scrollbar.remove();
+    this.vScrollbar.remove();
+    this.hScrollbar.remove();
   }
 
   private measureCharWidth(): void {
@@ -325,39 +388,53 @@ export class EditorRenderer {
   }
 
   private maxScrollX(): number {
-    const contentWidth = PADDING_LEFT + this.maxRowChars * this.charWidth + H_SCROLL_PAD;
+    const contentWidth = this.textOriginX + this.maxRowChars * this.charWidth + H_SCROLL_PAD;
     return Math.max(0, contentWidth - this.viewportWidth);
   }
 
-  /** The single entry point for scroll movement (wheel, scrollbar, reveal). */
   private setScroll(y: number, x = this.scrollX): void {
     const ny = Math.max(0, Math.min(this.maxScrollY(), y));
     const nx = Math.max(0, Math.min(this.maxScrollX(), x));
     if (ny === this.scrollY && nx === this.scrollX) return;
     this.scrollY = ny;
     this.scrollX = nx;
-    this.debug?.log("scroll", { st: Math.round(ny) });
     queueRender(this.renderPass);
   }
 
-  private thumbHeight(): number {
+  private vThumbHeight(): number {
     const track = this.viewportHeight;
     if (this.contentHeightPx <= track) return 0;
     return Math.max(SCROLLBAR_MIN_THUMB, (track * track) / this.contentHeightPx);
   }
 
-  private scrollToThumbPosition(thumbTopClient: number): void {
-    const trackRect = this.scrollbar.getBoundingClientRect();
-    const trackSpan = trackRect.height - this.thumbHeight();
+  private hThumbWidth(): number {
+    const contentWidth = this.textOriginX + this.maxRowChars * this.charWidth + H_SCROLL_PAD;
+    const track = this.viewportWidth;
+    if (contentWidth <= track) return 0;
+    return Math.max(SCROLLBAR_MIN_THUMB, (track * track) / contentWidth);
+  }
+
+  private scrollToVThumbPosition(thumbTopClient: number): void {
+    const trackRect = this.vScrollbar.getBoundingClientRect();
+    const trackSpan = trackRect.height - this.vThumbHeight();
     if (trackSpan <= 0) return;
     const ratio = Math.max(0, Math.min(1, (thumbTopClient - trackRect.top) / trackSpan));
     this.setScroll(ratio * this.maxScrollY());
   }
 
+  private scrollToHThumbPosition(thumbLeftClient: number): void {
+    const trackRect = this.hScrollbar.getBoundingClientRect();
+    const trackSpan = trackRect.width - this.hThumbWidth();
+    if (trackSpan <= 0) return;
+    const ratio = Math.max(0, Math.min(1, (thumbLeftClient - trackRect.left) / trackSpan));
+    this.setScroll(this.scrollY, ratio * this.maxScrollX());
+  }
+
   private onNotification(notification: EditorNotification): void {
     const doc = hasInvalidation(notification, DocumentInvalidated);
     const sel = hasInvalidation(notification, SelectionInvalidated);
-    if (!doc && !sel) return;
+    const vis = hasInvalidation(notification, VisualsInvalidated);
+    if (!doc && !sel && !vis) return;
     if (doc) {
       this.docDirty = true;
       if (this.pendingChangeSets !== null) {
@@ -370,6 +447,17 @@ export class EditorRenderer {
         }
       }
     }
+    if (vis) {
+      this.visualsDirty = true;
+      if (this.pendingVisualChanges !== null) {
+        const payloads = payloadsOf(notification, VisualsInvalidated);
+        if (payloads.some((payload) => payload.changes === undefined)) {
+          this.pendingVisualChanges = null;
+        } else {
+          this.pendingVisualChanges.push(...payloads.flatMap((payload) => [...payload.changes!]));
+        }
+      }
+    }
     if (sel) {
       this.selDirty = true;
       this.revealCaretPending = true;
@@ -378,25 +466,61 @@ export class EditorRenderer {
     queueRender(this.renderPass);
   }
 
+  private resolveBands(): void {
+    const specs = this.visuals?.gutterBands ?? [];
+    const key = specs.map((band) => `${band.id}:${band.side}:${band.widthCh}`).join("|");
+    if (key === this.bandsKey) return;
+    this.bandsKey = key;
+    let x = 0;
+    this.bands = specs
+      .filter((band) => band.side === "left")
+      .map((band) => {
+        const widthPx = Math.ceil(band.widthCh * this.charWidth) + BAND_CELL_PAD * 2;
+        const resolved = { ...band, x, widthPx };
+        x += widthPx;
+        return resolved;
+      });
+    this.textOriginX = x + PADDING_LEFT;
+    this.rowLayer.style.paddingLeft = `${this.textOriginX}px`;
+    // Rebuild band columns.
+    const columns = this.bands.map((band) => {
+      const el = document.createElement("div");
+      el.className = "editor-band";
+      el.dataset.bandId = band.id;
+      el.style.left = `${band.x}px`;
+      el.style.width = `${band.widthPx}px`;
+      return el;
+    });
+    this.bandHost.replaceChildren(...columns);
+    // Geometry of overlays and rows changed.
+    this.windowEnd = this.windowStart; // force window rebuild
+    this.overlaysDirty = true;
+  }
+
   private render(): void {
     if (this.disposed) return;
-    const t0 = this.debug !== null ? performance.now() : 0;
     const docDirty = this.docDirty;
     const selDirty = this.selDirty;
+    const visualsDirty = this.visualsDirty;
     const changeSets = this.pendingChangeSets;
+    const visualChanges = this.pendingVisualChanges;
     this.docDirty = false;
     this.selDirty = false;
+    this.visualsDirty = false;
     this.pendingChangeSets = [];
+    this.pendingVisualChanges = [];
 
     if (docDirty || selDirty) this.snapshot = this.runtime.snapshot();
     const { text, version, selection } = this.snapshot;
     const lineCount = text.lineCount;
 
-    this.contentHeightPx = layoutContentHeight({
-      text,
-      lineHeight: LINE_HEIGHT,
-      paddingTop: PADDING_TOP,
-    });
+    if (this.visuals === null || visualsDirty || docDirty) {
+      this.visuals = this.runtime.visualsSnapshot();
+      this.widgets = this.visuals.widgets(text);
+      this.geometry = new GeometryModel(lineCount, LINE_HEIGHT, PADDING_TOP, this.widgets);
+      this.resolveBands();
+    }
+    this.contentHeightPx = this.geometry.contentHeight();
     this.viewportHeight = this.viewport.clientHeight;
     this.viewportWidth = this.viewport.clientWidth;
 
@@ -406,27 +530,38 @@ export class EditorRenderer {
       let offset = this.anchor.offset;
       for (const set of changeSets) offset = mapOffset(set, offset);
       const line = text.lineRangeAt(Math.min(offset, text.length)).index;
-      this.scrollY += (line - this.anchor.line) * LINE_HEIGHT;
+      this.scrollY += this.geometry.lineTop(line) - this.anchor.topPx;
     }
 
     if (this.revealCaretPending) {
       this.revealCaretPending = false;
       const line = text.lineRangeAt(selection.primary.head).index;
-      const caretTop = PADDING_TOP + line * LINE_HEIGHT;
+      const caretTop = this.geometry.lineTop(line);
       if (caretTop < this.scrollY) {
         this.scrollY = caretTop;
       } else if (caretTop + LINE_HEIGHT > this.scrollY + this.viewportHeight) {
         this.scrollY = caretTop + LINE_HEIGHT - this.viewportHeight;
+      }
+
+      const lineRange = text.lineRange(line);
+      const beforeCaret = text.sliceString(lineRange.from, selection.primary.head);
+      const caretLeft = this.textOriginX + visualColumn(beforeCaret) * this.charWidth;
+      const leftMargin = this.textOriginX;
+      const rightMargin = 24;
+      if (caretLeft < this.scrollX + leftMargin) {
+        this.scrollX = caretLeft - leftMargin;
+      } else if (caretLeft + this.charWidth > this.scrollX + this.viewportWidth - rightMargin) {
+        this.scrollX = caretLeft + this.charWidth - this.viewportWidth + rightMargin;
       }
     }
     this.scrollY = Math.max(0, Math.min(this.maxScrollY(), this.scrollY));
     this.scrollX = Math.max(0, Math.min(this.maxScrollX(), this.scrollX));
 
     const scrollY = this.scrollY;
-    const visStart = Math.max(0, Math.floor((scrollY - PADDING_TOP) / LINE_HEIGHT));
+    const visStart = this.geometry.lineAt(scrollY);
     const visEnd = Math.min(
       lineCount,
-      Math.ceil((scrollY + this.viewportHeight - PADDING_TOP) / LINE_HEIGHT) + 1,
+      this.geometry.lineAt(scrollY + Math.max(0, this.viewportHeight - 1)) + 2,
     );
 
     const slackLines = Math.ceil(WINDOW_SLACK_PX / LINE_HEIGHT);
@@ -438,8 +573,7 @@ export class EditorRenderer {
       this.windowEnd >= needEnd &&
       this.windowEnd <= lineCount;
 
-    let stats: { mode: string; added: number; removed: number; rewritten: number } | null = null;
-    if (!windowOk || docDirty) {
+    if (!windowOk || docDirty || visualsDirty) {
       let start = this.windowStart;
       let end = this.windowEnd;
       if (!windowOk) {
@@ -450,6 +584,8 @@ export class EditorRenderer {
         end = Math.min(lineCount, start + targetLines);
       }
 
+      const winFrom = text.lineRange(start).from;
+      const winTo = end > start ? text.lineRange(end - 1).to : winFrom;
       const layout = layoutViewport({
         text,
         version,
@@ -459,10 +595,20 @@ export class EditorRenderer {
         lineHeight: LINE_HEIGHT,
         charWidth: this.charWidth,
         paddingTop: PADDING_TOP,
-        paddingLeft: PADDING_LEFT,
+        paddingLeft: this.textOriginX,
+        visuals: {
+          textStyles: this.visuals!.textStylesBetween(winFrom, winTo),
+          rangeDecorations: this.visuals!.decorationsBetween(winFrom, winTo),
+          virtualText: this.visuals!.virtualTextBetween(winFrom, winTo),
+          // All widgets: layout's absolute geometry must agree with the
+          // GeometryModel about rows above the window too.
+          blockWidgets: this.widgets,
+        },
       });
 
-      let structureUnknown = false;
+      // Dirtiness: document structure changes rebuild; in-line edits and
+      // localized visual changes rewrite only their rows.
+      let structureUnknown = visualChanges === null;
       const dirtySpans: Array<readonly [number, number]> = [];
       if (docDirty) {
         if (changeSets === null || changeSets.length > 1 || lineCount !== this.lastLineCount) {
@@ -476,15 +622,26 @@ export class EditorRenderer {
           }
         }
       }
+      if (visualChanges !== null) {
+        for (const range of visualChanges) {
+          dirtySpans.push([
+            text.lineRangeAt(Math.max(0, Math.min(range.from, text.length))).index,
+            text.lineRangeAt(Math.max(0, Math.min(range.to, text.length))).index,
+          ]);
+        }
+      }
 
-      stats = this.patchRows(layout, structureUnknown, dirtySpans, this.windowStart, this.windowEnd);
+      this.patchRows(layout, structureUnknown, dirtySpans, this.windowStart, this.windowEnd);
       this.windowStart = start;
       this.windowEnd = end;
+      this.renderBands(layout);
+      this.renderDecorations(layout);
+      this.reconcileMounts(layout);
+      this.overlaysDirty = true;
     }
     this.lastLineCount = lineCount;
 
-    // Position the window: content translates to (windowTop - scroll).
-    const windowTop = PADDING_TOP + this.windowStart * LINE_HEIGHT;
+    const windowTop = this.geometry.lineTop(this.windowStart);
     const dpr = window.devicePixelRatio || 1;
     const ty = Math.round((windowTop - scrollY) * dpr) / dpr;
     const tx = Math.round(-this.scrollX * dpr) / dpr;
@@ -493,53 +650,57 @@ export class EditorRenderer {
       this.lastTransform = transform;
       this.contentEl.style.transform = transform;
     }
-
-    // Scrollbar thumb.
-    const th = this.thumbHeight();
-    const maxY = this.maxScrollY();
-    const trackSpan = this.viewportHeight - th;
-    const thumbTop = th > 0 && maxY > 0 ? (scrollY / maxY) * trackSpan : 0;
-    const thumbCss = `${Math.round(thumbTop)}:${Math.round(th)}`;
-    if (thumbCss !== this.lastThumbCss) {
-      this.lastThumbCss = thumbCss;
-      this.thumb.style.height = `${th}px`;
-      this.thumb.style.top = `${thumbTop}px`;
-      this.thumb.style.display = th > 0 ? "" : "none";
+    // Bands pin horizontally: vertical channel only.
+    const bandTransform = `translateY(${ty}px)`;
+    if (bandTransform !== this.lastBandTransform) {
+      this.lastBandTransform = bandTransform;
+      this.bandHost.style.transform = bandTransform;
     }
 
-    if (docDirty || selDirty || this.overlaysDirty || (stats !== null && stats.mode !== "none")) {
+    const vThumbHeight = this.vThumbHeight();
+    const maxY = this.maxScrollY();
+    const vTrackSpan = this.viewportHeight - vThumbHeight;
+    const vThumbTop = vThumbHeight > 0 && maxY > 0 ? (scrollY / maxY) * vTrackSpan : 0;
+    const vThumbCss = `${Math.round(vThumbTop)}:${Math.round(vThumbHeight)}`;
+    if (vThumbCss !== this.lastVThumbCss) {
+      this.lastVThumbCss = vThumbCss;
+      this.vThumb.style.height = `${vThumbHeight}px`;
+      this.vThumb.style.top = `${vThumbTop}px`;
+      this.vThumb.style.display = vThumbHeight > 0 ? "" : "none";
+      this.vScrollbar.style.display = vThumbHeight > 0 ? "" : "none";
+    }
+
+    const hThumbWidth = this.hThumbWidth();
+    const maxX = this.maxScrollX();
+    const hTrackSpan = this.viewportWidth - hThumbWidth;
+    const hThumbLeft = hThumbWidth > 0 && maxX > 0 ? (this.scrollX / maxX) * hTrackSpan : 0;
+    const hThumbCss = `${Math.round(hThumbLeft)}:${Math.round(hThumbWidth)}`;
+    if (hThumbCss !== this.lastHThumbCss) {
+      this.lastHThumbCss = hThumbCss;
+      this.hThumb.style.width = `${hThumbWidth}px`;
+      this.hThumb.style.left = `${hThumbLeft}px`;
+      this.hThumb.style.display = hThumbWidth > 0 ? "" : "none";
+      this.hScrollbar.style.display = hThumbWidth > 0 ? "" : "none";
+    }
+
+    if (docDirty || selDirty || this.overlaysDirty) {
       this.renderOverlays(windowTop, selDirty);
       this.overlaysDirty = false;
     }
 
-    // Remember the first fully visible line as the scroll anchor for the
-    // next document change.
-    const anchorLine = Math.min(
-      Math.max(0, Math.ceil((scrollY - PADDING_TOP) / LINE_HEIGHT)),
-      lineCount - 1,
-    );
-    this.anchor = { line: anchorLine, offset: text.lineRange(anchorLine).from };
-
-    if (stats !== null || docDirty || selDirty) {
-      this.debug?.log("render", {
-        mode: stats?.mode ?? "state",
-        st: Math.round(scrollY),
-        win: `${this.windowStart}-${this.windowEnd}`,
-        added: stats?.added ?? 0,
-        removed: stats?.removed ?? 0,
-        rewritten: stats?.rewritten ?? 0,
-        dur: Math.round((performance.now() - t0) * 10) / 10,
-      });
-    }
+    const anchorLine = Math.min(Math.max(0, visStart), lineCount - 1);
+    this.anchor = {
+      offset: text.lineRange(anchorLine).from,
+      topPx: this.geometry.lineTop(anchorLine),
+    };
 
     if (docDirty || selDirty) this.options.onSnapshot?.(this.snapshot);
   }
 
   /**
-   * Reconcile the row elements (in-flow children of rowLayer; child i shows
-   * line windowStart + i) with the new layout. Edge trimming: when the
-   * window slides, retained rows are untouched — elements are removed from
-   * the shrinking edge and fragments inserted at the growing edge.
+   * Reconcile row elements with the new layout. Text-only windows keep the
+   * edge-trim fast path (retained rows untouched); windows containing block
+   * widgets rebuild, preserving widget mount element identity.
    */
   private patchRows(
     layout: ViewportLayoutSnapshot<unknown>,
@@ -549,12 +710,56 @@ export class EditorRenderer {
     prevEnd: number,
   ): { mode: string; added: number; removed: number; rewritten: number } {
     const layer = this.rowLayer;
+    const hasBlocks = layout.rows.some((row) => row.kind === "block");
+
+    if (hasBlocks || this.windowHasWidgets) {
+      // Mixed window: rebuild in document order, reusing mount elements.
+      const widgetByRow = new Map<number, string>();
+      for (const widget of layout.blockWidgets) widgetByRow.set(widget.row, widget.id);
+      const fragment = document.createDocumentFragment();
+      const index = new Map<number, number>();
+      let childIndex = 0;
+      let charsMax = this.maxRowChars;
+      for (const row of layout.rows) {
+        if (row.kind === "text") {
+          const el = document.createElement("div");
+          el.className = "editor-row";
+          renderRowContent(el, row.segments);
+          if (row.text.length > charsMax) charsMax = row.text.length;
+          index.set(row.line, childIndex);
+          fragment.append(el);
+        } else {
+          const id = widgetByRow.get(row.row);
+          let el = id !== undefined ? this.mountEls.get(id) : undefined;
+          if (el === undefined) {
+            el = document.createElement("div");
+            el.className = "editor-widget";
+            if (id !== undefined) {
+              el.dataset.widgetId = id;
+              this.mountEls.set(id, el);
+              this.runtime.mounts.mounted(id, el);
+            }
+          }
+          el.style.height = `${row.heightRows * LINE_HEIGHT}px`;
+          fragment.append(el);
+        }
+        childIndex++;
+      }
+      this.maxRowChars = charsMax;
+      layer.replaceChildren(fragment);
+      this.rowIndexByLine = index;
+      this.windowHasWidgets = hasBlocks;
+      return { mode: "rebuild-mixed", added: layout.rows.length, removed: 0, rewritten: 0 };
+    }
+
+    // Text-only fast path.
     const rows = layout.rows.filter((row) => row.kind === "text");
     const start = layout.startLine;
     const end = start + rows.length;
     for (const row of rows) {
       if (row.text.length > this.maxRowChars) this.maxRowChars = row.text.length;
     }
+    this.rowIndexByLine = null;
     const overlapStart = Math.max(start, prevStart);
     const overlapEnd = Math.min(end, prevEnd);
     const canPatch =
@@ -595,7 +800,10 @@ export class EditorRenderer {
     let rewritten = 0;
     for (const [firstLine, lastLine] of dirtySpans) {
       for (let line = Math.max(firstLine, start); line <= Math.min(lastLine, end - 1); line++) {
-        renderRowContent(layer.children[line - start] as HTMLDivElement, rows[line - start]!.segments);
+        renderRowContent(
+          layer.children[line - start] as HTMLDivElement,
+          rows[line - start]!.segments,
+        );
         rewritten++;
       }
     }
@@ -616,6 +824,70 @@ export class EditorRenderer {
     return el;
   }
 
+  /** Gutter band cells for the current window (cheap full rebuild). */
+  private renderBands(layout: ViewportLayoutSnapshot<unknown>): void {
+    if (this.bands.length === 0) return;
+    for (let i = 0; i < this.bands.length; i++) {
+      const band = this.bands[i]!;
+      const column = this.bandHost.children[i] as HTMLDivElement | undefined;
+      if (column === undefined) continue;
+      const fragment = document.createDocumentFragment();
+      for (const row of layout.rows) {
+        const cellEl = document.createElement("div");
+        if (row.kind === "text") {
+          const cell = band.cell?.(row.line) ?? null;
+          cellEl.className = cell?.className
+            ? `editor-band-cell ${cell.className}`
+            : "editor-band-cell";
+          if (cell) cellEl.textContent = cell.text;
+        } else {
+          cellEl.className = "editor-band-spacer";
+          cellEl.style.height = `${row.heightRows * LINE_HEIGHT}px`;
+        }
+        fragment.append(cellEl);
+      }
+      column.replaceChildren(fragment);
+    }
+  }
+
+  /** Decoration rect layers (window-local), rebuilt with the window. */
+  private renderDecorations(layout: ViewportLayoutSnapshot<unknown>): void {
+    const windowTop = this.geometry.lineTop(layout.startLine);
+    const bg: HTMLDivElement[] = [];
+    const fg: HTMLDivElement[] = [];
+    for (const decoration of layout.decorations) {
+      for (const rect of decoration.rects) {
+        const el = document.createElement("div");
+        el.className = decoration.className
+          ? `editor-decoration editor-decoration-${decoration.layer} ${decoration.className}`
+          : `editor-decoration editor-decoration-${decoration.layer}`;
+        el.style.top = `${rect.top - windowTop}px`;
+        el.style.left = `${rect.left}px`;
+        el.style.width = `${rect.width}px`;
+        el.style.height = `${rect.height}px`;
+        if (decoration.style) {
+          for (const [key, value] of Object.entries(decoration.style)) {
+            (el.style as unknown as Record<string, string>)[key] = value;
+          }
+        }
+        (decoration.layer === "background" ? bg : fg).push(el);
+      }
+    }
+    this.decoBgLayer.replaceChildren(...bg);
+    this.decoFgLayer.replaceChildren(...fg);
+  }
+
+  /** Withdraw mounts for widgets that left the window. */
+  private reconcileMounts(layout: ViewportLayoutSnapshot<unknown>): void {
+    const live = new Set(layout.blockWidgets.map((widget) => widget.id));
+    for (const id of [...this.mountEls.keys()]) {
+      if (!live.has(id)) {
+        this.mountEls.delete(id);
+        this.runtime.mounts.unmounted(id);
+      }
+    }
+  }
+
   /** Caret + selection rects, window-local, above the rows. */
   private renderOverlays(windowTop: number, selDirty: boolean): void {
     const { text, version, selection } = this.snapshot;
@@ -628,7 +900,8 @@ export class EditorRenderer {
       lineHeight: LINE_HEIGHT,
       charWidth: this.charWidth,
       paddingTop: PADDING_TOP,
-      paddingLeft: PADDING_LEFT,
+      paddingLeft: this.textOriginX,
+      visuals: { blockWidgets: this.widgets },
       anchors: [
         { kind: "overlay", id: "caret", at: selection.primary.head, payload: null },
         ...selection.ranges

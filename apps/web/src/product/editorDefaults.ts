@@ -16,6 +16,7 @@ import {
   DocumentInvalidated,
   editorSnapshot,
   EditorNotifications,
+  EditorVisuals,
   invalidate,
   SelectionInvalidated,
   type EditorSnapshot,
@@ -44,7 +45,11 @@ const applyResult = (result: CommandResult | undefined) =>
     const notifications = yield* EditorNotifications;
     if (result.transaction) {
       const document = yield* TextDocument;
+      const visuals = yield* EditorVisuals;
       yield* document.transact(result.transaction).pipe(Effect.orDie);
+      // Slide every contributed visual through the edit before anyone is
+      // notified: owners never run on the keystroke path.
+      yield* visuals.mapChanges(result.transaction.changes.desc());
       yield* selectionState.set(result.selection);
       const version = yield* document.version;
       yield* notifications.publish([

@@ -12,7 +12,7 @@
  * subscriber fiber behind the keystroke.
  */
 
-import { Effect, Exit, Fiber, Layer, Scope, Stream } from "effect";
+import { Context, Effect, Exit, Fiber, Layer, Scope, Stream } from "effect";
 import { makePackageRuntime } from "@the-editor/kernel";
 import { toPackageDescriptor } from "@the-editor/extensions";
 import { Commands, makeCommands } from "@the-editor/commands";
@@ -35,6 +35,7 @@ import {
   closeEditorScope,
   EditorNotifications,
   editorSnapshot,
+  EditorVisuals,
   invalidate,
   makeEditorScope,
   provideEditorScope,
@@ -42,13 +43,19 @@ import {
   type EditorNotification,
   type EditorScope,
   type EditorSnapshot,
+  type VisualsSnapshot,
 } from "@the-editor/editor";
-import { SelectionState, type Selection } from "@the-editor/engine";
+import { SelectionState, TextDocument, type Selection } from "@the-editor/engine";
 import { editorDefaults, EditorSurface } from "./product/editorDefaults";
+import { lineNumbers } from "./product/lineNumbers";
+import { MountHub } from "./editor/mounts";
 
 export type KeyOutcome = "handled" | "pending" | "passthrough";
 
 export class AppRuntime {
+  /** Widget mount contract: renderer announces containers, products portal in. */
+  readonly mounts = new MountHub();
+
   private constructor(
     private readonly scope: Scope.CloseableScope,
     private readonly editor: EditorScope,
@@ -78,13 +85,21 @@ export class AppRuntime {
         const arrangement = yield* workbench.arrangement;
         yield* workbench.setFocus(collectSlots(arrangement)[0]!.id).pipe(Effect.orDie);
 
+        // Single-editor world: editor-scope services are handed to packages
+        // directly. Multi-editor routing (via ActiveEditor) comes later.
         const services = Layer.mergeAll(
           Layer.succeed(Commands, commands),
           Layer.succeed(Keymaps, keymaps),
           Layer.succeed(Workbench, workbench),
+          Layer.succeed(EditorVisuals, Context.get(editor.context, EditorVisuals)),
+          Layer.succeed(EditorNotifications, Context.get(editor.context, EditorNotifications)),
+          Layer.succeed(TextDocument, Context.get(editor.context, TextDocument)),
         );
         yield* runtime
-          .activateGraph([toPackageDescriptor(editorDefaults, services)])
+          .activateGraph([
+            toPackageDescriptor(editorDefaults, services),
+            toPackageDescriptor(lineNumbers, services),
+          ])
           .pipe(Effect.orDie);
 
         return new AppRuntime(scope, editor, panel, workbench, commands, keymaps);
@@ -93,12 +108,20 @@ export class AppRuntime {
   }
 
   dispose(): void {
-    Effect.runSync(Scope.close(this.scope, Exit.void));
-    Effect.runSync(closeEditorScope(this.editor));
+    // Closing the package scope interrupts forked package fibers (an async
+    // boundary), so disposal cannot be runSync.
+    Effect.runFork(
+      Scope.close(this.scope, Exit.void).pipe(Effect.andThen(closeEditorScope(this.editor))),
+    );
   }
 
   snapshot(): EditorSnapshot {
     return this.runInEditor(editorSnapshot());
+  }
+
+  /** Merged visuals snapshot (cached inside the service per generation). */
+  visualsSnapshot(): VisualsSnapshot {
+    return this.runInEditor(Effect.flatMap(EditorVisuals, (visuals) => visuals.snapshot));
   }
 
   /**

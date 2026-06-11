@@ -80,20 +80,39 @@ body {
 
 .editor-scrollbar {
   position: absolute;
+  z-index: 5;
+}
+
+.editor-scrollbar-vertical {
   top: 0;
   right: 0;
-  bottom: 0;
+  bottom: 14px;
   width: 14px;
-  z-index: 5;
+}
+
+.editor-scrollbar-horizontal {
+  left: 0;
+  right: 14px;
+  bottom: 0;
+  height: 14px;
 }
 
 .editor-scrollbar-thumb {
   position: absolute;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.editor-scrollbar-thumb-vertical {
   left: 3px;
   right: 3px;
   min-height: 32px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.16);
+}
+
+.editor-scrollbar-thumb-horizontal {
+  top: 3px;
+  bottom: 3px;
+  min-width: 32px;
 }
 
 .editor-scrollbar-thumb:hover,
@@ -101,12 +120,52 @@ body {
   background: rgba(255, 255, 255, 0.3);
 }
 
+/* Text indent (gutter bands + padding) is set inline on .editor-rows. */
 .editor-row {
   height: 20px;
   line-height: 20px;
-  padding-left: 12px;
   white-space: pre;
   tab-size: 4;
+}
+
+/* Foreground decoration layer paints above rows, never captures input. */
+.editor-layer-fg {
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* Reserved block-widget space; product content portals into it. */
+.editor-widget {
+  position: relative;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* x-pinned gutter host; columns are positioned, background lives on them. */
+.editor-bands {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+}
+
+.editor-band {
+  position: absolute;
+  top: 0;
+  background: var(--bg-editor);
+}
+
+.editor-band-cell {
+  height: 20px;
+  line-height: 20px;
+  padding: 0 8px;
+  text-align: right;
+  color: var(--fg-dim);
+  user-select: none;
+}
+
+.editor-band-spacer {
+  user-select: none;
 }
 
 .editor-caret {
@@ -144,7 +203,6 @@ body {
   color: var(--fg-dim);
   opacity: 0.75;
 }
-
 
 .editor-decoration {
   position: absolute;

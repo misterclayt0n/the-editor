@@ -3,7 +3,6 @@ import type { EditorSnapshot } from "@the-editor/editor";
 import { formatChords, type Chord } from "@the-editor/keymaps";
 import { AppRuntime } from "./runtime";
 import { EditorView } from "./editor/EditorView";
-import { makeBenchmarkText } from "./benchmarkText";
 
 export function App() {
   // The runtime is an external resource, so the owning effect creates AND
@@ -14,7 +13,7 @@ export function App() {
   const [pending, setPending] = useState<ReadonlyArray<Chord>>([]);
 
   useEffect(() => {
-    const booted = AppRuntime.boot(makeBenchmarkText());
+    const booted = AppRuntime.boot("");
     setRuntime(booted);
     setSnapshot(booted.snapshot());
     return () => {

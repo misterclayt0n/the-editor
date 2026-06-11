@@ -58,6 +58,7 @@ import { type Selection } from "@the-editor/engine";
 import { editorDefaults, EditorSurface } from "./product/editorDefaults";
 import { lineNumbers } from "./product/lineNumbers";
 import { filesPackage, HostFileActions } from "./product/files";
+import { palettePackage, HostPaletteActions } from "./product/palette";
 import { createFileSystemPort } from "./platform/fs";
 import { MountHub } from "./editor/mounts";
 
@@ -70,6 +71,8 @@ export class AppRuntime {
   onDocumentSwitched?: () => void;
   /** Host UI hooks: file sync state changed (refresh status surfaces). */
   onFileStateChanged?: () => void;
+  /** Host UI hooks: the palette.open command fired (show the dialog). */
+  onPaletteOpenRequested?: () => void;
 
   private constructor(
     private readonly scope: Scope.CloseableScope,
@@ -126,12 +129,16 @@ export class AppRuntime {
             save: () => void instance.saveActiveFile(),
             open: () => void instance.openFileViaDialog(),
           }),
+          Layer.succeed(HostPaletteActions, {
+            open: () => instance.onPaletteOpenRequested?.(),
+          }),
         );
         yield* runtime
           .activateGraph([
             toPackageDescriptor(editorDefaults, services),
             toPackageDescriptor(lineNumbers, services),
             toPackageDescriptor(filesPackage, services),
+            toPackageDescriptor(palettePackage, services),
           ])
           .pipe(Effect.orDie);
 

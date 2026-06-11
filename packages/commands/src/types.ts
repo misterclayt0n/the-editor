@@ -18,11 +18,27 @@ export interface CommandInvocation {
  */
 export type CommandHandler = (invocation: CommandInvocation) => Effect.Effect<void, unknown, any>;
 
+/**
+ * Palette participation. Commands opt IN to the palette's primary surface;
+ * availability (which commands can run right now) is structural — the
+ * palette lists through `listAvailable`, so a command scoped to a surface
+ * simply isn't offered when that surface isn't focused.
+ */
+export type CommandPaletteDefinition = {
+  readonly enabled?: boolean;
+  /** Exact-match shortcuts in the palette input (e.g. vim-style "w"). */
+  readonly aliases?: readonly string[];
+  /** Palette section heading; defaults to "Commands". */
+  readonly group?: string;
+};
+
 export interface CommandDefinition {
   readonly title?: string;
   readonly description?: string;
   /** Where the command exists. Defaults to global. */
   readonly scope?: SurfaceScope;
+  /** Opt into the command palette (true, or with aliases/group). */
+  readonly palette?: boolean | CommandPaletteDefinition;
   readonly run: CommandHandler;
 }
 
@@ -30,5 +46,6 @@ export interface CommandContribution extends IdentifiedContribution {
   readonly title?: string;
   readonly description?: string;
   readonly scope: SurfaceScope;
+  readonly palette?: boolean | CommandPaletteDefinition;
   readonly run: CommandHandler;
 }

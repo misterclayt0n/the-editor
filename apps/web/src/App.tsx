@@ -3,6 +3,7 @@ import type { EditorSnapshot } from "@the-editor/editor";
 import { formatChords, type Chord } from "@the-editor/keymaps";
 import { AppRuntime } from "./runtime";
 import { EditorView } from "./editor/EditorView";
+import { CommandPalette } from "./ui/CommandPalette";
 
 const fileLabel = (runtime: AppRuntime): string => {
   const info = runtime.fileInfo();
@@ -22,6 +23,7 @@ export function App() {
   const [pending, setPending] = useState<ReadonlyArray<Chord>>([]);
   // Bumped when the active document changes: remounts the editor view.
   const [viewEpoch, setViewEpoch] = useState(0);
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   useEffect(() => {
     const booted = AppRuntime.boot("");
@@ -30,6 +32,7 @@ export function App() {
       setViewEpoch((epoch) => epoch + 1);
     };
     booted.onFileStateChanged = () => setSnapshot(booted.snapshot());
+    booted.onPaletteOpenRequested = () => setPaletteOpen(true);
     setRuntime(booted);
     setSnapshot(booted.snapshot());
     const isDev = location.hostname === "localhost" || location.hostname === "127.0.0.1";
@@ -48,6 +51,16 @@ export function App() {
 
   const handleSnapshot = useCallback((next: EditorSnapshot) => setSnapshot(next), []);
   const handlePending = useCallback((chords: ReadonlyArray<Chord>) => setPending(chords), []);
+  const handlePaletteOpenChange = useCallback((open: boolean) => {
+    setPaletteOpen(open);
+    // Radix restores focus to the previously focused element, but command
+    // execution may have swapped the view out from under it.
+    if (!open) {
+      window.requestAnimationFrame(() => {
+        document.querySelector<HTMLElement>(".editor")?.focus();
+      });
+    }
+  }, []);
 
   if (runtime === null || snapshot === null) return <div className="app" />;
 
@@ -61,6 +74,11 @@ export function App() {
         runtime={runtime}
         onSnapshot={handleSnapshot}
         onPending={handlePending}
+      />
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={handlePaletteOpenChange}
+        commands={runtime.commands}
       />
       <div className="status-bar">
         <span>

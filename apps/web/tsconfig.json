@@ -2,7 +2,12 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    "paths": {
+      "@/*": ["./src/*"],
+      "@the-editor/editor": ["../../packages/editor/src/index.ts"],
+      "@the-editor/editor-engine-monaco": ["../../packages/editor-engine-monaco/src/index.ts"]
+    }
   },
   "include": ["src", "vite.config.ts"]
 }

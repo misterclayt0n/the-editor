@@ -32,11 +32,13 @@ export const filesPackage = definePackage("the-editor/files", () =>
     yield* commands.register("file.save", {
       title: "Save File",
       scope: editorScope,
+      palette: { group: "File", aliases: ["w", "write"] },
       run: () => Effect.sync(() => host.save()),
     });
     yield* commands.register("file.open", {
       title: "Open File…",
       scope: editorScope,
+      palette: { group: "File", aliases: ["e", "edit"] },
       run: () => Effect.sync(() => host.open()),
     });
 

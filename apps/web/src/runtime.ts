@@ -33,6 +33,7 @@ import {
 import {
   activateTab,
   collectSlots,
+  dockEdge,
   findSlot,
   makeStack,
   makeWorkbench,
@@ -44,6 +45,7 @@ import {
   Workbench,
   type Arrangement,
   type Panel,
+  type SurfaceKind,
   type PanelId,
   type SlotId,
   type SplitDirection,
@@ -91,6 +93,12 @@ import { lspActions, HostLspActions } from "./product/lspActions";
 import { lspIntel, HostLspIntel } from "./product/lspIntel";
 import { intelActions, HostIntelActions } from "./product/intelActions";
 import { wordCompletions } from "./product/wordCompletions";
+import { makePanelRenderers, PanelRenderers } from "./workbench/panelRenderers";
+import { fileTreePackage, FileTreeSurface, HostFileTree } from "./product/fileTree";
+import { createFileTreeRenderer } from "./filetree/mount";
+import { HostVcsDefaults, makeVcsProviders, vcsDefaults, VcsProviders } from "./product/vcs";
+import { createGitProvider } from "./vcs/git";
+import { VcsManager } from "./vcs/manager";
 import {
   makeCompletionProviders,
   makeHoverProviders,
@@ -239,6 +247,10 @@ export class AppRuntime {
   onTriggerCompletion?: () => void;
   /** Host UI hooks: explicit signature-help trigger (ctrl+shift+space). */
   onTriggerSignatureHelp?: () => void;
+  /** Panel renderers for non-editor surface kinds (file tree, custom UIs). */
+  panelRenderers!: PanelRenderers.Service;
+  /** Version control (undefined without a process host). */
+  vcs: VcsManager | undefined;
   /** Intel provider registries (App hands them to the IntelController). */
   intel!: {
     readonly completions: CompletionProviders.Service;
@@ -288,10 +300,26 @@ export class AppRuntime {
         // commands through the focused panel's view context.
         const workspaceContext = workspace.context;
         const languageServers = yield* makeLanguageServers;
+        const panelRenderers = makePanelRenderers();
+        const vcsProviders = yield* makeVcsProviders;
+        const vcsProcessPort = createProcessPort();
         const completionProviders = yield* makeCompletionProviders;
         const hoverProviders = yield* makeHoverProviders;
         const signatureProviders = yield* makeSignatureProviders;
         const services = Layer.mergeAll(
+          Layer.succeed(PanelRenderers, panelRenderers),
+          Layer.succeed(VcsProviders, vcsProviders),
+          Layer.succeed(HostVcsDefaults, {
+            providers: vcsProcessPort !== undefined ? [createGitProvider(vcsProcessPort)] : [],
+          }),
+          Layer.succeed(HostFileTree, {
+            // `instance` is assigned at the end of boot; defer every deref.
+            renderer: {
+              title: (panel) => createFileTreeRenderer(instance).title(panel),
+              mount: (element, panel) => createFileTreeRenderer(instance).mount(element, panel),
+            },
+            toggle: () => instance.togglePanel(FileTreeSurface, { dock: "left" }),
+          }),
           Layer.succeed(CompletionProviders, completionProviders),
           Layer.succeed(HoverProviders, hoverProviders),
           Layer.succeed(SignatureProviders, signatureProviders),
@@ -322,6 +350,7 @@ export class AppRuntime {
           Layer.succeed(HostFileActions, {
             save: () => void instance.saveActiveFile(),
             open: () => void instance.openFileViaDialog(),
+            openFolder: () => void instance.openFolderViaDialog(),
           }),
           Layer.succeed(HostPaletteActions, {
             open: () => instance.onPaletteOpenRequested?.(),
@@ -352,10 +381,13 @@ export class AppRuntime {
             toPackageDescriptor(lspIntel, services),
             toPackageDescriptor(wordCompletions, services),
             toPackageDescriptor(intelActions, services),
+            toPackageDescriptor(vcsDefaults, services),
+            toPackageDescriptor(fileTreePackage, services),
           ])
           .pipe(Effect.orDie);
 
         const appRuntime = new AppRuntime(scope, workspace, workbench, commands, keymaps);
+        appRuntime.panelRenderers = panelRenderers;
         appRuntime.intel = {
           completions: completionProviders,
           hovers: hoverProviders,
@@ -365,6 +397,7 @@ export class AppRuntime {
         if (processPort !== undefined) {
           appRuntime.lsp = new LspManager(processPort, fileSystem, languageServers);
           appRuntime.lsp.onDiagnostics = (docId) => appRuntime.onDiagnosticsChanged?.(docId);
+          appRuntime.vcs = new VcsManager(vcsProviders, fileSystem);
         }
         return appRuntime;
       }),
@@ -451,6 +484,7 @@ export class AppRuntime {
     );
     if (!documentStillShown) {
       this.lsp?.detach(String(pane.document.id));
+      this.vcs?.detach(String(pane.document.id));
       this.highlightsByDoc.get(String(pane.document.id))?.close();
       this.highlightsByDoc.delete(String(pane.document.id));
       const files = Context.getOption(this.workspace.context, Files);
@@ -479,6 +513,39 @@ export class AppRuntime {
         .pipe(Effect.orDie),
     );
     this.focusSlotOfPanel(pane.panelId);
+  }
+
+  /** Live panel by id (editor panes AND custom panels). */
+  panelById(panelId: PanelId): Panel | undefined {
+    return Option.getOrUndefined(Effect.runSync(this.workbench.panel(panelId)));
+  }
+
+  /**
+   * Toggle a singleton panel of `kind`: open docked at an edge, or close
+   * the existing one. Custom panels render through PanelRenderers.
+   */
+  togglePanel(
+    kind: SurfaceKind,
+    options?: { readonly dock?: "left" | "right"; readonly ratio?: number },
+  ): void {
+    const panels = Effect.runSync(this.workbench.panels);
+    const existing = panels.find((panel) => panel.kind === kind);
+    if (existing !== undefined) {
+      Effect.runSync(
+        this.workbench.updateArrangement((a) => removePanel(a, existing.id)).pipe(Effect.orDie),
+      );
+      Effect.runSync(this.workbench.closePanel(existing.id));
+      return;
+    }
+    const panel = Effect.runSync(this.workbench.createPanel({ kind }));
+    Effect.runSync(
+      this.workbench
+        .updateArrangement((a) =>
+          dockEdge(a, panel.id, options?.dock ?? "left", { ratio: options?.ratio ?? 0.22 }),
+        )
+        .pipe(Effect.orDie),
+    );
+    this.focusSlotOfPanel(panel.id);
   }
 
   /** Cycle the active tab within the focused stack. */
@@ -674,10 +741,20 @@ export class AppRuntime {
     const document = await Effect.runPromise(files.value.openPath(path));
     this.attachHighlights(document, path);
     void this.lsp?.attach(document, path);
+    this.vcs?.attach(document, path);
 
     const { arrangement, focusedSlot } = this.workbenchSnapshot;
     const slot = focusedSlot === null ? undefined : findSlot(arrangement, focusedSlot);
-    const stack: Stack | undefined = slot?.kind === "stack" ? slot.stack : undefined;
+    const focusedStack: Stack | undefined = slot?.kind === "stack" ? slot.stack : undefined;
+    // Files open in EDITOR stacks. A focused custom panel (file tree) must
+    // not have its stack hijacked by the file it just asked to open.
+    const hostsEditors = (s: Stack) => s.panels.some((id) => this.panes.has(id));
+    const stack: Stack | undefined =
+      focusedStack !== undefined && hostsEditors(focusedStack)
+        ? focusedStack
+        : collectSlots(arrangement)
+            .flatMap((s) => (s.kind === "stack" ? [s.stack] : []))
+            .find(hostsEditors);
 
     if (stack !== undefined) {
       for (const panelId of stack.panels) {
@@ -694,15 +771,39 @@ export class AppRuntime {
         .updateArrangement((a) => {
           if (a.tiles === null) return { ...a, tiles: makeStack([pane.panelId]) };
           if (stack !== undefined) return placeInStack(a, stack.id, pane.panelId);
-          // Focused slot is an overlay (or nothing): fall back to the first stack.
-          const first = collectSlots(a).find((s) => s.kind === "stack");
-          return first === undefined
-            ? { ...a, tiles: makeStack([pane.panelId]) }
-            : placeInStack(a, first.id, pane.panelId);
+          // No editor stack anywhere (only custom panels): dock one.
+          return dockEdge(a, pane.panelId, "right", { ratio: 0.78 });
         })
         .pipe(Effect.orDie),
     );
     this.focusSlotOfPanel(pane.panelId);
+  }
+
+  /** The project root: the file tree's root and the VCS detect target. */
+  workspaceRoot: string | null = null;
+  private readonly workspaceRootListeners = new Set<(root: string | null) => void>();
+
+  subscribeWorkspaceRoot(listener: (root: string | null) => void): () => void {
+    this.workspaceRootListeners.add(listener);
+    return () => void this.workspaceRootListeners.delete(listener);
+  }
+
+  /** The platform file system, when one exists. */
+  fileSystem(): FileSystemPort.Service | undefined {
+    return Option.getOrUndefined(Context.getOption(this.workspace.context, FileSystemPort));
+  }
+
+  openFolder(root: string): void {
+    this.workspaceRoot = root.replace(/\/+$/, "") || "/";
+    void this.vcs?.setRoot(this.workspaceRoot);
+    for (const listener of this.workspaceRootListeners) listener(this.workspaceRoot);
+  }
+
+  async openFolderViaDialog(): Promise<void> {
+    const port = Context.getOption(this.workspace.context, FileSystemPort);
+    if (Option.isNone(port) || port.value.pickFolder === undefined) return;
+    const picked = await Effect.runPromise(port.value.pickFolder());
+    if (Option.isSome(picked)) this.openFolder(picked.value);
   }
 
   async openFileViaDialog(): Promise<void> {
@@ -721,6 +822,7 @@ export class AppRuntime {
       files.value.save(pane.document.id).pipe(Effect.catchAll(() => Effect.void)),
     );
     this.lsp?.documentSaved(String(pane.document.id));
+    this.vcs?.documentSaved();
     this.onFileStateChanged?.();
   }
 
@@ -779,6 +881,7 @@ export class AppRuntime {
     // Closing the package scope interrupts forked package fibers (an async
     // boundary), so disposal cannot be runSync.
     this.lsp?.dispose();
+    this.vcs?.dispose();
     for (const highlights of this.highlightsByDoc.values()) highlights.close();
     this.highlightsByDoc.clear();
     for (const fiber of this.mirrorFibers) Effect.runFork(Fiber.interrupt(fiber));

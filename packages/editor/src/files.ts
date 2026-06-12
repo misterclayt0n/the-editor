@@ -61,6 +61,11 @@ export type FileEvent = {
   readonly kind: "changed" | "deleted";
 };
 
+export type DirEntry = {
+  readonly name: string;
+  readonly kind: "file" | "directory";
+};
+
 export class FileSystemPort extends Context.Tag("@the-editor/editor/FileSystemPort")<
   FileSystemPort,
   FileSystemPort.Service
@@ -82,6 +87,20 @@ export namespace FileSystemPort {
     ) => Effect.Effect<() => void, FileIoError>;
     /** Native open-file dialog where the platform has one. */
     readonly pickFile: () => Effect.Effect<Option.Option<string>, FileIoError>;
+    /** Native open-folder dialog. Optional: capability-gated like watch. */
+    readonly pickFolder?: () => Effect.Effect<Option.Option<string>, FileIoError>;
+    /** Directory listing. Optional: only platforms with real paths have it. */
+    readonly readDir?: (
+      path: string,
+    ) => Effect.Effect<ReadonlyArray<DirEntry>, FileIoError>;
+    /**
+     * Recursive directory watch (tree/VCS refresh). Optional; event paths
+     * are best-effort (some platforms only report "something changed").
+     */
+    readonly watchDir?: (
+      path: string,
+      onEvent: (event: FileEvent) => void,
+    ) => Effect.Effect<() => void, FileIoError>;
     readonly capabilities: { readonly watch: boolean };
   }
 }

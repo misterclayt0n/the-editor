@@ -74,6 +74,9 @@ export type GutterBandSpec = {
   readonly id: string;
   readonly side: "left" | "right";
   readonly widthCh: number;
+  /** Exact pixel width (thin marker strips); overrides widthCh + padding. */
+  readonly widthPx?: number;
+  /** Lower renders further LEFT (line numbers 0, diff strip 1, …). */
   readonly priority?: number;
   readonly cell?: (line: number) => GutterCell | null;
 };

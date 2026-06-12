@@ -806,3 +806,88 @@ body {
   font-size: 12px;
   user-select: none;
 }
+
+/* Host for registry-rendered panels (file tree, custom surfaces). */
+.wb-custom-panel {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--bg-editor);
+}
+
+/* VCS diff gutter: a thin colored strip, Zed-style. */
+.editor-band-cell.vcs-gutter-added,
+.editor-band-cell.vcs-gutter-modified,
+.editor-band-cell.vcs-gutter-deleted {
+  padding: 0;
+  border-radius: 1px;
+}
+
+.editor-band-cell.vcs-gutter-added {
+  background: #4ec975;
+}
+
+.editor-band-cell.vcs-gutter-modified {
+  background: #569cd6;
+}
+
+/* Deletion marker: a short block at the boundary, not a full bar. */
+.editor-band-cell.vcs-gutter-deleted {
+  height: 7px;
+  margin-top: -3px;
+  background: #f48771;
+}
+
+/* File tree panel host: theme @pierre/trees to the editor's palette. */
+.file-tree-host {
+  display: flex;
+  flex-direction: column;
+  --trees-fg-override: var(--fg);
+  --trees-fg-muted-override: var(--fg-dim);
+  --trees-bg-override: var(--bg-editor);
+  --trees-bg-muted-override: var(--bg);
+  --trees-border-color-override: var(--border);
+  --trees-selected-bg-override: color-mix(in srgb, #569cd6 18%, var(--bg-editor));
+  --trees-selected-fg-override: var(--fg);
+  --trees-search-bg-override: var(--bg);
+  --trees-search-fg-override: var(--fg);
+}
+
+.file-tree-host {
+  height: 100%;
+}
+
+.file-tree-host > * {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+}
+
+.file-tree-empty {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--fg-dim);
+  font-size: 13px;
+}
+
+.file-tree-open-button {
+  padding: 5px 14px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.file-tree-open-button:hover {
+  background: color-mix(in srgb, #569cd6 12%, var(--bg));
+}
+
+.status-branch {
+  color: var(--fg-dim);
+}

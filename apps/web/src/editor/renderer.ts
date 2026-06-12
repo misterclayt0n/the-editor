@@ -630,15 +630,29 @@ export class EditorRenderer {
   }
 
   private resolveBands(): void {
-    const specs = this.visuals?.gutterBands ?? [];
-    const key = specs.map((band) => `${band.id}:${band.side}:${band.widthCh}`).join("|");
-    if (key === this.bandsKey) return;
+    const specs = [...(this.visuals?.gutterBands ?? [])].sort(
+      (a, b) => (a.priority ?? 0) - (b.priority ?? 0),
+    );
+    const key = specs
+      .map((band) => `${band.id}:${band.side}:${band.widthCh}:${band.widthPx ?? ""}`)
+      .join("|");
+    if (key === this.bandsKey) {
+      // Same geometry, but contributions may have replaced their CELL
+      // closures (content-mutable bands like VCS diff markers) — refresh
+      // them without rebuilding columns.
+      this.bands = this.bands.map((band) => {
+        const spec = specs.find((s) => s.id === band.id && s.side === band.side);
+        return spec !== undefined ? { ...spec, x: band.x, widthPx: band.widthPx } : band;
+      });
+      return;
+    }
     this.bandsKey = key;
     let x = 0;
     this.bands = specs
       .filter((band) => band.side === "left")
       .map((band) => {
-        const widthPx = Math.ceil(band.widthCh * this.charWidth) + BAND_CELL_PAD * 2;
+        const widthPx =
+          band.widthPx ?? Math.ceil(band.widthCh * this.charWidth) + BAND_CELL_PAD * 2;
         const resolved = { ...band, x, widthPx };
         x += widthPx;
         return resolved;

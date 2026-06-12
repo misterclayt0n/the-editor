@@ -107,4 +107,17 @@ contextBridge.exposeInMainWorld("theEditorFs", {
     return ipcRenderer.invoke("fs:unwatch", id);
   },
   pickFile: (): Promise<string | null> => ipcRenderer.invoke("fs:pick"),
+  pickFolder: (): Promise<string | null> => ipcRenderer.invoke("fs:pickfolder"),
+  readDir: (
+    path: string,
+  ): Promise<Array<{ name: string; kind: "file" | "directory" }>> =>
+    ipcRenderer.invoke("fs:readdir", path),
+  watchDir: async (
+    path: string,
+    onEvent: (event: { path: string; kind: string }) => void,
+  ): Promise<number> => {
+    const id: number = await ipcRenderer.invoke("fs:watchdir", path);
+    watchListeners.set(id, onEvent);
+    return id;
+  },
 });

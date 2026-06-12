@@ -18,7 +18,11 @@ import { EditorSurface } from "./editorDefaults";
  */
 export class HostFileActions extends Context.Tag("the-editor/web/HostFileActions")<
   HostFileActions,
-  { readonly save: () => void; readonly open: () => void }
+  {
+    readonly save: () => void;
+    readonly open: () => void;
+    readonly openFolder: () => void;
+  }
 >() {}
 
 const editorScope = SurfaceScope.surface(EditorSurface);
@@ -40,6 +44,13 @@ export const filesPackage = definePackage("the-editor/files", () =>
       scope: editorScope,
       palette: { group: "File", aliases: ["e", "edit"] },
       run: () => Effect.sync(() => host.open()),
+    });
+
+    yield* commands.register("file.openFolder", {
+      title: "Open Folder…",
+      scope: SurfaceScope.global,
+      palette: { group: "File", aliases: ["cd", "folder"] },
+      run: () => Effect.sync(() => host.openFolder()),
     });
 
     yield* keymaps.registerAll([

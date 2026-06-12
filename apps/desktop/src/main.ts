@@ -59,6 +59,46 @@ function registerFileSystemHandlers(): void {
     watchers.get(id)?.close();
     watchers.delete(id);
   });
+  ipcMain.handle("fs:readdir", async (_event, dirPath: string) => {
+    const entries = await fsp.readdir(dirPath, { withFileTypes: true });
+    return entries.map((entry) => ({
+      name: entry.name,
+      kind: entry.isDirectory() ? "directory" : "file",
+    }));
+  });
+  ipcMain.handle("fs:watchdir", (event, dirPath: string) => {
+    const id = nextWatchId++;
+    const sender = event.sender;
+    try {
+      let debounce: NodeJS.Timeout | null = null;
+      const pending = new Set<string>();
+      // Recursive watch (macOS/Windows native; tree + VCS refresh source).
+      const watcher = fs.watch(dirPath, { recursive: true }, (_eventType, fileName) => {
+        if (fileName !== null) pending.add(path.join(dirPath, String(fileName)));
+        if (debounce !== null) clearTimeout(debounce);
+        debounce = setTimeout(() => {
+          debounce = null;
+          if (sender.isDestroyed()) return;
+          const paths = [...pending];
+          pending.clear();
+          for (const changed of paths.length > 0 ? paths : [dirPath]) {
+            sender.send("fs:event", { watchId: id, path: changed, kind: "changed" });
+          }
+        }, 80);
+      });
+      watchers.set(id, watcher);
+    } catch {
+      // Best-effort, like fs:watch.
+    }
+    return id;
+  });
+  ipcMain.handle("fs:pickfolder", async (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    const result = window
+      ? await dialog.showOpenDialog(window, { properties: ["openDirectory"] })
+      : await dialog.showOpenDialog({ properties: ["openDirectory"] });
+    return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0];
+  });
   ipcMain.handle("fs:pick", async (event) => {
     const window = BrowserWindow.fromWebContents(event.sender);
     const result = window

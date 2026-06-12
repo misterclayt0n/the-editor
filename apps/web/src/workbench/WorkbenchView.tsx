@@ -349,7 +349,34 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
       <div className="wb-tabbar" data-wb-tabbar data-slot-id={stack.id}>
         {stack.panels.map((panelId, i) => {
           const tabPane = runtime.pane(panelId);
-          return tabPane === undefined ? null : (
+          if (tabPane === undefined) {
+            // Non-editor panel: title comes from the renderer registry.
+            const panel = runtime.panelById(panelId);
+            const renderer = panel !== undefined ? runtime.panelRenderers.get(panel.kind) : undefined;
+            const title = panel !== undefined && renderer !== undefined ? renderer.title(panel) : "panel";
+            return (
+              <Fragment key={panelId}>
+                {dropTabIndex === i && <div className="wb-tab-insert" />}
+                <div
+                  className={`wb-tab${i === stack.active ? " wb-tab--active" : ""}`}
+                  onPointerDown={(event) => tree.beginTabDrag(event, panelId, stack.id, title)}
+                >
+                  <span className="wb-tab-name">{title}</span>
+                  <button
+                    type="button"
+                    className="wb-tab-close"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      runtime.closeTab(panelId);
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+              </Fragment>
+            );
+          }
+          return (
             <Fragment key={panelId}>
               {dropTabIndex === i && <div className="wb-tab-insert" />}
               <Tab
@@ -381,10 +408,38 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
             {...(tree.onPending ? { onPending: tree.onPending } : {})}
           />
         )}
+        {pane === undefined && activePanelId !== undefined && (
+          <CustomPanelView key={activePanelId} runtime={runtime} panelId={activePanelId} />
+        )}
         {dropZone !== null && <div className={`wb-drop wb-drop-${dropZone}`} />}
       </div>
     </section>
   );
+}
+
+/** Mounts a registered panel renderer for non-editor panels. */
+function CustomPanelView({
+  runtime,
+  panelId,
+}: {
+  readonly runtime: AppRuntime;
+  readonly panelId: PanelId;
+}) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [epoch, setEpoch] = useState(0);
+
+  useEffect(() => runtime.panelRenderers.onChanged(() => setEpoch((e) => e + 1)), [runtime]);
+
+  useEffect(() => {
+    const element = hostRef.current;
+    const panel = runtime.panelById(panelId);
+    if (element === null || panel === undefined) return;
+    const renderer = runtime.panelRenderers.get(panel.kind);
+    if (renderer === undefined) return;
+    return renderer.mount(element, panel);
+  }, [runtime, panelId, epoch]);
+
+  return <div ref={hostRef} className="wb-custom-panel" data-panel-id={panelId} />;
 }
 
 type TabInfo = { readonly name: string; readonly dirty: boolean; readonly conflict: boolean };

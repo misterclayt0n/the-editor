@@ -14,7 +14,13 @@
  */
 
 import { Effect, Option } from "effect";
-import { FileIoError, type FileEvent, type FileStat, type FileSystemPort } from "@the-editor/editor";
+import {
+  FileIoError,
+  type DirEntry,
+  type FileEvent,
+  type FileStat,
+  type FileSystemPort,
+} from "@the-editor/editor";
 
 type Bridge = {
   readFile(path: string): Promise<string>;
@@ -23,6 +29,12 @@ type Bridge = {
   watch(path: string, onEvent: (event: { path: string; kind: string }) => void): Promise<number>;
   unwatch(id: number): Promise<void>;
   pickFile(): Promise<string | null>;
+  pickFolder?(): Promise<string | null>;
+  readDir?(path: string): Promise<Array<{ name: string; kind: "file" | "directory" }>>;
+  watchDir?(
+    path: string,
+    onEvent: (event: { path: string; kind: string }) => void,
+  ): Promise<number>;
 };
 
 const io = <A>(
@@ -49,6 +61,34 @@ function bridgePort(bridge: Bridge): FileSystemPort.Service {
         return () => void bridge.unwatch(id);
       }),
     pickFile: () => io("", "pick", () => bridge.pickFile()).pipe(Effect.map(Option.fromNullable)),
+    ...(bridge.pickFolder !== undefined
+      ? {
+          pickFolder: () =>
+            io("", "pick", () => bridge.pickFolder!()).pipe(Effect.map(Option.fromNullable)),
+        }
+      : {}),
+    ...(bridge.readDir !== undefined
+      ? {
+          readDir: (path: string): ReturnType<NonNullable<FileSystemPort.Service["readDir"]>> =>
+            io(path, "read", () => bridge.readDir!(path)) as ReturnType<
+              NonNullable<FileSystemPort.Service["readDir"]>
+            >,
+        }
+      : {}),
+    ...(bridge.watchDir !== undefined
+      ? {
+          watchDir: (path: string, onEvent: (event: FileEvent) => void) =>
+            io(path, "watch", async () => {
+              const id = await bridge.watchDir!(path, (event) =>
+                onEvent({
+                  path: event.path,
+                  kind: event.kind === "deleted" ? "deleted" : "changed",
+                }),
+              );
+              return () => void bridge.unwatch(id);
+            }),
+        }
+      : {}),
     capabilities: { watch: true },
   };
 }

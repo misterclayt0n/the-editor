@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Effect } from "effect";
 import type { EditorSnapshot } from "@the-editor/editor";
 import { formatChords, type Chord } from "@the-editor/keymaps";
 import type { Tile } from "@the-editor/workbench";
@@ -64,6 +65,7 @@ export function App() {
     booted.onFileStateChanged = () => setStatusEpoch((epoch) => epoch + 1);
     booted.onPaletteOpenRequested = () => setPaletteOpen(true);
     booted.onDiagnosticsChanged = () => setStatusEpoch((epoch) => epoch + 1);
+    const unsubscribeVcs = booted.vcs?.subscribe(() => setStatusEpoch((epoch) => epoch + 1));
     booted.onRenameRequested = (currentName) => setRename({ open: true, initial: currentName });
     const controller = new IntelController(
       booted,
@@ -93,10 +95,22 @@ export function App() {
         format: () => booted.formatActiveDocument(),
         intel: () => JSON.parse(JSON.stringify(controller.getState())),
         intelDebug: () => controller.debugInfo(),
+        openFolder: (path: string) => booted.openFolder(path),
+        toggleTree: () => {
+          void Effect.runPromise(
+            booted.commands.execute("files.toggleTree").pipe(Effect.catchAll(() => Effect.void)),
+          );
+        },
+        vcsDebug: () => ({
+          branch: booted.vcs?.branch() ?? null,
+          status: booted.vcs?.treeStatusEntries() ?? [],
+          ...(booted.vcs?.debugInfo() ?? {}),
+        }),
       };
     }
     return () => {
       unsubscribe();
+      unsubscribeVcs?.();
       controller.dispose();
       setIntel(null);
       setRuntime(null);
@@ -154,6 +168,9 @@ export function App() {
       />
       <div className="status-bar">
         <span>
+          {runtime?.vcs?.branch() != null && (
+            <span className="status-branch">{runtime.vcs.branch()} · </span>
+          )}
           {fileLabel(focusedPane)}
           {line !== null && head !== undefined
             ? ` · Ln ${line.index + 1}, Col ${head - line.from + 1}`

@@ -12,6 +12,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@pierre/trees": "1.0.0-beta.4",
     "@tailwindcss/vite": "^4.3.0",
     "@the-editor/commands": "workspace:*",
     "@the-editor/editor": "workspace:*",

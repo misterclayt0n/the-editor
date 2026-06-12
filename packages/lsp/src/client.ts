@@ -130,6 +130,24 @@ export class LspClient {
             tagSupport: { valueSet: [1, 2] },
           },
           definition: { dynamicRegistration: true, linkSupport: true },
+          completion: {
+            dynamicRegistration: true,
+            contextSupport: true,
+            completionItem: {
+              snippetSupport: true,
+              documentationFormat: [lsp.MarkupKind.Markdown, lsp.MarkupKind.PlainText],
+              deprecatedSupport: true,
+              insertReplaceSupport: true,
+              // Lazily resolved on accept: auto-import edits and docs.
+              resolveSupport: {
+                properties: ["documentation", "detail", "additionalTextEdits"],
+              },
+            },
+          },
+          hover: {
+            dynamicRegistration: true,
+            contentFormat: [lsp.MarkupKind.Markdown, lsp.MarkupKind.PlainText],
+          },
           formatting: { dynamicRegistration: true },
           rename: { dynamicRegistration: true, prepareSupport: false },
           inlayHint: { dynamicRegistration: true },
@@ -257,8 +275,6 @@ export class LspClient {
     });
   }
 
-  // ------------------------------------------------------------- features
-
   /** Normalized: Location | Location[] | LocationLink[] → Location[]. */
   async definition(
     uri: string,
@@ -304,6 +320,78 @@ export class LspClient {
       token,
     );
     return result ?? null;
+  }
+
+  /** Normalized: CompletionItem[] | CompletionList | null → list shape. */
+  async completion(
+    uri: string,
+    position: lsp.Position,
+    context: lsp.CompletionContext,
+    token?: CancellationToken,
+  ): Promise<{ items: lsp.CompletionItem[]; isIncomplete: boolean }> {
+    const result = await this.connection.sendRequest(
+      lsp.CompletionRequest.type,
+      { textDocument: { uri }, position, context },
+      token,
+    );
+    if (result === null || result === undefined) return { items: [], isIncomplete: false };
+    if (Array.isArray(result)) return { items: result, isIncomplete: false };
+    return { items: result.items, isIncomplete: result.isIncomplete };
+  }
+
+  /**
+   * workspace/executeCommand — completion-item commands run AFTER the
+   * insert; some servers deliver auto-imports through these (the edits
+   * come back as a workspace/applyEdit request).
+   */
+  async executeCommand(
+    command: string,
+    args?: unknown[],
+    token?: CancellationToken,
+  ): Promise<unknown> {
+    if (this.serverCapabilities.executeCommandProvider === undefined) return null;
+    return this.connection.sendRequest(
+      lsp.ExecuteCommandRequest.type,
+      { command, ...(args !== undefined ? { arguments: args as any[] } : {}) },
+      token,
+    );
+  }
+
+  /**
+   * completionItem/resolve — fills lazy properties (documentation,
+   * additionalTextEdits such as auto-imports). Identity when the server
+   * doesn't resolve.
+   */
+  async resolveCompletionItem(
+    item: lsp.CompletionItem,
+    token?: CancellationToken,
+  ): Promise<lsp.CompletionItem> {
+    if (this.serverCapabilities.completionProvider?.resolveProvider !== true) return item;
+    const result = await this.connection.sendRequest(
+      lsp.CompletionResolveRequest.type,
+      item,
+      token,
+    );
+    return result ?? item;
+  }
+
+  async hover(
+    uri: string,
+    position: lsp.Position,
+    token?: CancellationToken,
+  ): Promise<lsp.Hover | null> {
+    const result = await this.connection.sendRequest(
+      lsp.HoverRequest.type,
+      { textDocument: { uri }, position },
+      token,
+    );
+    return result ?? null;
+  }
+
+  /** Server-declared completion trigger characters (static capability). */
+  completionTriggerCharacters(): readonly string[] {
+    const provider = this.serverCapabilities.completionProvider;
+    return provider?.triggerCharacters ?? [];
   }
 
   async inlayHints(

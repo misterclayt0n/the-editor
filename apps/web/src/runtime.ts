@@ -84,9 +84,19 @@ import { createFileSystemPort } from "./platform/fs";
 import { createProcessPort } from "./platform/process";
 import { createSyntaxPort, type HighlightRun, type SyntaxPort } from "./platform/syntax";
 import { DocumentHighlights } from "./editor/highlights";
+import { FloatHub } from "./editor/floats";
 import { LspManager, type DiagnosticCounts } from "./lsp/manager";
 import { lspDefaults, LanguageServers, makeLanguageServers } from "./product/lsp";
 import { lspActions, HostLspActions } from "./product/lspActions";
+import { lspIntel, HostLspIntel } from "./product/lspIntel";
+import { intelActions, HostIntelActions } from "./product/intelActions";
+import { wordCompletions } from "./product/wordCompletions";
+import {
+  makeCompletionProviders,
+  makeHoverProviders,
+  CompletionProviders,
+  HoverProviders,
+} from "./intel/types";
 import { uriToPath, type lsp } from "@the-editor/lsp";
 import { MountHub } from "./editor/mounts";
 
@@ -106,7 +116,12 @@ export interface PaneHighlights {
 /** What the per-pane renderer consumes. */
 export interface PaneHost {
   readonly mounts: MountHub;
+  readonly floats: FloatHub;
   readonly highlights?: PaneHighlights | undefined;
+  /** Intercepts keydown BEFORE keymaps (completion navigation). */
+  keyInterceptor?: ((event: KeyboardEventLike) => boolean) | undefined;
+  /** Pointer hover over text: offset (null = left the text). */
+  pointerHover?: ((offset: number | null) => void) | undefined;
   snapshot(): EditorSnapshot;
   visualsSnapshot(): VisualsSnapshot;
   setSelection(selection: Selection): void;
@@ -125,6 +140,9 @@ export type PaneFileInfo = { readonly path: string; readonly status: FileSyncSta
  */
 export class EditorPane implements PaneHost {
   readonly mounts = new MountHub();
+  readonly floats = new FloatHub();
+  keyInterceptor?: ((event: KeyboardEventLike) => boolean) | undefined;
+  pointerHover?: ((offset: number | null) => void) | undefined;
 
   constructor(
     readonly panelId: PanelId,
@@ -215,6 +233,13 @@ export class AppRuntime {
   onDiagnosticsChanged?: (docId: string) => void;
   /** Host UI hooks: rename was requested at the caret (show the prompt). */
   onRenameRequested?: (currentName: string) => void;
+  /** Host UI hooks: explicit completion trigger (ctrl+space). */
+  onTriggerCompletion?: () => void;
+  /** Intel provider registries (App hands them to the IntelController). */
+  intel!: {
+    readonly completions: CompletionProviders.Service;
+    readonly hovers: HoverProviders.Service;
+  };
 
   private readonly panes = new Map<PanelId, EditorPane>();
   private syntaxPort: SyntaxPort | undefined;
@@ -258,7 +283,20 @@ export class AppRuntime {
         // commands through the focused panel's view context.
         const workspaceContext = workspace.context;
         const languageServers = yield* makeLanguageServers;
+        const completionProviders = yield* makeCompletionProviders;
+        const hoverProviders = yield* makeHoverProviders;
         const services = Layer.mergeAll(
+          Layer.succeed(CompletionProviders, completionProviders),
+          Layer.succeed(HoverProviders, hoverProviders),
+          Layer.succeed(HostIntelActions, {
+            triggerCompletion: () => instance.onTriggerCompletion?.(),
+          }),
+          Layer.succeed(HostLspIntel, {
+            completion: (context) => instance.lsp?.completionAt(context) ?? Promise.resolve(null),
+            hover: (context) => instance.lsp?.hoverAt(context) ?? Promise.resolve(null),
+            diagnosticsHover: (context) => instance.lsp?.diagnosticsHoverAt(context) ?? null,
+            triggerCharacters: (docId) => instance.lsp?.completionTriggerCharacters(docId) ?? [],
+          }),
           Layer.succeed(LanguageServers, languageServers),
           Layer.succeed(Commands, commands),
           Layer.succeed(Keymaps, keymaps),
@@ -298,10 +336,14 @@ export class AppRuntime {
             toPackageDescriptor(viewPackage, services),
             toPackageDescriptor(lspDefaults, services),
             toPackageDescriptor(lspActions, services),
+            toPackageDescriptor(lspIntel, services),
+            toPackageDescriptor(wordCompletions, services),
+            toPackageDescriptor(intelActions, services),
           ])
           .pipe(Effect.orDie);
 
         const appRuntime = new AppRuntime(scope, workspace, workbench, commands, keymaps);
+        appRuntime.intel = { completions: completionProviders, hovers: hoverProviders };
         const processPort = createProcessPort();
         if (processPort !== undefined) {
           appRuntime.lsp = new LspManager(processPort, fileSystem, languageServers);

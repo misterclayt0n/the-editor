@@ -6,6 +6,8 @@ import { AppRuntime, type EditorPane } from "./runtime";
 import { WorkbenchView } from "./workbench/WorkbenchView";
 import { CommandPalette } from "./ui/CommandPalette";
 import { RenameDialog } from "./ui/RenameDialog";
+import { IntelController } from "./intel/controller";
+import { IntelView } from "./intel/IntelView";
 
 const fileLabel = (pane: EditorPane | undefined): string => {
   if (pane === undefined) return "";
@@ -46,6 +48,7 @@ export function App() {
   // disposes it: under React StrictMode's mount -> cleanup -> remount cycle,
   // each mount gets a fresh runtime instead of reusing a disposed one.
   const [runtime, setRuntime] = useState<AppRuntime | null>(null);
+  const [intel, setIntel] = useState<IntelController | null>(null);
   const [snapshot, setSnapshot] = useState<EditorSnapshot | null>(null);
   const [pending, setPending] = useState<ReadonlyArray<Chord>>([]);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -62,9 +65,14 @@ export function App() {
     booted.onPaletteOpenRequested = () => setPaletteOpen(true);
     booted.onDiagnosticsChanged = () => setStatusEpoch((epoch) => epoch + 1);
     booted.onRenameRequested = (currentName) => setRename({ open: true, initial: currentName });
+    const controller = new IntelController(booted, booted.intel.completions, booted.intel.hovers);
+    booted.onTriggerCompletion = () => controller.triggerCompletion();
+    controller.setPane(booted.focusedPane() ?? null);
+    setIntel(controller);
     const unsubscribe = booted.subscribeWorkbench(() => {
       setStatusEpoch((epoch) => epoch + 1);
       setSnapshot(booted.focusedPane()?.snapshot() ?? null);
+      controller.setPane(booted.focusedPane() ?? null);
     });
     setRuntime(booted);
     setSnapshot(booted.focusedPane()?.snapshot() ?? null);
@@ -77,10 +85,14 @@ export function App() {
         layout: () => layoutSummary(booted),
         definition: () => booted.goToDefinition(),
         format: () => booted.formatActiveDocument(),
+        intel: () => JSON.parse(JSON.stringify(controller.getState())),
+        intelDebug: () => controller.debugInfo(),
       };
     }
     return () => {
       unsubscribe();
+      controller.dispose();
+      setIntel(null);
       setRuntime(null);
       booted.dispose();
     };
@@ -120,6 +132,7 @@ export function App() {
         onOpenChange={handlePaletteOpenChange}
         commands={runtime.commands}
       />
+      {intel !== null && <IntelView controller={intel} />}
       <RenameDialog
         open={rename.open}
         initialValue={rename.initial}

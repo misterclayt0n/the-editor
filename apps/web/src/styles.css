@@ -459,6 +459,227 @@ body {
   user-select: none;
 }
 
+/* Floats: text-anchored popovers, positioned by the renderer per frame. */
+.editor-float {
+  position: absolute;
+  z-index: 30;
+}
+
+.intel-completion {
+  min-width: 260px;
+  max-width: 460px;
+  max-height: 264px;
+  padding: 2px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-editor);
+  box-shadow: 0 10px 32px color-mix(in srgb, var(--bg-editor) 54%, transparent);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+
+.intel-item {
+  display: flex;
+  align-items: center;
+  height: 22px;
+  gap: 8px;
+  padding: 0 8px;
+  border-radius: 4px;
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 22px;
+  cursor: default;
+  white-space: nowrap;
+}
+
+.intel-item--selected {
+  background: color-mix(in srgb, #569cd6 14%, var(--bg-editor));
+}
+
+.intel-item--deprecated .intel-item__label {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+.intel-item__kind {
+  flex: none;
+  width: 18px;
+  height: 16px;
+  border-radius: 3px;
+  background: var(--border);
+  color: var(--fg-dim);
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+  text-transform: lowercase;
+}
+
+.intel-kind--function,
+.intel-kind--method {
+  color: #dcdcaa;
+}
+
+.intel-kind--variable,
+.intel-kind--field,
+.intel-kind--property {
+  color: #9cdcfe;
+}
+
+.intel-kind--class,
+.intel-kind--interface,
+.intel-kind--struct {
+  color: #4ec9b0;
+}
+
+.intel-kind--keyword {
+  color: #569cd6;
+}
+
+.intel-item__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.intel-item__detail {
+  margin-left: auto;
+  overflow: hidden;
+  max-width: 180px;
+  color: var(--fg-dim);
+  font-size: 11px;
+  text-overflow: ellipsis;
+}
+
+.intel-hover-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.intel-hover--diagnostic {
+  border-color: color-mix(in srgb, #f48771 45%, var(--border));
+  background: color-mix(in srgb, #f48771 6%, var(--bg-editor));
+}
+
+/* The text range a hover card describes. */
+.intel-hover-range {
+  background: rgba(86, 156, 214, 0.16);
+}
+
+.intel-hover {
+  position: relative;
+  min-width: 120px;
+  max-width: 520px;
+  padding: 8px 26px 8px 10px;
+  user-select: text;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-editor);
+  box-shadow: 0 10px 32px color-mix(in srgb, var(--bg-editor) 54%, transparent);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.intel-hover__md {
+  max-height: 320px;
+  overflow-y: auto;
+  user-select: text;
+  cursor: text;
+}
+
+.intel-hover__md > :first-child {
+  margin-top: 0;
+}
+
+.intel-hover__md > :last-child {
+  margin-bottom: 0;
+}
+
+.intel-hover__md p,
+.intel-hover__md ul,
+.intel-hover__md ol,
+.intel-hover__md blockquote {
+  margin: 4px 0;
+}
+
+.intel-hover__md ul,
+.intel-hover__md ol {
+  padding-left: 18px;
+}
+
+.intel-hover__md h1,
+.intel-hover__md h2,
+.intel-hover__md h3,
+.intel-hover__md h4 {
+  margin: 6px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.intel-hover__md hr {
+  margin: 6px 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+.intel-hover__md a {
+  color: #569cd6;
+}
+
+.intel-hover__md pre {
+  margin: 4px 0;
+  padding: 6px 8px;
+  overflow-x: auto;
+  border-radius: 4px;
+  background: var(--bg);
+  font-family: "SF Mono", Menlo, Monaco, "Cascadia Code", monospace;
+  font-size: 12px;
+  white-space: pre;
+}
+
+.intel-hover__md code {
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--bg);
+  font-family: "SF Mono", Menlo, Monaco, "Cascadia Code", monospace;
+  font-size: 12px;
+}
+
+.intel-hover__md pre code {
+  padding: 0;
+  background: none;
+}
+
+/* Zed-style copy button, top-right of each card. */
+.intel-hover__copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 80ms;
+}
+
+.intel-hover:hover .intel-hover__copy {
+  opacity: 1;
+}
+
+.intel-hover__copy:hover {
+  background: var(--border);
+  color: var(--fg);
+}
+
 /* LSP inlay hints: dim inline annotations, visually distinct from text. */
 .lsp-inlay-hint {
   color: var(--fg-dim);

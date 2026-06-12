@@ -213,6 +213,53 @@ function lineIndexAtOffset(text: TextBuffer, offset: number): number {
 function columnAtOffset(text: TextBuffer, line: number, offset: number, tabWidth: number): number {
   return engineColumnAtOffset({ text, line, offset, tabWidth });
 }
+
+/**
+ * Extra VISUAL columns contributed by virtual text (inlay hints etc.)
+ * rendered before `offset` on its line. Virtual text occupies columns but
+ * no document offsets, so every geometry computation — caret placement,
+ * selection rects, hit testing — must add these in. A virtual anchored
+ * exactly AT the offset with "before" affinity renders left of the offset's
+ * character, so the caret there sits to its right.
+ */
+export function virtualColsBefore(
+  virtuals: readonly VirtualText[] | undefined,
+  text: TextBuffer,
+  line: number,
+  offset: number,
+): number {
+  if (virtuals === undefined || virtuals.length === 0) return 0;
+  const range = text.lineRange(line);
+  let cols = 0;
+  for (const vt of virtuals) {
+    const at = clamp(vt.at, 0, text.length);
+    if (at < range.from || at > range.to) continue;
+    if (at < offset || (at === offset && (vt.affinity ?? "after") === "before")) {
+      cols += vt.text.length;
+    }
+  }
+  return cols;
+}
+
+/** Virtuals anchored on `line`, in visual order. */
+function lineVirtuals(
+  virtuals: readonly VirtualText[] | undefined,
+  text: TextBuffer,
+  line: number,
+): VirtualText[] {
+  if (virtuals === undefined || virtuals.length === 0) return [];
+  const range = text.lineRange(line);
+  return virtuals
+    .filter((vt) => {
+      const at = clamp(vt.at, 0, text.length);
+      return at >= range.from && at <= range.to;
+    })
+    .sort(
+      (a, b) =>
+        a.at - b.at ||
+        ((a.affinity ?? "after") === "before" ? 0 : 1) - ((b.affinity ?? "after") === "before" ? 0 : 1),
+    );
+}
 function rowTop(row: number, lineHeight: number, paddingTop: number): number {
   return paddingTop + row * lineHeight;
 }
@@ -223,9 +270,11 @@ function rectForLine(
   from: number,
   to: number,
   m: Metrics,
+  virtuals?: readonly VirtualText[],
 ): LayoutRect {
-  const a = columnAtOffset(text, line, from, m.tabWidth),
-    b = columnAtOffset(text, line, to, m.tabWidth);
+  const a =
+    columnAtOffset(text, line, from, m.tabWidth) + virtualColsBefore(virtuals, text, line, from),
+    b = columnAtOffset(text, line, to, m.tabWidth) + virtualColsBefore(virtuals, text, line, to);
   return {
     top: rowTop(visualRow, m.lineHeight, m.paddingTop),
     left: m.paddingLeft + a * m.charWidth,
@@ -268,6 +317,8 @@ export function hitTestTextPosition(args: {
   readonly paddingTop: number;
   readonly tabWidth: number;
   readonly bias?: HitTestBias;
+  /** Virtual text on/near the hit line; clicks inside it land at anchors. */
+  readonly virtualText?: readonly VirtualText[];
 }): HitTestResult {
   const lineHeight = Math.max(Number.EPSILON, args.lineHeight),
     charWidth = Math.max(Number.EPSILON, args.charWidth);
@@ -276,8 +327,24 @@ export function hitTestTextPosition(args: {
     0,
     args.text.lineCount - 1,
   );
-  const rawColumn = Math.max(0, (args.x - args.paddingLeft) / charWidth),
-    bias = args.bias ?? "before";
+  let rawColumn = Math.max(0, (args.x - args.paddingLeft) / charWidth);
+  const bias = args.bias ?? "before";
+  // Strip virtual columns left of x; a hit INSIDE a virtual run resolves
+  // to its anchor offset (the caret lands where the hint is attached).
+  {
+    let consumed = 0;
+    for (const vt of lineVirtuals(args.virtualText, args.text, line)) {
+      const at = clamp(vt.at, 0, args.text.length);
+      const baseColumn =
+        columnAtOffset(args.text, line, at, args.tabWidth) + consumed;
+      if (rawColumn < baseColumn) break;
+      if (rawColumn < baseColumn + vt.text.length) {
+        return { line, column: baseColumn - consumed, offset: at };
+      }
+      consumed += vt.text.length;
+      rawColumn -= vt.text.length;
+    }
+  }
   if (bias === "nearest") {
     const beforeOffset = offsetAtColumn({
       text: args.text,
@@ -310,6 +377,41 @@ export function hitTestTextPosition(args: {
     bias,
   });
   return { line, column: columnAtOffset(args.text, line, offset, args.tabWidth), offset };
+}
+
+/**
+ * Hit test that only reports positions ON the text: returns null when the
+ * point is left of the text origin (gutter), past the line's last visual
+ * column (text plus virtual text, with half a column of slack), or outside
+ * the line band vertically. Hover uses this — clamping to the nearest
+ * offset makes empty space to the right of a line "hover" its last token.
+ */
+export function hitTestTextPositionExact(args: {
+  readonly text: TextBuffer;
+  readonly x: number;
+  readonly y: number;
+  readonly lineHeight: number;
+  readonly charWidth: number;
+  readonly paddingLeft: number;
+  readonly paddingTop: number;
+  readonly tabWidth: number;
+  readonly virtualText?: readonly VirtualText[];
+}): HitTestResult | null {
+  const lineHeight = Math.max(Number.EPSILON, args.lineHeight),
+    charWidth = Math.max(Number.EPSILON, args.charWidth);
+  const rawLine = Math.floor((args.y - args.paddingTop) / lineHeight);
+  if (rawLine < 0 || rawLine >= args.text.lineCount) return null;
+  const rawColumn = (args.x - args.paddingLeft) / charWidth;
+  if (rawColumn < -0.5) return null;
+  const range = lineRange(args.text, rawLine);
+  const virtualCols = lineVirtuals(args.virtualText, args.text, rawLine).reduce(
+    (n, vt) => n + vt.text.length,
+    0,
+  );
+  const maxColumn =
+    columnAtOffset(args.text, rawLine, range.to, args.tabWidth) + virtualCols;
+  if (rawColumn > maxColumn + 0.5) return null;
+  return hitTestTextPosition({ ...args, bias: "nearest" });
 }
 
 function normalizeRange(
@@ -526,7 +628,9 @@ export function layoutViewport<Payload = unknown>(
         line = lineIndexAtOffset(request.text, at),
         row = lineToRow.get(line);
       if (row !== undefined) {
-        const column = columnAtOffset(request.text, line, at, m.tabWidth);
+        const column =
+          columnAtOffset(request.text, line, at, m.tabWidth) +
+          virtualColsBefore(visuals.virtualText, request.text, line, at);
         placements.push({
           kind: "overlay",
           id: anchor.id,
@@ -544,7 +648,7 @@ export function layoutViewport<Payload = unknown>(
         });
       }
     } else {
-      addRangePlacement(request.text, start, end, lineToRow, m, anchor, placements);
+      addRangePlacement(request.text, start, end, lineToRow, m, anchor, placements, visuals.virtualText);
     }
   }
   const decorations = layoutDecorations(
@@ -593,6 +697,7 @@ function addRangePlacement<Payload>(
   m: Metrics,
   anchor: Extract<LayoutAnchor<Payload>, { kind: "range" }>,
   out: LayoutPlacement<Payload>[],
+  virtuals?: readonly VirtualText[],
 ) {
   const range = normalizeRange(anchor.from, anchor.to, text.length);
   if (!range) return;
@@ -605,8 +710,10 @@ function addRangePlacement<Payload>(
       a = Math.max(range.from, lr.from),
       b = Math.min(range.to, lr.to);
     if (b < a) continue;
-    const columnStart = columnAtOffset(text, line, a, m.tabWidth),
-      columnEnd = columnAtOffset(text, line, b, m.tabWidth);
+    const columnStart =
+        columnAtOffset(text, line, a, m.tabWidth) + virtualColsBefore(virtuals, text, line, a),
+      columnEnd =
+        columnAtOffset(text, line, b, m.tabWidth) + virtualColsBefore(virtuals, text, line, b);
     out.push({
       kind: "range",
       id: anchor.id,
@@ -616,7 +723,7 @@ function addRangePlacement<Payload>(
       to: b,
       columnStart,
       columnEnd,
-      rects: [rectForLine(text, line, row, a, b, m)],
+      rects: [rectForLine(text, line, row, a, b, m, virtuals)],
       payload: anchor.payload,
     });
   }

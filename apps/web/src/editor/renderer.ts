@@ -38,7 +38,9 @@ import {
   DocumentInvalidated,
   hasInvalidation,
   hitTestTextPosition,
+  hitTestTextPositionExact,
   layoutViewport,
+  virtualColsBefore,
   payloadsOf,
   SelectionInvalidated,
   FileSyncInvalidated,
@@ -156,8 +158,28 @@ export class EditorRenderer {
   private readonly resizeObserver: ResizeObserver;
   private readonly unsubscribe: () => void;
   private readonly unsubscribeHighlights: () => void;
+  private readonly unsubscribeFloats: () => void;
   private readonly renderPass = () => this.render();
   private readonly handleKeyDown = (event: KeyboardEvent) => {
+    // Copy with a DOM selection inside a float (hover card text): native
+    // copy must win — the keymap's copy would grab the EDITOR selection.
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "c") {
+      const domSelection = window.getSelection();
+      const node = domSelection?.anchorNode ?? null;
+      const element = node instanceof Element ? node : node?.parentElement ?? null;
+      if (
+        domSelection !== null &&
+        !domSelection.isCollapsed &&
+        element?.closest(".editor-float") != null
+      ) {
+        return;
+      }
+    }
+    if (this.runtime.keyInterceptor?.(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     const outcome = this.runtime.handleKeyboardEvent(event);
     this.options.onPending?.(this.runtime.pendingChords());
     if (outcome !== "passthrough") event.preventDefault();
@@ -168,6 +190,9 @@ export class EditorRenderer {
       this.hScrollbar.contains(event.target as Node)
     )
       return;
+    // Clicks inside a float (hover card, completion list) belong to the
+    // float's own UI — moving the caret would kill text selection in it.
+    if ((event.target as HTMLElement).closest?.(".editor-float") !== null) return;
     const rect = this.viewport.getBoundingClientRect();
     // Vertical geometry goes through the model (widget-aware); the column
     // resolver gets a synthetic widget-less y for the resolved line.
@@ -182,8 +207,53 @@ export class EditorRenderer {
       paddingTop: PADDING_TOP,
       tabWidth: TAB_WIDTH,
       bias: "nearest",
+      virtualText: this.lineVirtuals(line),
     });
     this.runtime.setSelection(Selection.point(hit.offset));
+  };
+  private hoverRaf = 0;
+  private readonly handleMouseMove = (event: MouseEvent) => {
+    if (this.runtime.pointerHover === undefined) return;
+    // Inside a float the pointer is interacting with the float's own UI
+    // (selecting hover-card text); freeze hover state rather than
+    // re-hit-testing the text underneath it.
+    if ((event.target as HTMLElement).closest?.(".editor-float") !== null) return;
+    if (this.hoverRaf !== 0) return;
+    const x = event.clientX;
+    const y = event.clientY;
+    this.hoverRaf = requestAnimationFrame(() => {
+      this.hoverRaf = 0;
+      if (this.disposed) return;
+      const rect = this.viewport.getBoundingClientRect();
+      if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
+        this.runtime.pointerHover?.(null);
+        return;
+      }
+      // Hover is EXACT: empty space right of a line, widget rows, and the
+      // void past the last line report null instead of the nearest offset.
+      const contentY = y - rect.top + this.scrollY;
+      const line = this.geometry.lineAt(contentY);
+      const lineTop = this.geometry.lineTop(line);
+      if (contentY < lineTop || contentY >= lineTop + LINE_HEIGHT) {
+        this.runtime.pointerHover?.(null);
+        return;
+      }
+      const hit = hitTestTextPositionExact({
+        text: this.snapshot.text,
+        x: x - rect.left + this.scrollX,
+        y: PADDING_TOP + line * LINE_HEIGHT + 1,
+        lineHeight: LINE_HEIGHT,
+        charWidth: this.charWidth,
+        paddingLeft: this.textOriginX,
+        paddingTop: PADDING_TOP,
+        tabWidth: TAB_WIDTH,
+        virtualText: this.lineVirtuals(line),
+      });
+      this.runtime.pointerHover?.(hit?.offset ?? null);
+    });
+  };
+  private readonly handleMouseLeave = () => {
+    this.runtime.pointerHover?.(null);
   };
   private readonly handleFocus = () => this.caretEl.classList.remove("editor-caret-idle");
   private readonly handleBlur = () => this.caretEl.classList.add("editor-caret-idle");
@@ -359,6 +429,14 @@ export class EditorRenderer {
     this.resizeObserver = new ResizeObserver(() => queueRender(this.renderPass));
     this.resizeObserver.observe(this.viewport);
 
+    this.viewport.addEventListener("mousemove", this.handleMouseMove);
+    this.viewport.addEventListener("mouseleave", this.handleMouseLeave);
+    this.unsubscribeFloats = runtime.floats.onChanged(() => {
+      this.syncFloats();
+      queueRender(this.renderPass);
+    });
+    this.syncFloats();
+
     this.unsubscribe = runtime.subscribe((notification, source) =>
       this.onNotification(notification, source),
     );
@@ -378,6 +456,10 @@ export class EditorRenderer {
     cancelRender(this.renderPass);
     this.unsubscribe();
     this.unsubscribeHighlights();
+    this.unsubscribeFloats();
+    if (this.hoverRaf !== 0) cancelAnimationFrame(this.hoverRaf);
+    this.viewport.removeEventListener("mousemove", this.handleMouseMove);
+    this.viewport.removeEventListener("mouseleave", this.handleMouseLeave);
     this.resizeObserver.disconnect();
     this.viewport.removeEventListener("wheel", this.handleWheel);
     this.viewport.removeEventListener("mousedown", this.handleMouseDown);
@@ -392,6 +474,40 @@ export class EditorRenderer {
     this.hScrollbar.remove();
   }
 
+  /** Attach float elements (popovers) to the editor root. */
+  private syncFloats(): void {
+    for (const entry of this.runtime.floats.all()) {
+      if (entry.element.parentElement !== this.root) this.root.append(entry.element);
+    }
+  }
+
+  /** Anchor floats to their text offsets; flip when out of room. */
+  private positionFloats(): void {
+    const text = this.snapshot.text;
+    for (const entry of this.runtime.floats.all()) {
+      const anchor = entry.anchor;
+      if (anchor === null) continue;
+      const offset = Math.max(0, Math.min(anchor.offset, text.length));
+      const lineRange = text.lineRangeAt(offset);
+      const column = visualColumn(text.sliceString(lineRange.from, offset));
+      const lineTop = this.geometry.lineTop(lineRange.index) - this.scrollY;
+      let left = this.textOriginX + column * this.charWidth - this.scrollX;
+      const height = entry.element.offsetHeight;
+      const width = entry.element.offsetWidth;
+      let top =
+        anchor.placement === "below" ? lineTop + LINE_HEIGHT + 4 : lineTop - height - 4;
+      // Flip when the preferred side runs out of viewport.
+      if (anchor.placement === "below" && top + height > this.viewportHeight && lineTop > height) {
+        top = lineTop - height - 4;
+      } else if (anchor.placement === "above" && top < 0) {
+        top = lineTop + LINE_HEIGHT + 4;
+      }
+      left = Math.max(4, Math.min(left, this.viewportWidth - width - 4));
+      entry.element.style.left = `${Math.round(left)}px`;
+      entry.element.style.top = `${Math.round(top)}px`;
+    }
+  }
+
   /** Cached worker highlight runs as low-priority inline color styles. */
   private syntaxStyles(from: number, to: number): TextStyleRun[] {
     const highlights = this.runtime.highlights;
@@ -403,6 +519,14 @@ export class EditorRenderer {
       out.push({ from: run.from, to: run.to, style: { color }, priority: -100 });
     }
     return out;
+  }
+
+  /** Virtual text anchored on a line (caret/hit geometry must see it). */
+  private lineVirtuals(line: number) {
+    if (this.visuals === null) return [];
+    const text = this.snapshot.text;
+    const range = text.lineRange(Math.max(0, Math.min(line, text.lineCount - 1)));
+    return this.visuals.virtualTextBetween(range.from, range.to);
   }
 
   private measureCharWidth(): void {
@@ -587,6 +711,12 @@ export class EditorRenderer {
       }
 
       const lineRange = text.lineRange(line);
+      const caretVirtualCols = virtualColsBefore(
+        this.visuals?.virtualTextBetween(lineRange.from, lineRange.to) ?? [],
+        text,
+        line,
+        selection.primary.head,
+      );
       const beforeCaret = text.sliceString(lineRange.from, selection.primary.head);
       // The caret's line bounds content width from below. maxRowChars is
       // otherwise updated by the window patch AFTER this clamp runs, so a
@@ -594,7 +724,8 @@ export class EditorRenderer {
       // stale width and strand the caret off-screen.
       const caretLineCols = visualColumn(text.sliceString(lineRange.from, lineRange.to));
       if (caretLineCols > this.maxRowChars) this.maxRowChars = caretLineCols;
-      const caretLeft = this.textOriginX + visualColumn(beforeCaret) * this.charWidth;
+      const caretLeft =
+        this.textOriginX + (visualColumn(beforeCaret) + caretVirtualCols) * this.charWidth;
       const leftMargin = this.textOriginX;
       const rightMargin = 24;
       if (caretLeft < this.scrollX + leftMargin) {
@@ -757,6 +888,8 @@ export class EditorRenderer {
       offset: text.lineRange(anchorLine).from,
       topPx: this.geometry.lineTop(anchorLine),
     };
+
+    this.positionFloats();
 
     if (docDirty || selDirty) this.options.onSnapshot?.(this.snapshot);
   }
@@ -949,6 +1082,11 @@ export class EditorRenderer {
   /** Caret + selection rects, window-local, above the rows. */
   private renderOverlays(windowTop: number, selDirty: boolean): void {
     const { text, version, selection } = this.snapshot;
+    // Virtual text shifts every column right of it: caret and selection
+    // geometry must see the same virtuals the rows render.
+    const winFrom = this.windowEnd > this.windowStart ? text.lineRange(this.windowStart).from : 0;
+    const winTo =
+      this.windowEnd > this.windowStart ? text.lineRange(this.windowEnd - 1).to : 0;
     const layout = layoutViewport({
       text,
       version,
@@ -959,7 +1097,10 @@ export class EditorRenderer {
       charWidth: this.charWidth,
       paddingTop: PADDING_TOP,
       paddingLeft: this.textOriginX,
-      visuals: { blockWidgets: this.widgets },
+      visuals: {
+        blockWidgets: this.widgets,
+        virtualText: this.visuals?.virtualTextBetween(winFrom, winTo) ?? [],
+      },
       anchors: [
         { kind: "overlay", id: "caret", at: selection.primary.head, payload: null },
         ...selection.ranges

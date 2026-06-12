@@ -45,6 +45,13 @@ import {
 import type { DecorationSpec, VirtualTextSpec } from "@the-editor/editor";
 import type { ProcessPort } from "../platform/process";
 import type { LanguageServerDefinition, LanguageServers } from "../product/lsp";
+import type {
+  CompletionContext,
+  CompletionItem,
+  CompletionResult,
+  HoverContext,
+  HoverResult,
+} from "../intel/types";
 
 const FULL_SYNC_DEBOUNCE_MS = 150;
 const INLAY_HINT_DEBOUNCE_MS = 400;
@@ -89,6 +96,14 @@ type Attachment = {
   diagnosticsSet: RangeSet<DecorationSpec>;
   hintsSet: RangeSet<VirtualTextSpec>;
   counts: DiagnosticCounts;
+  /** Offset-resolved diagnostics from the last publish (hover lookup). */
+  diagnosticList: Array<{
+    from: number;
+    to: number;
+    message: string;
+    severity: number;
+    source: string | undefined;
+  }>;
 };
 
 const positionToOffset = (buffer: TextBuffer, position: lsp.Position): number => {
@@ -101,6 +116,34 @@ const offsetToPosition = (buffer: TextBuffer, offset: number): lsp.Position => {
   const clamped = Math.max(0, Math.min(offset, buffer.length));
   const range = buffer.lineRangeAt(clamped);
   return { line: range.index, character: clamped - range.from };
+};
+
+const completionKindNames: Record<number, string> = {
+  1: "text", 2: "method", 3: "function", 4: "constructor", 5: "field",
+  6: "variable", 7: "class", 8: "interface", 9: "module", 10: "property",
+  11: "unit", 12: "value", 13: "enum", 14: "keyword", 15: "snippet",
+  16: "color", 17: "file", 18: "reference", 19: "folder", 20: "enum-member",
+  21: "constant", 22: "struct", 23: "event", 24: "operator", 25: "type-parameter",
+};
+
+const editsFromTextEdits = (
+  buffer: TextBuffer,
+  edits: ReadonlyArray<lsp.TextEdit> | undefined,
+): Array<{ from: number; to: number; text: string }> =>
+  (edits ?? []).map((edit) => ({
+    from: positionToOffset(buffer, edit.range.start),
+    to: positionToOffset(buffer, edit.range.end),
+    text: edit.newText,
+  }));
+
+const markupToString = (
+  value: lsp.MarkupContent | lsp.MarkedString | lsp.MarkedString[] | undefined,
+): string => {
+  if (value === undefined) return "";
+  if (Array.isArray(value)) return value.map((v) => markupToString(v)).join("\n\n");
+  if (typeof value === "string") return value;
+  if ("kind" in value) return value.value;
+  return "```" + value.language + "\n" + value.value + "\n```";
 };
 
 const hintLabel = (hint: lsp.InlayHint): string =>
@@ -187,6 +230,7 @@ export class LspManager {
       diagnosticsSet: RangeSet.empty(),
       hintsSet: RangeSet.empty(),
       counts: { errors: 0, warnings: 0 },
+      diagnosticList: [],
     };
     this.attachments.set(docId, attachment);
     this.byUri.set(uri, attachment);
@@ -244,6 +288,135 @@ export class LspManager {
   }
 
   // -------------------------------------------------------------- features
+
+  /** LSP completion as a generic intel result. */
+  async completionAt(context: CompletionContext): Promise<CompletionResult | null> {
+    const attachment = this.attachments.get(context.docId);
+    if (attachment === undefined || !attachment.handle.alive) return null;
+    if (!attachment.handle.client.supports(lsp.CompletionRequest.method)) return null;
+    const buffer = this.bufferOf(attachment);
+    const triggerKind =
+      context.trigger.kind === "triggerCharacter"
+        ? lsp.CompletionTriggerKind.TriggerCharacter
+        : context.trigger.kind === "incomplete"
+          ? lsp.CompletionTriggerKind.TriggerForIncompleteCompletions
+          : lsp.CompletionTriggerKind.Invoked;
+    const result = await attachment.handle.client.completion(
+      attachment.uri,
+      offsetToPosition(buffer, context.offset),
+      {
+        triggerKind,
+        ...(context.trigger.kind === "triggerCharacter"
+          ? { triggerCharacter: context.trigger.character }
+          : {}),
+      },
+    );
+    const items: CompletionItem[] = result.items.map((item) => {
+      const label = typeof item.label === "string" ? item.label : String(item.label);
+      let insertText = item.insertText ?? label;
+      let range: { from: number; to: number } | undefined;
+      if (item.textEdit !== undefined) {
+        insertText = item.textEdit.newText;
+        const editRange =
+          "range" in item.textEdit ? item.textEdit.range : item.textEdit.replace;
+        range = {
+          from: positionToOffset(buffer, editRange.start),
+          to: positionToOffset(buffer, editRange.end),
+        };
+      }
+      const isSnippet = item.insertTextFormat === lsp.InsertTextFormat.Snippet;
+      const additionalEdits = editsFromTextEdits(buffer, item.additionalTextEdits);
+      // Auto-imports and docs are usually LAZY (completionItem/resolve);
+      // resolution offsets convert against the buffer as it is THEN.
+      let command = item.command;
+      const resolve = async () => {
+        if (!attachment.handle.alive) return null;
+        const resolved = await attachment.handle.client.resolveCompletionItem(item);
+        if (resolved.command !== undefined) command = resolved.command;
+        const liveBuffer = this.bufferOf(attachment);
+        return {
+          additionalEdits: editsFromTextEdits(liveBuffer, resolved.additionalTextEdits),
+          ...(resolved.documentation !== undefined
+            ? { documentation: markupToString(resolved.documentation) }
+            : {}),
+          ...(resolved.detail !== undefined ? { detail: resolved.detail } : {}),
+        };
+      };
+      // Spec: the item's command runs AFTER the edits are applied; servers
+      // that route auto-imports through it answer with workspace/applyEdit.
+      const postAccept = async () => {
+        if (command === undefined || !attachment.handle.alive) return;
+        await attachment.handle.client.executeCommand(command.command, command.arguments);
+      };
+      return {
+        label,
+        insertText,
+        ...(isSnippet ? { isSnippet: true } : {}),
+        ...(additionalEdits.length > 0 ? { additionalEdits } : {}),
+        resolve,
+        postAccept,
+        ...(range !== undefined ? { range } : {}),
+        ...(item.kind !== undefined ? { kind: completionKindNames[item.kind] ?? "text" } : {}),
+        ...(item.detail !== undefined ? { detail: item.detail } : {}),
+        ...(item.documentation !== undefined
+          ? { documentation: markupToString(item.documentation) }
+          : {}),
+        ...(item.filterText !== undefined ? { filterText: item.filterText } : {}),
+        ...(item.sortText !== undefined ? { sortText: item.sortText } : {}),
+        ...(item.tags?.includes(lsp.CompletionItemTag.Deprecated) ? { deprecated: true } : {}),
+      };
+    });
+    return { items, isIncomplete: result.isIncomplete };
+  }
+
+  /** Diagnostics under an offset, formatted as a hover card. */
+  diagnosticsHoverAt(context: HoverContext): HoverResult | null {
+    const attachment = this.attachments.get(context.docId);
+    if (attachment === undefined) return null;
+    const hits = attachment.diagnosticList.filter(
+      (d) => context.offset >= d.from && context.offset <= d.to,
+    );
+    if (hits.length === 0) return null;
+    const contents = hits
+      .map((d) => `${d.message}${d.source !== undefined ? `  (${d.source})` : ""}`)
+      .join("\n\n");
+    const from = Math.min(...hits.map((d) => d.from));
+    const to = Math.max(...hits.map((d) => d.to));
+    return { contents, range: { from, to }, kind: "diagnostic" };
+  }
+
+  /** LSP hover as a generic intel result. */
+  async hoverAt(context: HoverContext): Promise<HoverResult | null> {
+    const attachment = this.attachments.get(context.docId);
+    if (attachment === undefined || !attachment.handle.alive) return null;
+    if (!attachment.handle.client.supports(lsp.HoverRequest.method)) return null;
+    const buffer = this.bufferOf(attachment);
+    const hover = await attachment.handle.client.hover(
+      attachment.uri,
+      offsetToPosition(buffer, context.offset),
+    );
+    if (hover === null) return null;
+    const contents = markupToString(hover.contents);
+    if (contents.trim().length === 0) return null;
+    return {
+      kind: "info" as const,
+      contents,
+      ...(hover.range !== undefined
+        ? {
+            range: {
+              from: positionToOffset(buffer, hover.range.start),
+              to: positionToOffset(buffer, hover.range.end),
+            },
+          }
+        : {}),
+    };
+  }
+
+  completionTriggerCharacters(docId: string): readonly string[] {
+    const attachment = this.attachments.get(docId);
+    if (attachment === undefined || !attachment.handle.alive) return [];
+    return attachment.handle.client.completionTriggerCharacters();
+  }
 
   async definition(docId: string, offset: number): Promise<lsp.Location[]> {
     const attachment = this.attachments.get(docId);
@@ -375,6 +548,19 @@ export class LspManager {
       };
     });
     attachment.diagnosticsSet = RangeSet.of(ranges);
+    attachment.diagnosticList = params.diagnostics.map((diagnostic) => {
+      const from = positionToOffset(buffer, diagnostic.range.start);
+      let to = positionToOffset(buffer, diagnostic.range.end);
+      if (to <= from) to = Math.min(buffer.length, from + 1);
+      return {
+        from,
+        to,
+        message:
+          typeof diagnostic.message === "string" ? diagnostic.message : diagnostic.message.value,
+        severity: diagnostic.severity ?? 1,
+        source: diagnostic.source ?? undefined,
+      };
+    });
     this.pushVisuals(attachment);
     attachment.counts = {
       errors: params.diagnostics.filter((d) => (d.severity ?? 1) === 1).length,

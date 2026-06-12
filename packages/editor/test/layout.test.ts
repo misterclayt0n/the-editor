@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { TextBuffer } from "@the-editor/engine";
-import { hitTestTextPosition, layoutContentHeight, layoutViewport } from "../src/index";
+import { hitTestTextPosition, hitTestTextPositionExact, layoutContentHeight, layoutViewport } from "../src/index";
 
 const text = (s: string) => TextBuffer.fromString(s);
 
@@ -575,5 +575,104 @@ describe("layout viewport", () => {
     });
     expect(snapshot.placements).toEqual([]);
     expect(snapshot.rows).toHaveLength(1);
+  });
+});
+
+describe("virtual text geometry", () => {
+  const text = TextBuffer.fromString("let seed = 1\nnext line\n");
+  // Inlay hint ": Int" anchored after "seed" (offset 8), affinity before.
+  const virtualText = [{ at: 8, text: ": Int", affinity: "before" as const }];
+  const m = {
+    tabWidth: 4,
+    lineHeight: 20,
+    charWidth: 8,
+    paddingTop: 0,
+    paddingLeft: 0,
+  };
+
+  test("caret placement after the hint includes its columns", () => {
+    const layout = layoutViewport({
+      text,
+      version: 0,
+      startLine: 0,
+      lineCount: 2,
+      ...m,
+      visuals: { virtualText },
+      anchors: [
+        { kind: "overlay", id: "before-hint", at: 4, payload: null },
+        { kind: "overlay", id: "line-end", at: 12, payload: null },
+      ],
+    });
+    const byId = new Map(layout.placements.map((p) => [p.id, p] as const));
+    const beforeHint = byId.get("before-hint")!;
+    const lineEnd = byId.get("line-end")!;
+    // Before the anchor: pure text columns.
+    expect((beforeHint as { rect: { left: number } }).rect.left).toBe(4 * 8);
+    // At line end: text columns (12) + hint columns (5).
+    expect((lineEnd as { rect: { left: number } }).rect.left).toBe((12 + 5) * 8);
+  });
+
+  test("selection rect spanning the hint widens by its columns", () => {
+    const layout = layoutViewport({
+      text,
+      version: 0,
+      startLine: 0,
+      lineCount: 1,
+      ...m,
+      visuals: { virtualText },
+      anchors: [{ kind: "range", id: "sel", from: 4, to: 12, payload: null }],
+    });
+    const range = layout.placements.find((p) => p.kind === "range") as {
+      rects: ReadonlyArray<{ left: number; width: number }>;
+    };
+    expect(range.rects[0]!.left).toBe(4 * 8);
+    expect(range.rects[0]!.width).toBe((12 + 5 - 4) * 8);
+  });
+
+  test("hit testing maps x across and inside the hint", () => {
+    const base = {
+      text,
+      y: 1,
+      lineHeight: 20,
+      charWidth: 8,
+      paddingLeft: 0,
+      paddingTop: 0,
+      tabWidth: 4,
+      bias: "nearest" as const,
+      virtualText,
+    };
+    // Left of the hint: untouched mapping.
+    expect(hitTestTextPosition({ ...base, x: 4 * 8 }).offset).toBe(4);
+    // Inside the hint's visual span: resolves to its anchor.
+    expect(hitTestTextPosition({ ...base, x: (8 + 2) * 8 }).offset).toBe(8);
+    // Right of the hint: hint columns subtracted (visual col 15 = offset 10).
+    expect(hitTestTextPosition({ ...base, x: (10 + 5) * 8 }).offset).toBe(10);
+    // Far right: clamps to line end, not beyond.
+    expect(hitTestTextPosition({ ...base, x: 60 * 8 }).offset).toBe(12);
+  });
+
+  test("exact hit testing reports null off the text", () => {
+    const base = {
+      text,
+      y: 1,
+      lineHeight: 20,
+      charWidth: 8,
+      paddingLeft: 0,
+      paddingTop: 0,
+      tabWidth: 4,
+      virtualText,
+    };
+    // On text: same as nearest.
+    expect(hitTestTextPositionExact({ ...base, x: 4 * 8 })?.offset).toBe(4);
+    // Last visual column of the line ("let seed = 1" is 12 cols + 5 hint).
+    expect(hitTestTextPositionExact({ ...base, x: 17 * 8 })?.offset).toBe(12);
+    // Past the line's last visual column: null, not a clamp.
+    expect(hitTestTextPositionExact({ ...base, x: 18 * 8 })).toBeNull();
+    expect(hitTestTextPositionExact({ ...base, x: 60 * 8 })).toBeNull();
+    // Left of the text origin (gutter): null.
+    expect(hitTestTextPositionExact({ ...base, x: -8 })).toBeNull();
+    // Above the first line / below the last: null.
+    expect(hitTestTextPositionExact({ ...base, y: -1, x: 8 })).toBeNull();
+    expect(hitTestTextPositionExact({ ...base, y: 20 * 30, x: 8 })).toBeNull();
   });
 });

@@ -21,10 +21,36 @@ const here = dirname(fileURLToPath(import.meta.url));
 // (override with an argument). Asset distribution gets designed later.
 const source = process.argv[2] ?? join(homedir(), "code", "helix", "languages.toml");
 const target = join(here, "..", "src", "generated", "languages.ts");
+// Second output: the LSP server catalog, consumed by the web app's
+// lsp-defaults package (pure data; the web bundle must not import the
+// syntax package, which pulls native tree-sitter).
+const serversTarget = join(
+  here,
+  "..",
+  "..",
+  "..",
+  "apps",
+  "web",
+  "src",
+  "generated",
+  "languageServers.ts",
+);
+
+type HelixLanguageServerRef = string | { readonly name: string };
+
+type HelixLanguageServer = {
+  readonly command: string;
+  readonly args?: readonly string[];
+  readonly config?: unknown;
+  readonly environment?: Record<string, string>;
+};
 
 type HelixLanguage = {
   readonly name: string;
   readonly scope?: string;
+  readonly "language-id"?: string;
+  readonly "language-servers"?: ReadonlyArray<HelixLanguageServerRef>;
+  readonly roots?: readonly string[];
   readonly "file-types"?: ReadonlyArray<string | { readonly glob: string }>;
   readonly shebangs?: readonly string[];
   readonly "comment-token"?: string;
@@ -42,6 +68,7 @@ type HelixLanguage = {
 
 const raw = parse(readFileSync(source, "utf8")) as {
   language: HelixLanguage[];
+  "language-server": Record<string, HelixLanguageServer>;
 };
 
 const asArray = <T>(value: T | readonly T[] | undefined): readonly T[] =>
@@ -101,3 +128,70 @@ export const generatedLanguages: SyntaxConfiguration = `;
 mkdirSync(dirname(target), { recursive: true });
 writeFileSync(target, `${banner}${JSON.stringify({ language: languages }, null, 2)};\n`);
 console.log(`generated ${languages.length} languages -> ${target}`);
+
+// ---------------------------------------------------------- LSP catalog
+
+const serverDefinitions = Object.fromEntries(
+  Object.entries(raw["language-server"] ?? {}).map(([id, server]) => [
+    id,
+    {
+      command: server.command,
+      ...(server.args?.length ? { args: server.args } : {}),
+      ...(server.config !== undefined ? { config: server.config } : {}),
+      ...(server.environment !== undefined ? { environment: server.environment } : {}),
+    },
+  ]),
+);
+
+const serverLanguages = raw.language
+  .map((lang) => {
+    const servers = (lang["language-servers"] ?? []).map((ref) =>
+      typeof ref === "string" ? ref : ref.name,
+    );
+    const fileTypes = (lang["file-types"] ?? []).filter(
+      (ft): ft is string => typeof ft === "string",
+    );
+    return {
+      name: lang.name,
+      languageId: lang["language-id"] ?? lang.name,
+      fileTypes,
+      ...(lang.roots?.length ? { roots: lang.roots } : {}),
+      servers,
+    };
+  })
+  .filter((lang) => lang.servers.length > 0 && lang.fileTypes.length > 0);
+
+const serversBanner = `// GENERATED FILE — do not edit.
+// Source: helix-editor/helix languages.toml ([language-server] + per-language
+// language-servers). Regenerate: pnpm --filter @the-editor/syntax codegen
+
+export type GeneratedLanguageServer = {
+  readonly command: string;
+  readonly args?: readonly string[];
+  readonly config?: unknown;
+  readonly environment?: Readonly<Record<string, string>>;
+};
+
+export type GeneratedServerLanguage = {
+  readonly name: string;
+  /** LSP languageId for didOpen. */
+  readonly languageId: string;
+  readonly fileTypes: readonly string[];
+  /** Workspace root markers. */
+  readonly roots?: readonly string[];
+  /** Server ids in priority order; the first is the primary. */
+  readonly servers: readonly string[];
+};
+
+export const generatedLanguageServers: Readonly<Record<string, GeneratedLanguageServer>> = `;
+
+mkdirSync(dirname(serversTarget), { recursive: true });
+writeFileSync(
+  serversTarget,
+  `${serversBanner}${JSON.stringify(serverDefinitions, null, 2)};\n\n` +
+    `export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = ` +
+    `${JSON.stringify(serverLanguages, null, 2)};\n`,
+);
+console.log(
+  `generated ${Object.keys(serverDefinitions).length} servers, ${serverLanguages.length} languages -> ${serversTarget}`,
+);

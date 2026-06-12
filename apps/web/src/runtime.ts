@@ -74,15 +74,20 @@ import {
   type VisualsSnapshot,
   type WorkspaceScope,
 } from "@the-editor/editor";
-import { type Selection } from "@the-editor/engine";
+import { Selection } from "@the-editor/engine";
 import { editorDefaults, EditorSurface } from "./product/editorDefaults";
 import { lineNumbers } from "./product/lineNumbers";
 import { filesPackage, HostFileActions } from "./product/files";
 import { palettePackage, HostPaletteActions } from "./product/palette";
 import { viewPackage, HostViewActions } from "./product/view";
 import { createFileSystemPort } from "./platform/fs";
+import { createProcessPort } from "./platform/process";
 import { createSyntaxPort, type HighlightRun, type SyntaxPort } from "./platform/syntax";
 import { DocumentHighlights } from "./editor/highlights";
+import { LspManager, type DiagnosticCounts } from "./lsp/manager";
+import { lspDefaults, LanguageServers, makeLanguageServers } from "./product/lsp";
+import { lspActions, HostLspActions } from "./product/lspActions";
+import { uriToPath, type lsp } from "@the-editor/lsp";
 import { MountHub } from "./editor/mounts";
 
 export type KeyOutcome = "handled" | "pending" | "passthrough";
@@ -206,9 +211,15 @@ export class AppRuntime {
   onFileStateChanged?: () => void;
   /** Host UI hooks: the palette.open command fired (show the dialog). */
   onPaletteOpenRequested?: () => void;
+  /** Host UI hooks: diagnostics changed for a document (status surfaces). */
+  onDiagnosticsChanged?: (docId: string) => void;
+  /** Host UI hooks: rename was requested at the caret (show the prompt). */
+  onRenameRequested?: (currentName: string) => void;
 
   private readonly panes = new Map<PanelId, EditorPane>();
   private syntaxPort: SyntaxPort | undefined;
+  private lsp: LspManager | undefined;
+  private pendingRename: { docId: string; offset: number } | null = null;
   private readonly highlightsByDoc = new Map<string, DocumentHighlights>();
   private workbenchSnapshot: WorkbenchSnapshot;
   private readonly workbenchListeners = new Set<() => void>();
@@ -246,7 +257,9 @@ export class AppRuntime {
         // set themselves (see lineNumbers). Per-document services flow to
         // commands through the focused panel's view context.
         const workspaceContext = workspace.context;
+        const languageServers = yield* makeLanguageServers;
         const services = Layer.mergeAll(
+          Layer.succeed(LanguageServers, languageServers),
           Layer.succeed(Commands, commands),
           Layer.succeed(Keymaps, keymaps),
           Layer.succeed(Workbench, workbench),
@@ -261,6 +274,12 @@ export class AppRuntime {
           }),
           Layer.succeed(HostPaletteActions, {
             open: () => instance.onPaletteOpenRequested?.(),
+          }),
+          Layer.succeed(HostLspActions, {
+            goToDefinition: () => void instance.goToDefinition(),
+            formatDocument: () => void instance.formatActiveDocument(),
+            renameSymbol: () => instance.startRename(),
+            toggleInlayHints: () => instance.toggleInlayHints(),
           }),
           Layer.succeed(HostViewActions, {
             splitRight: () => instance.splitFocused("row"),
@@ -277,10 +296,18 @@ export class AppRuntime {
             toPackageDescriptor(filesPackage, services),
             toPackageDescriptor(palettePackage, services),
             toPackageDescriptor(viewPackage, services),
+            toPackageDescriptor(lspDefaults, services),
+            toPackageDescriptor(lspActions, services),
           ])
           .pipe(Effect.orDie);
 
-        return new AppRuntime(scope, workspace, workbench, commands, keymaps);
+        const appRuntime = new AppRuntime(scope, workspace, workbench, commands, keymaps);
+        const processPort = createProcessPort();
+        if (processPort !== undefined) {
+          appRuntime.lsp = new LspManager(processPort, fileSystem, languageServers);
+          appRuntime.lsp.onDiagnostics = (docId) => appRuntime.onDiagnosticsChanged?.(docId);
+        }
+        return appRuntime;
       }),
     );
     // Syntax host (absent in plain browsers: capability gating).
@@ -364,6 +391,7 @@ export class AppRuntime {
       (other) => other.document.id === pane.document.id,
     );
     if (!documentStillShown) {
+      this.lsp?.detach(String(pane.document.id));
       this.highlightsByDoc.get(String(pane.document.id))?.close();
       this.highlightsByDoc.delete(String(pane.document.id));
       const files = Context.getOption(this.workspace.context, Files);
@@ -492,6 +520,73 @@ export class AppRuntime {
     return this.highlightsByDoc.get(String(docId));
   }
 
+  /** Diagnostic counts for a document (null without LSP or attachment). */
+  diagnosticsFor(docId: unknown): DiagnosticCounts | null {
+    return this.lsp?.counts(String(docId)) ?? null;
+  }
+
+  async goToDefinition(): Promise<void> {
+    const pane = this.focusedPane();
+    if (pane === undefined || this.lsp === undefined) return;
+    const head = pane.snapshot().selection.primary.head;
+    const locations = await this.lsp.definition(String(pane.document.id), head);
+    const target = locations[0];
+    if (target === undefined) return;
+    const path = uriToPath(target.uri);
+    if (path === null) return;
+    await this.jumpToLocation(path, target.range.start);
+  }
+
+  /** Open (or focus) a file and place the caret at an LSP position. */
+  async jumpToLocation(path: string, position: lsp.Position): Promise<void> {
+    const current = this.focusedPane();
+    const samePath = current !== undefined && current.fileInfo()?.path === path;
+    if (!samePath) await this.openPath(path);
+    const pane = this.focusedPane();
+    if (pane === undefined) return;
+    const text = pane.snapshot().text;
+    const line = Math.min(Math.max(0, position.line), text.lineCount - 1);
+    const range = text.lineRange(line);
+    const offset = Math.min(range.from + Math.max(0, position.character), range.to);
+    pane.setSelection(Selection.point(offset));
+  }
+
+  async formatActiveDocument(): Promise<void> {
+    const pane = this.focusedPane();
+    if (pane === undefined || this.lsp === undefined) return;
+    await this.lsp.format(String(pane.document.id));
+  }
+
+  /** Phase 1 of rename: capture the caret target, ask the host for a name. */
+  startRename(): void {
+    const pane = this.focusedPane();
+    if (pane === undefined || this.lsp === undefined) return;
+    const snapshot = pane.snapshot();
+    const head = snapshot.selection.primary.head;
+    this.pendingRename = { docId: String(pane.document.id), offset: head };
+    // Word under the caret as the prompt's initial value.
+    const lineRange = snapshot.text.lineRangeAt(head);
+    const lineText = snapshot.text.sliceString(lineRange.from, lineRange.to);
+    const column = head - lineRange.from;
+    let start = column;
+    let end = column;
+    while (start > 0 && /\w/.test(lineText[start - 1]!)) start--;
+    while (end < lineText.length && /\w/.test(lineText[end]!)) end++;
+    this.onRenameRequested?.(lineText.slice(start, end));
+  }
+
+  /** Phase 2 of rename: the host collected the new name. */
+  async performRename(newName: string): Promise<void> {
+    const pending = this.pendingRename;
+    this.pendingRename = null;
+    if (pending === null || this.lsp === undefined || newName.length === 0) return;
+    await this.lsp.rename(pending.docId, pending.offset, newName);
+  }
+
+  toggleInlayHints(): void {
+    this.lsp?.toggleInlayHints();
+  }
+
   private attachHighlights(document: DocumentScope, path: string | undefined): void {
     if (this.syntaxPort === undefined) return;
     const key = String(document.id);
@@ -519,6 +614,7 @@ export class AppRuntime {
     if (Option.isNone(files)) return;
     const document = await Effect.runPromise(files.value.openPath(path));
     this.attachHighlights(document, path);
+    void this.lsp?.attach(document, path);
 
     const { arrangement, focusedSlot } = this.workbenchSnapshot;
     const slot = focusedSlot === null ? undefined : findSlot(arrangement, focusedSlot);
@@ -565,6 +661,7 @@ export class AppRuntime {
     await Effect.runPromise(
       files.value.save(pane.document.id).pipe(Effect.catchAll(() => Effect.void)),
     );
+    this.lsp?.documentSaved(String(pane.document.id));
     this.onFileStateChanged?.();
   }
 
@@ -622,6 +719,7 @@ export class AppRuntime {
   dispose(): void {
     // Closing the package scope interrupts forked package fibers (an async
     // boundary), so disposal cannot be runSync.
+    this.lsp?.dispose();
     for (const highlights of this.highlightsByDoc.values()) highlights.close();
     this.highlightsByDoc.clear();
     for (const fiber of this.mirrorFibers) Effect.runFork(Fiber.interrupt(fiber));

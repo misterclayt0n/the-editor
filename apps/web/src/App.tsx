@@ -5,6 +5,7 @@ import type { Tile } from "@the-editor/workbench";
 import { AppRuntime, type EditorPane } from "./runtime";
 import { WorkbenchView } from "./workbench/WorkbenchView";
 import { CommandPalette } from "./ui/CommandPalette";
+import { RenameDialog } from "./ui/RenameDialog";
 
 const fileLabel = (pane: EditorPane | undefined): string => {
   if (pane === undefined) return "";
@@ -48,6 +49,10 @@ export function App() {
   const [snapshot, setSnapshot] = useState<EditorSnapshot | null>(null);
   const [pending, setPending] = useState<ReadonlyArray<Chord>>([]);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [rename, setRename] = useState<{ open: boolean; initial: string }>({
+    open: false,
+    initial: "",
+  });
   // Bumped on focus/file changes so the status bar re-reads the focused pane.
   const [, setStatusEpoch] = useState(0);
 
@@ -55,6 +60,8 @@ export function App() {
     const booted = AppRuntime.boot("");
     booted.onFileStateChanged = () => setStatusEpoch((epoch) => epoch + 1);
     booted.onPaletteOpenRequested = () => setPaletteOpen(true);
+    booted.onDiagnosticsChanged = () => setStatusEpoch((epoch) => epoch + 1);
+    booted.onRenameRequested = (currentName) => setRename({ open: true, initial: currentName });
     const unsubscribe = booted.subscribeWorkbench(() => {
       setStatusEpoch((epoch) => epoch + 1);
       setSnapshot(booted.focusedPane()?.snapshot() ?? null);
@@ -68,6 +75,8 @@ export function App() {
         save: () => booted.saveActiveFile(),
         info: () => booted.focusedPane()?.fileInfo() ?? null,
         layout: () => layoutSummary(booted),
+        definition: () => booted.goToDefinition(),
+        format: () => booted.formatActiveDocument(),
       };
     }
     return () => {
@@ -97,6 +106,7 @@ export function App() {
   const focusedPane = runtime.focusedPane();
   const head = snapshot?.selection.primary.head;
   const line = snapshot && head !== undefined ? snapshot.text.lineRangeAt(head) : null;
+  const diagnostics = focusedPane ? runtime.diagnosticsFor(focusedPane.document.id) : null;
 
   return (
     <div className="app">
@@ -110,12 +120,35 @@ export function App() {
         onOpenChange={handlePaletteOpenChange}
         commands={runtime.commands}
       />
+      <RenameDialog
+        open={rename.open}
+        initialValue={rename.initial}
+        onSubmit={(value) => void runtime.performRename(value)}
+        onClose={() => {
+          setRename((state) => ({ ...state, open: false }));
+          window.requestAnimationFrame(() => {
+            document
+              .querySelector<HTMLElement>(".wb-pane--focused .editor")
+              ?.focus({ preventScroll: true });
+          });
+        }}
+      />
       <div className="status-bar">
         <span>
           {fileLabel(focusedPane)}
           {line !== null && head !== undefined
             ? ` · Ln ${line.index + 1}, Col ${head - line.from + 1}`
             : ""}
+          {diagnostics !== null && diagnostics.errors + diagnostics.warnings > 0 && (
+            <span className="status-diagnostics">
+              {diagnostics.errors > 0 && (
+                <span className="status-diagnostics-errors"> ✗ {diagnostics.errors}</span>
+              )}
+              {diagnostics.warnings > 0 && (
+                <span className="status-diagnostics-warnings"> ⚠ {diagnostics.warnings}</span>
+              )}
+            </span>
+          )}
           {pending.length > 0 ? ` · ${formatChords(pending)} …` : ""}
         </span>
         <span>

@@ -220,7 +220,8 @@ body {
 }
 
 .editor-decoration-underline {
-  border-bottom: 1px wavy currentColor;
+  /* Color comes from the contribution's inline borderBottomColor. */
+  border-bottom: 2px dotted currentColor;
 }
 
 .editor-decoration-outline {
@@ -456,6 +457,48 @@ body {
   color: var(--fg-dim);
   font-size: 13px;
   user-select: none;
+}
+
+/* LSP inlay hints: dim inline annotations, visually distinct from text. */
+.lsp-inlay-hint {
+  color: var(--fg-dim);
+  opacity: 0.85;
+}
+
+/* Single-input prompt (rename), palette-positioned. */
+.rename-dialog {
+  position: fixed;
+  z-index: 50;
+  top: 88px;
+  left: 50vw;
+  width: min(360px, calc(100vw - 96px));
+  transform: translateX(-50%);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-editor);
+  box-shadow: 0 10px 32px color-mix(in srgb, var(--bg-editor) 54%, transparent);
+}
+
+.rename-dialog__input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  outline: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+}
+
+.status-diagnostics-errors {
+  color: #f48771;
+}
+
+.status-diagnostics-warnings {
+  color: #cca700;
 }
 
 .status-bar {

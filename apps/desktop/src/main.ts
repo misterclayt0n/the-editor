@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
+import { spawn, type ChildProcess } from "node:child_process";
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL?.trim();
@@ -67,6 +68,63 @@ function registerFileSystemHandlers(): void {
   });
 }
 
+/**
+ * Process host: the main-process half of the renderer's ProcessPort.
+ * Language servers (and any future external tool) run as ordinary child
+ * processes here; stdio crosses to the renderer as raw byte chunks.
+ */
+let nextProcId = 1;
+const procs = new Map<number, ChildProcess>();
+
+function registerProcessHandlers(): void {
+  ipcMain.handle(
+    "proc:spawn",
+    (event, options: { command: string; args?: string[]; cwd?: string }) => {
+      const sender = event.sender;
+      try {
+        const child = spawn(options.command, options.args ?? [], {
+          ...(options.cwd ? { cwd: options.cwd } : {}),
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+        const id = nextProcId++;
+        procs.set(id, child);
+        child.stdout!.on("data", (chunk: Buffer) => {
+          if (!sender.isDestroyed()) {
+            sender.send("proc:data", { id, stream: "stdout", chunk: new Uint8Array(chunk) });
+          }
+        });
+        child.stderr!.on("data", (chunk: Buffer) => {
+          if (!sender.isDestroyed()) {
+            sender.send("proc:data", { id, stream: "stderr", chunk: new Uint8Array(chunk) });
+          }
+        });
+        child.on("exit", (code) => {
+          procs.delete(id);
+          if (!sender.isDestroyed()) sender.send("proc:exit", { id, code });
+        });
+        child.on("error", () => {
+          procs.delete(id);
+          if (!sender.isDestroyed()) sender.send("proc:exit", { id, code: -1 });
+        });
+        return id;
+      } catch {
+        return null;
+      }
+    },
+  );
+  ipcMain.handle("proc:write", (_event, id: number, chunk: Uint8Array) => {
+    procs.get(id)?.stdin?.write(Buffer.from(chunk));
+  });
+  ipcMain.handle("proc:kill", (_event, id: number) => {
+    procs.get(id)?.kill();
+    procs.delete(id);
+  });
+  app.on("will-quit", () => {
+    for (const child of procs.values()) child.kill();
+    procs.clear();
+  });
+}
+
 function createWindow(): void {
   const window = new BrowserWindow({
     width: 1200,
@@ -93,6 +151,7 @@ function createWindow(): void {
 
 void app.whenReady().then(() => {
   registerFileSystemHandlers();
+  registerProcessHandlers();
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

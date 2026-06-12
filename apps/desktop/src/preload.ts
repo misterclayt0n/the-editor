@@ -46,6 +46,48 @@ try {
   console.error("[preload] syntax engine unavailable:", error);
 }
 
+/**
+ * The renderer-side half of ProcessPort (language servers and other
+ * external tools). Byte chunks; listener routing by process id.
+ */
+const procDataListeners = new Map<
+  number,
+  (chunk: Uint8Array, stream: "stdout" | "stderr") => void
+>();
+const procExitListeners = new Map<number, (code: number | null) => void>();
+ipcRenderer.on(
+  "proc:data",
+  (_event, payload: { id: number; stream: "stdout" | "stderr"; chunk: Uint8Array }) => {
+    procDataListeners.get(payload.id)?.(payload.chunk, payload.stream);
+  },
+);
+ipcRenderer.on("proc:exit", (_event, payload: { id: number; code: number | null }) => {
+  procExitListeners.get(payload.id)?.(payload.code);
+  procDataListeners.delete(payload.id);
+  procExitListeners.delete(payload.id);
+});
+
+contextBridge.exposeInMainWorld("theEditorProc", {
+  spawn: (options: { command: string; args?: string[]; cwd?: string }): Promise<number | null> =>
+    ipcRenderer.invoke("proc:spawn", options),
+  write: (id: number, chunk: Uint8Array): Promise<void> =>
+    ipcRenderer.invoke("proc:write", id, chunk),
+  kill: (id: number): Promise<void> => {
+    procDataListeners.delete(id);
+    procExitListeners.delete(id);
+    return ipcRenderer.invoke("proc:kill", id);
+  },
+  onData: (
+    id: number,
+    listener: (chunk: Uint8Array, stream: "stdout" | "stderr") => void,
+  ): void => {
+    procDataListeners.set(id, listener);
+  },
+  onExit: (id: number, listener: (code: number | null) => void): void => {
+    procExitListeners.set(id, listener);
+  },
+});
+
 contextBridge.exposeInMainWorld("theEditorFs", {
   readFile: (path: string): Promise<string> => ipcRenderer.invoke("fs:read", path),
   writeFile: (path: string, text: string): Promise<{ mtimeMs: number; size: number }> =>

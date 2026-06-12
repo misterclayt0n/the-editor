@@ -1,6 +1,6 @@
 // GENERATED FILE — do not edit.
-// Source: runtime/languages.toml (vendored from helix-editor/helix).
-// Regenerate: pnpm --filter @the-editor/syntax codegen
+// Source: helix-editor/helix languages.toml.
+// Regenerate: pnpm --filter @the-editor/syntax codegen [path-to-languages.toml]
 
 import type { SyntaxConfiguration } from "../syntax.js";
 

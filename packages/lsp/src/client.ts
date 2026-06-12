@@ -41,6 +41,7 @@ const staticCapabilityKeys: Record<string, string> = {
   [lsp.InlayHintRequest.method]: "inlayHintProvider",
   [lsp.HoverRequest.method]: "hoverProvider",
   [lsp.CompletionRequest.method]: "completionProvider",
+  [lsp.SignatureHelpRequest.method]: "signatureHelpProvider",
   [lsp.ReferencesRequest.method]: "referencesProvider",
   [lsp.DocumentSymbolRequest.method]: "documentSymbolProvider",
 };
@@ -147,6 +148,15 @@ export class LspClient {
           hover: {
             dynamicRegistration: true,
             contentFormat: [lsp.MarkupKind.Markdown, lsp.MarkupKind.PlainText],
+          },
+          signatureHelp: {
+            dynamicRegistration: true,
+            contextSupport: true,
+            signatureInformation: {
+              documentationFormat: [lsp.MarkupKind.Markdown, lsp.MarkupKind.PlainText],
+              parameterInformation: { labelOffsetSupport: true },
+              activeParameterSupport: true,
+            },
           },
           formatting: { dynamicRegistration: true },
           rename: { dynamicRegistration: true, prepareSupport: false },
@@ -392,6 +402,28 @@ export class LspClient {
   completionTriggerCharacters(): readonly string[] {
     const provider = this.serverCapabilities.completionProvider;
     return provider?.triggerCharacters ?? [];
+  }
+
+  signatureTriggerCharacters(): readonly string[] {
+    return this.serverCapabilities.signatureHelpProvider?.triggerCharacters ?? [];
+  }
+
+  signatureRetriggerCharacters(): readonly string[] {
+    return this.serverCapabilities.signatureHelpProvider?.retriggerCharacters ?? [];
+  }
+
+  async signatureHelp(
+    uri: string,
+    position: lsp.Position,
+    context: lsp.SignatureHelpContext,
+    token?: CancellationToken,
+  ): Promise<lsp.SignatureHelp | null> {
+    const result = await this.connection.sendRequest(
+      lsp.SignatureHelpRequest.type,
+      { textDocument: { uri }, position, context },
+      token,
+    );
+    return result ?? null;
   }
 
   async inlayHints(

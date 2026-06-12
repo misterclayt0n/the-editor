@@ -10,6 +10,36 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { highlightSnippet } from "../editor/snippetHighlight";
 import type { IntelController } from "./controller";
+import type { SignatureInfo } from "./types";
+
+/** The signature label split around the active parameter's span. */
+function SignatureLabel({
+  signature,
+  activeParameter,
+}: {
+  readonly signature: SignatureInfo;
+  readonly activeParameter: number;
+}) {
+  const label = signature.label;
+  const parameter = signature.parameters?.[activeParameter];
+  let range: readonly [number, number] | null = null;
+  if (parameter !== undefined) {
+    if (typeof parameter.label === "string") {
+      const index = label.indexOf(parameter.label);
+      if (index >= 0) range = [index, index + parameter.label.length];
+    } else {
+      range = parameter.label;
+    }
+  }
+  if (range === null) return <span className="intel-signature__label">{label}</span>;
+  return (
+    <span className="intel-signature__label">
+      {label.slice(0, range[0])}
+      <span className="intel-signature__active">{label.slice(range[0], range[1])}</span>
+      {label.slice(range[1])}
+    </span>
+  );
+}
 
 const escapeHtml = (text: string): string =>
   text
@@ -92,6 +122,13 @@ export function IntelView({ controller }: { readonly controller: IntelController
 
   const completionHost = controller.completionElement();
   const hoverHost = controller.hoverElement();
+  const signatureHost = controller.signatureElement();
+  const signatureResult = state.signature.result;
+  const activeSignature = signatureResult?.signatures[state.signature.selected];
+  const activeParameter =
+    activeSignature?.activeParameter ?? signatureResult?.activeParameter ?? 0;
+  const activeParameterDoc =
+    activeSignature?.parameters?.[activeParameter]?.documentation;
 
   return (
     <>
@@ -121,6 +158,33 @@ export function IntelView({ controller }: { readonly controller: IntelController
             ))}
           </div>,
           completionHost,
+        )}
+      {signatureHost !== null &&
+        state.signature.open &&
+        signatureResult !== null &&
+        activeSignature !== undefined &&
+        createPortal(
+          <div className="intel-signature">
+            <div className="intel-signature__line">
+              {signatureResult.signatures.length > 1 && (
+                <span className="intel-signature__counter">
+                  {state.signature.selected + 1}/{signatureResult.signatures.length}
+                </span>
+              )}
+              <SignatureLabel signature={activeSignature} activeParameter={activeParameter} />
+            </div>
+            {activeParameterDoc !== undefined && (
+              <div className="intel-signature__param-doc">
+                <Markdown contents={activeParameterDoc} />
+              </div>
+            )}
+            {activeSignature.documentation !== undefined && (
+              <div className="intel-signature__doc">
+                <Markdown contents={activeSignature.documentation} />
+              </div>
+            )}
+          </div>,
+          signatureHost,
         )}
       {hoverHost !== null &&
         state.hover.open &&

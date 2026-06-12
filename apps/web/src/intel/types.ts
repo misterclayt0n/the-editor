@@ -117,6 +117,53 @@ export interface HoverProvider {
   provide(context: HoverContext): Promise<HoverResult | null> | HoverResult | null;
 }
 
+export type SignatureTrigger =
+  | { readonly kind: "invoked" } // explicit (ctrl+shift+space)
+  | { readonly kind: "triggerCharacter"; readonly character: string }
+  | { readonly kind: "contentChange" }; // edits while the widget is open
+
+export type SignatureParameter = {
+  /** Plain text, or [start, end) offsets into the signature label. */
+  readonly label: string | readonly [number, number];
+  readonly documentation?: string;
+};
+
+export type SignatureInfo = {
+  readonly label: string;
+  readonly documentation?: string;
+  readonly parameters?: ReadonlyArray<SignatureParameter>;
+  readonly activeParameter?: number;
+};
+
+export type SignatureResult = {
+  readonly signatures: ReadonlyArray<SignatureInfo>;
+  readonly activeSignature?: number;
+  readonly activeParameter?: number;
+};
+
+export type SignatureContext = {
+  readonly docId: string;
+  readonly path: string | null;
+  readonly text: TextBuffer;
+  readonly offset: number;
+  readonly trigger: SignatureTrigger;
+  /** True when a widget is already showing (the session is re-querying). */
+  readonly isRetrigger: boolean;
+  /** The currently displayed help, for servers that refine it. */
+  readonly active?: SignatureResult;
+};
+
+export interface SignatureProvider {
+  readonly id: string;
+  /** Characters that open the widget ("(",  ","). */
+  readonly triggerCharacters?: (docId: string) => readonly string[];
+  /** Characters that re-query an OPEN widget (")" closing it server-side). */
+  readonly retriggerCharacters?: (docId: string) => readonly string[];
+  provide(
+    context: SignatureContext,
+  ): Promise<SignatureResult | null> | SignatureResult | null;
+}
+
 const makeProviderRegistry = <P>() =>
   Effect.gen(function* () {
     const providers = yield* Ref.make<ReadonlyArray<P>>([]);
@@ -148,12 +195,26 @@ export class HoverProviders extends Context.Tag("the-editor/web/HoverProviders")
   }
 >() {}
 
+export class SignatureProviders extends Context.Tag("the-editor/web/SignatureProviders")<
+  SignatureProviders,
+  {
+    readonly register: (
+      provider: SignatureProvider,
+    ) => Effect.Effect<void, never, Scope.Scope>;
+    readonly list: Effect.Effect<ReadonlyArray<SignatureProvider>>;
+  }
+>() {}
+
 export const makeCompletionProviders = makeProviderRegistry<CompletionProvider>();
 export const makeHoverProviders = makeProviderRegistry<HoverProvider>();
+export const makeSignatureProviders = makeProviderRegistry<SignatureProvider>();
 
 export namespace CompletionProviders {
   export type Service = Context.Tag.Service<CompletionProviders>;
 }
 export namespace HoverProviders {
   export type Service = Context.Tag.Service<HoverProviders>;
+}
+export namespace SignatureProviders {
+  export type Service = Context.Tag.Service<SignatureProviders>;
 }

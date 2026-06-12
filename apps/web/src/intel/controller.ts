@@ -42,6 +42,9 @@ import type {
   CompletionTrigger,
   HoverProviders,
   HoverResult,
+  SignatureProviders,
+  SignatureResult,
+  SignatureTrigger,
 } from "./types";
 
 const HOVER_DELAY_MS = 300;
@@ -71,6 +74,12 @@ export type IntelState = {
     readonly anchor: number;
   };
   readonly hover: { readonly open: boolean; readonly parts: readonly HoverResult[] };
+  readonly signature: {
+    readonly open: boolean;
+    readonly result: SignatureResult | null;
+    /** Selected signature index (ArrowUp/Down when several overloads). */
+    readonly selected: number;
+  };
 };
 
 type CompletionSession = {
@@ -105,6 +114,19 @@ type SnippetSessionState = {
   stops: Array<{ index: number; ranges: Array<{ from: number; to: number }> }>;
   current: number;
   version: number;
+};
+
+/**
+ * A live signature-help widget: opened by a trigger character ("(", ",")
+ * or explicitly; every subsequent edit or caret move RE-QUERIES (the
+ * server tracks which call/parameter the caret is in and answers null once
+ * it leaves — that closes the widget). ArrowUp/Down cycle overloads.
+ */
+type SignatureSessionState = {
+  pane: EditorPane;
+  anchor: number;
+  result: SignatureResult;
+  selected: number;
 };
 
 type DocumentChangeRange = {
@@ -164,6 +186,12 @@ export class IntelController {
   private hoverRangeHandle: VisualsHandle | null = null;
   private session: CompletionSession | null = null;
   private snippet: SnippetSessionState | null = null;
+  private signatureSession: SignatureSessionState | null = null;
+  private signatureGeneration = 0;
+  /** Coalesces doc-change + selection-change into one signature re-query. */
+  private signatureQueryTimer: number | null = null;
+  private signaturePendingTrigger: SignatureTrigger | null = null;
+  private signatureFloat: FloatHandle | null = null;
   private hover: HoverSession | null = null;
   private hoverTimer: number | null = null;
   /** Pending graceful hide (pointer left the range, may be heading to the card). */
@@ -187,12 +215,14 @@ export class IntelController {
   private state: IntelState = {
     completion: { open: false, items: [], selected: 0, anchor: 0 },
     hover: { open: false, parts: [] },
+    signature: { open: false, result: null, selected: 0 },
   };
 
   constructor(
     private readonly runtime: AppRuntime,
     private readonly completionProviders: CompletionProviders.Service,
     private readonly hoverProviders: HoverProviders.Service,
+    private readonly signatureProviders: SignatureProviders.Service,
   ) {}
 
   // -------------------------------------------------------------- host API
@@ -213,6 +243,20 @@ export class IntelController {
         this.snippet !== null
           ? { current: this.snippet.current, stops: this.snippet.stops }
           : null,
+      signature:
+        this.signatureSession !== null
+          ? {
+              selected: this.signatureSession.selected,
+              signatures: this.signatureSession.result.signatures.map((s) => s.label),
+            }
+          : null,
+      signatureTriggers: Effect.runSync(this.signatureProviders.list).map((provider) => ({
+        id: provider.id,
+        triggers:
+          this.pane !== null
+            ? provider.triggerCharacters?.(String(this.pane.document.id)) ?? []
+            : [],
+      })),
     };
   }
 
@@ -229,19 +273,26 @@ export class IntelController {
     return this.hoverFloat?.element ?? null;
   }
 
+  signatureElement(): HTMLElement | null {
+    return this.signatureFloat?.element ?? null;
+  }
+
   /** Follow workbench focus: one active pane at a time. */
   setPane(pane: EditorPane | null): void {
     if (pane === this.pane) return;
     this.dismissCompletion();
     this.dismissHover();
     this.endSnippetSession();
+    this.dismissSignature();
     if (this.pane !== null) {
       this.pane.keyInterceptor = undefined;
       this.pane.pointerHover = undefined;
       this.completionFloat?.dispose();
       this.hoverFloat?.dispose();
+      this.signatureFloat?.dispose();
       this.completionFloat = null;
       this.hoverFloat = null;
+      this.signatureFloat = null;
       if (this.hoverRangeScope !== null) {
         Effect.runFork(Scope.close(this.hoverRangeScope, Exit.void));
         this.hoverRangeScope = null;
@@ -255,6 +306,7 @@ export class IntelController {
 
     this.completionFloat = pane.floats.create();
     this.hoverFloat = pane.floats.create();
+    this.signatureFloat = pane.floats.create();
     const visuals = Context.get(
       pane.document.context as Context.Context<EditorVisuals>,
       EditorVisuals,
@@ -275,6 +327,99 @@ export class IntelController {
   triggerCompletion(): void {
     if (this.pane === null) return;
     void this.startSession({ kind: "invoked" });
+  }
+
+  /** ctrl+shift+space and the palette command land here. */
+  triggerSignatureHelp(): void {
+    if (this.pane === null) return;
+    void this.querySignature({ kind: "invoked" });
+  }
+
+  // -------------------------------------------------------- signature help
+
+  private signatureTriggerKind(character: string): "trigger" | "retrigger" | null {
+    if (character.length === 0 || this.pane === null) return null;
+    const docId = String(this.pane.document.id);
+    const providers = Effect.runSync(this.signatureProviders.list);
+    if (providers.some((p) => p.triggerCharacters?.(docId).includes(character))) return "trigger";
+    if (providers.some((p) => p.retriggerCharacters?.(docId).includes(character)))
+      return "retrigger";
+    return null;
+  }
+
+  /**
+   * Doc edits and caret moves both land here; one query per frame-ish.
+   * Trigger characters outrank plain content changes when they coalesce.
+   */
+  private scheduleSignatureQuery(trigger: SignatureTrigger): void {
+    if (trigger.kind === "triggerCharacter" || this.signaturePendingTrigger === null) {
+      this.signaturePendingTrigger = trigger;
+    }
+    if (this.signatureQueryTimer !== null) return;
+    this.signatureQueryTimer = window.setTimeout(() => {
+      this.signatureQueryTimer = null;
+      const pending = this.signaturePendingTrigger;
+      this.signaturePendingTrigger = null;
+      if (pending !== null) void this.querySignature(pending);
+    }, 30);
+  }
+
+  private async querySignature(trigger: SignatureTrigger): Promise<void> {
+    const pane = this.pane;
+    if (pane === null) return;
+    const generation = ++this.signatureGeneration;
+    const snapshot = pane.snapshot();
+    const caret = snapshot.selection.primary.head;
+    const isRetrigger = this.signatureSession !== null;
+    const context = {
+      docId: String(pane.document.id),
+      path: pane.fileInfo()?.path ?? null,
+      text: snapshot.text,
+      offset: caret,
+      trigger,
+      isRetrigger,
+      ...(this.signatureSession !== null ? { active: this.signatureSession.result } : {}),
+    };
+    const providers = Effect.runSync(this.signatureProviders.list);
+    // First provider with an answer wins (overloads aren't merged across
+    // providers the way completion items are).
+    let result: SignatureResult | null = null;
+    for (const provider of providers) {
+      result = await withTimeout(provider.provide(context), null);
+      if (result !== null && result.signatures.length > 0) break;
+      result = null;
+    }
+    if (generation !== this.signatureGeneration || this.pane !== pane) return;
+    if (result === null) {
+      this.dismissSignature();
+      return;
+    }
+    const anchor = this.signatureSession?.anchor ?? caret;
+    const selected = Math.min(result.activeSignature ?? 0, result.signatures.length - 1);
+    this.signatureSession = { pane, anchor, result, selected };
+    this.signatureFloat?.setAnchor({ offset: anchor, placement: "above" });
+    this.publish();
+  }
+
+  private moveSignatureSelection(delta: number): void {
+    const session = this.signatureSession;
+    if (session === null) return;
+    const count = session.result.signatures.length;
+    session.selected = (session.selected + delta + count) % count;
+    this.publish();
+  }
+
+  private dismissSignature(): void {
+    this.signatureGeneration++;
+    this.signaturePendingTrigger = null;
+    if (this.signatureQueryTimer !== null) {
+      window.clearTimeout(this.signatureQueryTimer);
+      this.signatureQueryTimer = null;
+    }
+    if (this.signatureSession === null) return;
+    this.signatureSession = null;
+    this.signatureFloat?.hide();
+    this.publish();
   }
 
   acceptSelected(): void {
@@ -446,6 +591,23 @@ export class IntelController {
           return true;
         default:
           return false;
+      }
+    }
+    if (this.signatureSession !== null) {
+      if (event.key === "Escape") {
+        this.dismissSignature();
+        return true;
+      }
+      // Up/Down cycle overloads — only intercepted when there ARE several.
+      if (this.signatureSession.result.signatures.length > 1) {
+        if (event.key === "ArrowUp") {
+          this.moveSignatureSelection(-1);
+          return true;
+        }
+        if (event.key === "ArrowDown") {
+          this.moveSignatureSelection(1);
+          return true;
+        }
       }
     }
     if (this.snippet !== null) {
@@ -649,6 +811,8 @@ export class IntelController {
       }
     }
 
+    this.onDocumentChangedSignature(typedChar, documentPayloads.length > 0);
+
     if (this.session !== null) {
       // Inside a session: trigger chars re-query; otherwise refilter, and
       // re-query if any provider's last list was incomplete.
@@ -673,6 +837,20 @@ export class IntelController {
     }
   }
 
+  /** Signature reactions to a document change (runs for ANY session state). */
+  private onDocumentChangedSignature(typedChar: string, hadTextChange: boolean): void {
+    if (typedChar !== "") {
+      const kind = this.signatureTriggerKind(typedChar);
+      if (kind === "trigger" || (kind === "retrigger" && this.signatureSession !== null)) {
+        this.scheduleSignatureQuery({ kind: "triggerCharacter", character: typedChar });
+        return;
+      }
+    }
+    if (hadTextChange && this.signatureSession !== null) {
+      this.scheduleSignatureQuery({ kind: "contentChange" });
+    }
+  }
+
   private onSelectionChanged(): void {
     const pane = this.pane;
     if (pane === null) return;
@@ -689,6 +867,9 @@ export class IntelController {
       const hi = Math.max(...offsets);
       if (caret < lo || caret > hi) this.endSnippetSession();
     }
+    // Caret moves re-query signature help: the server answers null once
+    // the caret leaves the call, which closes the widget.
+    if (this.signatureSession !== null) this.scheduleSignatureQuery({ kind: "contentChange" });
     this.dismissHover();
   }
 
@@ -854,6 +1035,11 @@ export class IntelController {
         anchor: this.session?.anchor ?? 0,
       },
       hover: { open: this.hover !== null, parts: this.hover?.parts ?? [] },
+      signature: {
+        open: this.signatureSession !== null,
+        result: this.signatureSession?.result ?? null,
+        selected: this.signatureSession?.selected ?? 0,
+      },
     };
     for (const listener of this.listeners) listener();
   }

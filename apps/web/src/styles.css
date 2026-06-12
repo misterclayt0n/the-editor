@@ -680,6 +680,48 @@ body {
   color: var(--fg);
 }
 
+/* Signature help: the call's label with the active parameter highlighted. */
+.intel-signature {
+  min-width: 160px;
+  max-width: 560px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-editor);
+  box-shadow: 0 10px 32px color-mix(in srgb, var(--bg-editor) 54%, transparent);
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.intel-signature__line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: "SF Mono", Menlo, Monaco, "Cascadia Code", monospace;
+  white-space: pre-wrap;
+}
+
+.intel-signature__counter {
+  flex: none;
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+
+.intel-signature__active {
+  border-radius: 3px;
+  background: color-mix(in srgb, #569cd6 22%, var(--bg-editor));
+  font-weight: 600;
+}
+
+.intel-signature__param-doc,
+.intel-signature__doc {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+  color: var(--fg-dim);
+}
+
 /* LSP inlay hints: dim inline annotations, visually distinct from text. */
 .lsp-inlay-hint {
   color: var(--fg-dim);

@@ -9,10 +9,13 @@ import { definePackage } from "@the-editor/extensions";
 import {
   CompletionProviders,
   HoverProviders,
+  SignatureProviders,
   type CompletionContext,
   type CompletionResult,
   type HoverContext,
   type HoverResult,
+  type SignatureContext,
+  type SignatureResult,
 } from "../intel/types";
 
 export class HostLspIntel extends Context.Tag("the-editor/web/HostLspIntel")<
@@ -24,6 +27,9 @@ export class HostLspIntel extends Context.Tag("the-editor/web/HostLspIntel")<
     readonly hover: (context: HoverContext) => Promise<HoverResult | null>;
     readonly diagnosticsHover: (context: HoverContext) => HoverResult | null;
     readonly triggerCharacters: (docId: string) => readonly string[];
+    readonly signature: (context: SignatureContext) => Promise<SignatureResult | null>;
+    readonly signatureTriggerCharacters: (docId: string) => readonly string[];
+    readonly signatureRetriggerCharacters: (docId: string) => readonly string[];
   }
 >() {}
 
@@ -31,12 +37,19 @@ export const lspIntel = definePackage("the-editor/lsp-intel", () =>
   Effect.gen(function* () {
     const completions = yield* CompletionProviders;
     const hovers = yield* HoverProviders;
+    const signatures = yield* SignatureProviders;
     const host = yield* HostLspIntel;
 
     yield* completions.register({
       id: "lsp",
       triggerCharacters: (docId) => host.triggerCharacters(docId),
       provide: (context) => host.completion(context),
+    });
+    yield* signatures.register({
+      id: "lsp",
+      triggerCharacters: (docId) => host.signatureTriggerCharacters(docId),
+      retriggerCharacters: (docId) => host.signatureRetriggerCharacters(docId),
+      provide: (context) => host.signature(context),
     });
     // Diagnostics card first; the docs card stacks beneath it.
     yield* hovers.register({

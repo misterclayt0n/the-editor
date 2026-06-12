@@ -65,8 +65,14 @@ export function App() {
     booted.onPaletteOpenRequested = () => setPaletteOpen(true);
     booted.onDiagnosticsChanged = () => setStatusEpoch((epoch) => epoch + 1);
     booted.onRenameRequested = (currentName) => setRename({ open: true, initial: currentName });
-    const controller = new IntelController(booted, booted.intel.completions, booted.intel.hovers);
+    const controller = new IntelController(
+      booted,
+      booted.intel.completions,
+      booted.intel.hovers,
+      booted.intel.signatures,
+    );
     booted.onTriggerCompletion = () => controller.triggerCompletion();
+    booted.onTriggerSignatureHelp = () => controller.triggerSignatureHelp();
     controller.setPane(booted.focusedPane() ?? null);
     setIntel(controller);
     const unsubscribe = booted.subscribeWorkbench(() => {

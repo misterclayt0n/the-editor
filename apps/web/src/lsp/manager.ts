@@ -51,6 +51,8 @@ import type {
   CompletionResult,
   HoverContext,
   HoverResult,
+  SignatureContext,
+  SignatureResult,
 } from "../intel/types";
 
 const FULL_SYNC_DEBOUNCE_MS = 150;
@@ -294,6 +296,7 @@ export class LspManager {
     const attachment = this.attachments.get(context.docId);
     if (attachment === undefined || !attachment.handle.alive) return null;
     if (!attachment.handle.client.supports(lsp.CompletionRequest.method)) return null;
+    this.flushPendingSync(attachment);
     const buffer = this.bufferOf(attachment);
     const triggerKind =
       context.trigger.kind === "triggerCharacter"
@@ -390,6 +393,7 @@ export class LspManager {
     const attachment = this.attachments.get(context.docId);
     if (attachment === undefined || !attachment.handle.alive) return null;
     if (!attachment.handle.client.supports(lsp.HoverRequest.method)) return null;
+    this.flushPendingSync(attachment);
     const buffer = this.bufferOf(attachment);
     const hover = await attachment.handle.client.hover(
       attachment.uri,
@@ -418,10 +422,97 @@ export class LspManager {
     return attachment.handle.client.completionTriggerCharacters();
   }
 
+  signatureTriggerCharacters(docId: string): readonly string[] {
+    const attachment = this.attachments.get(docId);
+    if (attachment === undefined || !attachment.handle.alive) return [];
+    return attachment.handle.client.signatureTriggerCharacters();
+  }
+
+  signatureRetriggerCharacters(docId: string): readonly string[] {
+    const attachment = this.attachments.get(docId);
+    if (attachment === undefined || !attachment.handle.alive) return [];
+    return attachment.handle.client.signatureRetriggerCharacters();
+  }
+
+  /** LSP signature help as a generic intel result. */
+  async signatureHelpAt(context: SignatureContext): Promise<SignatureResult | null> {
+    const attachment = this.attachments.get(context.docId);
+    if (attachment === undefined || !attachment.handle.alive) return null;
+    if (!attachment.handle.client.supports(lsp.SignatureHelpRequest.method)) return null;
+    this.flushPendingSync(attachment);
+    const buffer = this.bufferOf(attachment);
+    const triggerKind =
+      context.trigger.kind === "triggerCharacter"
+        ? lsp.SignatureHelpTriggerKind.TriggerCharacter
+        : context.trigger.kind === "contentChange"
+          ? lsp.SignatureHelpTriggerKind.ContentChange
+          : lsp.SignatureHelpTriggerKind.Invoked;
+    const help = await attachment.handle.client.signatureHelp(
+      attachment.uri,
+      offsetToPosition(buffer, context.offset),
+      {
+        triggerKind,
+        isRetrigger: context.isRetrigger,
+        ...(context.trigger.kind === "triggerCharacter"
+          ? { triggerCharacter: context.trigger.character }
+          : {}),
+        ...(context.isRetrigger && context.active !== undefined
+          ? {
+              activeSignatureHelp: {
+                signatures: context.active.signatures.map((signature) => ({
+                  label: signature.label,
+                  ...(signature.parameters !== undefined
+                    ? {
+                        parameters: signature.parameters.map((parameter) => ({
+                          label: parameter.label as string | [number, number],
+                        })),
+                      }
+                    : {}),
+                })),
+                ...(context.active.activeSignature !== undefined
+                  ? { activeSignature: context.active.activeSignature }
+                  : {}),
+                ...(context.active.activeParameter !== undefined
+                  ? { activeParameter: context.active.activeParameter }
+                  : {}),
+              },
+            }
+          : {}),
+      },
+    );
+    if (help === null || help.signatures.length === 0) return null;
+    return {
+      signatures: help.signatures.map((signature) => ({
+        label: signature.label,
+        ...(signature.documentation !== undefined
+          ? { documentation: markupToString(signature.documentation) }
+          : {}),
+        ...(signature.parameters !== undefined
+          ? {
+              parameters: signature.parameters.map((parameter) => ({
+                label: parameter.label as string | readonly [number, number],
+                ...(parameter.documentation !== undefined
+                  ? { documentation: markupToString(parameter.documentation) }
+                  : {}),
+              })),
+            }
+          : {}),
+        ...(signature.activeParameter !== undefined && signature.activeParameter !== null
+          ? { activeParameter: signature.activeParameter }
+          : {}),
+      })),
+      ...(help.activeSignature !== undefined ? { activeSignature: help.activeSignature } : {}),
+      ...(help.activeParameter !== undefined && help.activeParameter !== null
+        ? { activeParameter: help.activeParameter }
+        : {}),
+    };
+  }
+
   async definition(docId: string, offset: number): Promise<lsp.Location[]> {
     const attachment = this.attachments.get(docId);
     if (attachment === undefined || !attachment.handle.alive) return [];
     if (!attachment.handle.client.supports(lsp.DefinitionRequest.method)) return [];
+    this.flushPendingSync(attachment);
     const buffer = this.bufferOf(attachment);
     return attachment.handle.client.definition(attachment.uri, offsetToPosition(buffer, offset));
   }
@@ -430,6 +521,7 @@ export class LspManager {
     const attachment = this.attachments.get(docId);
     if (attachment === undefined || !attachment.handle.alive) return false;
     if (!attachment.handle.client.supports(lsp.DocumentFormattingRequest.method)) return false;
+    this.flushPendingSync(attachment);
     const edits = await attachment.handle.client.formatting(attachment.uri, {
       tabSize: 2,
       insertSpaces: true,
@@ -443,6 +535,7 @@ export class LspManager {
     const attachment = this.attachments.get(docId);
     if (attachment === undefined || !attachment.handle.alive) return false;
     if (!attachment.handle.client.supports(lsp.RenameRequest.method)) return false;
+    this.flushPendingSync(attachment);
     const buffer = this.bufferOf(attachment);
     const edit = await attachment.handle.client.rename(
       attachment.uri,
@@ -514,15 +607,36 @@ export class LspManager {
       if (attachment.fullSyncTimer !== null) window.clearTimeout(attachment.fullSyncTimer);
       attachment.fullSyncTimer = window.setTimeout(() => {
         attachment.fullSyncTimer = null;
-        if (this.disposed || !attachment.handle.alive) return;
-        const current = Effect.runSync(text.snapshot);
-        const fullText = current.buffer.sliceString(0, current.buffer.length);
-        attachment.sync?.reset(fullText);
-        attachment.handle.client.changeDocumentFull(attachment.uri, current.version, fullText);
-        attachment.syncedVersion = current.version;
+        this.sendFullSync(attachment);
       }, FULL_SYNC_DEBOUNCE_MS);
     }
     this.scheduleHints(attachment, INLAY_HINT_DEBOUNCE_MS);
+  }
+
+  private sendFullSync(attachment: Attachment): void {
+    if (this.disposed || !attachment.handle.alive) return;
+    const text = Context.get(
+      attachment.document.context as Context.Context<TextDocument>,
+      TextDocument,
+    );
+    const current = Effect.runSync(text.snapshot);
+    const fullText = current.buffer.sliceString(0, current.buffer.length);
+    attachment.sync?.reset(fullText);
+    attachment.handle.client.changeDocumentFull(attachment.uri, current.version, fullText);
+    attachment.syncedVersion = current.version;
+  }
+
+  /**
+   * Position-sensitive requests must not race a PENDING resync: a typing
+   * burst trips the chain gate into the debounced full sync, and a request
+   * issued in that window reads positions against the server's STALE
+   * mirror (signature help asked about "(" the server hadn't seen yet).
+   */
+  private flushPendingSync(attachment: Attachment): void {
+    if (attachment.fullSyncTimer === null) return;
+    window.clearTimeout(attachment.fullSyncTimer);
+    attachment.fullSyncTimer = null;
+    this.sendFullSync(attachment);
   }
 
   // ----------------------------------------------------------- diagnostics

@@ -94,8 +94,10 @@ import { wordCompletions } from "./product/wordCompletions";
 import {
   makeCompletionProviders,
   makeHoverProviders,
+  makeSignatureProviders,
   CompletionProviders,
   HoverProviders,
+  SignatureProviders,
 } from "./intel/types";
 import { uriToPath, type lsp } from "@the-editor/lsp";
 import { MountHub } from "./editor/mounts";
@@ -235,10 +237,13 @@ export class AppRuntime {
   onRenameRequested?: (currentName: string) => void;
   /** Host UI hooks: explicit completion trigger (ctrl+space). */
   onTriggerCompletion?: () => void;
+  /** Host UI hooks: explicit signature-help trigger (ctrl+shift+space). */
+  onTriggerSignatureHelp?: () => void;
   /** Intel provider registries (App hands them to the IntelController). */
   intel!: {
     readonly completions: CompletionProviders.Service;
     readonly hovers: HoverProviders.Service;
+    readonly signatures: SignatureProviders.Service;
   };
 
   private readonly panes = new Map<PanelId, EditorPane>();
@@ -285,17 +290,25 @@ export class AppRuntime {
         const languageServers = yield* makeLanguageServers;
         const completionProviders = yield* makeCompletionProviders;
         const hoverProviders = yield* makeHoverProviders;
+        const signatureProviders = yield* makeSignatureProviders;
         const services = Layer.mergeAll(
           Layer.succeed(CompletionProviders, completionProviders),
           Layer.succeed(HoverProviders, hoverProviders),
+          Layer.succeed(SignatureProviders, signatureProviders),
           Layer.succeed(HostIntelActions, {
             triggerCompletion: () => instance.onTriggerCompletion?.(),
+            triggerSignatureHelp: () => instance.onTriggerSignatureHelp?.(),
           }),
           Layer.succeed(HostLspIntel, {
             completion: (context) => instance.lsp?.completionAt(context) ?? Promise.resolve(null),
             hover: (context) => instance.lsp?.hoverAt(context) ?? Promise.resolve(null),
             diagnosticsHover: (context) => instance.lsp?.diagnosticsHoverAt(context) ?? null,
             triggerCharacters: (docId) => instance.lsp?.completionTriggerCharacters(docId) ?? [],
+            signature: (context) => instance.lsp?.signatureHelpAt(context) ?? Promise.resolve(null),
+            signatureTriggerCharacters: (docId) =>
+              instance.lsp?.signatureTriggerCharacters(docId) ?? [],
+            signatureRetriggerCharacters: (docId) =>
+              instance.lsp?.signatureRetriggerCharacters(docId) ?? [],
           }),
           Layer.succeed(LanguageServers, languageServers),
           Layer.succeed(Commands, commands),
@@ -343,7 +356,11 @@ export class AppRuntime {
           .pipe(Effect.orDie);
 
         const appRuntime = new AppRuntime(scope, workspace, workbench, commands, keymaps);
-        appRuntime.intel = { completions: completionProviders, hovers: hoverProviders };
+        appRuntime.intel = {
+          completions: completionProviders,
+          hovers: hoverProviders,
+          signatures: signatureProviders,
+        };
         const processPort = createProcessPort();
         if (processPort !== undefined) {
           appRuntime.lsp = new LspManager(processPort, fileSystem, languageServers);

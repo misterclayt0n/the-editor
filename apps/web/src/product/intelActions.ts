@@ -11,7 +11,10 @@ import { EditorSurface } from "./editorDefaults";
 
 export class HostIntelActions extends Context.Tag("the-editor/web/HostIntelActions")<
   HostIntelActions,
-  { readonly triggerCompletion: () => void }
+  {
+    readonly triggerCompletion: () => void;
+    readonly triggerSignatureHelp: () => void;
+  }
 >() {}
 
 const editorScope = SurfaceScope.surface(EditorSurface);
@@ -28,8 +31,15 @@ export const intelActions = definePackage("the-editor/intel-actions", () =>
       palette: { group: "Editor" },
       run: () => Effect.sync(() => host.triggerCompletion()),
     });
+    yield* commands.register("editor.triggerParameterHints", {
+      title: "Trigger Parameter Hints",
+      scope: editorScope,
+      palette: { group: "Editor" },
+      run: () => Effect.sync(() => host.triggerSignatureHelp()),
+    });
     yield* keymaps.registerAll([
       { keys: "ctrl+space", command: "editor.triggerCompletion", scope: editorScope },
+      { keys: "ctrl+shift+space", command: "editor.triggerParameterHints", scope: editorScope },
     ]);
   }),
 );

@@ -64,6 +64,7 @@ import {
   setSelection,
   ViewNotifications,
   WorkspaceNotifications,
+  type DocumentChangeRange,
   type DocumentScope,
   type EditorNotification,
   type EditorSnapshot,
@@ -80,13 +81,27 @@ import { filesPackage, HostFileActions } from "./product/files";
 import { palettePackage, HostPaletteActions } from "./product/palette";
 import { viewPackage, HostViewActions } from "./product/view";
 import { createFileSystemPort } from "./platform/fs";
+import { createSyntaxPort, type HighlightRun, type SyntaxPort } from "./platform/syntax";
+import { DocumentHighlights } from "./editor/highlights";
 import { MountHub } from "./editor/mounts";
 
 export type KeyOutcome = "handled" | "pending" | "passthrough";
 
+/** Synchronous highlight source for the renderer's layout pass. */
+export interface PaneHighlights {
+  /** Bring the engine to `version` before painting it (null = resync). */
+  ensureSynced(
+    version: number,
+    changeSets: ReadonlyArray<ReadonlyArray<DocumentChangeRange>> | null,
+  ): void;
+  runsBetween(from: number, to: number): readonly HighlightRun[];
+  subscribe(listener: () => void): () => void;
+}
+
 /** What the per-pane renderer consumes. */
 export interface PaneHost {
   readonly mounts: MountHub;
+  readonly highlights?: PaneHighlights | undefined;
   snapshot(): EditorSnapshot;
   visualsSnapshot(): VisualsSnapshot;
   setSelection(selection: Selection): void;
@@ -112,6 +127,11 @@ export class EditorPane implements PaneHost {
     readonly view: ViewScope,
     private readonly runtime: AppRuntime,
   ) {}
+
+  /** Highlight source for this pane's document (absent without a host). */
+  get highlights(): PaneHighlights | undefined {
+    return this.runtime.highlightsFor(this.document.id);
+  }
 
   snapshot(): EditorSnapshot {
     return this.runIn(editorSnapshot());
@@ -188,6 +208,8 @@ export class AppRuntime {
   onPaletteOpenRequested?: () => void;
 
   private readonly panes = new Map<PanelId, EditorPane>();
+  private syntaxPort: SyntaxPort | undefined;
+  private readonly highlightsByDoc = new Map<string, DocumentHighlights>();
   private workbenchSnapshot: WorkbenchSnapshot;
   private readonly workbenchListeners = new Set<() => void>();
   private mirrorFibers: ReadonlyArray<Fiber.RuntimeFiber<unknown, unknown>> = [];
@@ -261,9 +283,12 @@ export class AppRuntime {
         return new AppRuntime(scope, workspace, workbench, commands, keymaps);
       }),
     );
+    // Syntax host (absent in plain browsers: capability gating).
+    instance.syntaxPort = createSyntaxPort();
     // First pane: a scratch document in a single stack.
     const registry = Context.get(instance.workspace.context, DocumentRegistry);
     const scratch = Effect.runSync(registry.open({ text: initialText }));
+    instance.attachHighlights(scratch, undefined);
     const pane = instance.createPane(scratch);
     Effect.runSync(
       instance.workbench
@@ -339,6 +364,8 @@ export class AppRuntime {
       (other) => other.document.id === pane.document.id,
     );
     if (!documentStillShown) {
+      this.highlightsByDoc.get(String(pane.document.id))?.close();
+      this.highlightsByDoc.delete(String(pane.document.id));
       const files = Context.getOption(this.workspace.context, Files);
       if (Option.isSome(files)) Effect.runSync(files.value.unbind(pane.document.id));
       const registry = Context.get(this.workspace.context, DocumentRegistry);
@@ -459,6 +486,22 @@ export class AppRuntime {
     if (slot !== undefined) this.focusSlot(slot);
   }
 
+  // ---------------------------------------------------------------- syntax
+
+  highlightsFor(docId: unknown): PaneHighlights | undefined {
+    return this.highlightsByDoc.get(String(docId));
+  }
+
+  private attachHighlights(document: DocumentScope, path: string | undefined): void {
+    if (this.syntaxPort === undefined) return;
+    const key = String(document.id);
+    if (this.highlightsByDoc.has(key)) return;
+    this.highlightsByDoc.set(
+      key,
+      new DocumentHighlights(this.syntaxPort, key, document, path),
+    );
+  }
+
   // ----------------------------------------------------------------- files
 
   fileInfoFor(document: DocumentScope): PaneFileInfo | null {
@@ -475,6 +518,7 @@ export class AppRuntime {
     const files = Context.getOption(this.workspace.context, Files);
     if (Option.isNone(files)) return;
     const document = await Effect.runPromise(files.value.openPath(path));
+    this.attachHighlights(document, path);
 
     const { arrangement, focusedSlot } = this.workbenchSnapshot;
     const slot = focusedSlot === null ? undefined : findSlot(arrangement, focusedSlot);
@@ -578,6 +622,8 @@ export class AppRuntime {
   dispose(): void {
     // Closing the package scope interrupts forked package fibers (an async
     // boundary), so disposal cannot be runSync.
+    for (const highlights of this.highlightsByDoc.values()) highlights.close();
+    this.highlightsByDoc.clear();
     for (const fiber of this.mirrorFibers) Effect.runFork(Fiber.interrupt(fiber));
     const views = [...this.panes.values()].map((pane) => pane.view);
     this.panes.clear();

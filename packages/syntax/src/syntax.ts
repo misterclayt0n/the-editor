@@ -812,9 +812,11 @@ export class LanguageRegistry {
     config.language.forEach((c, i) => {
       const id = LanguageId.of(i);
       if (r.byName.has(c.name)) throw new DuplicateLanguageIdError(c.name);
-      if (r.byScope.has(c.scope)) throw new DuplicateScopeError(c.scope);
       r.byName.set(c.name, id);
-      r.byScope.set(c.scope, id);
+      // Scopes and shebangs legitimately collide in real configurations
+      // (helix: json/jsonc share "source.json"); registration order is
+      // priority, first claim wins for lookup.
+      if (!r.byScope.has(c.scope)) r.byScope.set(c.scope, id);
       for (const ft of c.fileTypes) {
         if (typeof ft === "string") {
           if (r.byExt.has(ft)) throw new DuplicateExtensionError(ft);
@@ -822,8 +824,7 @@ export class LanguageRegistry {
         }
       }
       for (const s of c.shebangs ?? []) {
-        if (r.byShebang.has(s)) throw new DuplicateShebangError(s);
-        r.byShebang.set(s, id);
+        if (!r.byShebang.has(s)) r.byShebang.set(s, id);
       }
       r.defs.push(new LanguageDefinition(c));
     });
@@ -859,9 +860,14 @@ export class LanguageRegistry {
     return this.languageForExtension(ext);
   }
   languageForShebang(text: SyntaxText) {
+    // Only a real "#!" line counts, and only its interpreter name —
+    // substring scans would let any first line claim a language.
     const line = text.sliceString(0, Math.min(text.length, 256)).split(/\r?\n/, 1)[0] ?? "";
-    for (const [s, id] of this.byShebang) if (line.includes(s)) return id;
-    return undefined;
+    if (!line.startsWith("#!")) return undefined;
+    const tokens = line.slice(2).trim().split(/\s+/);
+    let interpreter = tokens[0]?.split("/").pop() ?? "";
+    if (interpreter === "env") interpreter = tokens[1]?.split("/").pop() ?? "";
+    return interpreter.length > 0 ? this.byShebang.get(interpreter) : undefined;
   }
   languageForMatch(text: SyntaxText) {
     const prefix = text.sliceString(0, Math.min(text.length, 4096));
@@ -892,11 +898,12 @@ export class LanguageRegistry {
     return id !== undefined ? { languageId: id, source: "injectionRegex" as const } : undefined;
   }
   detectLanguageForDocument(args: { path?: string; text: SyntaxText }) {
-    return (
-      (args.path && this.assignByFilename(args.path)) ||
-      this.assignByShebang(args.text) ||
-      this.assignByMatch(args.text)
-    );
+    // Filename, then shebang — never injection regexes: those match
+    // injection-site LANGUAGE IDENTIFIERS (```rust fences), not document
+    // content. Matching them against prose claims plain text for whatever
+    // language's pattern happens to occur in the first paragraph
+    // (elixir's "(elixir|ex)" matches the word "text").
+    return (args.path && this.assignByFilename(args.path)) || this.assignByShebang(args.text);
   }
   grammar(id: LanguageId) {
     return this.language(id)?.grammar(this);
@@ -972,6 +979,12 @@ export class Syntax {
     if (!lang) throw new MissingGrammarError();
     const parser = new Parser();
     parser.setLanguage(lang as any);
+    // Zed-style parse budget: callers may bound the SYNCHRONOUS cost
+    // (incremental reparses after small edits almost always fit) and fall
+    // back to an unbounded parse elsewhere on timeout (ParseFailedError).
+    if (args.timeoutMs !== undefined) {
+      (parser as any).setTimeoutMicros(Math.max(1, Math.round(args.timeoutMs * 1000)));
+    }
     // The native Node binding invokes input callbacks with JavaScript string
     // offsets. Keep the callback chunked and avoid materializing whole TextBuffer
     // input; public conversion helpers still expose UTF-8 byte coordinates where
@@ -988,6 +1001,7 @@ export class Syntax {
       registry: args.registry,
       languageId: this.languageId,
       oldTree: this.tree,
+      ...(args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs } : {}),
     });
   }
   tryReparse(args: { text: SyntaxText; registry: LanguageRegistry; timeoutMs?: number }) {
@@ -1051,58 +1065,108 @@ export class Syntax {
     registry: LanguageRegistry;
     byteRange: ByteRange;
   }) {
-    const def = args.registry.language(this.languageId);
-    const h = def?.highlightQuery(args.registry);
-    if (!h) return [];
-    const caps = h.query
-      .captures(this.tree.rootNode)
-      .filter(
-        (c) => c.node.endIndex > args.byteRange.start && c.node.startIndex < args.byteRange.end,
-      );
-    return normalizeRuns(
-      caps
-        .map((c) => ({
-          byteRange: {
-            start: Math.max(c.node.startIndex, args.byteRange.start),
-            end: Math.min(c.node.endIndex, args.byteRange.end),
-          },
-          kind: h.captureKinds[h.captureNames.indexOf(c.name)],
-        }))
-        .filter((r): r is SyntaxHighlightRun => !!r.kind && r.byteRange.start < r.byteRange.end),
-    );
+    return highlightRunsForTree({
+      tree: this.tree,
+      registry: args.registry,
+      languageId: this.languageId,
+      byteRange: args.byteRange,
+    });
   }
 }
+
+/**
+ * Windowed highlight runs for a raw tree — hosts that manage their own
+ * parse loop (persistent parser, resume slicing) use this directly.
+ * Range-restricting the cursor makes the query cost O(window), not O(file).
+ */
+export function highlightRunsForTree(args: {
+  tree: Parser.Tree;
+  registry: LanguageRegistry;
+  languageId: LanguageId;
+  byteRange: ByteRange;
+}): readonly SyntaxHighlightRun[] {
+  const def = args.registry.language(args.languageId);
+  const h = def?.highlightQuery(args.registry);
+  if (!h) return [];
+  // node-tree-sitter 0.21.1 quirk: the binding forwards startIndex RAW
+  // (TS bytes = 2x UTF-16 index) but shifts endIndex <<1 itself — so
+  // pre-double only the start (src/query.cc:189,192).
+  const caps = (
+    h.query.captures(args.tree.rootNode, {
+      startIndex: args.byteRange.start * 2,
+      endIndex: args.byteRange.end,
+    } as any) as Parser.QueryCapture[]
+  ).filter(
+    (c) => c.node.endIndex > args.byteRange.start && c.node.startIndex < args.byteRange.end,
+  );
+  return normalizeRuns(
+    caps
+      .map((c) => ({
+        byteRange: {
+          start: Math.max(c.node.startIndex, args.byteRange.start),
+          end: Math.min(c.node.endIndex, args.byteRange.end),
+        },
+        kind: h.captureKinds[h.captureNames.indexOf(c.name)],
+      }))
+      .filter((r): r is SyntaxHighlightRun => !!r.kind && r.byteRange.start < r.byteRange.end),
+  );
+}
+/**
+ * Flatten overlapping captures into disjoint runs: in every segment the
+ * INNERMOST capture wins (latest start; ties to the earliest end), and
+ * adjacent same-kind segments merge. Sweep line, O(n log n) — the previous
+ * per-boundary candidate scan was O(boundaries x captures) and cost ~20ms
+ * on dense windows, ON THE KEYSTROKE PATH.
+ */
 export function normalizeHighlightRuns(
   captures: readonly SyntaxHighlightRun[],
 ): readonly SyntaxHighlightRun[] {
   if (captures.length === 0) return [];
-  const boundaries = [
-    ...new Set(captures.flatMap((run) => [run.byteRange.start, run.byteRange.end])),
-  ].sort((a, b) => a - b);
-  const out: SyntaxHighlightRun[] = [];
-  for (let i = 0; i < boundaries.length - 1; i++) {
-    const start = boundaries[i]!;
-    const end = boundaries[i + 1]!;
-    if (start >= end) continue;
-    const candidates = captures.filter(
-      (run) => run.byteRange.start <= start && end <= run.byteRange.end,
-    );
-    if (candidates.length === 0) continue;
-    candidates.sort(
-      (a, b) => b.byteRange.start - a.byteRange.start || a.byteRange.end - b.byteRange.end,
-    );
-    const selected = candidates[0]!;
-    const last = out[out.length - 1];
-    if (last && last.kind === selected.kind && last.byteRange.end === start) {
-      out[out.length - 1] = {
-        byteRange: { start: last.byteRange.start, end },
-        kind: selected.kind,
-      };
-    } else {
-      out.push({ byteRange: { start, end }, kind: selected.kind });
-    }
+  // [position, isStart, captureIndex]; ends sort before starts at a
+  // position, so a run ending at p never covers [p, next).
+  const events: Array<[number, 0 | 1, number]> = [];
+  for (let i = 0; i < captures.length; i++) {
+    const range = captures[i]!.byteRange;
+    if (range.start >= range.end) continue;
+    events.push([range.start, 1, i], [range.end, 0, i]);
   }
-  return out;
+  events.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+
+  const active = new Set<number>();
+  const out: Array<{ start: number; end: number; kind: SyntaxHighlightRun["kind"] }> = [];
+  let prev = -1;
+  let i = 0;
+  while (i < events.length) {
+    const pos = events[i]![0];
+    if (prev !== -1 && pos > prev && active.size > 0) {
+      let winner: SyntaxHighlightRun | null = null;
+      for (const index of active) {
+        const run = captures[index]!;
+        if (
+          winner === null ||
+          run.byteRange.start > winner.byteRange.start ||
+          (run.byteRange.start === winner.byteRange.start &&
+            run.byteRange.end < winner.byteRange.end)
+        ) {
+          winner = run;
+        }
+      }
+      const last = out[out.length - 1];
+      if (last !== undefined && last.kind === winner!.kind && last.end === prev) {
+        last.end = pos;
+      } else {
+        out.push({ start: prev, end: pos, kind: winner!.kind });
+      }
+    }
+    while (i < events.length && events[i]![0] === pos) {
+      const [, isStart, index] = events[i]!;
+      if (isStart === 1) active.add(index);
+      else active.delete(index);
+      i++;
+    }
+    prev = pos;
+  }
+  return out.map((run) => ({ byteRange: { start: run.start, end: run.end }, kind: run.kind }));
 }
 const normalizeRuns = normalizeHighlightRuns;
 

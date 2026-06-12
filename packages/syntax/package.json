@@ -14,18 +14,21 @@
     "build": "tsdown src/index.ts --dts --format esm",
     "dev": "tsdown src/index.ts --dts --format esm --watch",
     "typecheck": "tsgo --noEmit --pretty",
-    "test": "vitest run test/syntax.test.ts test/query.test.ts --passWithNoTests",
-    "clean": "rm -rf dist"
+    "test": "vitest run test/syntax.test.ts test/query.test.ts test/store.test.ts --passWithNoTests",
+    "clean": "rm -rf dist",
+    "codegen": "tsx scripts/generate-languages.ts"
   },
   "dependencies": {
     "tree-sitter": "^0.21.1"
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "smol-toml": "^1.6.1",
     "tree-sitter-json": "^0.24.8",
     "tsdown": "catalog:",
     "tsx": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "@the-editor/grammar-loader": "workspace:*"
   }
 }

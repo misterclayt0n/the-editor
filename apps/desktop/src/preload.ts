@@ -21,6 +21,31 @@ contextBridge.exposeInMainWorld("theEditorDesktop", {
  * when it exists (Electron); otherwise it falls back to the File System
  * Access API.
  */
+/**
+ * The SYNCHRONOUS syntax bridge: the foreground tree lives in this renderer
+ * process (the window runs without the OS sandbox so the preload can load
+ * native tree-sitter), and the editor queries highlights as plain function
+ * calls during layout — no round trip, no frame without colors.
+ */
+try {
+  // Lazy require so a missing native toolchain degrades to "no highlights"
+  // instead of breaking the preload (and with it, file IO).
+  const { createSyntaxEngine, defaultRequire } =
+    require("./syntax-engine.cjs") as typeof import("./syntax-engine");
+  const engine = createSyntaxEngine(defaultRequire);
+  contextBridge.exposeInMainWorld("theEditorSyntaxSync", {
+    open: (docId: string, path: string | undefined, text: string) =>
+      engine.open(docId, path, text),
+    edit: (docId: string, edits: ReadonlyArray<{ start: number; end: number; text: string }>) =>
+      engine.edit(docId, edits),
+    pump: (docId: string, budgetMs: number) => engine.pump(docId, budgetMs),
+    highlights: (docId: string, from: number, to: number) => engine.highlights(docId, from, to),
+    close: (docId: string) => engine.close(docId),
+  });
+} catch (error) {
+  console.error("[preload] syntax engine unavailable:", error);
+}
+
 contextBridge.exposeInMainWorld("theEditorFs", {
   readFile: (path: string): Promise<string> => ipcRenderer.invoke("fs:read", path),
   writeFile: (path: string, text: string): Promise<{ mtimeMs: number; size: number }> =>

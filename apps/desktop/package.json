@@ -13,7 +13,10 @@
     "clean": "rm -rf dist-electron"
   },
   "dependencies": {
-    "electron": "catalog:"
+    "electron": "catalog:",
+    "@the-editor/syntax": "workspace:*",
+    "tree-sitter": "^0.21.1",
+    "@the-editor/grammar-loader": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",

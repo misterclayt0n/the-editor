@@ -49,9 +49,11 @@ import {
   type EditorSnapshot,
   type LayoutInlineSegment,
   type ResolvedGutterBand,
+  type TextStyleRun,
   type ViewportLayoutSnapshot,
   type VisualsSnapshot,
 } from "@the-editor/editor";
+import { highlightColor } from "./highlightColors";
 import { Selection, type TextBuffer } from "@the-editor/engine";
 import type { Chord } from "@the-editor/keymaps";
 import type { PaneHost } from "../runtime";
@@ -153,6 +155,7 @@ export class EditorRenderer {
   private readonly measureEl: HTMLSpanElement;
   private readonly resizeObserver: ResizeObserver;
   private readonly unsubscribe: () => void;
+  private readonly unsubscribeHighlights: () => void;
   private readonly renderPass = () => this.render();
   private readonly handleKeyDown = (event: KeyboardEvent) => {
     const outcome = this.runtime.handleKeyboardEvent(event);
@@ -359,6 +362,13 @@ export class EditorRenderer {
     this.unsubscribe = runtime.subscribe((notification, source) =>
       this.onNotification(notification, source),
     );
+    // Fresh highlight data: rebuild the window (cheap, parse-paced).
+    this.unsubscribeHighlights =
+      runtime.highlights?.subscribe(() => {
+        this.visualsDirty = true;
+        this.pendingVisualChanges = null;
+        queueRender(this.renderPass);
+      }) ?? (() => {});
 
     queueRender(this.renderPass);
   }
@@ -367,6 +377,7 @@ export class EditorRenderer {
     this.disposed = true;
     cancelRender(this.renderPass);
     this.unsubscribe();
+    this.unsubscribeHighlights();
     this.resizeObserver.disconnect();
     this.viewport.removeEventListener("wheel", this.handleWheel);
     this.viewport.removeEventListener("mousedown", this.handleMouseDown);
@@ -379,6 +390,19 @@ export class EditorRenderer {
     this.viewport.remove();
     this.vScrollbar.remove();
     this.hScrollbar.remove();
+  }
+
+  /** Cached worker highlight runs as low-priority inline color styles. */
+  private syntaxStyles(from: number, to: number): TextStyleRun[] {
+    const highlights = this.runtime.highlights;
+    if (highlights === undefined) return [];
+    const out: TextStyleRun[] = [];
+    for (const run of highlights.runsBetween(from, to)) {
+      const color = highlightColor(run.kind);
+      if (color === undefined) continue;
+      out.push({ from: run.from, to: run.to, style: { color }, priority: -100 });
+    }
+    return out;
   }
 
   private measureCharWidth(): void {
@@ -528,6 +552,10 @@ export class EditorRenderer {
     if (docDirty || selDirty) this.snapshot = this.runtime.snapshot();
     const { text, version, selection } = this.snapshot;
     const lineCount = text.lineCount;
+    // The syntax engine must be at THIS version before the layout below
+    // reads highlight runs: the frame that paints an edit is the frame
+    // that has its colors (synchronous, in-process — no flash possible).
+    this.runtime.highlights?.ensureSynced(version, changeSets);
 
     if (this.visuals === null || visualsDirty || docDirty) {
       this.visuals = this.runtime.visualsSnapshot();
@@ -618,7 +646,11 @@ export class EditorRenderer {
         paddingTop: PADDING_TOP,
         paddingLeft: this.textOriginX,
         visuals: {
-          textStyles: this.visuals!.textStylesBetween(winFrom, winTo),
+          // Syntax runs merge under product styles (lowest priority).
+          textStyles: [
+            ...this.syntaxStyles(winFrom, winTo),
+            ...this.visuals!.textStylesBetween(winFrom, winTo),
+          ],
           rangeDecorations: this.visuals!.decorationsBetween(winFrom, winTo),
           virtualText: this.visuals!.virtualTextBetween(winFrom, winTo),
           // All widgets: layout's absolute geometry must agree with the

@@ -77,7 +77,10 @@ function createWindow(): void {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
+      // The preload hosts the synchronous syntax engine (native
+      // tree-sitter); that requires the unsandboxed renderer. Context
+      // isolation stays on and the page still has no node access.
+      sandbox: false,
     },
   });
 

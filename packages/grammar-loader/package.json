@@ -1,0 +1,16 @@
+{
+  "name": "@the-editor/grammar-loader",
+  "version": "0.0.0",
+  "private": true,
+  "main": "index.cjs",
+  "types": "index.d.cts",
+  "scripts": {
+    "build": "node-gyp rebuild",
+    "typecheck": "exit 0",
+    "test": "exit 0",
+    "clean": "rm -rf build"
+  },
+  "devDependencies": {
+    "node-gyp": "^11.0.0"
+  }
+}

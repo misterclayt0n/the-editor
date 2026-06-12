@@ -16,8 +16,14 @@ export type GeneratedServerLanguage = {
   readonly fileTypes: readonly string[];
   /** Workspace root markers. */
   readonly roots?: readonly string[];
-  /** Server ids in priority order; the first is the primary. */
-  readonly servers: readonly string[];
+  /** Servers in priority order with helix feature constraints. */
+  readonly servers: ReadonlyArray<{
+    readonly name: string;
+    /** Helix only-features: the server serves ONLY these. */
+    readonly only?: readonly string[];
+    /** Helix except-features: the server serves everything BUT these. */
+    readonly except?: readonly string[];
+  }>;
 };
 
 export const generatedLanguageServers: Readonly<Record<string, GeneratedLanguageServer>> = {
@@ -1158,7 +1164,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "Cargo.lock"
     ],
     "servers": [
-      "rust-analyzer"
+      {
+        "name": "rust-analyzer"
+      }
     ]
   },
   {
@@ -1172,7 +1180,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "Forc.lock"
     ],
     "servers": [
-      "forc"
+      {
+        "name": "forc"
+      }
     ]
   },
   {
@@ -1182,8 +1192,12 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "toml"
     ],
     "servers": [
-      "taplo",
-      "tombi"
+      {
+        "name": "taplo"
+      },
+      {
+        "name": "tombi"
+      }
     ]
   },
   {
@@ -1196,7 +1210,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "mawk"
     ],
     "servers": [
-      "awk-language-server"
+      {
+        "name": "awk-language-server"
+      }
     ]
   },
   {
@@ -1206,9 +1222,15 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "proto"
     ],
     "servers": [
-      "buf",
-      "pbkit",
-      "protols"
+      {
+        "name": "buf"
+      },
+      {
+        "name": "pbkit"
+      },
+      {
+        "name": "protols"
+      }
     ]
   },
   {
@@ -1218,7 +1240,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "e"
     ],
     "servers": [
-      "eiffel-language-server"
+      {
+        "name": "eiffel-language-server"
+      }
     ]
   },
   {
@@ -1233,8 +1257,12 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "mix.lock"
     ],
     "servers": [
-      "elixir-ls",
-      "expert"
+      {
+        "name": "elixir-ls"
+      },
+      {
+        "name": "expert"
+      }
     ]
   },
   {
@@ -1245,7 +1273,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "fnlm"
     ],
     "servers": [
-      "fennel-ls"
+      {
+        "name": "fennel-ls"
+      }
     ]
   },
   {
@@ -1255,7 +1285,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "fish"
     ],
     "servers": [
-      "fish-lsp"
+      {
+        "name": "fish-lsp"
+      }
     ]
   },
   {
@@ -1265,7 +1297,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "mint"
     ],
     "servers": [
-      "mint"
+      {
+        "name": "mint"
+      }
     ]
   },
   {
@@ -1280,7 +1314,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "pixi.lock"
     ],
     "servers": [
-      "mojo-lsp-server"
+      {
+        "name": "mojo-lsp-server"
+      }
     ]
   },
   {
@@ -1315,7 +1351,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "code-workspace"
     ],
     "servers": [
-      "vscode-json-language-server"
+      {
+        "name": "vscode-json-language-server"
+      }
     ]
   },
   {
@@ -1325,7 +1363,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "jsonc"
     ],
     "servers": [
-      "vscode-json-language-server"
+      {
+        "name": "vscode-json-language-server"
+      }
     ]
   },
   {
@@ -1335,7 +1375,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "jsonld"
     ],
     "servers": [
-      "vscode-json-language-server"
+      {
+        "name": "vscode-json-language-server"
+      }
     ]
   },
   {
@@ -1345,7 +1387,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "c"
     ],
     "servers": [
-      "clangd"
+      {
+        "name": "clangd"
+      }
     ]
   },
   {
@@ -1375,7 +1419,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "inl"
     ],
     "servers": [
-      "clangd"
+      {
+        "name": "clangd"
+      }
     ]
   },
   {
@@ -1389,8 +1435,12 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "shard.lock"
     ],
     "servers": [
-      "crystalline",
-      "ameba-ls"
+      {
+        "name": "crystalline"
+      },
+      {
+        "name": "ameba-ls"
+      }
     ]
   },
   {
@@ -1407,9 +1457,15 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "*.csproj"
     ],
     "servers": [
-      "roslyn-language-server",
-      "omnisharp",
-      "csharp-ls"
+      {
+        "name": "roslyn-language-server"
+      },
+      {
+        "name": "omnisharp"
+      },
+      {
+        "name": "csharp-ls"
+      }
     ]
   },
   {
@@ -1424,7 +1480,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "project.json"
     ],
     "servers": [
-      "c3-lsp"
+      {
+        "name": "c3-lsp"
+      }
     ]
   },
   {
@@ -1438,8 +1496,12 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "go.mod"
     ],
     "servers": [
-      "gopls",
-      "golangci-lint-lsp"
+      {
+        "name": "gopls"
+      },
+      {
+        "name": "golangci-lint-lsp"
+      }
     ]
   },
   {
@@ -1449,7 +1511,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "gotmpl"
     ],
     "servers": [
-      "gopls"
+      {
+        "name": "gopls"
+      }
     ]
   },
   {
@@ -1469,7 +1533,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "jsconfig.json"
     ],
     "servers": [
-      "typescript-language-server"
+      {
+        "name": "typescript-language-server"
+      }
     ]
   },
   {
@@ -1483,7 +1549,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "jsconfig.json"
     ],
     "servers": [
-      "typescript-language-server"
+      {
+        "name": "typescript-language-server"
+      }
     ]
   },
   {
@@ -1499,7 +1567,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "tsconfig.json"
     ],
     "servers": [
-      "typescript-language-server"
+      {
+        "name": "typescript-language-server"
+      }
     ]
   },
   {
@@ -1512,7 +1582,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "tspconfig.yaml"
     ],
     "servers": [
-      "typespec"
+      {
+        "name": "typespec"
+      }
     ]
   },
   {
@@ -1526,7 +1598,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "tsconfig.json"
     ],
     "servers": [
-      "typescript-language-server"
+      {
+        "name": "typescript-language-server"
+      }
     ]
   },
   {
@@ -1536,7 +1610,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "css"
     ],
     "servers": [
-      "vscode-css-language-server"
+      {
+        "name": "vscode-css-language-server"
+      }
     ]
   },
   {
@@ -1546,7 +1622,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "scss"
     ],
     "servers": [
-      "vscode-css-language-server"
+      {
+        "name": "vscode-css-language-server"
+      }
     ]
   },
   {
@@ -1556,7 +1634,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "less"
     ],
     "servers": [
-      "vscode-css-language-server"
+      {
+        "name": "vscode-css-language-server"
+      }
     ]
   },
   {
@@ -1577,8 +1657,12 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "cshtml"
     ],
     "servers": [
-      "vscode-html-language-server",
-      "superhtml"
+      {
+        "name": "vscode-html-language-server"
+      },
+      {
+        "name": "superhtml"
+      }
     ]
   },
   {
@@ -1602,10 +1686,18 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "pyrightconfig.json"
     ],
     "servers": [
-      "ty",
-      "ruff",
-      "jedi",
-      "pylsp"
+      {
+        "name": "ty"
+      },
+      {
+        "name": "ruff"
+      },
+      {
+        "name": "jedi"
+      },
+      {
+        "name": "pylsp"
+      }
     ]
   },
   {
@@ -1615,7 +1707,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "ncl"
     ],
     "servers": [
-      "nls"
+      {
+        "name": "nls"
+      }
     ]
   },
   {
@@ -1625,8 +1719,12 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "nix"
     ],
     "servers": [
-      "nil",
-      "nixd"
+      {
+        "name": "nil"
+      },
+      {
+        "name": "nixd"
+      }
     ]
   },
   {
@@ -1646,8 +1744,12 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "rbs"
     ],
     "servers": [
-      "ruby-lsp",
-      "solargraph"
+      {
+        "name": "ruby-lsp"
+      },
+      {
+        "name": "solargraph"
+      }
     ]
   },
   {
@@ -1677,7 +1779,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "zshrc_Apple_Terminal"
     ],
     "servers": [
-      "bash-language-server"
+      {
+        "name": "bash-language-server"
+      }
     ]
   },
   {
@@ -1696,7 +1800,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "index.php"
     ],
     "servers": [
-      "intelephense"
+      {
+        "name": "intelephense"
+      }
     ]
   },
   {
@@ -1713,7 +1819,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "cbx"
     ],
     "servers": [
-      "texlab"
+      {
+        "name": "texlab"
+      }
     ]
   },
   {
@@ -1723,7 +1831,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "bib"
     ],
     "servers": [
-      "texlab"
+      {
+        "name": "texlab"
+      }
     ]
   },
   {
@@ -1737,7 +1847,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "lakefile.toml"
     ],
     "servers": [
-      "lean"
+      {
+        "name": "lean"
+      }
     ]
   },
   {
@@ -1751,7 +1863,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "Project.toml"
     ],
     "servers": [
-      "julia"
+      {
+        "name": "julia"
+      }
     ]
   },
   {
@@ -1768,7 +1882,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "build.gradle.kts"
     ],
     "servers": [
-      "jdtls"
+      {
+        "name": "jdtls"
+      }
     ]
   },
   {
@@ -1778,7 +1894,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "smali"
     ],
     "servers": [
-      "smalisp"
+      {
+        "name": "smalisp"
+      }
     ]
   },
   {
@@ -1789,7 +1907,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "bean"
     ],
     "servers": [
-      "beancount-language-server"
+      {
+        "name": "beancount-language-server"
+      }
     ]
   },
   {
@@ -1799,7 +1919,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "ml"
     ],
     "servers": [
-      "ocamllsp"
+      {
+        "name": "ocamllsp"
+      }
     ]
   },
   {
@@ -1809,7 +1931,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "mli"
     ],
     "servers": [
-      "ocamllsp"
+      {
+        "name": "ocamllsp"
+      }
     ]
   },
   {
@@ -1827,7 +1951,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       ".git"
     ],
     "servers": [
-      "lua-language-server"
+      {
+        "name": "lua-language-server"
+      }
     ]
   },
   {
@@ -1840,7 +1966,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "tlconfig.lua"
     ],
     "servers": [
-      "teal-language-server"
+      {
+        "name": "teal-language-server"
+      }
     ]
   },
   {
@@ -1850,7 +1978,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "svelte"
     ],
     "servers": [
-      "svelteserver"
+      {
+        "name": "svelteserver"
+      }
     ]
   },
   {
@@ -1863,7 +1993,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "package.json"
     ],
     "servers": [
-      "vuels"
+      {
+        "name": "vuels"
+      }
     ]
   },
   {
@@ -1876,8 +2008,12 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "bu"
     ],
     "servers": [
-      "yaml-language-server",
-      "ansible-language-server"
+      {
+        "name": "yaml-language-server"
+      },
+      {
+        "name": "ansible-language-server"
+      }
     ]
   },
   {
@@ -1895,7 +2031,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "hie.yaml"
     ],
     "servers": [
-      "haskell-language-server"
+      {
+        "name": "haskell-language-server"
+      }
     ]
   },
   {
@@ -1911,7 +2049,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "hie.yaml"
     ],
     "servers": [
-      "haskell-language-server"
+      {
+        "name": "haskell-language-server"
+      }
     ]
   },
   {
@@ -1926,7 +2066,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "bower.json"
     ],
     "servers": [
-      "purescript-language-server"
+      {
+        "name": "purescript-language-server"
+      }
     ]
   },
   {
@@ -1940,7 +2082,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "build.zig"
     ],
     "servers": [
-      "zls"
+      {
+        "name": "zls"
+      }
     ]
   },
   {
@@ -1951,7 +2095,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "prolog"
     ],
     "servers": [
-      "swipl"
+      {
+        "name": "swipl"
+      }
     ]
   },
   {
@@ -1961,8 +2107,12 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "cmake"
     ],
     "servers": [
-      "neocmakelsp",
-      "cmake-language-server"
+      {
+        "name": "neocmakelsp"
+      },
+      {
+        "name": "cmake-language-server"
+      }
     ]
   },
   {
@@ -1978,8 +2128,12 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "comp"
     ],
     "servers": [
-      "glsl_analyzer",
-      "glsld"
+      {
+        "name": "glsl_analyzer"
+      },
+      {
+        "name": "glsld"
+      }
     ]
   },
   {
@@ -2000,7 +2154,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "pm6"
     ],
     "servers": [
-      "perlnavigator"
+      {
+        "name": "perlnavigator"
+      }
     ]
   },
   {
@@ -2014,7 +2170,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "zuo"
     ],
     "servers": [
-      "racket"
+      {
+        "name": "racket"
+      }
     ]
   },
   {
@@ -2032,7 +2190,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "sexp"
     ],
     "servers": [
-      "cl-lsp"
+      {
+        "name": "cl-lsp"
+      }
     ]
   },
   {
@@ -2042,7 +2202,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "wgsl"
     ],
     "servers": [
-      "wgsl-analyzer"
+      {
+        "name": "wgsl-analyzer"
+      }
     ]
   },
   {
@@ -2066,9 +2228,15 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       ".marksman.toml"
     ],
     "servers": [
-      "marksman",
-      "markdown-oxide",
-      "rumdl"
+      {
+        "name": "marksman"
+      },
+      {
+        "name": "markdown-oxide"
+      },
+      {
+        "name": "rumdl"
+      }
     ]
   },
   {
@@ -2081,7 +2249,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "pubspec.yaml"
     ],
     "servers": [
-      "dart"
+      {
+        "name": "dart"
+      }
     ]
   },
   {
@@ -2101,7 +2271,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       ".scala-build"
     ],
     "servers": [
-      "metals"
+      {
+        "name": "metals"
+      }
     ]
   },
   {
@@ -2118,8 +2290,12 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "Containerfile"
     ],
     "servers": [
-      "docker-langserver",
-      "docker-language-server"
+      {
+        "name": "docker-langserver"
+      },
+      {
+        "name": "docker-language-server"
+      }
     ]
   },
   {
@@ -2131,7 +2307,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "graphqls"
     ],
     "servers": [
-      "graphql-language-service"
+      {
+        "name": "graphql-language-service"
+      }
     ]
   },
   {
@@ -2144,7 +2322,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "elm.json"
     ],
     "servers": [
-      "elm-language-server"
+      {
+        "name": "elm-language-server"
+      }
     ]
   },
   {
@@ -2157,7 +2337,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "bsconfig.json"
     ],
     "servers": [
-      "rescript-language-server"
+      {
+        "name": "rescript-language-server"
+      }
     ]
   },
   {
@@ -2172,8 +2354,20 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "rebar.config"
     ],
     "servers": [
-      "erlang-ls",
-      "elp"
+      {
+        "name": "erlang-ls",
+        "except": [
+          "document-symbols",
+          "workspace-symbols"
+        ]
+      },
+      {
+        "name": "elp",
+        "except": [
+          "document-symbols",
+          "workspace-symbols"
+        ]
+      }
     ]
   },
   {
@@ -2188,7 +2382,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "settings.gradle.kts"
     ],
     "servers": [
-      "kotlin-language-server"
+      {
+        "name": "kotlin-language-server"
+      }
     ]
   },
   {
@@ -2200,7 +2396,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "nomad"
     ],
     "servers": [
-      "terraform-ls"
+      {
+        "name": "terraform-ls"
+      }
     ]
   },
   {
@@ -2210,7 +2408,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "tfvars"
     ],
     "servers": [
-      "terraform-ls"
+      {
+        "name": "terraform-ls"
+      }
     ]
   },
   {
@@ -2220,7 +2420,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "sol"
     ],
     "servers": [
-      "solc"
+      {
+        "name": "solc"
+      }
     ]
   },
   {
@@ -2233,7 +2435,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "gleam.toml"
     ],
     "servers": [
-      "gleam"
+      {
+        "name": "gleam"
+      }
     ]
   },
   {
@@ -2246,7 +2450,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "Cargo.toml"
     ],
     "servers": [
-      "ron-lsp"
+      {
+        "name": "ron-lsp"
+      }
     ]
   },
   {
@@ -2257,8 +2463,12 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "resource"
     ],
     "servers": [
-      "robotcode",
-      "robotframework_ls"
+      {
+        "name": "robotcode"
+      },
+      {
+        "name": "robotframework_ls"
+      }
     ]
   },
   {
@@ -2269,7 +2479,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "R"
     ],
     "servers": [
-      "r"
+      {
+        "name": "r"
+      }
     ]
   },
   {
@@ -2280,7 +2492,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "Rmd"
     ],
     "servers": [
-      "r"
+      {
+        "name": "r"
+      }
     ]
   },
   {
@@ -2294,7 +2508,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "Package.swift"
     ],
     "servers": [
-      "sourcekit-lsp"
+      {
+        "name": "sourcekit-lsp"
+      }
     ]
   },
   {
@@ -2308,8 +2524,12 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "mix.lock"
     ],
     "servers": [
-      "elixir-ls",
-      "expert"
+      {
+        "name": "elixir-ls"
+      },
+      {
+        "name": "expert"
+      }
     ]
   },
   {
@@ -2320,8 +2540,12 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "nuon"
     ],
     "servers": [
-      "nu-lsp",
-      "nu-lint"
+      {
+        "name": "nu-lsp"
+      },
+      {
+        "name": "nu-lint"
+      }
     ]
   },
   {
@@ -2332,7 +2556,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "vapi"
     ],
     "servers": [
-      "vala-language-server"
+      {
+        "name": "vala-language-server"
+      }
     ]
   },
   {
@@ -2342,7 +2568,17 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "ha"
     ],
     "servers": [
-      "hare-lsp"
+      {
+        "name": "hare-lsp",
+        "except": [
+          "code-action",
+          "completion",
+          "format",
+          "inlay-hints",
+          "rename-symbol",
+          "workspace-symbols"
+        ]
+      }
     ]
   },
   {
@@ -2353,7 +2589,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "dtsi"
     ],
     "servers": [
-      "dts-lsp"
+      {
+        "name": "dts-lsp"
+      }
     ]
   },
   {
@@ -2363,7 +2601,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "cairo"
     ],
     "servers": [
-      "cairo-language-server"
+      {
+        "name": "cairo-language-server"
+      }
     ]
   },
   {
@@ -2377,7 +2617,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "main.odin"
     ],
     "servers": [
-      "ols"
+      {
+        "name": "ols"
+      }
     ]
   },
   {
@@ -2392,7 +2634,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "v.mod"
     ],
     "servers": [
-      "vlang-language-server"
+      {
+        "name": "vlang-language-server"
+      }
     ]
   },
   {
@@ -2403,7 +2647,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "vh"
     ],
     "servers": [
-      "verible-verilog-ls"
+      {
+        "name": "verible-verilog-ls"
+      }
     ]
   },
   {
@@ -2414,8 +2660,12 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "svh"
     ],
     "servers": [
-      "svlangserver",
-      "verible-verilog-ls"
+      {
+        "name": "svlangserver"
+      },
+      {
+        "name": "verible-verilog-ls"
+      }
     ]
   },
   {
@@ -2425,7 +2675,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "scad"
     ],
     "servers": [
-      "openscad-lsp"
+      {
+        "name": "openscad-lsp"
+      }
     ]
   },
   {
@@ -2438,7 +2690,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "package.json"
     ],
     "servers": [
-      "prisma-language-server"
+      {
+        "name": "prisma-language-server"
+      }
     ]
   },
   {
@@ -2461,7 +2715,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "shadow-cljs.edn"
     ],
     "servers": [
-      "clojure-lsp"
+      {
+        "name": "clojure-lsp"
+      }
     ]
   },
   {
@@ -2473,7 +2729,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "star"
     ],
     "servers": [
-      "starpls"
+      {
+        "name": "starpls"
+      }
     ]
   },
   {
@@ -2483,7 +2741,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "elv"
     ],
     "servers": [
-      "elvish"
+      {
+        "name": "elvish"
+      }
     ]
   },
   {
@@ -2493,7 +2753,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "idr"
     ],
     "servers": [
-      "idris2-lsp"
+      {
+        "name": "idris2-lsp"
+      }
     ]
   },
   {
@@ -2514,7 +2776,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "fpm.toml"
     ],
     "servers": [
-      "fortls"
+      {
+        "name": "fortls"
+      }
     ]
   },
   {
@@ -2524,7 +2788,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "dot"
     ],
     "servers": [
-      "dot-language-server"
+      {
+        "name": "dot-language-server"
+      }
     ]
   },
   {
@@ -2537,7 +2803,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "cue.mod"
     ],
     "servers": [
-      "cuelsp"
+      {
+        "name": "cuelsp"
+      }
     ]
   },
   {
@@ -2547,7 +2815,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "slang"
     ],
     "servers": [
-      "slangd"
+      {
+        "name": "slangd"
+      }
     ]
   },
   {
@@ -2557,7 +2827,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "slint"
     ],
     "servers": [
-      "slint-lsp"
+      {
+        "name": "slint-lsp"
+      }
     ]
   },
   {
@@ -2571,7 +2843,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "lfm"
     ],
     "servers": [
-      "pasls"
+      {
+        "name": "pasls"
+      }
     ]
   },
   {
@@ -2585,7 +2859,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "jsonnetfile.json"
     ],
     "servers": [
-      "jsonnet-language-server"
+      {
+        "name": "jsonnet-language-server"
+      }
     ]
   },
   {
@@ -2599,7 +2875,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "alire.toml"
     ],
     "servers": [
-      "ada-language-server"
+      {
+        "name": "ada-language-server"
+      }
     ]
   },
   {
@@ -2609,7 +2887,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "astro"
     ],
     "servers": [
-      "astro-ls"
+      {
+        "name": "astro-ls"
+      }
     ]
   },
   {
@@ -2619,7 +2899,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "bass"
     ],
     "servers": [
-      "bass"
+      {
+        "name": "bass"
+      }
     ]
   },
   {
@@ -2629,7 +2911,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "wat"
     ],
     "servers": [
-      "wasm-language-tools"
+      {
+        "name": "wasm-language-tools"
+      }
     ]
   },
   {
@@ -2640,7 +2924,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "dd"
     ],
     "servers": [
-      "serve-d"
+      {
+        "name": "serve-d"
+      }
     ]
   },
   {
@@ -2667,7 +2953,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "image"
     ],
     "servers": [
-      "systemd-lsp"
+      {
+        "name": "systemd-lsp"
+      }
     ]
   },
   {
@@ -2678,7 +2966,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "bicepparam"
     ],
     "servers": [
-      "bicep-langserver"
+      {
+        "name": "bicep-langserver"
+      }
     ]
   },
   {
@@ -2688,7 +2978,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "qml"
     ],
     "servers": [
-      "qmlls"
+      {
+        "name": "qmlls"
+      }
     ]
   },
   {
@@ -2702,7 +2994,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "lock.json"
     ],
     "servers": [
-      "pony-lsp"
+      {
+        "name": "pony-lsp"
+      }
     ]
   },
   {
@@ -2712,7 +3006,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "dhall"
     ],
     "servers": [
-      "dhall-lsp-server"
+      {
+        "name": "dhall-lsp-server"
+      }
     ]
   },
   {
@@ -2724,7 +3020,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "nasm"
     ],
     "servers": [
-      "asm-lsp"
+      {
+        "name": "asm-lsp"
+      }
     ]
   },
   {
@@ -2734,7 +3032,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "s"
     ],
     "servers": [
-      "asm-lsp"
+      {
+        "name": "asm-lsp"
+      }
     ]
   },
   {
@@ -2747,7 +3047,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "smithy-build.json"
     ],
     "servers": [
-      "cs"
+      {
+        "name": "cs"
+      }
     ]
   },
   {
@@ -2757,7 +3059,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "hdl"
     ],
     "servers": [
-      "hdls"
+      {
+        "name": "hdls"
+      }
     ]
   },
   {
@@ -2768,7 +3072,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "vhdl"
     ],
     "servers": [
-      "vhdl_ls"
+      {
+        "name": "vhdl_ls"
+      }
     ]
   },
   {
@@ -2778,7 +3084,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "rego"
     ],
     "servers": [
-      "regols"
+      {
+        "name": "regols"
+      }
     ]
   },
   {
@@ -2790,7 +3098,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "nimble"
     ],
     "servers": [
-      "nimlangserver"
+      {
+        "name": "nimlangserver"
+      }
     ]
   },
   {
@@ -2804,7 +3114,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "Setup.hs"
     ],
     "servers": [
-      "haskell-language-server"
+      {
+        "name": "haskell-language-server"
+      }
     ]
   },
   {
@@ -2814,7 +3126,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "mdoc"
     ],
     "servers": [
-      "markdoc-ls"
+      {
+        "name": "markdoc-ls"
+      }
     ]
   },
   {
@@ -2824,7 +3138,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "cl"
     ],
     "servers": [
-      "clangd"
+      {
+        "name": "clangd"
+      }
     ]
   },
   {
@@ -2834,7 +3150,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "just"
     ],
     "servers": [
-      "just-lsp"
+      {
+        "name": "just-lsp"
+      }
     ]
   },
   {
@@ -2844,7 +3162,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "blp"
     ],
     "servers": [
-      "blueprint-compiler"
+      {
+        "name": "blueprint-compiler"
+      }
     ]
   },
   {
@@ -2857,7 +3177,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "4th"
     ],
     "servers": [
-      "forth-lsp"
+      {
+        "name": "forth-lsp"
+      }
     ]
   },
   {
@@ -2875,7 +3197,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "*.fsproj"
     ],
     "servers": [
-      "fsharp-ls"
+      {
+        "name": "fsharp-ls"
+      }
     ]
   },
   {
@@ -2886,7 +3210,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "typ"
     ],
     "servers": [
-      "tinymist"
+      {
+        "name": "tinymist"
+      }
     ]
   },
   {
@@ -2896,7 +3222,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "jq"
     ],
     "servers": [
-      "jq-lsp"
+      {
+        "name": "jq-lsp"
+      }
     ]
   },
   {
@@ -2910,7 +3238,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "go.mod"
     ],
     "servers": [
-      "templ"
+      {
+        "name": "templ"
+      }
     ]
   },
   {
@@ -2922,7 +3252,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "bbclass"
     ],
     "servers": [
-      "bitbake-language-server"
+      {
+        "name": "bitbake-language-server"
+      }
     ]
   },
   {
@@ -2932,7 +3264,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "kk"
     ],
     "servers": [
-      "koka"
+      {
+        "name": "koka"
+      }
     ]
   },
   {
@@ -2943,7 +3277,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "pcf"
     ],
     "servers": [
-      "pkl-lsp"
+      {
+        "name": "pkl-lsp"
+      }
     ]
   },
   {
@@ -2956,7 +3292,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "pyproject.toml"
     ],
     "servers": [
-      "hyuga"
+      {
+        "name": "hyuga"
+      }
     ]
   },
   {
@@ -2966,7 +3304,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "pest"
     ],
     "servers": [
-      "pest-language-server"
+      {
+        "name": "pest-language-server"
+      }
     ]
   },
   {
@@ -2980,9 +3320,19 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "ember-cli-build.js"
     ],
     "servers": [
-      "typescript-language-server",
-      "vscode-eslint-language-server",
-      "ember-language-server"
+      {
+        "name": "typescript-language-server",
+        "except": [
+          "format",
+          "diagnostics"
+        ]
+      },
+      {
+        "name": "vscode-eslint-language-server"
+      },
+      {
+        "name": "ember-language-server"
+      }
     ]
   },
   {
@@ -2996,9 +3346,19 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "ember-cli-build.js"
     ],
     "servers": [
-      "typescript-language-server",
-      "vscode-eslint-language-server",
-      "ember-language-server"
+      {
+        "name": "typescript-language-server",
+        "except": [
+          "format",
+          "diagnostics"
+        ]
+      },
+      {
+        "name": "vscode-eslint-language-server"
+      },
+      {
+        "name": "ember-language-server"
+      }
     ]
   },
   {
@@ -3011,7 +3371,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "package.json"
     ],
     "servers": [
-      "circom-lsp"
+      {
+        "name": "circom-lsp"
+      }
     ]
   },
   {
@@ -3027,7 +3389,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "workflow/"
     ],
     "servers": [
-      "pylsp"
+      {
+        "name": "pylsp"
+      }
     ]
   },
   {
@@ -3037,7 +3401,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "qnt"
     ],
     "servers": [
-      "quint-language-server"
+      {
+        "name": "quint-language-server"
+      }
     ]
   },
   {
@@ -3050,7 +3416,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "swim.toml"
     ],
     "servers": [
-      "spade-language-server"
+      {
+        "name": "spade-language-server"
+      }
     ]
   },
   {
@@ -3060,7 +3428,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "ab"
     ],
     "servers": [
-      "amber-lsp"
+      {
+        "name": "amber-lsp"
+      }
     ]
   },
   {
@@ -3070,7 +3440,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "koto"
     ],
     "servers": [
-      "koto-ls"
+      {
+        "name": "koto-ls"
+      }
     ]
   },
   {
@@ -3083,7 +3455,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "alire.toml"
     ],
     "servers": [
-      "ada-gpr-language-server"
+      {
+        "name": "ada-gpr-language-server"
+      }
     ]
   },
   {
@@ -3094,7 +3468,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "qll"
     ],
     "servers": [
-      "codeql"
+      {
+        "name": "codeql"
+      }
     ]
   },
   {
@@ -3105,7 +3481,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "yar"
     ],
     "servers": [
-      "yls"
+      {
+        "name": "yls"
+      }
     ]
   },
   {
@@ -3116,7 +3494,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "inc"
     ],
     "servers": [
-      "sourcepawn-studio"
+      {
+        "name": "sourcepawn-studio"
+      }
     ]
   },
   {
@@ -3129,7 +3509,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "Clarinet.toml"
     ],
     "servers": [
-      "clarinet"
+      {
+        "name": "clarinet"
+      }
     ]
   },
   {
@@ -3149,7 +3531,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       ".luaurc"
     ],
     "servers": [
-      "luau"
+      {
+        "name": "luau"
+      }
     ]
   },
   {
@@ -3161,7 +3545,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "wikitext"
     ],
     "servers": [
-      "wikitext-lsp"
+      {
+        "name": "wikitext-lsp"
+      }
     ]
   },
   {
@@ -3171,7 +3557,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "kcl"
     ],
     "servers": [
-      "kcl-lsp"
+      {
+        "name": "kcl-lsp"
+      }
     ]
   },
   {
@@ -3186,7 +3574,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "build.hxml"
     ],
     "servers": [
-      "haxe-language-server"
+      {
+        "name": "haxe-language-server"
+      }
     ]
   },
   {
@@ -3199,7 +3589,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "package.json"
     ],
     "servers": [
-      "ripple-lsp"
+      {
+        "name": "ripple-lsp"
+      }
     ]
   },
   {
@@ -3209,7 +3601,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "styx"
     ],
     "servers": [
-      "styx"
+      {
+        "name": "styx"
+      }
     ]
   },
   {
@@ -3219,7 +3613,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "tiltfile"
     ],
     "servers": [
-      "tilt"
+      {
+        "name": "tilt"
+      }
     ]
   },
   {
@@ -3229,7 +3625,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       "ebnf"
     ],
     "servers": [
-      "ebnfer"
+      {
+        "name": "ebnfer"
+      }
     ]
   },
   {
@@ -3243,7 +3641,9 @@ export const generatedServerLanguages: ReadonlyArray<GeneratedServerLanguage> = 
       ".git"
     ],
     "servers": [
-      "drools-lsp"
+      {
+        "name": "drools-lsp"
+      }
     ]
   }
 ];

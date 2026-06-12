@@ -36,7 +36,13 @@ const serversTarget = join(
   "languageServers.ts",
 );
 
-type HelixLanguageServerRef = string | { readonly name: string };
+type HelixLanguageServerRef =
+  | string
+  | {
+      readonly name: string;
+      readonly "only-features"?: readonly string[];
+      readonly "except-features"?: readonly string[];
+    };
 
 type HelixLanguageServer = {
   readonly command: string;
@@ -146,7 +152,13 @@ const serverDefinitions = Object.fromEntries(
 const serverLanguages = raw.language
   .map((lang) => {
     const servers = (lang["language-servers"] ?? []).map((ref) =>
-      typeof ref === "string" ? ref : ref.name,
+      typeof ref === "string"
+        ? { name: ref }
+        : {
+            name: ref.name,
+            ...(ref["only-features"]?.length ? { only: ref["only-features"] } : {}),
+            ...(ref["except-features"]?.length ? { except: ref["except-features"] } : {}),
+          },
     );
     const fileTypes = (lang["file-types"] ?? []).filter(
       (ft): ft is string => typeof ft === "string",
@@ -179,8 +191,14 @@ export type GeneratedServerLanguage = {
   readonly fileTypes: readonly string[];
   /** Workspace root markers. */
   readonly roots?: readonly string[];
-  /** Server ids in priority order; the first is the primary. */
-  readonly servers: readonly string[];
+  /** Servers in priority order with helix feature constraints. */
+  readonly servers: ReadonlyArray<{
+    readonly name: string;
+    /** Helix only-features: the server serves ONLY these. */
+    readonly only?: readonly string[];
+    /** Helix except-features: the server serves everything BUT these. */
+    readonly except?: readonly string[];
+  }>;
 };
 
 export const generatedLanguageServers: Readonly<Record<string, GeneratedLanguageServer>> = `;

@@ -73,6 +73,8 @@ export type IntelState = {
     readonly selected: number;
     readonly anchor: number;
   };
+  /** Docs for the SELECTED completion item (eager + resolve-updated). */
+  readonly completionDocs: { readonly detail?: string; readonly documentation?: string } | null;
   readonly hover: { readonly open: boolean; readonly parts: readonly HoverResult[] };
   readonly signature: {
     readonly open: boolean;
@@ -210,10 +212,13 @@ export class IntelController {
     CompletionItem,
     Promise<CompletionResolution | null>
   >();
+  /** Settled resolutions, for the docs panel (documentation arrives lazily). */
+  private readonly resolvedDocs = new WeakMap<CompletionItem, CompletionResolution>();
 
   private readonly listeners = new Set<() => void>();
   private state: IntelState = {
     completion: { open: false, items: [], selected: 0, anchor: 0 },
+    completionDocs: null,
     hover: { open: false, parts: [] },
     signature: { open: false, result: null, selected: 0 },
   };
@@ -525,7 +530,14 @@ export class IntelController {
     const session = this.session;
     if (session === null || session.scored.length === 0) return;
     const item = session.scored[session.selected]?.item;
-    if (item !== undefined) void this.resolveItem(item);
+    if (item === undefined) return;
+    void this.resolveItem(item).then((resolution) => {
+      if (resolution === null) return;
+      this.resolvedDocs.set(item, resolution);
+      // Repaint the docs panel if this item is still the selected one.
+      const current = this.session;
+      if (current !== null && current.scored[current.selected]?.item === item) this.publish();
+    });
   }
 
   private async finalizeAccept(
@@ -1027,6 +1039,11 @@ export class IntelController {
   // ------------------------------------------------------------- internals
 
   private publish(): void {
+    const selectedItem =
+      this.session !== null ? this.session.scored[this.session.selected]?.item : undefined;
+    const resolved = selectedItem !== undefined ? this.resolvedDocs.get(selectedItem) : undefined;
+    const documentation = resolved?.documentation ?? selectedItem?.documentation;
+    const detail = resolved?.detail ?? selectedItem?.detail;
     this.state = {
       completion: {
         open: this.session !== null && this.session.scored.length > 0,
@@ -1034,6 +1051,13 @@ export class IntelController {
         selected: this.session?.selected ?? 0,
         anchor: this.session?.anchor ?? 0,
       },
+      completionDocs:
+        selectedItem !== undefined && (documentation !== undefined || detail !== undefined)
+          ? {
+              ...(detail !== undefined ? { detail } : {}),
+              ...(documentation !== undefined ? { documentation } : {}),
+            }
+          : null,
       hover: { open: this.hover !== null, parts: this.hover?.parts ?? [] },
       signature: {
         open: this.signatureSession !== null,

@@ -135,8 +135,9 @@ export function IntelView({ controller }: { readonly controller: IntelController
       {completionHost !== null &&
         state.completion.open &&
         createPortal(
-          <div ref={listRef} className="intel-completion" role="listbox">
-            {state.completion.items.slice(0, 60).map((scored, index) => (
+          <div className="intel-completion-wrap">
+            <div ref={listRef} className="intel-completion" role="listbox">
+              {state.completion.items.slice(0, 60).map((scored, index) => (
               <div
                 key={`${scored.providerOrder}:${scored.item.label}:${index}`}
                 role="option"
@@ -155,7 +156,18 @@ export function IntelView({ controller }: { readonly controller: IntelController
                   <span className="intel-item__detail">{scored.item.detail}</span>
                 )}
               </div>
-            ))}
+              ))}
+            </div>
+            {state.completionDocs !== null && (
+              <div className="intel-docs">
+                {state.completionDocs.detail !== undefined && (
+                  <div className="intel-docs__detail">{state.completionDocs.detail}</div>
+                )}
+                {state.completionDocs.documentation !== undefined && (
+                  <Markdown contents={state.completionDocs.documentation} />
+                )}
+              </div>
+            )}
           </div>,
           completionHost,
         )}

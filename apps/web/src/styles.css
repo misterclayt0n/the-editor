@@ -465,6 +465,38 @@ body {
   z-index: 30;
 }
 
+.intel-completion-wrap {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+/* Docs panel for the selected completion item, beside the list. */
+.intel-docs {
+  width: 340px;
+  max-height: 264px;
+  padding: 8px 10px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-editor);
+  box-shadow: 0 10px 32px color-mix(in srgb, var(--bg-editor) 54%, transparent);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 12px;
+  line-height: 1.5;
+  user-select: text;
+}
+
+.intel-docs__detail {
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  color: var(--fg-dim);
+  font-family: "SF Mono", Menlo, Monaco, "Cascadia Code", monospace;
+  white-space: pre-wrap;
+}
+
 .intel-completion {
   min-width: 260px;
   max-width: 460px;

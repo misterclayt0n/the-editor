@@ -23,6 +23,12 @@ export type LanguageServerDefinition = {
   readonly languages: ReadonlyArray<{
     readonly languageId: string;
     readonly fileTypes: readonly string[];
+    /** Position in the language's server list — feature routing order. */
+    readonly priority?: number;
+    /** Helix only-features: this server serves ONLY these for the language. */
+    readonly only?: readonly string[];
+    /** Helix except-features: everything BUT these. */
+    readonly except?: readonly string[];
   }>;
   /** Files marking the workspace root, nearest-ancestor-wins. */
   readonly rootMarkers?: readonly string[];
@@ -62,10 +68,12 @@ export namespace LanguageServers {
 
 /**
  * Stock servers: the ENTIRE helix catalog, generated from languages.toml
- * (188 servers; ~156 languages wired). Each language's PRIMARY server (the
- * first in its language-servers list) claims its file types; commands
- * resolve from PATH and absent ones simply fail to spawn with backoff.
- * Helix's per-server `config` doubles as initializationOptions and as the
+ * (188 servers; ~156 languages wired). EVERY server in a language's
+ * language-servers list claims its file types — documents attach to all of
+ * them, and the list position (priority) decides feature routing, with
+ * helix only-/except-features narrowing what each serves. Commands resolve
+ * from PATH and absent ones simply fail to spawn with backoff. Helix's
+ * per-server `config` doubles as initializationOptions and as the
  * workspace/configuration answer source, matching helix semantics.
  */
 export const lspDefaults = definePackage("the-editor/lsp-defaults", () =>
@@ -73,17 +81,29 @@ export const lspDefaults = definePackage("the-editor/lsp-defaults", () =>
     const servers = yield* LanguageServers;
 
     type Group = {
-      languages: Array<{ languageId: string; fileTypes: readonly string[] }>;
+      languages: Array<{
+        languageId: string;
+        fileTypes: readonly string[];
+        priority?: number;
+        only?: readonly string[];
+        except?: readonly string[];
+      }>;
       roots: Set<string>;
     };
     const byServer = new Map<string, Group>();
     for (const language of generatedServerLanguages) {
-      const primary = language.servers[0];
-      if (primary === undefined) continue;
-      const group = byServer.get(primary) ?? { languages: [], roots: new Set<string>() };
-      group.languages.push({ languageId: language.languageId, fileTypes: language.fileTypes });
-      for (const root of language.roots ?? []) group.roots.add(root);
-      byServer.set(primary, group);
+      language.servers.forEach((server, index) => {
+        const group = byServer.get(server.name) ?? { languages: [], roots: new Set<string>() };
+        group.languages.push({
+          languageId: language.languageId,
+          fileTypes: language.fileTypes,
+          priority: index,
+          ...(server.only !== undefined ? { only: server.only } : {}),
+          ...(server.except !== undefined ? { except: server.except } : {}),
+        });
+        for (const root of language.roots ?? []) group.roots.add(root);
+        byServer.set(server.name, group);
+      });
     }
     for (const [id, group] of byServer) {
       const spec = generatedLanguageServers[id];

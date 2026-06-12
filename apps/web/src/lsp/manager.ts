@@ -80,32 +80,54 @@ type ClientHandle = {
   alive: boolean;
 };
 
+type DiagnosticEntry = {
+  from: number;
+  to: number;
+  message: string;
+  severity: number;
+  source: string | undefined;
+};
+
+/**
+ * One document's connection to ONE server. A document can have several
+ * (helix's language-servers list): each keeps its own sync chain and its
+ * own diagnostics; features route by priority order + helix only-/except-
+ * features.
+ */
+type ServerBinding = {
+  readonly handle: ClientHandle;
+  readonly languageId: string;
+  readonly only?: readonly string[];
+  readonly except?: readonly string[];
+  readonly sync: DocumentSyncState | null; // null = full-text sync
+  /** Last version the server has (chain-gated incremental sync). */
+  syncedVersion: number;
+  fullSyncTimer: number | null;
+  diagnosticRanges: RangedValue<DecorationSpec>[];
+  diagnosticList: DiagnosticEntry[];
+  counts: DiagnosticCounts;
+};
+
+/** Helix feature gating: only ⇒ allow-list, except ⇒ deny-list. */
+const featureAllowed = (binding: ServerBinding, feature: string): boolean => {
+  if (binding.only !== undefined && !binding.only.includes(feature)) return false;
+  if (binding.except !== undefined && binding.except.includes(feature)) return false;
+  return true;
+};
+
 type Attachment = {
   readonly docId: string;
   readonly uri: string;
   readonly path: string;
   readonly document: DocumentScope;
-  readonly handle: ClientHandle;
+  /** Priority order — the first eligible binding serves each feature. */
+  readonly bindings: ServerBinding[];
   readonly visualsScope: Scope.CloseableScope;
   readonly visuals: VisualsHandle;
   readonly busFiber: Fiber.RuntimeFiber<unknown, unknown>;
-  readonly sync: DocumentSyncState | null; // null = full-text sync
-  /** Last version the server has (chain-gated incremental sync). */
-  syncedVersion: number;
-  fullSyncTimer: number | null;
   hintTimer: number | null;
   hintCancel: { cancel(): void } | null;
-  diagnosticsSet: RangeSet<DecorationSpec>;
   hintsSet: RangeSet<VirtualTextSpec>;
-  counts: DiagnosticCounts;
-  /** Offset-resolved diagnostics from the last publish (hover lookup). */
-  diagnosticList: Array<{
-    from: number;
-    to: number;
-    message: string;
-    severity: number;
-    source: string | undefined;
-  }>;
 };
 
 const positionToOffset = (buffer: TextBuffer, position: lsp.Position): number => {
@@ -173,20 +195,41 @@ export class LspManager {
     if (this.disposed || this.attachments.has(docId)) return;
     const definitions = Effect.runSync(this.servers.list);
     const extension = path.split(".").pop() ?? "";
-    let matched: { definition: LanguageServerDefinition; languageId: string } | null = null;
+    // EVERY matching server attaches (helix's language-servers list);
+    // per-language priority decides feature routing order.
+    type Candidate = {
+      definition: LanguageServerDefinition;
+      languageId: string;
+      priority: number;
+      only?: readonly string[];
+      except?: readonly string[];
+    };
+    const candidates: Candidate[] = [];
     for (const definition of definitions) {
       const language = definition.languages.find((l) => l.fileTypes.includes(extension));
-      if (language !== undefined) {
-        matched = { definition, languageId: language.languageId };
-        break;
-      }
+      if (language === undefined) continue;
+      if (candidates.some((c) => c.definition.id === definition.id)) continue;
+      candidates.push({
+        definition,
+        languageId: language.languageId,
+        priority: language.priority ?? 0,
+        ...(language.only !== undefined ? { only: language.only } : {}),
+        ...(language.except !== undefined ? { except: language.except } : {}),
+      });
     }
-    if (matched === null) return;
+    if (candidates.length === 0) return;
+    candidates.sort((a, b) => a.priority - b.priority);
 
-    const root = await this.findRoot(path, matched.definition.rootMarkers ?? []);
-    const handle = await this.ensureClient(matched.definition, root);
-    if (handle === null || this.disposed) return;
-    if (!(await handle.ready)) return;
+    const handles = await Promise.all(
+      candidates.map(async (candidate) => {
+        const root = await this.findRoot(path, candidate.definition.rootMarkers ?? []);
+        const handle = await this.ensureClient(candidate.definition, root);
+        if (handle === null || !(await handle.ready)) return null;
+        return { candidate, handle };
+      }),
+    );
+    const ready = handles.filter((entry) => entry !== null);
+    if (ready.length === 0 || this.disposed) return;
     if (this.attachments.has(docId)) return; // raced a second attach
 
     const context = document.context as Context.Context<
@@ -199,9 +242,24 @@ export class LspManager {
     const uri = pathToUri(path);
     const snapshot = Effect.runSync(text.snapshot);
     const initialText = snapshot.buffer.sliceString(0, snapshot.buffer.length);
-    handle.client.openDocument(uri, matched.languageId, snapshot.version, initialText);
 
-    const incremental = handle.client.syncKind() === lsp.TextDocumentSyncKind.Incremental;
+    const bindings: ServerBinding[] = ready.map(({ candidate, handle }) => {
+      handle.client.openDocument(uri, candidate.languageId, snapshot.version, initialText);
+      const incremental = handle.client.syncKind() === lsp.TextDocumentSyncKind.Incremental;
+      return {
+        handle,
+        languageId: candidate.languageId,
+        ...(candidate.only !== undefined ? { only: candidate.only } : {}),
+        ...(candidate.except !== undefined ? { except: candidate.except } : {}),
+        sync: incremental ? new DocumentSyncState(initialText) : null,
+        syncedVersion: snapshot.version,
+        fullSyncTimer: null,
+        diagnosticRanges: [],
+        diagnosticList: [],
+        counts: { errors: 0, warnings: 0 },
+      };
+    });
+
     const visualsScope = Effect.runSync(Scope.make());
     const visuals = Effect.runSync(
       editorVisuals.contribute("lsp", {}).pipe(Scope.extend(visualsScope)),
@@ -212,11 +270,9 @@ export class LspManager {
       uri,
       path,
       document,
-      handle,
+      bindings,
       visualsScope,
       visuals,
-      sync: incremental ? new DocumentSyncState(initialText) : null,
-      syncedVersion: snapshot.version,
       busFiber: Effect.runFork(
         Stream.runForEach(bus.notifications, (notification) =>
           Effect.sync(() => {
@@ -226,13 +282,9 @@ export class LspManager {
           }),
         ),
       ),
-      fullSyncTimer: null,
       hintTimer: null,
       hintCancel: null,
-      diagnosticsSet: RangeSet.empty(),
       hintsSet: RangeSet.empty(),
-      counts: { errors: 0, warnings: 0 },
-      diagnosticList: [],
     };
     this.attachments.set(docId, attachment);
     this.byUri.set(uri, attachment);
@@ -244,23 +296,33 @@ export class LspManager {
     if (attachment === undefined) return;
     this.attachments.delete(docId);
     this.byUri.delete(attachment.uri);
-    if (attachment.fullSyncTimer !== null) window.clearTimeout(attachment.fullSyncTimer);
+    for (const binding of attachment.bindings) {
+      if (binding.fullSyncTimer !== null) window.clearTimeout(binding.fullSyncTimer);
+      if (binding.handle.alive) binding.handle.client.closeDocument(attachment.uri);
+    }
     if (attachment.hintTimer !== null) window.clearTimeout(attachment.hintTimer);
     attachment.hintCancel?.cancel();
     Effect.runFork(Fiber.interrupt(attachment.busFiber));
     Effect.runFork(Scope.close(attachment.visualsScope, Exit.void));
-    if (attachment.handle.alive) attachment.handle.client.closeDocument(attachment.uri);
   }
 
   counts(docId: string): DiagnosticCounts | null {
-    return this.attachments.get(docId)?.counts ?? null;
+    const attachment = this.attachments.get(docId);
+    if (attachment === undefined) return null;
+    return attachment.bindings.reduce(
+      (sum, binding) => ({
+        errors: sum.errors + binding.counts.errors,
+        warnings: sum.warnings + binding.counts.warnings,
+      }),
+      { errors: 0, warnings: 0 },
+    );
   }
 
   /** Host save hook: didSave + watched-files fan-out to interested servers. */
   documentSaved(docId: string): void {
     const attachment = this.attachments.get(docId);
-    if (attachment !== undefined && attachment.handle.alive) {
-      attachment.handle.client.saveDocument(attachment.uri);
+    for (const binding of attachment?.bindings ?? []) {
+      if (binding.handle.alive) binding.handle.client.saveDocument(attachment!.uri);
     }
     const path = attachment?.path;
     if (path === undefined) return;
@@ -291,12 +353,54 @@ export class LspManager {
 
   // -------------------------------------------------------------- features
 
-  /** LSP completion as a generic intel result. */
+  /** Bindings able to serve `feature`, in priority order. */
+  private eligibleBindings(
+    attachment: Attachment,
+    method: string,
+    feature: string,
+  ): ServerBinding[] {
+    return attachment.bindings.filter(
+      (binding) =>
+        binding.handle.alive &&
+        binding.handle.client.supports(method) &&
+        featureAllowed(binding, feature),
+    );
+  }
+
+  /** The first binding able to serve `feature` (helix routing). */
+  private bindingFor(
+    attachment: Attachment,
+    method: string,
+    feature: string,
+  ): ServerBinding | null {
+    return this.eligibleBindings(attachment, method, feature)[0] ?? null;
+  }
+
+  /** LSP completion as a generic intel result — merged across servers. */
   async completionAt(context: CompletionContext): Promise<CompletionResult | null> {
     const attachment = this.attachments.get(context.docId);
-    if (attachment === undefined || !attachment.handle.alive) return null;
-    if (!attachment.handle.client.supports(lsp.CompletionRequest.method)) return null;
+    if (attachment === undefined) return null;
+    const bindings = this.eligibleBindings(attachment, lsp.CompletionRequest.method, "completion");
+    if (bindings.length === 0) return null;
     this.flushPendingSync(attachment);
+    const results = await Promise.all(
+      bindings.map((binding) =>
+        this.completionFrom(attachment, binding, context).catch(() => null),
+      ),
+    );
+    const merged = results.filter((result) => result !== null);
+    if (merged.length === 0) return null;
+    return {
+      items: merged.flatMap((result) => result.items),
+      isIncomplete: merged.some((result) => result.isIncomplete === true),
+    };
+  }
+
+  private async completionFrom(
+    attachment: Attachment,
+    binding: ServerBinding,
+    context: CompletionContext,
+  ): Promise<CompletionResult | null> {
     const buffer = this.bufferOf(attachment);
     const triggerKind =
       context.trigger.kind === "triggerCharacter"
@@ -304,7 +408,7 @@ export class LspManager {
         : context.trigger.kind === "incomplete"
           ? lsp.CompletionTriggerKind.TriggerForIncompleteCompletions
           : lsp.CompletionTriggerKind.Invoked;
-    const result = await attachment.handle.client.completion(
+    const result = await binding.handle.client.completion(
       attachment.uri,
       offsetToPosition(buffer, context.offset),
       {
@@ -333,8 +437,8 @@ export class LspManager {
       // resolution offsets convert against the buffer as it is THEN.
       let command = item.command;
       const resolve = async () => {
-        if (!attachment.handle.alive) return null;
-        const resolved = await attachment.handle.client.resolveCompletionItem(item);
+        if (!binding.handle.alive) return null;
+        const resolved = await binding.handle.client.resolveCompletionItem(item);
         if (resolved.command !== undefined) command = resolved.command;
         const liveBuffer = this.bufferOf(attachment);
         return {
@@ -348,8 +452,8 @@ export class LspManager {
       // Spec: the item's command runs AFTER the edits are applied; servers
       // that route auto-imports through it answer with workspace/applyEdit.
       const postAccept = async () => {
-        if (command === undefined || !attachment.handle.alive) return;
-        await attachment.handle.client.executeCommand(command.command, command.arguments);
+        if (command === undefined || !binding.handle.alive) return;
+        await binding.handle.client.executeCommand(command.command, command.arguments);
       };
       return {
         label,
@@ -376,9 +480,9 @@ export class LspManager {
   diagnosticsHoverAt(context: HoverContext): HoverResult | null {
     const attachment = this.attachments.get(context.docId);
     if (attachment === undefined) return null;
-    const hits = attachment.diagnosticList.filter(
-      (d) => context.offset >= d.from && context.offset <= d.to,
-    );
+    const hits = attachment.bindings
+      .flatMap((binding) => binding.diagnosticList)
+      .filter((d) => context.offset >= d.from && context.offset <= d.to);
     if (hits.length === 0) return null;
     const contents = hits
       .map((d) => `${d.message}${d.source !== undefined ? `  (${d.source})` : ""}`)
@@ -391,11 +495,12 @@ export class LspManager {
   /** LSP hover as a generic intel result. */
   async hoverAt(context: HoverContext): Promise<HoverResult | null> {
     const attachment = this.attachments.get(context.docId);
-    if (attachment === undefined || !attachment.handle.alive) return null;
-    if (!attachment.handle.client.supports(lsp.HoverRequest.method)) return null;
+    if (attachment === undefined) return null;
+    const binding = this.bindingFor(attachment, lsp.HoverRequest.method, "hover");
+    if (binding === null) return null;
     this.flushPendingSync(attachment);
     const buffer = this.bufferOf(attachment);
-    const hover = await attachment.handle.client.hover(
+    const hover = await binding.handle.client.hover(
       attachment.uri,
       offsetToPosition(buffer, context.offset),
     );
@@ -418,27 +523,43 @@ export class LspManager {
 
   completionTriggerCharacters(docId: string): readonly string[] {
     const attachment = this.attachments.get(docId);
-    if (attachment === undefined || !attachment.handle.alive) return [];
-    return attachment.handle.client.completionTriggerCharacters();
+    if (attachment === undefined) return [];
+    const chars = this.eligibleBindings(
+      attachment,
+      lsp.CompletionRequest.method,
+      "completion",
+    ).flatMap((binding) => binding.handle.client.completionTriggerCharacters());
+    return [...new Set(chars)];
   }
 
   signatureTriggerCharacters(docId: string): readonly string[] {
     const attachment = this.attachments.get(docId);
-    if (attachment === undefined || !attachment.handle.alive) return [];
-    return attachment.handle.client.signatureTriggerCharacters();
+    if (attachment === undefined) return [];
+    const chars = this.eligibleBindings(
+      attachment,
+      lsp.SignatureHelpRequest.method,
+      "signature-help",
+    ).flatMap((binding) => binding.handle.client.signatureTriggerCharacters());
+    return [...new Set(chars)];
   }
 
   signatureRetriggerCharacters(docId: string): readonly string[] {
     const attachment = this.attachments.get(docId);
-    if (attachment === undefined || !attachment.handle.alive) return [];
-    return attachment.handle.client.signatureRetriggerCharacters();
+    if (attachment === undefined) return [];
+    const chars = this.eligibleBindings(
+      attachment,
+      lsp.SignatureHelpRequest.method,
+      "signature-help",
+    ).flatMap((binding) => binding.handle.client.signatureRetriggerCharacters());
+    return [...new Set(chars)];
   }
 
   /** LSP signature help as a generic intel result. */
   async signatureHelpAt(context: SignatureContext): Promise<SignatureResult | null> {
     const attachment = this.attachments.get(context.docId);
-    if (attachment === undefined || !attachment.handle.alive) return null;
-    if (!attachment.handle.client.supports(lsp.SignatureHelpRequest.method)) return null;
+    if (attachment === undefined) return null;
+    const binding = this.bindingFor(attachment, lsp.SignatureHelpRequest.method, "signature-help");
+    if (binding === null) return null;
     this.flushPendingSync(attachment);
     const buffer = this.bufferOf(attachment);
     const triggerKind =
@@ -447,7 +568,7 @@ export class LspManager {
         : context.trigger.kind === "contentChange"
           ? lsp.SignatureHelpTriggerKind.ContentChange
           : lsp.SignatureHelpTriggerKind.Invoked;
-    const help = await attachment.handle.client.signatureHelp(
+    const help = await binding.handle.client.signatureHelp(
       attachment.uri,
       offsetToPosition(buffer, context.offset),
       {
@@ -510,19 +631,21 @@ export class LspManager {
 
   async definition(docId: string, offset: number): Promise<lsp.Location[]> {
     const attachment = this.attachments.get(docId);
-    if (attachment === undefined || !attachment.handle.alive) return [];
-    if (!attachment.handle.client.supports(lsp.DefinitionRequest.method)) return [];
+    if (attachment === undefined) return [];
+    const binding = this.bindingFor(attachment, lsp.DefinitionRequest.method, "goto-definition");
+    if (binding === null) return [];
     this.flushPendingSync(attachment);
     const buffer = this.bufferOf(attachment);
-    return attachment.handle.client.definition(attachment.uri, offsetToPosition(buffer, offset));
+    return binding.handle.client.definition(attachment.uri, offsetToPosition(buffer, offset));
   }
 
   async format(docId: string): Promise<boolean> {
     const attachment = this.attachments.get(docId);
-    if (attachment === undefined || !attachment.handle.alive) return false;
-    if (!attachment.handle.client.supports(lsp.DocumentFormattingRequest.method)) return false;
+    if (attachment === undefined) return false;
+    const binding = this.bindingFor(attachment, lsp.DocumentFormattingRequest.method, "format");
+    if (binding === null) return false;
     this.flushPendingSync(attachment);
-    const edits = await attachment.handle.client.formatting(attachment.uri, {
+    const edits = await binding.handle.client.formatting(attachment.uri, {
       tabSize: 2,
       insertSpaces: true,
     });
@@ -533,11 +656,12 @@ export class LspManager {
 
   async rename(docId: string, offset: number, newName: string): Promise<boolean> {
     const attachment = this.attachments.get(docId);
-    if (attachment === undefined || !attachment.handle.alive) return false;
-    if (!attachment.handle.client.supports(lsp.RenameRequest.method)) return false;
+    if (attachment === undefined) return false;
+    const binding = this.bindingFor(attachment, lsp.RenameRequest.method, "rename-symbol");
+    if (binding === null) return false;
     this.flushPendingSync(attachment);
     const buffer = this.bufferOf(attachment);
-    const edit = await attachment.handle.client.rename(
+    const edit = await binding.handle.client.rename(
       attachment.uri,
       offsetToPosition(buffer, offset),
       newName,
@@ -575,55 +699,56 @@ export class LspManager {
     version: number,
     changes: ReadonlyArray<{ fromA: number; toA: number; fromB: number; toB: number }> | undefined,
   ): void {
-    if (this.disposed || !attachment.handle.alive) return;
+    if (this.disposed) return;
     // Incremental sync demands an INTACT chain and a FRESH notification:
     // the bus is sliding (slow consumers drop batches), and the inserted
     // text is sliced from the live buffer — valid only while the buffer is
     // still at the notification's version. Anything else resyncs fully.
-    const snapshot =
-      attachment.sync !== null && changes !== undefined
-        ? Effect.runSync(text.snapshot)
-        : null;
-    if (
-      attachment.sync !== null &&
-      changes !== undefined &&
-      snapshot !== null &&
-      snapshot.version === version &&
-      version === attachment.syncedVersion + 1
-    ) {
-      const edits = changes.map((change) => ({
-        start: change.fromA,
-        end: change.toA,
-        text: snapshot.buffer.sliceString(change.fromB, change.toB),
-      }));
-      attachment.handle.client.changeDocumentIncremental(
-        attachment.uri,
-        version,
-        attachment.sync.applyEdits(edits),
-      );
-      attachment.syncedVersion = version;
-    } else {
-      // Full sync (or unknown changes): debounce whole-text sends.
-      if (attachment.fullSyncTimer !== null) window.clearTimeout(attachment.fullSyncTimer);
-      attachment.fullSyncTimer = window.setTimeout(() => {
-        attachment.fullSyncTimer = null;
-        this.sendFullSync(attachment);
-      }, FULL_SYNC_DEBOUNCE_MS);
+    // Each binding keeps its OWN chain (servers differ in sync kind).
+    const snapshot = changes !== undefined ? Effect.runSync(text.snapshot) : null;
+    for (const binding of attachment.bindings) {
+      if (!binding.handle.alive) continue;
+      if (
+        binding.sync !== null &&
+        changes !== undefined &&
+        snapshot !== null &&
+        snapshot.version === version &&
+        version === binding.syncedVersion + 1
+      ) {
+        const edits = changes.map((change) => ({
+          start: change.fromA,
+          end: change.toA,
+          text: snapshot.buffer.sliceString(change.fromB, change.toB),
+        }));
+        binding.handle.client.changeDocumentIncremental(
+          attachment.uri,
+          version,
+          binding.sync.applyEdits(edits),
+        );
+        binding.syncedVersion = version;
+      } else {
+        // Full sync (or unknown changes): debounce whole-text sends.
+        if (binding.fullSyncTimer !== null) window.clearTimeout(binding.fullSyncTimer);
+        binding.fullSyncTimer = window.setTimeout(() => {
+          binding.fullSyncTimer = null;
+          this.sendFullSync(attachment, binding);
+        }, FULL_SYNC_DEBOUNCE_MS);
+      }
     }
     this.scheduleHints(attachment, INLAY_HINT_DEBOUNCE_MS);
   }
 
-  private sendFullSync(attachment: Attachment): void {
-    if (this.disposed || !attachment.handle.alive) return;
+  private sendFullSync(attachment: Attachment, binding: ServerBinding): void {
+    if (this.disposed || !binding.handle.alive) return;
     const text = Context.get(
       attachment.document.context as Context.Context<TextDocument>,
       TextDocument,
     );
     const current = Effect.runSync(text.snapshot);
     const fullText = current.buffer.sliceString(0, current.buffer.length);
-    attachment.sync?.reset(fullText);
-    attachment.handle.client.changeDocumentFull(attachment.uri, current.version, fullText);
-    attachment.syncedVersion = current.version;
+    binding.sync?.reset(fullText);
+    binding.handle.client.changeDocumentFull(attachment.uri, current.version, fullText);
+    binding.syncedVersion = current.version;
   }
 
   /**
@@ -633,17 +758,21 @@ export class LspManager {
    * mirror (signature help asked about "(" the server hadn't seen yet).
    */
   private flushPendingSync(attachment: Attachment): void {
-    if (attachment.fullSyncTimer === null) return;
-    window.clearTimeout(attachment.fullSyncTimer);
-    attachment.fullSyncTimer = null;
-    this.sendFullSync(attachment);
+    for (const binding of attachment.bindings) {
+      if (binding.fullSyncTimer === null) continue;
+      window.clearTimeout(binding.fullSyncTimer);
+      binding.fullSyncTimer = null;
+      this.sendFullSync(attachment, binding);
+    }
   }
 
   // ----------------------------------------------------------- diagnostics
 
-  private handleDiagnostics(params: lsp.PublishDiagnosticsParams): void {
+  private handleDiagnostics(handle: ClientHandle, params: lsp.PublishDiagnosticsParams): void {
     const attachment = this.byUri.get(params.uri);
     if (attachment === undefined) return;
+    const binding = attachment.bindings.find((b) => b.handle === handle);
+    if (binding === undefined || !featureAllowed(binding, "diagnostics")) return;
     const buffer = this.bufferOf(attachment);
     const ranges = params.diagnostics.map((diagnostic) => {
       const from = positionToOffset(buffer, diagnostic.range.start);
@@ -661,8 +790,8 @@ export class LspManager {
         },
       };
     });
-    attachment.diagnosticsSet = RangeSet.of(ranges);
-    attachment.diagnosticList = params.diagnostics.map((diagnostic) => {
+    binding.diagnosticRanges = ranges;
+    binding.diagnosticList = params.diagnostics.map((diagnostic) => {
       const from = positionToOffset(buffer, diagnostic.range.start);
       let to = positionToOffset(buffer, diagnostic.range.end);
       if (to <= from) to = Math.min(buffer.length, from + 1);
@@ -676,7 +805,7 @@ export class LspManager {
       };
     });
     this.pushVisuals(attachment);
-    attachment.counts = {
+    binding.counts = {
       errors: params.diagnostics.filter((d) => (d.severity ?? 1) === 1).length,
       warnings: params.diagnostics.filter((d) => d.severity === 2).length,
     };
@@ -687,7 +816,7 @@ export class LspManager {
 
   private scheduleHints(attachment: Attachment, delayMs: number): void {
     if (!this.hintsEnabled || this.disposed) return;
-    if (!attachment.handle.client.supports(lsp.InlayHintRequest.method)) return;
+    if (this.bindingFor(attachment, lsp.InlayHintRequest.method, "inlay-hints") === null) return;
     if (attachment.hintTimer !== null) window.clearTimeout(attachment.hintTimer);
     attachment.hintTimer = window.setTimeout(() => {
       attachment.hintTimer = null;
@@ -696,15 +825,17 @@ export class LspManager {
   }
 
   private async requestHints(attachment: Attachment): Promise<void> {
-    if (this.disposed || !attachment.handle.alive || !this.hintsEnabled) return;
+    if (this.disposed || !this.hintsEnabled) return;
+    const binding = this.bindingFor(attachment, lsp.InlayHintRequest.method, "inlay-hints");
+    if (binding === null) return;
     const buffer = this.bufferOf(attachment);
     if (buffer.length > INLAY_HINT_MAX_CHARS) return;
     attachment.hintCancel?.cancel();
-    const source = attachment.handle.client.cancellationSource();
+    const source = binding.handle.client.cancellationSource();
     attachment.hintCancel = source;
     let hints: lsp.InlayHint[];
     try {
-      hints = await attachment.handle.client.inlayHints(
+      hints = await binding.handle.client.inlayHints(
         attachment.uri,
         {
           start: { line: 0, character: 0 },
@@ -734,9 +865,12 @@ export class LspManager {
   }
 
   private pushVisuals(attachment: Attachment): void {
+    const merged = attachment.bindings
+      .flatMap((binding) => binding.diagnosticRanges)
+      .sort((a, b) => a.from - b.from || a.to - b.to);
     Effect.runSync(
       attachment.visuals.update({
-        decorations: attachment.diagnosticsSet,
+        decorations: RangeSet.of(merged),
         virtualText: attachment.hintsSet,
       }),
     );
@@ -867,11 +1001,13 @@ export class LspManager {
           ? { initializationOptions: definition.initializationOptions }
           : {}),
         settings: () => definition.settings,
-        onDiagnostics: (params) => this.handleDiagnostics(params),
+        onDiagnostics: (params) => this.handleDiagnostics(handle, params),
         onApplyEdit: (params) => this.applyWorkspaceEdit(params),
         onInlayHintRefresh: () => {
           for (const attachment of this.attachments.values()) {
-            if (attachment.handle === handle) this.scheduleHints(attachment, 0);
+            if (attachment.bindings.some((b) => b.handle === handle)) {
+              this.scheduleHints(attachment, 0);
+            }
           }
         },
       }),
@@ -887,15 +1023,18 @@ export class LspManager {
     closeListeners.add(() => {
       handle.alive = false;
       this.clients.delete(key);
-      // Server died: clear its visuals so stale squiggles don't linger.
+      // Server died: clear ITS visuals (other bindings keep theirs).
       for (const attachment of this.attachments.values()) {
-        if (attachment.handle === handle) {
-          attachment.diagnosticsSet = RangeSet.empty();
+        const binding = attachment.bindings.find((b) => b.handle === handle);
+        if (binding === undefined) continue;
+        binding.diagnosticRanges = [];
+        binding.diagnosticList = [];
+        binding.counts = { errors: 0, warnings: 0 };
+        if (!attachment.bindings.some((b) => b.handle.alive)) {
           attachment.hintsSet = RangeSet.empty();
-          this.pushVisuals(attachment);
-          attachment.counts = { errors: 0, warnings: 0 };
-          this.onDiagnostics?.(attachment.docId);
         }
+        this.pushVisuals(attachment);
+        this.onDiagnostics?.(attachment.docId);
       }
     });
     this.clients.set(key, handle);

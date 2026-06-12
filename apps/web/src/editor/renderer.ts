@@ -54,7 +54,7 @@ import {
 } from "@the-editor/editor";
 import { Selection, type TextBuffer } from "@the-editor/engine";
 import type { Chord } from "@the-editor/keymaps";
-import type { AppRuntime } from "../runtime";
+import type { PaneHost } from "../runtime";
 import { cancelRender, queueRender } from "./frame";
 
 const LINE_HEIGHT = 20;
@@ -275,7 +275,7 @@ export class EditorRenderer {
 
   constructor(
     private readonly root: HTMLElement,
-    private readonly runtime: AppRuntime,
+    private readonly runtime: PaneHost,
     private readonly options: EditorRendererOptions = {},
   ) {
     this.snapshot = runtime.snapshot();
@@ -560,6 +560,12 @@ export class EditorRenderer {
 
       const lineRange = text.lineRange(line);
       const beforeCaret = text.sliceString(lineRange.from, selection.primary.head);
+      // The caret's line bounds content width from below. maxRowChars is
+      // otherwise updated by the window patch AFTER this clamp runs, so a
+      // bulk edit (paste, fast typing) would clamp the reveal against a
+      // stale width and strand the caret off-screen.
+      const caretLineCols = visualColumn(text.sliceString(lineRange.from, lineRange.to));
+      if (caretLineCols > this.maxRowChars) this.maxRowChars = caretLineCols;
       const caretLeft = this.textOriginX + visualColumn(beforeCaret) * this.charWidth;
       const leftMargin = this.textOriginX;
       const rightMargin = 24;
@@ -647,6 +653,17 @@ export class EditorRenderer {
       }
 
       this.patchRows(layout, structureUnknown, dirtySpans, this.windowStart, this.windowEnd);
+      // Content width derives from the window (line widths aren't indexed,
+      // so it cannot be exact like the vertical side). Document edits
+      // RECOMPUTE it — deleting the long line shrinks the scrollbar — while
+      // scroll-driven rebuilds only grow it, keeping the thumb stable while
+      // panning past the widest line.
+      const windowCols = layout.rows.reduce(
+        (max, row) => (row.kind === "text" ? Math.max(max, visualColumn(row.text)) : max),
+        0,
+      );
+      this.maxRowChars = docDirty ? windowCols : Math.max(this.maxRowChars, windowCols);
+      this.scrollX = Math.max(0, Math.min(this.maxScrollX(), this.scrollX));
       this.windowStart = start;
       this.windowEnd = end;
       this.renderBands(layout);
@@ -734,13 +751,11 @@ export class EditorRenderer {
       const fragment = document.createDocumentFragment();
       const index = new Map<number, number>();
       let childIndex = 0;
-      let charsMax = this.maxRowChars;
       for (const row of layout.rows) {
         if (row.kind === "text") {
           const el = document.createElement("div");
           el.className = "editor-row";
           renderRowContent(el, row.segments);
-          if (row.text.length > charsMax) charsMax = row.text.length;
           index.set(row.line, childIndex);
           fragment.append(el);
         } else {
@@ -760,7 +775,6 @@ export class EditorRenderer {
         }
         childIndex++;
       }
-      this.maxRowChars = charsMax;
       layer.replaceChildren(fragment);
       this.rowIndexByLine = index;
       this.windowHasWidgets = hasBlocks;
@@ -771,9 +785,6 @@ export class EditorRenderer {
     const rows = layout.rows.filter((row) => row.kind === "text");
     const start = layout.startLine;
     const end = start + rows.length;
-    for (const row of rows) {
-      if (row.text.length > this.maxRowChars) this.maxRowChars = row.text.length;
-    }
     this.rowIndexByLine = null;
     const overlapStart = Math.max(start, prevStart);
     const overlapEnd = Math.min(end, prevEnd);

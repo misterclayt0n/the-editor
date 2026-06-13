@@ -708,6 +708,10 @@ export class LspManager {
     const snapshot = changes !== undefined ? Effect.runSync(text.snapshot) : null;
     for (const binding of attachment.bindings) {
       if (!binding.handle.alive) continue;
+      // A position-sensitive request may already have force-synced this binding
+      // forward (flushPendingSync); a stale/earlier notification then has nothing
+      // to add and must not schedule a redundant resync.
+      if (snapshot !== null && version <= binding.syncedVersion) continue;
       if (
         binding.sync !== null &&
         changes !== undefined &&
@@ -752,17 +756,34 @@ export class LspManager {
   }
 
   /**
-   * Position-sensitive requests must not race a PENDING resync: a typing
-   * burst trips the chain gate into the debounced full sync, and a request
-   * issued in that window reads positions against the server's STALE
-   * mirror (signature help asked about "(" the server hadn't seen yet).
+   * Position-sensitive requests must not race the document sync. Two ways the
+   * server's mirror can lag the buffer:
+   *   1. a typing burst tripped the chain gate into the debounced full sync;
+   *   2. the edit that TRIGGERED this request (e.g. the "." that opens member
+   *      completion) hasn't reached the manager's document-bus subscriber yet —
+   *      bus delivery order between the controller (which fires the request) and
+   *      the manager (which syncs) is not guaranteed, so the completion can be
+   *      sent before the "." is synced and tsserver answers with GLOBALS, not
+   *      members.
+   * Either way: if the server isn't at the buffer's current version, push the
+   * full text now (resets the incremental chain) before the request goes out.
    */
   private flushPendingSync(attachment: Attachment): void {
+    const text = Context.get(
+      attachment.document.context as Context.Context<TextDocument>,
+      TextDocument,
+    );
+    const currentVersion = Effect.runSync(text.snapshot).version;
     for (const binding of attachment.bindings) {
-      if (binding.fullSyncTimer === null) continue;
-      window.clearTimeout(binding.fullSyncTimer);
-      binding.fullSyncTimer = null;
-      this.sendFullSync(attachment, binding);
+      if (!binding.handle.alive) continue;
+      const pending = binding.fullSyncTimer !== null;
+      if (pending) {
+        window.clearTimeout(binding.fullSyncTimer);
+        binding.fullSyncTimer = null;
+      }
+      if (pending || binding.syncedVersion < currentVersion) {
+        this.sendFullSync(attachment, binding);
+      }
     }
   }
 

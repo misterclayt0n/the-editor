@@ -137,8 +137,6 @@ export function IntelView({ controller }: { readonly controller: IntelController
   const activeSignature = signatureResult?.signatures[state.signature.selected];
   const activeParameter =
     activeSignature?.activeParameter ?? signatureResult?.activeParameter ?? 0;
-  const activeParameterDoc =
-    activeSignature?.parameters?.[activeParameter]?.documentation;
 
   return (
     <>
@@ -187,6 +185,8 @@ export function IntelView({ controller }: { readonly controller: IntelController
         activeSignature !== undefined &&
         createPortal(
           <div className="intel-signature">
+            {/* Just the signature label — docs are deliberately omitted; the big
+             * description block was noise and overlapped the completion popup. */}
             <div className="intel-signature__line">
               {signatureResult.signatures.length > 1 && (
                 <span className="intel-signature__counter">
@@ -195,16 +195,6 @@ export function IntelView({ controller }: { readonly controller: IntelController
               )}
               <SignatureLabel signature={activeSignature} activeParameter={activeParameter} />
             </div>
-            {activeParameterDoc !== undefined && (
-              <div className="intel-signature__param-doc">
-                <Markdown contents={activeParameterDoc} />
-              </div>
-            )}
-            {activeSignature.documentation !== undefined && (
-              <div className="intel-signature__doc">
-                <Markdown contents={activeSignature.documentation} />
-              </div>
-            )}
           </div>,
           signatureHost,
         )}

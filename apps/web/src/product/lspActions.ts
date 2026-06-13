@@ -18,6 +18,7 @@ export class HostLspActions extends Context.Tag("the-editor/web/HostLspActions")
     readonly formatDocument: () => void;
     readonly renameSymbol: () => void;
     readonly toggleInlayHints: () => void;
+    readonly toggleLsp: () => void;
   }
 >() {}
 
@@ -52,6 +53,14 @@ export const lspActions = definePackage("the-editor/lsp-actions", () =>
       scope: editorScope,
       palette: { group: "LSP" },
       run: () => Effect.sync(() => host.toggleInlayHints()),
+    });
+    // Global so it's reachable even when focus is on the file tree or an empty
+    // workbench: stops every server, or restarts them + re-attaches open docs.
+    yield* commands.register("lsp.toggle", {
+      title: "Toggle Language Servers",
+      scope: SurfaceScope.global,
+      palette: { group: "LSP", aliases: ["lsp", "restart lsp", "stop lsp"] },
+      run: () => Effect.sync(() => host.toggleLsp()),
     });
 
     yield* keymaps.registerAll([

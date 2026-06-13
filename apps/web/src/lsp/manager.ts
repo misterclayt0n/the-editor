@@ -179,6 +179,7 @@ export class LspManager {
   private readonly byUri = new Map<string, Attachment>();
   private readonly failedSpawns = new Map<string, number>();
   private disposed = false;
+  private enabled = true;
   private hintsEnabled = true;
   /** Host hook: diagnostics for a document changed (status surfaces). */
   onDiagnostics?: (docId: string) => void;
@@ -192,7 +193,7 @@ export class LspManager {
   /** Attach a file-backed document; no matching server is a quiet no-op. */
   async attach(document: DocumentScope, path: string): Promise<void> {
     const docId = String(document.id);
-    if (this.disposed || this.attachments.has(docId)) return;
+    if (this.disposed || !this.enabled || this.attachments.has(docId)) return;
     const definitions = Effect.runSync(this.servers.list);
     const extension = path.split(".").pop() ?? "";
     // EVERY matching server attaches (helix's language-servers list);
@@ -669,6 +670,36 @@ export class LspManager {
     if (edit === null) return false;
     const result = await this.applyWorkspaceEdit({ edit });
     return result.applied;
+  }
+
+  isEnabled(): boolean {
+    return this.enabled;
+  }
+
+  /**
+   * Stop every server WITHOUT permanently disposing the manager: detach all
+   * documents (clears squiggles/hints), shut down + kill all clients, and
+   * forget spawn-failure backoffs so a later start() gets a clean retry.
+   * attach() is a no-op until start() flips the flag back; the host re-attaches
+   * its open documents then.
+   */
+  stop(): void {
+    if (this.disposed || !this.enabled) return;
+    this.enabled = false;
+    for (const docId of [...this.attachments.keys()]) this.detach(docId);
+    for (const handle of this.clients.values()) {
+      if (handle.alive) {
+        void handle.client.shutdown().then(() => this.port.kill(handle.procId));
+      }
+    }
+    this.clients.clear();
+    this.failedSpawns.clear();
+  }
+
+  /** Re-enable attaching; the host calls attach() for each open document. */
+  start(): void {
+    if (this.disposed) return;
+    this.enabled = true;
   }
 
   dispose(): void {

@@ -363,6 +363,7 @@ export class AppRuntime {
             formatDocument: () => void instance.formatActiveDocument(),
             renameSymbol: () => instance.startRename(),
             toggleInlayHints: () => instance.toggleInlayHints(),
+            toggleLsp: () => instance.toggleLsp(),
           }),
           Layer.succeed(HostViewActions, {
             splitRight: () => instance.splitFocused("row"),
@@ -714,6 +715,32 @@ export class AppRuntime {
 
   toggleInlayHints(): void {
     this.lsp?.toggleInlayHints();
+  }
+
+  /**
+   * Stop all language servers, or restart them and re-attach every open
+   * document. The manager only owns the server side; re-attaching is the
+   * runtime's job since it holds the open panes (attach dedupes by doc id).
+   */
+  toggleLsp(): void {
+    if (this.lsp === undefined) return;
+    if (this.lsp.isEnabled()) {
+      this.lsp.stop();
+    } else {
+      this.lsp.start();
+      for (const pane of this.panes.values()) {
+        const path = pane.fileInfo()?.path;
+        if (path !== undefined) void this.lsp.attach(pane.document, path);
+      }
+    }
+    // Diagnostics counts vanished/returned — refresh the status surfaces.
+    for (const pane of this.panes.values()) {
+      this.onDiagnosticsChanged?.(String(pane.document.id));
+    }
+  }
+
+  lspEnabled(): boolean {
+    return this.lsp?.isEnabled() ?? false;
   }
 
   private attachHighlights(document: DocumentScope, path: string | undefined): void {

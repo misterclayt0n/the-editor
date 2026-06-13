@@ -120,7 +120,13 @@ function normalizeTile(tile: Tile): Tile | null {
   }
   if (children.length === 0) return null;
   if (children.length === 1) return children[0]!.tile;
-  return { kind: "split", direction: tile.direction, children };
+  // Renormalize weights to sum to 1 so they stay canonical proportions after a
+  // sibling is pruned (a removed child would otherwise leave the rest summing to
+  // <1, which under-fills a flex row — the dead-space-after-close bug).
+  const total = children.reduce((sum, child) => sum + child.weight, 0);
+  const normalized =
+    total > 0 ? children.map((child) => ({ tile: child.tile, weight: child.weight / total })) : children;
+  return { kind: "split", direction: tile.direction, children: normalized };
 }
 
 /**

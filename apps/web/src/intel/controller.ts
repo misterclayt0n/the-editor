@@ -781,8 +781,15 @@ export class IntelController {
         a.providerOrder - b.providerOrder ||
         (a.item.sortText ?? a.item.label).localeCompare(b.item.sortText ?? b.item.label),
     );
+    // Keep the user's arrow selection on the SAME item when it survives
+    // the refilter; reset to top only when it filtered out.
+    const previousItem = session.scored[session.selected]?.item;
     session.scored = scored.slice(0, MAX_VISIBLE_SCORED);
-    session.selected = 0;
+    const kept =
+      previousItem !== undefined
+        ? session.scored.findIndex((entry) => entry.item === previousItem)
+        : -1;
+    session.selected = kept >= 0 ? kept : 0;
     if (session.scored.length === 0) {
       this.dismissCompletion();
       return;
@@ -827,6 +834,11 @@ export class IntelController {
     }
 
     this.onDocumentChangedSignature(typedChar, documentPayloads.length > 0);
+
+    // Below here: reactions to TEXT changes only. The document bus also
+    // carries VisualsInvalidated (diagnostics/hints republish) — refiltering
+    // on those would reset the user's arrow selection in the open popup.
+    if (documentPayloads.length === 0) return;
 
     if (this.session !== null) {
       // Inside a session: trigger chars re-query; otherwise refilter, and

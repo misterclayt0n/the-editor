@@ -95,7 +95,7 @@
   --tw-translate-x: 0;
   --tw-translate-y: 0;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-lg);
   background: var(--bg-editor);
   color: var(--fg);
   box-shadow: 0 10px 32px color-mix(in srgb, var(--bg-editor) 54%, transparent);
@@ -165,8 +165,8 @@
   box-sizing: border-box;
   display: flex;
   align-items: center;
-  height: 32px;
-  padding: 0 12px;
+  height: 38px;
+  padding: 0 14px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-editor);
   color: var(--fg-dim);
@@ -195,7 +195,7 @@
 
 .command-palette .command-palette__list.command-list[data-slot="command-list"] {
   max-height: 300px;
-  padding: 2px;
+  padding: 4px;
   overflow: auto;
 }
 
@@ -211,22 +211,22 @@
   box-sizing: border-box;
   display: flex;
   align-items: center;
-  height: 24px;
+  height: 26px;
   gap: 8px;
   padding: 0 10px;
   margin: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--fg);
   font: inherit;
   font-size: 13px;
-  line-height: 24px;
+  line-height: 26px;
   cursor: default;
 }
 
 .command-palette .command-palette__item.command-item[data-slot="command-item"]:hover,
 .command-palette .command-palette__item.command-item[data-slot="command-item"][data-selected="true"] {
-  background: color-mix(in srgb, #569cd6 10%, var(--bg-editor));
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-editor));
   color: var(--fg);
 }
 

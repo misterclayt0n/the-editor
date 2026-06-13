@@ -2,7 +2,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme } from "electron";
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL?.trim();
 
@@ -166,10 +166,12 @@ function registerProcessHandlers(): void {
 }
 
 function createWindow(): void {
+  // Dark chrome end to end — the native title bar follows the theme.
+  nativeTheme.themeSource = "dark";
   const window = new BrowserWindow({
     width: 1200,
     height: 800,
-    backgroundColor: "#161616",
+    backgroundColor: "#141415",
     title: "The Editor",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),

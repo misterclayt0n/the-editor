@@ -71,11 +71,12 @@ describe("normalization", () => {
       overlays: [],
     };
     const normalized = normalizeArrangement(a);
+    // Weights are renormalized to sum to 1 (canonical proportions).
     expect(normalized.tiles).toMatchObject({
       kind: "split",
       children: [
-        { tile: stack("a", [1, 2], 1), weight: 1 },
-        { tile: { kind: "split", direction: "column" }, weight: 1 },
+        { tile: stack("a", [1, 2], 1), weight: 0.5 },
+        { tile: { kind: "split", direction: "column" }, weight: 0.5 },
       ],
     });
   });

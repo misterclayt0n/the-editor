@@ -268,6 +268,10 @@ export class EditorRenderer {
   private readonly handleMouseLeave = () => {
     this.runtime.pointerHover?.(null);
   };
+  private readonly handleNativeScrollLeak = () => {
+    if (this.viewport.scrollLeft !== 0) this.viewport.scrollLeft = 0;
+    if (this.viewport.scrollTop !== 0) this.viewport.scrollTop = 0;
+  };
   private readonly handleFocus = () => this.caretEl.classList.remove("editor-caret-idle");
   private readonly handleBlur = () => this.caretEl.classList.add("editor-caret-idle");
   private readonly handleWheel = (event: WheelEvent) => {
@@ -444,6 +448,10 @@ export class EditorRenderer {
 
     this.viewport.addEventListener("mousemove", this.handleMouseMove);
     this.viewport.addEventListener("mouseleave", this.handleMouseLeave);
+    // The viewport is overflow:hidden but the browser can still scroll it
+    // NATIVELY (scrollIntoView walking ancestors, focus reveal heuristics)
+    // — invisible to the owned-scroll model. Snap any such drift back.
+    this.viewport.addEventListener("scroll", this.handleNativeScrollLeak);
     this.unsubscribeFloats = runtime.floats.onChanged(() => {
       this.syncFloats();
       queueRender(this.renderPass);
@@ -473,6 +481,7 @@ export class EditorRenderer {
     if (this.hoverRaf !== 0) cancelAnimationFrame(this.hoverRaf);
     this.viewport.removeEventListener("mousemove", this.handleMouseMove);
     this.viewport.removeEventListener("mouseleave", this.handleMouseLeave);
+    this.viewport.removeEventListener("scroll", this.handleNativeScrollLeak);
     this.resizeObserver.disconnect();
     this.viewport.removeEventListener("wheel", this.handleWheel);
     this.viewport.removeEventListener("mousedown", this.handleMouseDown);

@@ -1,13 +1,25 @@
 :root {
   color-scheme: dark;
-  --bg: #161616;
-  --bg-editor: #1c1c1c;
-  --fg: #e6e6e6;
-  --fg-dim: #8a8a8a;
+  /* Layered surfaces, RustRover-style: chrome < panel < editor. */
+  --bg: #141415;
+  --bg-panel: #19191b;
+  --bg-editor: #1e1e21;
+  --fg: #e2e3e5;
+  --fg-dim: #85878d;
   --caret: #f5f5f5;
-  --selection: rgba(86, 156, 214, 0.35);
-  --status-bg: #202020;
-  --border: #2c2c2c;
+  --accent: #4d80f0;
+  --selection: rgba(77, 128, 240, 0.28);
+  --status-bg: #141415;
+  --border: #27272b;
+
+  /* Rounding system, matched to @pierre/trees (6px rows) and JetBrains'
+   * floating-card chrome. Surfaces (panes, popovers) carry the large radius;
+   * rows/chips inside them carry the medium one; tiny controls the small. */
+  --radius-lg: 9px;
+  --radius-md: 6px;
+  --radius-sm: 4px;
+  /* Gap the chrome shows between floating cards (panes, splits, edges). */
+  --pane-gap: 6px;
 }
 
 html,
@@ -106,7 +118,8 @@ body {
 .editor-scrollbar-thumb {
   position: absolute;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.1);
+  transition: background 100ms;
 }
 
 .editor-scrollbar-thumb-vertical {
@@ -123,7 +136,7 @@ body {
 
 .editor-scrollbar-thumb:hover,
 .editor-scrollbar-thumb:active {
-  background: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.24);
 }
 
 /* Text indent (gutter bands + padding) is set inline on .editor-rows. */
@@ -244,6 +257,10 @@ body {
   display: flex;
   flex: 1;
   min-height: 0;
+  /* The outer padding (plus the transparent dividers between cells) is what
+   * the chrome shows around each floating pane card. */
+  padding: var(--pane-gap);
+  background: var(--bg);
 }
 
 .wb-split {
@@ -269,30 +286,35 @@ body {
   min-height: 0;
 }
 
+/*
+ * Dividers are the transparent gaps between floating cards; the chrome shows
+ * through. A grab reveals an accent pill so the resize handle is discoverable.
+ */
 .wb-divider {
   flex: none;
   z-index: 3;
-  background: var(--border);
-  background-clip: content-box;
+  background: transparent;
+  transition: background-color 100ms ease;
 }
 
 .wb-divider-row {
-  width: 5px;
-  margin: 0 -2px;
-  padding: 0 2px;
+  width: var(--pane-gap);
+  /* Hover pill is drawn by the inset background so it floats inside the gap. */
+  background-clip: content-box;
+  padding: 30% 1px;
   cursor: col-resize;
 }
 
 .wb-divider-column {
-  height: 5px;
-  margin: -2px 0;
-  padding: 2px 0;
+  height: var(--pane-gap);
+  background-clip: content-box;
+  padding: 1px 30%;
   cursor: row-resize;
 }
 
 .wb-divider:hover,
 .wb-divider:active {
-  background-color: color-mix(in srgb, #569cd6 55%, var(--border));
+  background-color: color-mix(in srgb, var(--accent) 60%, transparent);
 }
 
 .wb-pane {
@@ -301,46 +323,70 @@ body {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
   background: var(--bg-editor);
+  /* Floating card: rounded, clipped, with a hairline ring. */
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+/* The focused card carries a faint accent ring so focus reads at a glance. */
+.wb-pane--focused {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
 }
 
 .wb-tabbar {
   display: flex;
   flex: none;
-  align-items: stretch;
-  height: 29px;
+  align-items: center;
+  gap: 3px;
+  height: 38px;
+  padding: 0 6px;
   overflow: hidden;
-  background: var(--bg);
-  border-bottom: 1px solid var(--border);
+  background: var(--bg-editor);
   user-select: none;
 }
 
+/* Tabs are floating pill chips: inactive ones are quiet, the active one is a
+ * filled, fully-rounded chip that reads as the selection. */
 .wb-tab {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
-  max-width: 180px;
-  padding: 0 6px 0 10px;
-  border-right: 1px solid var(--border);
+  gap: 7px;
+  max-width: 200px;
+  height: 26px;
+  padding: 0 7px 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
   color: var(--fg-dim);
-  font-size: 12px;
+  font-size: 12.5px;
   cursor: default;
+  transition: color 80ms ease, background-color 80ms ease;
 }
 
-.wb-tab--active {
-  background: var(--bg-editor);
+.wb-tab:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
   color: var(--fg);
 }
 
-.wb-pane--focused .wb-tab--active::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: color-mix(in srgb, #569cd6 65%, transparent);
+.wb-tab--active {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-editor));
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--fg);
+}
+
+/* The focused pane's active chip gets a stronger accent fill (no underline —
+ * the chip itself is the indicator). */
+.wb-pane--focused .wb-tab--active {
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg-editor));
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.wb-file-icon {
+  flex: none;
+  width: 15px;
+  height: 15px;
 }
 
 .wb-tab--dragging {
@@ -366,23 +412,28 @@ body {
 }
 
 .wb-tab--active .wb-tab-dot {
-  background: var(--fg);
+  background: var(--accent);
 }
 
 .wb-tab-close {
   flex: none;
-  width: 16px;
-  height: 16px;
+  width: 17px;
+  height: 17px;
   padding: 0;
   border: 0;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--fg-dim);
   font-size: 13px;
-  line-height: 16px;
+  line-height: 17px;
   text-align: center;
   opacity: 0;
   cursor: default;
+}
+
+.wb-tab-close:hover {
+  background: color-mix(in srgb, var(--fg) 14%, transparent);
+  color: var(--fg);
 }
 
 .wb-tab:hover .wb-tab-close,
@@ -398,8 +449,10 @@ body {
 .wb-tab-insert {
   flex: none;
   width: 2px;
-  margin: 4px -1px;
-  background: #569cd6;
+  height: 22px;
+  margin: 0 -1px;
+  border-radius: 2px;
+  background: var(--accent);
 }
 
 .wb-body {
@@ -412,8 +465,9 @@ body {
 .wb-drop {
   position: absolute;
   z-index: 6;
-  background: color-mix(in srgb, #569cd6 12%, transparent);
-  border: 1px solid color-mix(in srgb, #569cd6 40%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
   pointer-events: none;
 }
 
@@ -440,10 +494,11 @@ body {
 .wb-drag-ghost {
   position: fixed;
   z-index: 60;
-  padding: 3px 10px;
+  padding: 4px 11px;
   border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--status-bg);
+  border-radius: var(--radius-md);
+  background: var(--bg-editor);
+  box-shadow: 0 8px 24px color-mix(in srgb, #000 45%, transparent);
   color: var(--fg);
   font-size: 12px;
   pointer-events: none;
@@ -478,7 +533,7 @@ body {
   padding: 8px 10px;
   overflow-y: auto;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-lg);
   background: var(--bg-editor);
   box-shadow: 0 10px 32px color-mix(in srgb, var(--bg-editor) 54%, transparent);
   color: var(--fg);
@@ -501,10 +556,10 @@ body {
   min-width: 260px;
   max-width: 460px;
   max-height: 264px;
-  padding: 2px;
+  padding: 4px;
   overflow-y: auto;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-lg);
   background: var(--bg-editor);
   box-shadow: 0 10px 32px color-mix(in srgb, var(--bg-editor) 54%, transparent);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -516,7 +571,7 @@ body {
   height: 22px;
   gap: 8px;
   padding: 0 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-md);
   color: var(--fg);
   font-size: 12px;
   line-height: 22px;
@@ -525,7 +580,7 @@ body {
 }
 
 .intel-item--selected {
-  background: color-mix(in srgb, #569cd6 14%, var(--bg-editor));
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-editor));
 }
 
 .intel-item--deprecated .intel-item__label {
@@ -604,7 +659,7 @@ body {
   padding: 8px 26px 8px 10px;
   user-select: text;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-lg);
   background: var(--bg-editor);
   box-shadow: 0 10px 32px color-mix(in srgb, var(--bg-editor) 54%, transparent);
   color: var(--fg);
@@ -663,7 +718,7 @@ body {
   margin: 4px 0;
   padding: 6px 8px;
   overflow-x: auto;
-  border-radius: 4px;
+  border-radius: var(--radius-md);
   background: var(--bg);
   font-family: "SF Mono", Menlo, Monaco, "Cascadia Code", monospace;
   font-size: 12px;
@@ -695,12 +750,12 @@ body {
   height: 20px;
   padding: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--fg-dim);
   cursor: pointer;
   opacity: 0;
-  transition: opacity 80ms;
+  transition: opacity 80ms ease;
 }
 
 .intel-hover:hover .intel-hover__copy {
@@ -718,7 +773,7 @@ body {
   max-width: 560px;
   padding: 6px 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-lg);
   background: var(--bg-editor);
   box-shadow: 0 10px 32px color-mix(in srgb, var(--bg-editor) 54%, transparent);
   color: var(--fg);
@@ -769,7 +824,7 @@ body {
   width: min(360px, calc(100vw - 96px));
   transform: translateX(-50%);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-lg);
   background: var(--bg-editor);
   box-shadow: 0 10px 32px color-mix(in srgb, var(--bg-editor) 54%, transparent);
 }
@@ -798,12 +853,15 @@ body {
 
 .status-bar {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  padding: 4px 12px;
+  height: 26px;
+  padding: 0 12px;
   background: var(--status-bg);
   border-top: 1px solid var(--border);
   color: var(--fg-dim);
-  font-size: 12px;
+  font-size: 11.5px;
+  letter-spacing: 0.1px;
   user-select: none;
 }
 
@@ -812,6 +870,7 @@ body {
   position: absolute;
   inset: 0;
   overflow: hidden;
+  /* Match the pane's tab strip so the whole tool-window card is one surface. */
   background: var(--bg-editor);
 }
 
@@ -845,9 +904,10 @@ body {
   --trees-fg-override: var(--fg);
   --trees-fg-muted-override: var(--fg-dim);
   --trees-bg-override: var(--bg-editor);
-  --trees-bg-muted-override: var(--bg);
+  --trees-bg-muted-override: color-mix(in srgb, var(--fg) 7%, var(--bg-editor));
   --trees-border-color-override: var(--border);
-  --trees-selected-bg-override: color-mix(in srgb, #569cd6 18%, var(--bg-editor));
+  --trees-border-radius-override: var(--radius-md);
+  --trees-selected-bg-override: color-mix(in srgb, var(--accent) 18%, var(--bg-editor));
   --trees-selected-fg-override: var(--fg);
   --trees-search-bg-override: var(--bg);
   --trees-search-fg-override: var(--fg);
@@ -877,15 +937,20 @@ body {
 .file-tree-open-button {
   padding: 5px 14px;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius-md);
   background: var(--bg);
   color: var(--fg);
   font-size: 12px;
   cursor: pointer;
+  transition: background-color 80ms ease, transform 100ms ease;
 }
 
 .file-tree-open-button:hover {
-  background: color-mix(in srgb, #569cd6 12%, var(--bg));
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg));
+}
+
+.file-tree-open-button:active {
+  transform: scale(0.97);
 }
 
 .status-branch {

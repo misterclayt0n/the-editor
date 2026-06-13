@@ -25,6 +25,7 @@ import type { Chord } from "@the-editor/keymaps";
 import type { PanelId, SlotId, Stack, Tile } from "@the-editor/workbench";
 import type { AppRuntime, EditorPane } from "../runtime";
 import { EditorView } from "../editor/EditorView";
+import { FileIcon } from "./fileIcons";
 
 type WorkbenchViewProps = {
   readonly runtime: AppRuntime;
@@ -223,6 +224,11 @@ function SplitView({
   ...tree
 }: TreeProps & { split: Extract<Tile, { kind: "split" }>; path: ReadonlyArray<number> }) {
   const container = useRef<HTMLDivElement>(null);
+  // flex-grow only consumes 100% of free space when the grow factors sum to >=1;
+  // a removed sibling can leave the raw weights summing to <1 (e.g. one cell of a
+  // former 3-way split), which would leave the rest of the row blank. Normalize so
+  // the cells always tile the full axis regardless of the stored weights.
+  const totalWeight = tile.children.reduce((sum, child) => sum + child.weight, 0);
   return (
     <div ref={container} className={`wb-split wb-split-${tile.direction}`}>
       {tile.children.map((child, i) => (
@@ -236,7 +242,10 @@ function SplitView({
               container={container}
             />
           )}
-          <div className="wb-cell" style={{ flexGrow: child.weight }}>
+          <div
+            className="wb-cell"
+            style={{ flexGrow: totalWeight > 0 ? child.weight / totalWeight : 1 }}
+          >
             <TileView tile={child.tile} path={[...path, i]} {...tree} />
           </div>
         </Fragment>
@@ -493,6 +502,7 @@ function Tab({
         if (event.button === 1) onClose();
       }}
     >
+      {info.name !== "untitled" && <FileIcon fileName={info.name} />}
       <span className={`wb-tab-name${info.conflict ? " wb-tab-name--conflict" : ""}`}>
         {info.name}
       </span>

@@ -113,11 +113,21 @@ export function IntelView({ controller }: { readonly controller: IntelController
   );
   const listRef = useRef<HTMLDivElement>(null);
 
-  // Keep the selected row in view.
+  // Keep the selected row in view. NEVER scrollIntoView here: it walks ALL
+  // scrollable ancestors — including the overflow:hidden editor viewport,
+  // which it scrolls NATIVELY while the owned-scroll model still thinks 0,
+  // visually shifting the whole buffer. Scroll the list alone.
   useEffect(() => {
     if (!state.completion.open) return;
-    const selected = listRef.current?.querySelector<HTMLElement>(".intel-item--selected");
-    selected?.scrollIntoView({ block: "nearest" });
+    const list = listRef.current;
+    const selected = list?.querySelector<HTMLElement>(".intel-item--selected");
+    if (list == null || selected == null) return;
+    const viewTop = list.scrollTop;
+    const viewBottom = viewTop + list.clientHeight;
+    const itemTop = selected.offsetTop;
+    const itemBottom = itemTop + selected.offsetHeight;
+    if (itemTop < viewTop) list.scrollTop = itemTop;
+    else if (itemBottom > viewBottom) list.scrollTop = itemBottom - list.clientHeight;
   }, [state.completion.selected, state.completion.open]);
 
   const completionHost = controller.completionElement();

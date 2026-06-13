@@ -212,8 +212,21 @@ export class EditorRenderer {
     this.runtime.setSelection(Selection.point(hit.offset));
   };
   private hoverRaf = 0;
+  private lastPointerClient: { x: number; y: number } | null = null;
   private readonly handleMouseMove = (event: MouseEvent) => {
     if (this.runtime.pointerHover === undefined) return;
+    // Chromium re-synthesizes mousemove at the SAME client position when
+    // the DOM changes under a stationary cursor (scrolling rebuilds rows).
+    // Those are not user movement: consecutive identical coordinates never
+    // arm or re-arm hover. Zed gets this for free (OS-level moves only).
+    if (
+      this.lastPointerClient !== null &&
+      this.lastPointerClient.x === event.clientX &&
+      this.lastPointerClient.y === event.clientY
+    ) {
+      return;
+    }
+    this.lastPointerClient = { x: event.clientX, y: event.clientY };
     // Inside a float the pointer is interacting with the float's own UI
     // (selecting hover-card text); freeze hover state rather than
     // re-hit-testing the text underneath it.
@@ -549,6 +562,9 @@ export class EditorRenderer {
     if (ny === this.scrollY && nx === this.scrollX) return;
     this.scrollY = ny;
     this.scrollX = nx;
+    // Every scroll position change hides hover immediately (Zed's model);
+    // it re-arms only on a REAL mouse move afterwards.
+    this.runtime.pointerScrolled?.();
     queueRender(this.renderPass);
   }
 

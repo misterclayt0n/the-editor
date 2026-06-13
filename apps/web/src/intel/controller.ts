@@ -243,6 +243,7 @@ export class IntelController {
       paneDoc: this.pane !== null ? String(this.pane.document.id) : null,
       providers: Effect.runSync(this.completionProviders.list).map((p) => p.id),
       hoverProviders: Effect.runSync(this.hoverProviders.list).map((p) => p.id),
+      ptrCalls: this.ptrCalls,
       session: this.session !== null ? { loaded: this.session.loaded, sources: this.session.sources.length, scored: this.session.scored.length } : null,
       snippet:
         this.snippet !== null
@@ -292,6 +293,7 @@ export class IntelController {
     if (this.pane !== null) {
       this.pane.keyInterceptor = undefined;
       this.pane.pointerHover = undefined;
+      this.pane.pointerScrolled = undefined;
       this.completionFloat?.dispose();
       this.hoverFloat?.dispose();
       this.signatureFloat?.dispose();
@@ -322,6 +324,7 @@ export class IntelController {
     );
     pane.keyInterceptor = (event) => this.interceptKey(event);
     pane.pointerHover = (offset) => this.onPointerHover(offset);
+    pane.pointerScrolled = () => this.onScrolled();
     this.unsubscribePane = pane.subscribe((notification, source) => {
       if (source === "document") this.onDocumentChanged(notification);
       if (source === "view") this.onSelectionChanged();
@@ -901,6 +904,20 @@ export class IntelController {
     this.publish();
   }
 
+  /**
+   * Scrolling hides hover IMMEDIATELY and disarms any pending dwell —
+   * Zed's model: a hover may only re-arm from a real mouse move after the
+   * scroll, never from text sliding under a stationary cursor.
+   */
+  private onScrolled(): void {
+    if (this.hoverTimer !== null) {
+      window.clearTimeout(this.hoverTimer);
+      this.hoverTimer = null;
+    }
+    this.hoverOffset = null;
+    this.dismissHover();
+  }
+
   /** IntelView reports pointer enter/leave on the card itself. */
   setHoverCardHovered(hovered: boolean): void {
     this.hoverCardHovered = hovered;
@@ -939,7 +956,10 @@ export class IntelController {
     }
   }
 
+  /** Dev counter: pointer-hover callbacks (e2e pipeline probes). */
+  ptrCalls = 0;
   private onPointerHover(offset: number | null): void {
+    this.ptrCalls++;
     if (offset === null) {
       if (this.hoverTimer !== null) {
         window.clearTimeout(this.hoverTimer);

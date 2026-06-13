@@ -132,6 +132,8 @@ export interface PaneHost {
   keyInterceptor?: ((event: KeyboardEventLike) => boolean) | undefined;
   /** Pointer hover over text: offset (null = left the text). */
   pointerHover?: ((offset: number | null) => void) | undefined;
+  /** Scroll position changed: hover must hide NOW (Zed semantics). */
+  pointerScrolled?: (() => void) | undefined;
   snapshot(): EditorSnapshot;
   visualsSnapshot(): VisualsSnapshot;
   setSelection(selection: Selection): void;
@@ -153,6 +155,7 @@ export class EditorPane implements PaneHost {
   readonly floats = new FloatHub();
   keyInterceptor?: ((event: KeyboardEventLike) => boolean) | undefined;
   pointerHover?: ((offset: number | null) => void) | undefined;
+  pointerScrolled?: (() => void) | undefined;
 
   constructor(
     readonly panelId: PanelId,

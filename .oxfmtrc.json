@@ -9,13 +9,13 @@
     "bun.lock",
     "*.tsbuildinfo",
     "**/routeTree.gen.ts",
-    "apps/web/public/mockServiceWorker.js",
+    "apps/web/pubjjlic/mockServiceWorker.js",
     "apps/web/src/lib/vendor/qrcodegen.ts",
     "*.icon/**"
   ],
   "sortPackageJson": {},
   "overrides": [
-    {
+    {jjkkjj
       "files": [".devcontainer/devcontainer.json"],
       "options": {
         "trailingComma": "none"

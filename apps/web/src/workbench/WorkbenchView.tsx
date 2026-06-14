@@ -21,7 +21,6 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { EditorSnapshot } from "@the-editor/editor";
-import type { Chord } from "@the-editor/keymaps";
 import type { PanelId, SlotId, Stack, Tile } from "@the-editor/workbench";
 import type { AppRuntime, EditorPane } from "../runtime";
 import { EditorView } from "../editor/EditorView";
@@ -31,7 +30,6 @@ type WorkbenchViewProps = {
   readonly runtime: AppRuntime;
   /** Snapshot stream of the FOCUSED pane (status bar fodder). */
   readonly onActiveSnapshot?: (snapshot: EditorSnapshot) => void;
-  readonly onPending?: (chords: ReadonlyArray<Chord>) => void;
 };
 
 type DropZone = "center" | "left" | "right" | "top" | "bottom";
@@ -91,7 +89,7 @@ function hitTest(x: number, y: number): DropTarget | null {
   return null;
 }
 
-export function WorkbenchView({ runtime, onActiveSnapshot, onPending }: WorkbenchViewProps) {
+export function WorkbenchView({ runtime, onActiveSnapshot }: WorkbenchViewProps) {
   const wb = useSyncExternalStore(
     useCallback((cb) => runtime.subscribeWorkbench(cb), [runtime]),
     () => runtime.getWorkbenchSnapshot(),
@@ -188,7 +186,6 @@ export function WorkbenchView({ runtime, onActiveSnapshot, onPending }: Workbenc
         drag={drag}
         beginTabDrag={beginTabDrag}
         {...(onActiveSnapshot ? { onActiveSnapshot } : {})}
-        {...(onPending ? { onPending } : {})}
       />
       {drag !== null && (
         <div className="wb-drag-ghost" style={{ left: drag.x + 10, top: drag.y + 8 }}>
@@ -210,7 +207,6 @@ type TreeProps = {
     title: string,
   ) => void;
   readonly onActiveSnapshot?: (snapshot: EditorSnapshot) => void;
-  readonly onPending?: (chords: ReadonlyArray<Chord>) => void;
 };
 
 function TileView({ tile, path, ...tree }: TreeProps & { tile: Tile; path: ReadonlyArray<number> }) {
@@ -414,7 +410,6 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
             key={activePanelId}
             pane={pane}
             {...(focused && tree.onActiveSnapshot ? { onSnapshot: tree.onActiveSnapshot } : {})}
-            {...(tree.onPending ? { onPending: tree.onPending } : {})}
           />
         )}
         {pane === undefined && activePanelId !== undefined && (

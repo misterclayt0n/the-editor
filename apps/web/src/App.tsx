@@ -75,7 +75,16 @@ export function App() {
     );
     booted.onTriggerCompletion = () => controller.triggerCompletion();
     booted.onTriggerSignatureHelp = () => controller.triggerSignatureHelp();
+    booted.onPendingChords = (chords) => setPending(chords);
     controller.setPane(booted.focusedPane() ?? null);
+
+    // ONE keyboard entry point for the whole app: bubble-phase, document-level.
+    // Cooperative leaves (the owned editor, @pierre/trees) stop propagation on
+    // the keys they own, so those never reach here; everything else (the global
+    // palette binding, splits, etc.) bubbles up and the runtime dispatches it —
+    // which is what makes every surface, file tree included, keyboard-driven.
+    const onKeyDown = (event: KeyboardEvent) => booted.dispatchKeyboardEvent(event);
+    document.addEventListener("keydown", onKeyDown);
     setIntel(controller);
     const unsubscribe = booted.subscribeWorkbench(() => {
       setStatusEpoch((epoch) => epoch + 1);
@@ -109,6 +118,7 @@ export function App() {
       };
     }
     return () => {
+      document.removeEventListener("keydown", onKeyDown);
       unsubscribe();
       unsubscribeVcs?.();
       controller.dispose();
@@ -119,7 +129,6 @@ export function App() {
   }, []);
 
   const handleActiveSnapshot = useCallback((next: EditorSnapshot) => setSnapshot(next), []);
-  const handlePending = useCallback((chords: ReadonlyArray<Chord>) => setPending(chords), []);
   const handlePaletteOpenChange = useCallback((open: boolean) => {
     setPaletteOpen(open);
     // Radix restores focus to the previously focused element, but command
@@ -145,7 +154,6 @@ export function App() {
       <WorkbenchView
         runtime={runtime}
         onActiveSnapshot={handleActiveSnapshot}
-        onPending={handlePending}
       />
       <CommandPalette
         open={paletteOpen}

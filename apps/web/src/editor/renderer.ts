@@ -57,7 +57,6 @@ import {
 } from "@the-editor/editor";
 import { highlightColor } from "./highlightColors";
 import { Selection, type TextBuffer } from "@the-editor/engine";
-import type { Chord } from "@the-editor/keymaps";
 import type { PaneHost } from "../runtime";
 import { cancelRender, queueRender } from "./frame";
 
@@ -77,7 +76,6 @@ const BAND_CELL_PAD = 8;
 
 export type EditorRendererOptions = {
   readonly onSnapshot?: (snapshot: EditorSnapshot) => void;
-  readonly onPending?: (chords: ReadonlyArray<Chord>) => void;
 };
 
 type OffsetRange = { readonly from: number; readonly to: number };
@@ -160,30 +158,6 @@ export class EditorRenderer {
   private readonly unsubscribeHighlights: () => void;
   private readonly unsubscribeFloats: () => void;
   private readonly renderPass = () => this.render();
-  private readonly handleKeyDown = (event: KeyboardEvent) => {
-    // Copy with a DOM selection inside a float (hover card text): native
-    // copy must win — the keymap's copy would grab the EDITOR selection.
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "c") {
-      const domSelection = window.getSelection();
-      const node = domSelection?.anchorNode ?? null;
-      const element = node instanceof Element ? node : node?.parentElement ?? null;
-      if (
-        domSelection !== null &&
-        !domSelection.isCollapsed &&
-        element?.closest(".editor-float") != null
-      ) {
-        return;
-      }
-    }
-    if (this.runtime.keyInterceptor?.(event)) {
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    const outcome = this.runtime.handleKeyboardEvent(event);
-    this.options.onPending?.(this.runtime.pendingChords());
-    if (outcome !== "passthrough") event.preventDefault();
-  };
   private readonly handleMouseDown = (event: MouseEvent) => {
     if (
       this.vScrollbar.contains(event.target as Node) ||
@@ -439,7 +413,6 @@ export class EditorRenderer {
     this.hScrollbar.addEventListener("pointerdown", this.handleHTrackDown);
     this.hScrollbar.addEventListener("pointermove", this.handleHThumbMove);
     this.hScrollbar.addEventListener("pointerup", this.handleHThumbUp);
-    root.addEventListener("keydown", this.handleKeyDown);
     root.addEventListener("focus", this.handleFocus);
     root.addEventListener("blur", this.handleBlur);
 
@@ -485,7 +458,6 @@ export class EditorRenderer {
     this.resizeObserver.disconnect();
     this.viewport.removeEventListener("wheel", this.handleWheel);
     this.viewport.removeEventListener("mousedown", this.handleMouseDown);
-    this.root.removeEventListener("keydown", this.handleKeyDown);
     this.root.removeEventListener("focus", this.handleFocus);
     this.root.removeEventListener("blur", this.handleBlur);
     for (const id of this.mountEls.keys()) this.runtime.mounts.unmounted(id);

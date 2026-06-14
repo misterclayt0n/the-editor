@@ -112,6 +112,13 @@ import { MountHub } from "./editor/mounts";
 
 export type KeyOutcome = "handled" | "pending" | "passthrough";
 
+/** A surface that owns its own typing (form fields, contenteditable). */
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable;
+}
+
 /** Synchronous highlight source for the renderer's layout pass. */
 export interface PaneHighlights {
   /** Bring the engine to `version` before painting it (null = resync). */
@@ -140,8 +147,6 @@ export interface PaneHost {
   subscribe(
     listener: (notification: EditorNotification, source: "document" | "view") => void,
   ): () => void;
-  handleKeyboardEvent(event: KeyboardEventLike): KeyOutcome;
-  pendingChords(): ReadonlyArray<Chord>;
 }
 
 export type PaneFileInfo = { readonly path: string; readonly status: FileSyncStatus };
@@ -184,14 +189,6 @@ export class EditorPane implements PaneHost {
   /** Path + sync status of this pane's document, when file-bound. */
   fileInfo(): PaneFileInfo | null {
     return this.runtime.fileInfoFor(this.document);
-  }
-
-  handleKeyboardEvent(event: KeyboardEventLike): KeyOutcome {
-    return this.runtime.handleKeyboardEvent(event);
-  }
-
-  pendingChords(): ReadonlyArray<Chord> {
-    return this.runtime.pendingChords();
   }
 
   /**
@@ -250,6 +247,8 @@ export class AppRuntime {
   onTriggerCompletion?: () => void;
   /** Host UI hooks: explicit signature-help trigger (ctrl+shift+space). */
   onTriggerSignatureHelp?: () => void;
+  /** Host UI hooks: the pending chord prefix changed (status surfaces). */
+  onPendingChords?: (chords: ReadonlyArray<Chord>) => void;
   /** Panel renderers for non-editor surface kinds (file tree, custom UIs). */
   panelRenderers!: PanelRenderers.Service;
   /** Version control (undefined without a process host). */
@@ -859,11 +858,51 @@ export class AppRuntime {
   // ------------------------------------------------------------- keyboard
 
   /**
-   * The host's single keyboard entry point. Returns what the host should do:
-   * handled/pending mean preventDefault; passthrough means the key is not
-   * ours (browser shortcuts, IME, etc.).
+   * The app's SINGLE keyboard entry point. ONE document-level listener routes
+   * every keystroke here, whatever surface is focused — keymaps are the app's,
+   * not the editor's. Cooperative leaves (the owned editor, @pierre/trees)
+   * claim the keys they use and let the rest bubble; this dispatches global +
+   * focused-surface bindings against whatever reaches it. Editable overlays
+   * (the command palette, the rename prompt, the tree's search box) own their
+   * own keys, so it stays out of their way entirely.
    */
-  handleKeyboardEvent(event: KeyboardEventLike): KeyOutcome {
+  dispatchKeyboardEvent(event: KeyboardEvent): void {
+    // An <input>/<textarea>/contenteditable owns its keys (palette, rename
+    // prompt, pierre's search). The owned editor is a plain focusable div, so
+    // it is never an editable target and still flows through below.
+    if (isEditableTarget(event.target)) return;
+
+    // Native copy of a selection inside a float (hover-card text): the keymap's
+    // copy would grab the EDITOR selection instead.
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "c") {
+      const selection = window.getSelection();
+      const node = selection?.anchorNode ?? null;
+      const element = node instanceof Element ? node : node?.parentElement ?? null;
+      if (selection !== null && !selection.isCollapsed && element?.closest(".editor-float") != null) {
+        return;
+      }
+    }
+
+    // The focused editor's completion/snippet interceptor runs before keymaps.
+    if (this.focusedPane()?.keyInterceptor?.(event) === true) {
+      event.preventDefault();
+      this.onPendingChords?.(this.pendingChords());
+      return;
+    }
+
+    const outcome = this.resolveKeyboardEvent(event);
+    if (outcome !== "passthrough") event.preventDefault();
+    this.onPendingChords?.(this.pendingChords());
+  }
+
+  /**
+   * Resolves a key against the keymaps (scope-aware via the focused panel).
+   * handled/pending mean the caller should preventDefault; passthrough means
+   * the key is not ours (browser shortcuts, IME, a leaf surface's own key).
+   * Text insertion is gated on an editor pane actually being focused, so a
+   * printable key over the file tree never leaks into a buffer.
+   */
+  private resolveKeyboardEvent(event: KeyboardEventLike): KeyOutcome {
     const chord = chordFromKeyboardEvent(event);
     if (chord === undefined) return "passthrough";
 
@@ -879,7 +918,7 @@ export class AppRuntime {
       case "pending":
         return "pending";
       case "none":
-        if (isTextInputChord(chord) && event.key.length === 1) {
+        if (isTextInputChord(chord) && event.key.length === 1 && this.focusedPane() !== undefined) {
           Effect.runSync(
             this.commands.execute("editor.insertText", { text: event.key }).pipe(Effect.orDie),
           );

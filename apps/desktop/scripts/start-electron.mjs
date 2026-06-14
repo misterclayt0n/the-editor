@@ -1,12 +1,26 @@
 // Launch Electron against the built renderer (apps/web/dist).
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const desktopDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const webDist = resolve(desktopDir, "..", "web", "dist", "index.html");
+
+// node-pty's spawn-helper can lose its +x bit on install (pnpm + prebuilt
+// tarball); re-arm it so pty.fork() doesn't fail with "posix_spawnp failed".
+try {
+  const ptyRoot = resolve(dirname(createRequire(import.meta.url).resolve("node-pty")), "..");
+  const candidates = [resolve(ptyRoot, "build/Release/spawn-helper")];
+  const prebuilds = resolve(ptyRoot, "prebuilds");
+  if (existsSync(prebuilds)) {
+    for (const entry of readdirSync(prebuilds)) candidates.push(resolve(prebuilds, entry, "spawn-helper"));
+  }
+  for (const candidate of candidates) if (existsSync(candidate)) chmodSync(candidate, 0o755);
+} catch {
+  // node-pty optional; terminal just won't have a shell.
+}
 
 if (!existsSync(join(desktopDir, "dist-electron", "main.cjs"))) {
   console.error("[start-electron] missing dist-electron/main.cjs — run `pnpm -s build` first");

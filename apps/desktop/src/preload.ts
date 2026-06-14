@@ -88,6 +88,40 @@ contextBridge.exposeInMainWorld("theEditorProc", {
   },
 });
 
+/**
+ * The renderer-side half of TerminalPort (the terminal panel's PTY). A single
+ * merged byte stream + window size, routed by terminal id.
+ */
+const termDataListeners = new Map<number, (data: string) => void>();
+const termExitListeners = new Map<number, (code: number | null) => void>();
+ipcRenderer.on("term:data", (_event, payload: { id: number; data: string }) => {
+  termDataListeners.get(payload.id)?.(payload.data);
+});
+ipcRenderer.on("term:exit", (_event, payload: { id: number; code: number | null }) => {
+  termExitListeners.get(payload.id)?.(payload.code);
+  termDataListeners.delete(payload.id);
+  termExitListeners.delete(payload.id);
+});
+
+contextBridge.exposeInMainWorld("theEditorTerminal", {
+  spawn: (options: { cols: number; rows: number; cwd?: string; shell?: string }): Promise<number | null> =>
+    ipcRenderer.invoke("term:spawn", options),
+  write: (id: number, data: string): Promise<void> => ipcRenderer.invoke("term:write", id, data),
+  resize: (id: number, cols: number, rows: number): Promise<void> =>
+    ipcRenderer.invoke("term:resize", id, cols, rows),
+  kill: (id: number): Promise<void> => {
+    termDataListeners.delete(id);
+    termExitListeners.delete(id);
+    return ipcRenderer.invoke("term:kill", id);
+  },
+  onData: (id: number, listener: (data: string) => void): void => {
+    termDataListeners.set(id, listener);
+  },
+  onExit: (id: number, listener: (code: number | null) => void): void => {
+    termExitListeners.set(id, listener);
+  },
+});
+
 contextBridge.exposeInMainWorld("theEditorFs", {
   readFile: (path: string): Promise<string> => ipcRenderer.invoke("fs:read", path),
   writeFile: (path: string, text: string): Promise<{ mtimeMs: number; size: number }> =>

@@ -4,12 +4,39 @@
 // 3. launch Electron pointed at the dev server
 import { spawn, spawnSync } from "node:child_process";
 import { connect } from "node:net";
+import { chmodSync, existsSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const desktopDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const webDir = resolve(desktopDir, "..", "web");
+
+/**
+ * node-pty's `spawn-helper` is a Mach-O/ELF executable that pty.fork()
+ * posix_spawn()s; the prebuilt tarball can extract it without the +x bit (a
+ * pnpm quirk), and then every spawn fails with "posix_spawnp failed". Re-arm
+ * the execute bit on every dev launch so a fresh install just works.
+ */
+function ensurePtyHelperExecutable() {
+  try {
+    const require = createRequire(import.meta.url);
+    const ptyRoot = resolve(dirname(require.resolve("node-pty")), "..");
+    const candidates = [resolve(ptyRoot, "build/Release/spawn-helper")];
+    const prebuilds = resolve(ptyRoot, "prebuilds");
+    if (existsSync(prebuilds)) {
+      for (const entry of readdirSync(prebuilds)) {
+        candidates.push(resolve(prebuilds, entry, "spawn-helper"));
+      }
+    }
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) chmodSync(candidate, 0o755);
+    }
+  } catch {
+    // node-pty is optional; the terminal panel just won't have a shell.
+  }
+}
+ensurePtyHelperExecutable();
 
 const port = Number(process.env.PORT ?? 5183);
 const devServerUrl = `http://localhost:${port}`;

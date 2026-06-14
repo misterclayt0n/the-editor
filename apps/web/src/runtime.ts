@@ -85,6 +85,7 @@ import { palettePackage, HostPaletteActions } from "./product/palette";
 import { viewPackage, HostViewActions } from "./product/view";
 import { createFileSystemPort } from "./platform/fs";
 import { createProcessPort } from "./platform/process";
+import { createTerminalPort, type TerminalPort } from "./platform/terminal";
 import { createSyntaxPort, type HighlightRun, type SyntaxPort } from "./platform/syntax";
 import { DocumentHighlights } from "./editor/highlights";
 import { FloatHub } from "./editor/floats";
@@ -97,6 +98,8 @@ import { wordCompletions } from "./product/wordCompletions";
 import { makePanelRenderers, PanelRenderers } from "./workbench/panelRenderers";
 import { fileTreePackage, FileTreeSurface, HostFileTree } from "./product/fileTree";
 import { createFileTreeRenderer } from "./filetree/mount";
+import { terminalPackage, TerminalSurface, HostTerminal } from "./product/terminal";
+import { createTerminalRenderer } from "./terminal/mount";
 import { HostVcsDefaults, makeVcsProviders, vcsDefaults, VcsProviders } from "./product/vcs";
 import { createGitProvider } from "./vcs/git";
 import { VcsManager } from "./vcs/manager";
@@ -277,6 +280,7 @@ export class AppRuntime {
   private lastEditorSlot: SlotId | null = null;
   private syntaxPort: SyntaxPort | undefined;
   private lsp: LspManager | undefined;
+  private terminal: TerminalPort | undefined;
   private pendingRename: { docId: string; offset: number } | null = null;
   private readonly highlightsByDoc = new Map<string, DocumentHighlights>();
   private workbenchSnapshot: WorkbenchSnapshot;
@@ -335,6 +339,13 @@ export class AppRuntime {
               mount: (element, panel) => createFileTreeRenderer(instance).mount(element, panel),
             },
             toggle: () => instance.togglePanel(FileTreeSurface, { dock: "left" }),
+          }),
+          Layer.succeed(HostTerminal, {
+            renderer: {
+              title: (panel) => createTerminalRenderer(instance).title(panel),
+              mount: (element, panel) => createTerminalRenderer(instance).mount(element, panel),
+            },
+            toggle: () => instance.togglePanel(TerminalSurface, { dock: "bottom", ratio: 0.32 }),
           }),
           Layer.succeed(CompletionProviders, completionProviders),
           Layer.succeed(HoverProviders, hoverProviders),
@@ -401,6 +412,7 @@ export class AppRuntime {
             toPackageDescriptor(intelActions, services),
             toPackageDescriptor(vcsDefaults, services),
             toPackageDescriptor(fileTreePackage, services),
+            toPackageDescriptor(terminalPackage, services),
           ])
           .pipe(Effect.orDie);
 
@@ -561,7 +573,7 @@ export class AppRuntime {
    */
   togglePanel(
     kind: SurfaceKind,
-    options?: { readonly dock?: "left" | "right"; readonly ratio?: number },
+    options?: { readonly dock?: "left" | "right" | "top" | "bottom"; readonly ratio?: number },
   ): void {
     const panels = Effect.runSync(this.workbench.panels);
     const existing = panels.find((panel) => panel.kind === kind);
@@ -877,6 +889,11 @@ export class AppRuntime {
     return Option.getOrUndefined(Context.getOption(this.workspace.context, FileSystemPort));
   }
 
+  /** The platform PTY transport for the terminal panel (Electron / dev echo). */
+  terminalPort(): TerminalPort | undefined {
+    return (this.terminal ??= createTerminalPort());
+  }
+
   openFolder(root: string): void {
     this.workspaceRoot = root.replace(/\/+$/, "") || "/";
     void this.vcs?.setRoot(this.workspaceRoot);
@@ -917,19 +934,18 @@ export class AppRuntime {
    * every keystroke here, whatever surface is focused — keymaps are the app's,
    * not the editor's. Cooperative leaves (the owned editor, @pierre/trees)
    * claim the keys they use and let the rest bubble; this dispatches global +
-   * focused-surface bindings against whatever reaches it. Editable overlays
-   * (the command palette, the rename prompt, the tree's search box) own their
-   * own keys, so it stays out of their way entirely.
+   * focused-surface bindings against whatever reaches it. Editable surfaces
+   * (the command palette, the rename prompt, the tree's search box, the
+   * TERMINAL) keep their own typing — but GLOBAL bindings (the palette, toggle
+   * terminal/tree) still fire over them, so an editable surface is never a
+   * keyboard trap. Surface-scoped bindings (editor save, etc.) do NOT leak in.
    */
   dispatchKeyboardEvent(event: KeyboardEvent): void {
-    // An <input>/<textarea>/contenteditable owns its keys (palette, rename
-    // prompt, pierre's search). The owned editor is a plain focusable div, so
-    // it is never an editable target and still flows through below.
-    if (isEditableTarget(event.target)) return;
+    const editable = isEditableTarget(event.target);
 
     // Native copy of a selection inside a float (hover-card text): the keymap's
     // copy would grab the EDITOR selection instead.
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "c") {
+    if (!editable && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "c") {
       const selection = window.getSelection();
       const node = selection?.anchorNode ?? null;
       const element = node instanceof Element ? node : node?.parentElement ?? null;
@@ -938,14 +954,15 @@ export class AppRuntime {
       }
     }
 
-    // The focused editor's completion/snippet interceptor runs before keymaps.
-    if (this.focusedPane()?.keyInterceptor?.(event) === true) {
+    // The focused editor's completion/snippet interceptor runs before keymaps
+    // (never over an editable surface — completion only lives in the editor).
+    if (!editable && this.focusedPane()?.keyInterceptor?.(event) === true) {
       event.preventDefault();
       this.onPendingChords?.(this.pendingChords());
       return;
     }
 
-    const outcome = this.resolveKeyboardEvent(event);
+    const outcome = this.resolveKeyboardEvent(event, editable);
     if (outcome !== "passthrough") event.preventDefault();
     this.onPendingChords?.(this.pendingChords());
   }
@@ -954,16 +971,18 @@ export class AppRuntime {
    * Resolves a key against the keymaps (scope-aware via the focused panel).
    * handled/pending mean the caller should preventDefault; passthrough means
    * the key is not ours (browser shortcuts, IME, a leaf surface's own key).
-   * Text insertion is gated on an editor pane actually being focused, so a
-   * printable key over the file tree never leaks into a buffer.
+   * `editable`: the key originated in an input/terminal that owns its typing,
+   * so only GLOBAL bindings may claim it — no surface bindings, no chord
+   * buffering, no text insertion.
    */
-  private resolveKeyboardEvent(event: KeyboardEventLike): KeyOutcome {
+  private resolveKeyboardEvent(event: KeyboardEventLike, editable: boolean): KeyOutcome {
     const chord = chordFromKeyboardEvent(event);
     if (chord === undefined) return "passthrough";
 
     const resolution = Effect.runSync(this.keymaps.handleKey(chord));
     switch (resolution._tag) {
       case "match":
+        if (editable && resolution.binding.scope._tag !== "global") return "passthrough";
         Effect.runSync(
           this.commands
             .execute(resolution.binding.command, resolution.binding.args)
@@ -971,9 +990,15 @@ export class AppRuntime {
         );
         return "handled";
       case "pending":
-        return "pending";
+        // Don't hold a chord prefix over an editable surface's own typing.
+        return editable ? "passthrough" : "pending";
       case "none":
-        if (isTextInputChord(chord) && event.key.length === 1 && this.focusedPane() !== undefined) {
+        if (
+          !editable &&
+          isTextInputChord(chord) &&
+          event.key.length === 1 &&
+          this.focusedPane() !== undefined
+        ) {
           Effect.runSync(
             this.commands.execute("editor.insertText", { text: event.key }).pipe(Effect.orDie),
           );
@@ -985,6 +1010,31 @@ export class AppRuntime {
 
   pendingChords(): ReadonlyArray<Chord> {
     return Effect.runSync(this.keymaps.pending);
+  }
+
+  /**
+   * Run a key against ONLY the global keymap, returning whether it matched.
+   * For surfaces that swallow their own keydowns before they can bubble to the
+   * document dispatcher (the terminal: ghostty consumes everything) — they ask
+   * this so app-global shortcuts (the palette, toggle terminal) still work
+   * without the surface becoming a keyboard trap. Non-global keys are left for
+   * the surface.
+   */
+  handleGlobalKey(event: KeyboardEventLike): boolean {
+    const chord = chordFromKeyboardEvent(event);
+    if (chord === undefined) return false;
+    const resolution = Effect.runSync(this.keymaps.handleKey(chord));
+    if (resolution._tag === "match" && resolution.binding.scope._tag === "global") {
+      Effect.runSync(
+        this.commands
+          .execute(resolution.binding.command, resolution.binding.args)
+          .pipe(Effect.orDie),
+      );
+      this.onPendingChords?.(this.pendingChords());
+      return true;
+    }
+    this.onPendingChords?.(this.pendingChords());
+    return false;
   }
 
   // ------------------------------------------------------------ lifecycle

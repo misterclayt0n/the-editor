@@ -2,9 +2,12 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
+import { createRequire } from "node:module";
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme } from "electron";
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL?.trim();
+/** Native modules (node-pty) are externalized; require them at runtime. */
+const nodeRequire = createRequire(import.meta.url);
 
 /**
  * File system host: the main-process half of the renderer's FileSystemPort.
@@ -169,6 +172,100 @@ function registerProcessHandlers(): void {
   });
 }
 
+/**
+ * Terminal host: the main-process half of the renderer's TerminalPort. Real
+ * PTYs need node-pty (native); the require is guarded so a missing/unbuilt
+ * binary degrades to "no terminal" instead of crashing the app. Run
+ * `pnpm --filter @the-editor/desktop exec electron-rebuild -f -w node-pty`
+ * if it fails to load under Electron's ABI.
+ */
+type Pty = {
+  readonly pid: number;
+  onData(cb: (data: string) => void): void;
+  onExit(cb: (e: { exitCode: number }) => void): void;
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  kill(): void;
+};
+type PtyModule = {
+  spawn(
+    file: string,
+    args: string[],
+    opts: { name: string; cols: number; rows: number; cwd: string; env: NodeJS.ProcessEnv },
+  ): Pty;
+};
+
+let ptyModule: PtyModule | null = null;
+let ptyLoadAttempted = false;
+function loadPty(): PtyModule | null {
+  if (!ptyLoadAttempted) {
+    ptyLoadAttempted = true;
+    try {
+      ptyModule = nodeRequire("node-pty") as PtyModule;
+    } catch (error) {
+      console.warn("[terminal] node-pty unavailable; terminal disabled.", error);
+      ptyModule = null;
+    }
+  }
+  return ptyModule;
+}
+
+let nextTermId = 1;
+const terms = new Map<number, Pty>();
+
+function registerTerminalHandlers(): void {
+  ipcMain.handle(
+    "term:spawn",
+    (event, options: { cols: number; rows: number; cwd?: string; shell?: string }) => {
+      const pty = loadPty();
+      if (pty === null) return null;
+      const sender = event.sender;
+      try {
+        const shell =
+          options.shell ?? process.env.SHELL ?? (process.platform === "win32" ? "powershell.exe" : "/bin/bash");
+        const child = pty.spawn(shell, [], {
+          name: "xterm-256color",
+          cols: Math.max(1, options.cols),
+          rows: Math.max(1, options.rows),
+          cwd: options.cwd ?? process.env.HOME ?? process.cwd(),
+          env: { ...process.env, TERM: "xterm-256color" },
+        });
+        const id = nextTermId++;
+        terms.set(id, child);
+        child.onData((data) => {
+          if (!sender.isDestroyed()) sender.send("term:data", { id, data });
+        });
+        child.onExit(({ exitCode }) => {
+          terms.delete(id);
+          if (!sender.isDestroyed()) sender.send("term:exit", { id, code: exitCode });
+        });
+        return id;
+      } catch (error) {
+        console.warn("[terminal] spawn failed", error);
+        return null;
+      }
+    },
+  );
+  ipcMain.handle("term:write", (_event, id: number, data: string) => {
+    terms.get(id)?.write(data);
+  });
+  ipcMain.handle("term:resize", (_event, id: number, cols: number, rows: number) => {
+    try {
+      terms.get(id)?.resize(Math.max(1, cols), Math.max(1, rows));
+    } catch {
+      // A resize on a dying PTY is harmless to drop.
+    }
+  });
+  ipcMain.handle("term:kill", (_event, id: number) => {
+    terms.get(id)?.kill();
+    terms.delete(id);
+  });
+  app.on("will-quit", () => {
+    for (const child of terms.values()) child.kill();
+    terms.clear();
+  });
+}
+
 function createWindow(): void {
   // Dark chrome end to end — the native title bar follows the theme.
   nativeTheme.themeSource = "dark";
@@ -198,6 +295,7 @@ function createWindow(): void {
 void app.whenReady().then(() => {
   registerFileSystemHandlers();
   registerProcessHandlers();
+  registerTerminalHandlers();
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

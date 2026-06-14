@@ -12,6 +12,8 @@ export default defineConfig([
     ...shared,
     entry: ["src/main.ts"],
     clean: true,
+    // Native module: required at runtime from node_modules, never bundled.
+    external: ["node-pty"],
   },
   {
     ...shared,

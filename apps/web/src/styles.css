@@ -897,6 +897,31 @@ body {
   background: #f48771;
 }
 
+/* Terminal panel host: ghostty-web canvas fills the panel body. */
+.terminal-host {
+  display: flex;
+  height: 100%;
+  background: var(--bg-editor);
+}
+
+.terminal-body {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: 4px 6px;
+}
+
+.terminal-empty {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  color: var(--fg-dim);
+  font-size: 13px;
+  text-align: center;
+}
+
 /* File tree panel host: theme @pierre/trees to the editor's palette. */
 .file-tree-host {
   display: flex;

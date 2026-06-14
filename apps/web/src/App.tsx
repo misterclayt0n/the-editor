@@ -28,6 +28,7 @@ const layoutSummary = (runtime: AppRuntime): unknown => {
       ? {
           stack: tile.id,
           focused: tile.id === focusedSlot,
+          tabsHidden: tile.tabsHidden === true,
           active: tile.active,
           tabs: tile.panels.map((panelId) => ({
             panel: panelId,

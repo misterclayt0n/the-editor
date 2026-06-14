@@ -267,6 +267,14 @@ export class AppRuntime {
   };
 
   private readonly panes = new Map<PanelId, EditorPane>();
+  /**
+   * The "active editor group": the last stack the user focused that hosts an
+   * editor pane. Opening a file targets THIS, not the raw focused slot — so
+   * clicking a file in the tree (which moves focus to the tree) still opens in
+   * the editor you were last working in, and a focused terminal/tool panel
+   * never hijacks file opens. Focusing a tool panel leaves it unchanged.
+   */
+  private lastEditorSlot: SlotId | null = null;
   private syntaxPort: SyntaxPort | undefined;
   private lsp: LspManager | undefined;
   private pendingRename: { docId: string; offset: number } | null = null;
@@ -463,8 +471,25 @@ export class AppRuntime {
       Effect.runFork(
         Stream.runForEach(this.workbench.arrangementChanges, () => Effect.sync(publish)),
       ),
-      Effect.runFork(Stream.runForEach(this.workbench.focusChanges, () => Effect.sync(publish))),
+      Effect.runFork(
+        Stream.runForEach(this.workbench.focusChanges, (focused) =>
+          Effect.sync(() => {
+            // Remember the last editor group focused; tool panels (file tree,
+            // terminal) don't count, so they never become the open target.
+            if (Option.isSome(focused) && this.stackHostsEditors(focused.value)) {
+              this.lastEditorSlot = focused.value;
+            }
+            publish();
+          }),
+        ),
+      ),
     ];
+  }
+
+  /** Does this slot's stack currently host at least one editor pane? */
+  private stackHostsEditors(slotId: SlotId): boolean {
+    const slot = findSlot(this.workbenchSnapshot.arrangement, slotId);
+    return slot?.kind === "stack" && slot.stack.panels.some((id) => this.panes.has(id));
   }
 
   // ------------------------------------------------------------- gestures
@@ -796,17 +821,24 @@ export class AppRuntime {
     this.vcs?.attach(document, path);
 
     const { arrangement, focusedSlot } = this.workbenchSnapshot;
-    const slot = focusedSlot === null ? undefined : findSlot(arrangement, focusedSlot);
-    const focusedStack: Stack | undefined = slot?.kind === "stack" ? slot.stack : undefined;
-    // Files open in EDITOR stacks. A focused custom panel (file tree) must
-    // not have its stack hijacked by the file it just asked to open.
     const hostsEditors = (s: Stack) => s.panels.some((id) => this.panes.has(id));
+    const editorStacks = collectSlots(arrangement).flatMap((s) =>
+      s.kind === "stack" && hostsEditors(s.stack) ? [s.stack] : [],
+    );
+    // Target the ACTIVE EDITOR GROUP, not the raw focused slot: the last editor
+    // the user worked in (tool panels like the file tree don't count). Fall
+    // back to the focused stack if it's an editor (first open in a fresh group),
+    // then any editor group, then none → a new group is docked below.
+    const focusedSlotStack =
+      focusedSlot === null ? undefined : findSlot(arrangement, focusedSlot);
+    const focusedEditor =
+      focusedSlotStack?.kind === "stack" && hostsEditors(focusedSlotStack.stack)
+        ? focusedSlotStack.stack
+        : undefined;
     const stack: Stack | undefined =
-      focusedStack !== undefined && hostsEditors(focusedStack)
-        ? focusedStack
-        : collectSlots(arrangement)
-            .flatMap((s) => (s.kind === "stack" ? [s.stack] : []))
-            .find(hostsEditors);
+      editorStacks.find((s) => s.id === this.lastEditorSlot) ??
+      focusedEditor ??
+      editorStacks[0];
 
     if (stack !== undefined) {
       for (const panelId of stack.panels) {

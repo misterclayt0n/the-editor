@@ -25,6 +25,7 @@ import type { PanelId, SlotId, Stack, Tile } from "@the-editor/workbench";
 import type { AppRuntime, EditorPane } from "../runtime";
 import { EditorView } from "../editor/EditorView";
 import { FileIcon } from "./fileIcons";
+import type { PanelMount } from "./panelRenderers";
 
 type WorkbenchViewProps = {
   readonly runtime: AppRuntime;
@@ -413,7 +414,12 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
           />
         )}
         {pane === undefined && activePanelId !== undefined && (
-          <CustomPanelView key={activePanelId} runtime={runtime} panelId={activePanelId} />
+          <CustomPanelView
+            key={activePanelId}
+            runtime={runtime}
+            panelId={activePanelId}
+            focused={focused}
+          />
         )}
         {dropZone !== null && <div className={`wb-drop wb-drop-${dropZone}`} />}
       </div>
@@ -425,11 +431,14 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
 function CustomPanelView({
   runtime,
   panelId,
+  focused,
 }: {
   readonly runtime: AppRuntime;
   readonly panelId: PanelId;
+  readonly focused: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const mountRef = useRef<PanelMount | null>(null);
   const [epoch, setEpoch] = useState(0);
 
   useEffect(() => runtime.panelRenderers.onChanged(() => setEpoch((e) => e + 1)), [runtime]);
@@ -440,10 +449,59 @@ function CustomPanelView({
     if (element === null || panel === undefined) return;
     const renderer = runtime.panelRenderers.get(panel.kind);
     if (renderer === undefined) return;
-    return renderer.mount(element, panel);
+    const handle = renderer.mount(element, panel);
+    mountRef.current = handle;
+    return () => {
+      mountRef.current = null;
+      handle.dispose();
+    };
   }, [runtime, panelId, epoch]);
 
-  return <div ref={hostRef} className="wb-custom-panel" data-panel-id={panelId} />;
+  // Hand the panel the keyboard when the workbench focuses its slot — the
+  // analog of StackView auto-focusing a pane's `.editor`. Retry across frames:
+  // a panel's focusable content (e.g. @pierre/trees rows) can populate async,
+  // so the first attempt may land nothing. Stop as soon as focus is inside, so
+  // we never fight a user who clicked a row or moved focus out.
+  useEffect(() => {
+    if (!focused) return;
+    const element = hostRef.current;
+    if (element === null) return;
+    let raf = 0;
+    let tries = 0;
+    const attempt = () => {
+      raf = 0;
+      if (element.contains(document.activeElement)) return;
+      mountRef.current?.focus?.();
+      if (!element.contains(document.activeElement) && tries < 40) {
+        tries += 1;
+        raf = requestAnimationFrame(attempt);
+      }
+    };
+    attempt();
+    return () => {
+      if (raf !== 0) cancelAnimationFrame(raf);
+    };
+  }, [focused, panelId, epoch]);
+
+  // A click anywhere in the panel that doesn't already land focus inside (empty
+  // area, gaps a leaf doesn't focus) should still hand the panel the keyboard —
+  // next frame, after the click's own focus settles.
+  const onPointerDown = () => {
+    requestAnimationFrame(() => {
+      const element = hostRef.current;
+      if (element === null || element.contains(document.activeElement)) return;
+      mountRef.current?.focus?.();
+    });
+  };
+
+  return (
+    <div
+      ref={hostRef}
+      className="wb-custom-panel"
+      data-panel-id={panelId}
+      onPointerDown={onPointerDown}
+    />
+  );
 }
 
 type TabInfo = { readonly name: string; readonly dirty: boolean; readonly conflict: boolean };

@@ -31,6 +31,7 @@ type Bridge = {
   pickFile(): Promise<string | null>;
   pickFolder?(): Promise<string | null>;
   readDir?(path: string): Promise<Array<{ name: string; kind: "file" | "directory" }>>;
+  mkdir?(path: string): Promise<void>;
   watchDir?(
     path: string,
     onEvent: (event: { path: string; kind: string }) => void,
@@ -74,6 +75,9 @@ function bridgePort(bridge: Bridge): FileSystemPort.Service {
               NonNullable<FileSystemPort.Service["readDir"]>
             >,
         }
+      : {}),
+    ...(bridge.mkdir !== undefined
+      ? { mkdir: (path: string) => io(path, "write", () => bridge.mkdir!(path)).pipe(Effect.asVoid) }
       : {}),
     ...(bridge.watchDir !== undefined
       ? {

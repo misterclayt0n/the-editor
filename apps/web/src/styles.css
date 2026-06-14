@@ -917,7 +917,15 @@ body {
   height: 100%;
 }
 
-.file-tree-host > * {
+/* Body holds either the tree or the empty state and fills the panel. */
+.file-tree-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.file-tree-body > * {
   flex: 1;
   min-height: 0;
   height: 100%;

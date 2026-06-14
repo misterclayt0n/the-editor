@@ -10,11 +10,15 @@ export function RenameDialog({
   initialValue,
   onSubmit,
   onClose,
+  placeholder = "New name",
+  ariaLabel = "Rename Symbol",
 }: {
   readonly open: boolean;
   readonly initialValue: string;
   readonly onSubmit: (value: string) => void;
   readonly onClose: () => void;
+  readonly placeholder?: string;
+  readonly ariaLabel?: string;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState(initialValue);
@@ -32,12 +36,12 @@ export function RenameDialog({
   if (!open) return null;
 
   return (
-    <div className="rename-dialog" role="dialog" aria-label="Rename Symbol">
+    <div className="rename-dialog" role="dialog" aria-label={ariaLabel}>
       <input
         ref={inputRef}
         className="rename-dialog__input"
         value={value}
-        placeholder="New name"
+        placeholder={placeholder}
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter") {

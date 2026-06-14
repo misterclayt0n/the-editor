@@ -18,9 +18,13 @@ function registerFileSystemHandlers(): void {
     return fsp.readFile(filePath, "utf8");
   });
   ipcMain.handle("fs:write", async (_event, filePath: string, text: string) => {
+    await fsp.mkdir(path.dirname(filePath), { recursive: true });
     await fsp.writeFile(filePath, text, "utf8");
     const stat = await fsp.stat(filePath);
     return { mtimeMs: stat.mtimeMs, size: stat.size };
+  });
+  ipcMain.handle("fs:mkdir", async (_event, dirPath: string) => {
+    await fsp.mkdir(dirPath, { recursive: true });
   });
   ipcMain.handle("fs:stat", async (_event, filePath: string) => {
     try {

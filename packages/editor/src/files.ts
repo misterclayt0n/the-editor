@@ -93,6 +93,8 @@ export namespace FileSystemPort {
     readonly readDir?: (
       path: string,
     ) => Effect.Effect<ReadonlyArray<DirEntry>, FileIoError>;
+    /** Create a directory (recursive). Optional: only real-path platforms. */
+    readonly mkdir?: (path: string) => Effect.Effect<void, FileIoError>;
     /**
      * Recursive directory watch (tree/VCS refresh). Optional; event paths
      * are best-effort (some platforms only report "something changed").

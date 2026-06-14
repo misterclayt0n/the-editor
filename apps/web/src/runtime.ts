@@ -249,6 +249,11 @@ export class AppRuntime {
   onTriggerSignatureHelp?: () => void;
   /** Host UI hooks: the pending chord prefix changed (status surfaces). */
   onPendingChords?: (chords: ReadonlyArray<Chord>) => void;
+  /** Host UI hook: ask the user for a string (resolves null on cancel). */
+  onPrompt?: (options: {
+    readonly initial?: string;
+    readonly placeholder?: string;
+  }) => Promise<string | null>;
   /** Panel renderers for non-editor surface kinds (file tree, custom UIs). */
   panelRenderers!: PanelRenderers.Service;
   /** Version control (undefined without a process host). */
@@ -740,6 +745,11 @@ export class AppRuntime {
 
   lspEnabled(): boolean {
     return this.lsp?.isEnabled() ?? false;
+  }
+
+  /** Ask the host for a string (new-file/new-folder names, etc.). */
+  requestPrompt(options: { initial?: string; placeholder?: string }): Promise<string | null> {
+    return this.onPrompt?.(options) ?? Promise.resolve(null);
   }
 
   private attachHighlights(document: DocumentScope, path: string | undefined): void {

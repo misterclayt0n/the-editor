@@ -112,6 +112,7 @@ contextBridge.exposeInMainWorld("theEditorFs", {
     path: string,
   ): Promise<Array<{ name: string; kind: "file" | "directory" }>> =>
     ipcRenderer.invoke("fs:readdir", path),
+  mkdir: (path: string): Promise<void> => ipcRenderer.invoke("fs:mkdir", path),
   watchDir: async (
     path: string,
     onEvent: (event: { path: string; kind: string }) => void,

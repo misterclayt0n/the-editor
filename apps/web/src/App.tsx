@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Effect } from "effect";
 import type { EditorSnapshot } from "@the-editor/editor";
 import { formatChords, type Chord } from "@the-editor/keymaps";
@@ -57,6 +57,9 @@ export function App() {
     open: false,
     initial: "",
   });
+  // Generic string prompt (new file/folder names, etc.); resolves null on cancel.
+  const [prompt, setPrompt] = useState<{ initial: string; placeholder: string } | null>(null);
+  const promptResolve = useRef<((value: string | null) => void) | null>(null);
   // Bumped on focus/file changes so the status bar re-reads the focused pane.
   const [, setStatusEpoch] = useState(0);
 
@@ -67,6 +70,11 @@ export function App() {
     booted.onDiagnosticsChanged = () => setStatusEpoch((epoch) => epoch + 1);
     const unsubscribeVcs = booted.vcs?.subscribe(() => setStatusEpoch((epoch) => epoch + 1));
     booted.onRenameRequested = (currentName) => setRename({ open: true, initial: currentName });
+    booted.onPrompt = (options) =>
+      new Promise<string | null>((resolve) => {
+        promptResolve.current = resolve;
+        setPrompt({ initial: options.initial ?? "", placeholder: options.placeholder ?? "New name" });
+      });
     const controller = new IntelController(
       booted,
       booted.intel.completions,
@@ -129,6 +137,16 @@ export function App() {
   }, []);
 
   const handleActiveSnapshot = useCallback((next: EditorSnapshot) => setSnapshot(next), []);
+  // Resolve the pending prompt exactly once (Enter fires onSubmit then onClose).
+  const finishPrompt = useCallback((value: string | null) => {
+    const resolve = promptResolve.current;
+    promptResolve.current = null;
+    setPrompt(null);
+    resolve?.(value);
+    window.requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>(".wb-pane--focused .editor")?.focus({ preventScroll: true });
+    });
+  }, []);
   const handlePaletteOpenChange = useCallback((open: boolean) => {
     setPaletteOpen(open);
     // Radix restores focus to the previously focused element, but command
@@ -173,6 +191,14 @@ export function App() {
               ?.focus({ preventScroll: true });
           });
         }}
+      />
+      <RenameDialog
+        open={prompt !== null}
+        initialValue={prompt?.initial ?? ""}
+        placeholder={prompt?.placeholder ?? "New name"}
+        ariaLabel="Prompt"
+        onSubmit={(value) => finishPrompt(value.length > 0 ? value : null)}
+        onClose={() => finishPrompt(null)}
       />
       <div className="status-bar">
         <span>

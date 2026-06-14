@@ -10,14 +10,25 @@
 import { Context, Effect, type Scope } from "effect";
 import type { Panel, SurfaceKind } from "@the-editor/workbench";
 
+/** A live mounted panel: how to tear it down, and (optionally) how to take
+ * keyboard focus when the workbench focuses its slot. A panel that owns its
+ * own focusable content (e.g. @pierre/trees in a shadow root) implements
+ * `focus` so the workbench can hand it the keyboard, the same way an editor
+ * pane's `.editor` element is focused — that's what makes every surface
+ * keyboard-drivable. */
+export type PanelMount = {
+  readonly dispose: () => void;
+  readonly focus?: () => void;
+};
+
 export type PanelRenderer = {
   /** Tab title for panels of this kind. */
   readonly title: (panel: Panel) => string;
   /**
-   * Mount into the slot body element; returns dispose. The element belongs
+   * Mount into the slot body element; returns a handle. The element belongs
    * to the renderer until dispose — portal React, mount a canvas, whatever.
    */
-  readonly mount: (element: HTMLElement, panel: Panel) => () => void;
+  readonly mount: (element: HTMLElement, panel: Panel) => PanelMount;
 };
 
 export class PanelRenderers extends Context.Tag("the-editor/web/PanelRenderers")<

@@ -65,8 +65,14 @@ export function createFileTreeRenderer(runtime: AppRuntime): PanelRenderer {
 
       element.classList.add("file-tree-host");
 
+      // A body that holds either the tree or the empty state. No header chrome:
+      // search is keyboard-driven (focus the tree and type — pierre opens the
+      // search bar, hidden by unsafeCSS while closed; Escape closes it).
+      const body = document.createElement("div");
+      body.className = "file-tree-body";
+      element.replaceChildren(body);
+
       const empty = () => {
-        element.replaceChildren();
         const wrap = document.createElement("div");
         wrap.className = "file-tree-empty";
         const note = document.createElement("div");
@@ -77,7 +83,7 @@ export function createFileTreeRenderer(runtime: AppRuntime): PanelRenderer {
         button.textContent = "Open Folder…";
         button.onclick = () => void runtime.openFolderViaDialog();
         wrap.append(note, button);
-        element.append(wrap);
+        body.replaceChildren(wrap);
       };
 
       const applyGitStatus = () => {
@@ -88,13 +94,16 @@ export function createFileTreeRenderer(runtime: AppRuntime): PanelRenderer {
       const setUp = async (root: string) => {
         const paths = await listWorkspace(runtime, root);
         if (disposed) return;
-        element.replaceChildren();
+        body.replaceChildren();
         tree?.cleanUp();
         tree = new FileTree({
           paths,
           search: true,
           flattenEmptyDirectories: true,
           initialExpansion: "closed",
+          // Hide the always-on search bar; the header's search icon toggles it.
+          unsafeCSS:
+            "[data-file-tree-search-container][data-open='false'] { display: none !important; }",
           onSelectionChange: (selected) => {
             const path = selected[0];
             if (path === undefined) return;
@@ -103,7 +112,7 @@ export function createFileTreeRenderer(runtime: AppRuntime): PanelRenderer {
             void runtime.openPath(`${root}/${path}`);
           },
         });
-        tree.render({ containerWrapper: element });
+        tree.render({ containerWrapper: body });
         applyGitStatus();
 
         // Watch-driven refresh: any change under the root re-lists.
@@ -146,13 +155,44 @@ export function createFileTreeRenderer(runtime: AppRuntime): PanelRenderer {
         cleanups.push(runtime.vcs.subscribe(() => applyGitStatus()));
       }
 
-      return () => {
-        disposed = true;
-        if (refreshTimer !== null) window.clearTimeout(refreshTimer);
-        unwatch?.();
-        for (const cleanup of cleanups) cleanup();
-        tree?.cleanUp();
-        element.replaceChildren();
+      // Hand the keyboard to @pierre/trees when the workbench focuses this
+      // slot. Pierre's row keydown handler bails when no item is DOM-focused
+      // (focus is controller-state, not DOM, until a row is focused), so the
+      // panel being the focused SLOT isn't enough — we focus a row inside the
+      // shadow root. Once focused, arrows navigate and a printable key opens
+      // search; ⌘⇧P and other unclaimed keys still bubble to the dispatcher.
+      // Returns whether it landed focus, so the caller can retry while the
+      // list is still populating (setUp is async).
+      const focusTree = (): boolean => {
+        const openButton = body.querySelector<HTMLElement>(".file-tree-open-button");
+        if (openButton !== null) {
+          openButton.focus();
+          return true;
+        }
+        const host = [...body.children].find((child) => child.shadowRoot !== null);
+        const root = host?.shadowRoot ?? null;
+        if (root === null) return false;
+        // The roving-focus row first (where the user left off), else the first.
+        const row =
+          root.querySelector<HTMLElement>("[data-type='item'][tabindex='0']") ??
+          root.querySelector<HTMLElement>("[data-type='item']");
+        if (row !== null) {
+          row.focus();
+          return true;
+        }
+        return false;
+      };
+
+      return {
+        dispose: () => {
+          disposed = true;
+          if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+          unwatch?.();
+          for (const cleanup of cleanups) cleanup();
+          tree?.cleanUp();
+          element.replaceChildren();
+        },
+        focus: focusTree,
       };
     },
   };

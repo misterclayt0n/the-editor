@@ -163,6 +163,17 @@ export function activateTab(
   };
 }
 
+/** Show/hide a stack's tab strip (chrome only — panels are untouched). */
+export function toggleStackTabs(arrangement: Arrangement, slotId: SlotIdType): Arrangement {
+  requireStack(arrangement, slotId);
+  return {
+    ...arrangement,
+    tiles: mapStacks(arrangement.tiles!, (stack) =>
+      stack.id === slotId ? { ...stack, tabsHidden: stack.tabsHidden !== true } : stack,
+    ),
+  };
+}
+
 /** Float a panel above the tiles. Last overlay is topmost. */
 export function floatPanel(arrangement: Arrangement, panelId: PanelId): Arrangement {
   const overlay: Overlay = { id: freshSlotId(), panelId };

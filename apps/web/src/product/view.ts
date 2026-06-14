@@ -24,6 +24,7 @@ export class HostViewActions extends Context.Tag("the-editor/web/HostViewActions
     readonly closeTab: () => void;
     readonly nextTab: () => void;
     readonly previousTab: () => void;
+    readonly toggleTabs: () => void;
   }
 >() {}
 
@@ -64,6 +65,14 @@ export const viewPackage = definePackage("the-editor/view", () =>
       scope: editorScope,
       palette: { group: "View", aliases: ["bp"] },
       run: () => Effect.sync(() => host.previousTab()),
+    });
+    // Global: reachable from the file tree (its single tab is the obvious use),
+    // an empty workbench, etc. Hidden tabs can still be cycled by keyboard.
+    yield* commands.register("view.toggleTabs", {
+      title: "Toggle Panel Tabs",
+      scope: SurfaceScope.global,
+      palette: { group: "View", aliases: ["tabs"] },
+      run: () => Effect.sync(() => host.toggleTabs()),
     });
 
     yield* keymaps.registerAll([

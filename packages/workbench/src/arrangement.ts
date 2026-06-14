@@ -24,6 +24,9 @@ export type Stack = {
   readonly id: SlotId;
   readonly panels: ReadonlyArray<PanelId>;
   readonly active: number;
+  /** Chrome only: hide this stack's tab strip (e.g. a single-panel file tree).
+   * Layout-truth, so it persists and rides through surgery; absent = shown. */
+  readonly tabsHidden?: boolean;
 };
 
 export type Split = {

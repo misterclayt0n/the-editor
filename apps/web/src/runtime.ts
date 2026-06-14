@@ -42,6 +42,7 @@ import {
   removePanel,
   slotOfPanel,
   splitBeside,
+  toggleStackTabs,
   Workbench,
   type Arrangement,
   type Panel,
@@ -375,6 +376,7 @@ export class AppRuntime {
             closeTab: () => instance.closeFocusedTab(),
             nextTab: () => instance.cycleTab(1),
             previousTab: () => instance.cycleTab(-1),
+            toggleTabs: () => instance.toggleTabs(),
           }),
         );
         yield* runtime
@@ -554,6 +556,17 @@ export class AppRuntime {
         .pipe(Effect.orDie),
     );
     this.focusSlotOfPanel(panel.id);
+  }
+
+  /** Show/hide the focused stack's tab strip (e.g. a single-panel file tree).
+   * Tabs can still be cycled by keyboard while hidden, so it's safe on any
+   * stack. */
+  toggleTabs(): void {
+    const focusedSlot = this.workbenchSnapshot.focusedSlot;
+    if (focusedSlot === null) return;
+    Effect.runSync(
+      this.workbench.updateArrangement((a) => toggleStackTabs(a, focusedSlot)).pipe(Effect.orDie),
+    );
   }
 
   /** Cycle the active tab within the focused stack. */

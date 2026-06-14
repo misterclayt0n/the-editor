@@ -352,6 +352,7 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
 
   return (
     <section className={`wb-pane${focused ? " wb-pane--focused" : ""}`}>
+      {stack.tabsHidden !== true && (
       <div className="wb-tabbar" data-wb-tabbar data-slot-id={stack.id}>
         {stack.panels.map((panelId, i) => {
           const tabPane = runtime.pane(panelId);
@@ -399,6 +400,7 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
         })}
         {dropTabIndex === stack.panels.length && <div className="wb-tab-insert" />}
       </div>
+      )}
       <div
         ref={bodyRef}
         className="wb-body"

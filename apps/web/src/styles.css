@@ -46,6 +46,51 @@ body {
   height: 100%;
 }
 
+/* The window's top band: themed chrome that owns the traffic-light gutter
+ * and hosts window-level controls. The whole bar drags the window; the
+ * controls inside opt out. */
+.titlebar {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  height: 36px;
+  padding: 0 8px;
+  background: var(--bg);
+  user-select: none;
+  -webkit-app-region: drag;
+}
+
+/* Make room for the macOS traffic lights floating over the left of the bar,
+ * plus a gap so the toggle button doesn't crowd the green light. */
+.titlebar[data-traffic-lights] {
+  padding-left: 84px;
+}
+
+.titlebar-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  transition: background 100ms ease, color 100ms ease;
+  -webkit-app-region: no-drag;
+}
+
+.titlebar-button:hover {
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  color: var(--fg);
+}
+
+.titlebar-button:active {
+  background: color-mix(in srgb, var(--fg) 16%, transparent);
+}
+
 .editor {
   position: absolute;
   inset: 0;
@@ -258,8 +303,10 @@ body {
   flex: 1;
   min-height: 0;
   /* The outer padding (plus the transparent dividers between cells) is what
-   * the chrome shows around each floating pane card. */
-  padding: var(--pane-gap);
+   * the chrome shows around each floating pane card. Top/bottom are trimmed
+   * so the panes hug the title bar and status bar; the sides keep the full
+   * pane gap. */
+  padding: 3px var(--pane-gap);
   background: var(--bg);
 }
 
@@ -865,10 +912,9 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 26px;
+  height: 22px;
   padding: 0 12px;
   background: var(--status-bg);
-  border-top: 1px solid var(--border);
   color: var(--fg-dim);
   font-size: 11.5px;
   letter-spacing: 0.1px;

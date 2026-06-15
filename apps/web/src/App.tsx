@@ -5,6 +5,7 @@ import { formatChords, type Chord } from "@the-editor/keymaps";
 import type { Tile } from "@the-editor/workbench";
 import { AppRuntime, type EditorPane } from "./runtime";
 import { WorkbenchView } from "./workbench/WorkbenchView";
+import { TitleBar } from "./ui/TitleBar";
 import { CommandPalette, type CommandPaletteMode } from "./ui/CommandPalette";
 import { FileFinder } from "./ui/FileFinder";
 import { RenameDialog } from "./ui/RenameDialog";
@@ -179,6 +180,7 @@ export function App() {
 
   return (
     <div className="app">
+      <TitleBar runtime={runtime} />
       <WorkbenchView
         runtime={runtime}
         onActiveSnapshot={handleActiveSnapshot}

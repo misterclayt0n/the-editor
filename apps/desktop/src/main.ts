@@ -422,6 +422,14 @@ function createWindow(): void {
     height: 800,
     backgroundColor: "#141415",
     title: "The Editor",
+    // Reclaim the title bar: the renderer paints its own themed bar (see
+    // TitleBar.tsx) and the traffic lights float over it, centered in the
+    // 44px-tall band the renderer reserves on the left.
+    titleBarStyle: "hiddenInset",
+    // x/y chosen to match the standard macOS inset and to vertically center
+    // the 12px lights in the 36px title bar (center ≈ y17), so they line up
+    // with the toggle button (also centered in the bar).
+    trafficLightPosition: { x: 13, y: 11 },
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,

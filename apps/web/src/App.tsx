@@ -4,7 +4,7 @@ import type { EditorSnapshot } from "@the-editor/editor";
 import { formatChords, type Chord } from "@the-editor/keymaps";
 import type { Tile } from "@the-editor/workbench";
 import { AppRuntime, type EditorPane } from "./runtime";
-import { WorkbenchView } from "./workbench/WorkbenchView";
+import { WorkbenchView, FOCUSED_EDITOR_SELECTOR } from "./workbench/WorkbenchView";
 import { CommandPalette } from "./ui/CommandPalette";
 import { RenameDialog } from "./ui/RenameDialog";
 import { IntelController } from "./intel/controller";
@@ -145,7 +145,7 @@ export function App() {
     setPrompt(null);
     resolve?.(value);
     window.requestAnimationFrame(() => {
-      document.querySelector<HTMLElement>(".wb-pane--focused .editor")?.focus({ preventScroll: true });
+      document.querySelector<HTMLElement>(FOCUSED_EDITOR_SELECTOR)?.focus({ preventScroll: true });
     });
   }, []);
   const handlePaletteOpenChange = useCallback((open: boolean) => {
@@ -155,7 +155,7 @@ export function App() {
     if (!open) {
       window.requestAnimationFrame(() => {
         document
-          .querySelector<HTMLElement>(".wb-pane--focused .editor")
+          .querySelector<HTMLElement>(FOCUSED_EDITOR_SELECTOR)
           ?.focus({ preventScroll: true });
       });
     }
@@ -188,7 +188,7 @@ export function App() {
           setRename((state) => ({ ...state, open: false }));
           window.requestAnimationFrame(() => {
             document
-              .querySelector<HTMLElement>(".wb-pane--focused .editor")
+              .querySelector<HTMLElement>(FOCUSED_EDITOR_SELECTOR)
               ?.focus({ preventScroll: true });
           });
         }}

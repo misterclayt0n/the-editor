@@ -19,13 +19,16 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import type { EditorSnapshot } from "@the-editor/editor";
 import type { PanelId, SlotId, Stack, Tile } from "@the-editor/workbench";
 import type { AppRuntime, EditorPane } from "../runtime";
 import { EditorView } from "../editor/EditorView";
 import { FileIcon } from "./fileIcons";
 import type { PanelMount } from "./panelRenderers";
+import { createPortalNode, OutPortal, type PortalNode } from "./panelPortal";
 
 type WorkbenchViewProps = {
   readonly runtime: AppRuntime;
@@ -51,6 +54,13 @@ type DragState = {
 const DRAG_THRESHOLD = 5;
 /** Edge bands of the pane body that mean "split here" instead of "move here". */
 const EDGE_RATIO = 0.27;
+
+/**
+ * The visible editor of the focused pane. A pane shows exactly one panel (its
+ * active tab); other tabs' containers are parked detached, so the focused pane
+ * holds at most one `.editor` in the document.
+ */
+export const FOCUSED_EDITOR_SELECTOR = ".wb-pane--focused .editor";
 
 function hitTest(x: number, y: number): DropTarget | null {
   const el = document.elementFromPoint(x, y);
@@ -90,12 +100,56 @@ function hitTest(x: number, y: number): DropTarget | null {
   return null;
 }
 
+function collectStacks(tile: Tile, out: Stack[]): void {
+  if (tile.kind === "stack") {
+    out.push(tile);
+    return;
+  }
+  for (const child of tile.children) collectStacks(child.tile, out);
+}
+
 export function WorkbenchView({ runtime, onActiveSnapshot }: WorkbenchViewProps) {
   const wb = useSyncExternalStore(
     useCallback((cb) => runtime.subscribeWorkbench(cb), [runtime]),
     () => runtime.getWorkbenchSnapshot(),
   );
   const [drag, setDrag] = useState<DragState | null>(null);
+
+  // One persistent container per panel, created lazily. Panel content renders
+  // into these (see PanelInPortals); an OutPortal re-homes the live element on
+  // a tab switch or stack move, so the content (a terminal's PTY + screen, an
+  // editor's scroll) is never disposed and rebuilt — only when the panel
+  // leaves the arrangement (closed).
+  const nodesRef = useRef<Map<PanelId, PortalNode> | null>(null);
+  const nodeFor = useCallback((panelId: PanelId): PortalNode => {
+    const nodes = (nodesRef.current ??= new Map<PanelId, PortalNode>());
+    let node = nodes.get(panelId);
+    if (node === undefined) {
+      node = createPortalNode("wb-panel-host");
+      nodes.set(panelId, node);
+    }
+    return node;
+  }, []);
+
+  // Keep every visited tab mounted (lazy: a never-shown tab isn't built;
+  // sticky: a visited tab stays alive while inactive). Prune panels that left
+  // the arrangement so their content unmounts and disposes.
+  const activatedRef = useRef<Set<PanelId> | null>(null);
+  const activated = (activatedRef.current ??= new Set<PanelId>());
+  const nodes = (nodesRef.current ??= new Map<PanelId, PortalNode>());
+  const stacks: Stack[] = [];
+  if (wb.arrangement.tiles !== null) collectStacks(wb.arrangement.tiles, stacks);
+  const allPanels = new Set<PanelId>(stacks.flatMap((s) => s.panels));
+  for (const id of activated) if (!allPanels.has(id)) activated.delete(id);
+  for (const id of nodes.keys()) if (!allPanels.has(id)) nodes.delete(id);
+  for (const s of stacks) {
+    const active = s.panels[s.active];
+    if (active !== undefined) activated.add(active);
+  }
+  const livePanels = [...activated];
+  const focusedStack = stacks.find((s) => s.id === wb.focusedSlot);
+  const focusedActivePanelId =
+    focusedStack !== undefined ? focusedStack.panels[focusedStack.active] : undefined;
 
   const beginTabDrag = useCallback(
     (
@@ -135,7 +189,7 @@ export function WorkbenchView({ runtime, onActiveSnapshot }: WorkbenchViewProps)
         // editor of whichever pane ended up focused.
         window.requestAnimationFrame(() => {
           document
-            .querySelector<HTMLElement>(".wb-pane--focused .editor")
+            .querySelector<HTMLElement>(FOCUSED_EDITOR_SELECTOR)
             ?.focus({ preventScroll: true });
         });
       };
@@ -186,6 +240,13 @@ export function WorkbenchView({ runtime, onActiveSnapshot }: WorkbenchViewProps)
         focusedSlot={wb.focusedSlot}
         drag={drag}
         beginTabDrag={beginTabDrag}
+        nodeFor={nodeFor}
+      />
+      <PanelInPortals
+        runtime={runtime}
+        nodeFor={nodeFor}
+        livePanels={livePanels}
+        focusedActivePanelId={focusedActivePanelId}
         {...(onActiveSnapshot ? { onActiveSnapshot } : {})}
       />
       {drag !== null && (
@@ -195,6 +256,58 @@ export function WorkbenchView({ runtime, onActiveSnapshot }: WorkbenchViewProps)
       )}
     </div>
   );
+}
+
+/**
+ * Renders every live panel's content into its persistent container. Mounted
+ * once at the workbench root, so a panel's content survives tab switches and
+ * stack moves — only the container is re-homed (by an OutPortal), never the
+ * React subtree. The focused stack's active panel drives focus and the live
+ * editor snapshot.
+ */
+function PanelInPortals({
+  runtime,
+  nodeFor,
+  livePanels,
+  focusedActivePanelId,
+  onActiveSnapshot,
+}: {
+  readonly runtime: AppRuntime;
+  readonly nodeFor: (panelId: PanelId) => PortalNode;
+  readonly livePanels: ReadonlyArray<PanelId>;
+  readonly focusedActivePanelId: PanelId | undefined;
+  readonly onActiveSnapshot?: (snapshot: EditorSnapshot) => void;
+}): ReactNode {
+  return livePanels.map((panelId) =>
+    createPortal(
+      <PanelBody
+        runtime={runtime}
+        panelId={panelId}
+        focused={panelId === focusedActivePanelId}
+        {...(onActiveSnapshot ? { onSnapshot: onActiveSnapshot } : {})}
+      />,
+      nodeFor(panelId).element,
+      panelId,
+    ),
+  );
+}
+
+function PanelBody({
+  runtime,
+  panelId,
+  focused,
+  onSnapshot,
+}: {
+  readonly runtime: AppRuntime;
+  readonly panelId: PanelId;
+  readonly focused: boolean;
+  readonly onSnapshot?: (snapshot: EditorSnapshot) => void;
+}) {
+  const pane = runtime.pane(panelId);
+  if (pane !== undefined) {
+    return <EditorView pane={pane} {...(focused && onSnapshot ? { onSnapshot } : {})} />;
+  }
+  return <CustomPanelView runtime={runtime} panelId={panelId} focused={focused} />;
 }
 
 type TreeProps = {
@@ -207,7 +320,7 @@ type TreeProps = {
     fromSlot: SlotId,
     title: string,
   ) => void;
-  readonly onActiveSnapshot?: (snapshot: EditorSnapshot) => void;
+  readonly nodeFor: (panelId: PanelId) => PortalNode;
 };
 
 function TileView({ tile, path, ...tree }: TreeProps & { tile: Tile; path: ReadonlyArray<number> }) {
@@ -327,7 +440,9 @@ function SplitDivider({
 function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
   const { runtime, focusedSlot, drag } = tree;
   const activePanelId = stack.panels[stack.active];
-  const pane = activePanelId === undefined ? undefined : runtime.pane(activePanelId);
+  // Content keep-alive (across tab switches AND stack moves) is owned by the
+  // panel pool at the workbench root; this stack only homes its active panel's
+  // live container via an OutPortal.
   const focused = focusedSlot === stack.id;
   const bodyRef = useRef<HTMLDivElement>(null);
 
@@ -408,21 +523,7 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
         data-slot-id={stack.id}
         onFocusCapture={() => runtime.focusSlot(stack.id)}
       >
-        {pane !== undefined && activePanelId !== undefined && (
-          <EditorView
-            key={activePanelId}
-            pane={pane}
-            {...(focused && tree.onActiveSnapshot ? { onSnapshot: tree.onActiveSnapshot } : {})}
-          />
-        )}
-        {pane === undefined && activePanelId !== undefined && (
-          <CustomPanelView
-            key={activePanelId}
-            runtime={runtime}
-            panelId={activePanelId}
-            focused={focused}
-          />
-        )}
+        {activePanelId !== undefined && <OutPortal node={tree.nodeFor(activePanelId)} />}
         {dropZone !== null && <div className={`wb-drop wb-drop-${dropZone}`} />}
       </div>
     </section>

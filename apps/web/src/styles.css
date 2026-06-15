@@ -461,6 +461,16 @@ body {
   min-height: 0;
 }
 
+/* A stack shows one panel: the outlet hosts its active panel's live container.
+   The container (and its content — terminal, editor) is created once and moved
+   between outlets on tab switch / stack move, never destroyed. Parked
+   containers (inactive tabs) are detached, so they keep state while hidden. */
+.wb-panel-outlet,
+.wb-panel-host {
+  position: absolute;
+  inset: 0;
+}
+
 /* Drop affordances: edge zones split, center moves the tab in. */
 .wb-drop {
   position: absolute;

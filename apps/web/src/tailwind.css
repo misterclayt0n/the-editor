@@ -252,3 +252,175 @@
   line-height: 24px;
   text-align: left;
 }
+
+/* File finder: command-palette shell with a preview pane, no extra motion. */
+.file-finder-dialog.command-dialog-content[data-slot="dialog-content"] {
+  width: min(920px, calc(100vw - 96px));
+}
+
+.file-finder.command-root[data-slot="command"] {
+  overflow: hidden;
+}
+
+.file-finder__body {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.44fr) minmax(360px, 0.56fr);
+  height: min(520px, calc(100vh - 176px));
+  min-height: 360px;
+}
+
+.file-finder__results {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+}
+
+.file-finder__meta {
+  height: 28px;
+  padding: 0 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  color: var(--fg-dim);
+  font-size: 11.5px;
+  line-height: 28px;
+  white-space: nowrap;
+}
+
+.command-palette .file-finder__list.command-list[data-slot="command-list"] {
+  max-height: none;
+  min-height: 0;
+  flex: 1;
+}
+
+.command-palette .file-finder__item.command-item[data-slot="command-item"] {
+  height: 36px;
+  align-items: center;
+  line-height: 1.25;
+}
+
+.file-finder__item-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.file-finder__name {
+  font-size: 13px;
+}
+
+.file-finder__path {
+  overflow: hidden;
+  color: var(--fg-dim);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-finder__git {
+  flex: none;
+  max-width: 92px;
+  overflow: hidden;
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--theme-version-control-modified) 14%, transparent);
+  color: var(--fg-dim);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-finder__preview {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  background: color-mix(in srgb, var(--bg-editor) 92%, var(--status-bg));
+}
+
+.file-finder__preview-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  height: 28px;
+  padding: 0 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  color: var(--fg-dim);
+  font-size: 11.5px;
+}
+
+.file-finder__preview-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-finder__preview-size {
+  flex: none;
+  margin-left: auto;
+}
+
+.file-finder__preview-empty {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  color: var(--fg-dim);
+  font-size: 13px;
+  text-align: center;
+}
+
+.file-finder__code {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  overflow: auto;
+  padding: 8px 0 12px;
+  color: var(--fg);
+  font-family: "SF Mono", Menlo, Monaco, "Cascadia Code", monospace;
+  font-size: 12px;
+  line-height: 19px;
+  tab-size: 4;
+}
+
+.file-finder__code-line {
+  display: flex;
+  min-width: max-content;
+  white-space: pre;
+}
+
+.file-finder__line-number {
+  flex: none;
+  width: 42px;
+  padding-right: 10px;
+  color: var(--fg-dim);
+  opacity: 0.62;
+  text-align: right;
+  user-select: none;
+}
+
+.file-finder__line-text {
+  padding-right: 16px;
+}
+
+.file-finder__truncated {
+  display: block;
+  padding: 8px 12px 0 52px;
+  color: var(--fg-dim);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 12px;
+}
+
+@media (max-width: 760px) {
+  .file-finder__body {
+    grid-template-columns: 1fr;
+  }
+
+  .file-finder__preview {
+    display: none;
+  }
+}

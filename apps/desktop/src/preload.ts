@@ -88,6 +88,39 @@ contextBridge.exposeInMainWorld("theEditorProc", {
   },
 });
 
+contextBridge.exposeInMainWorld("theEditorFileFinder", {
+  search: (input: {
+    root: string;
+    query: string;
+    limit: number;
+    currentFile?: string;
+  }): Promise<
+    | {
+        ok: true;
+        value: {
+          items: Array<{ relativePath: string; fileName: string; size: number; gitStatus: string }>;
+          totalMatched: number;
+          totalFiles: number;
+          location?:
+            | { type: "line"; line: number }
+            | { type: "position"; line: number; col: number }
+            | {
+                type: "range";
+                start: { line: number; col: number };
+                end: { line: number; col: number };
+              };
+        };
+      }
+    | { ok: false; error: string }
+  > => ipcRenderer.invoke("finder:search", input),
+  track: (input: {
+    root: string;
+    query: string;
+    relativePath: string;
+  }): Promise<{ ok: true; value: boolean } | { ok: false; error: string }> =>
+    ipcRenderer.invoke("finder:track", input),
+});
+
 /**
  * The renderer-side half of TerminalPort (the terminal panel's PTY). A single
  * merged byte stream + window size, routed by terminal id.

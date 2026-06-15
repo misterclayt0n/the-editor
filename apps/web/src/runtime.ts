@@ -86,6 +86,7 @@ import { palettePackage, HostPaletteActions } from "./product/palette";
 import { viewPackage, HostViewActions } from "./product/view";
 import { themeCommands, HostThemeActions } from "./product/themes";
 import { createFileSystemPort } from "./platform/fs";
+import { createFileFinderPort, type FileFinderPort } from "./platform/fileFinder";
 import { createProcessPort } from "./platform/process";
 import { createTerminalPort, type TerminalPort } from "./platform/terminal";
 import { createSyntaxPort, type HighlightRun, type SyntaxPort } from "./platform/syntax";
@@ -254,6 +255,8 @@ export class AppRuntime {
   onFileStateChanged?: () => void;
   /** Host UI hooks: the palette.open command fired (show the dialog). */
   onPaletteOpenRequested?: () => void;
+  /** Host UI hooks: file.find command fired (show the fff picker). */
+  onFileFinderOpenRequested?: () => void;
   /** Host UI hooks: theme selector command fired (show themed palette mode). */
   onThemeSelectorOpenRequested?: () => void;
   /** Host UI hooks: diagnostics changed for a document (status surfaces). */
@@ -296,6 +299,7 @@ export class AppRuntime {
   private syntaxPort: SyntaxPort | undefined;
   private lsp: LspManager | undefined;
   private terminal: TerminalPort | undefined;
+  private fileFinder: FileFinderPort | undefined | null = undefined;
   private pendingRename: { docId: string; offset: number } | null = null;
   private readonly highlightsByDoc = new Map<string, DocumentHighlights>();
   private workbenchSnapshot: WorkbenchSnapshot;
@@ -414,6 +418,7 @@ export class AppRuntime {
             save: () => void instance.saveActiveFile(),
             open: () => void instance.openFileViaDialog(),
             openFolder: () => void instance.openFolderViaDialog(),
+            find: () => instance.onFileFinderOpenRequested?.(),
           }),
           Layer.succeed(HostPaletteActions, {
             open: () => instance.onPaletteOpenRequested?.(),
@@ -1022,6 +1027,12 @@ export class AppRuntime {
   /** The platform PTY transport for the terminal panel (Electron / dev echo). */
   terminalPort(): TerminalPort | undefined {
     return (this.terminal ??= createTerminalPort());
+  }
+
+  /** The native fff-backed finder, when the desktop bridge is present. */
+  fileFinderPort(): FileFinderPort | undefined {
+    if (this.fileFinder === undefined) this.fileFinder = createFileFinderPort() ?? null;
+    return this.fileFinder ?? undefined;
   }
 
   openFolder(root: string): void {

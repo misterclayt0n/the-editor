@@ -13,7 +13,7 @@ export default defineConfig([
     entry: ["src/main.ts"],
     clean: true,
     // Native module: required at runtime from node_modules, never bundled.
-    external: ["node-pty"],
+    external: ["node-pty", "@ff-labs/fff-node"],
   },
   {
     ...shared,

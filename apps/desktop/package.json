@@ -13,6 +13,7 @@
     "clean": "rm -rf dist-electron"
   },
   "dependencies": {
+    "@ff-labs/fff-node": "^0.9.4",
     "@the-editor/grammar-loader": "workspace:*",
     "@the-editor/syntax": "workspace:*",
     "electron": "catalog:",

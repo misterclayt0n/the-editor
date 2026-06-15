@@ -22,6 +22,7 @@ export class HostFileActions extends Context.Tag("the-editor/web/HostFileActions
     readonly save: () => void;
     readonly open: () => void;
     readonly openFolder: () => void;
+    readonly find: () => void;
   }
 >() {}
 
@@ -46,6 +47,13 @@ export const filesPackage = definePackage("the-editor/files", () =>
       run: () => Effect.sync(() => host.open()),
     });
 
+    yield* commands.register("file.find", {
+      title: "Find File…",
+      scope: SurfaceScope.global,
+      palette: { group: "File", aliases: ["quick open", "go to file", "fff"] },
+      run: () => Effect.sync(() => host.find()),
+    });
+
     yield* commands.register("file.openFolder", {
       title: "Open Folder…",
       scope: SurfaceScope.global,
@@ -58,6 +66,8 @@ export const filesPackage = definePackage("the-editor/files", () =>
       { keys: "ctrl+s", command: "file.save", scope: editorScope },
       { keys: "meta+o", command: "file.open", scope: editorScope },
       { keys: "ctrl+o", command: "file.open", scope: editorScope },
+      { keys: "meta+p", command: "file.find", scope: SurfaceScope.global },
+      { keys: "ctrl+p", command: "file.find", scope: SurfaceScope.global },
     ]);
   }),
 );

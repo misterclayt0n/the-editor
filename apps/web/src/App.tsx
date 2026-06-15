@@ -6,6 +6,7 @@ import type { Tile } from "@the-editor/workbench";
 import { AppRuntime, type EditorPane } from "./runtime";
 import { WorkbenchView } from "./workbench/WorkbenchView";
 import { CommandPalette, type CommandPaletteMode } from "./ui/CommandPalette";
+import { FileFinder } from "./ui/FileFinder";
 import { RenameDialog } from "./ui/RenameDialog";
 import { IntelController } from "./intel/controller";
 import { IntelView } from "./intel/IntelView";
@@ -55,6 +56,7 @@ export function App() {
   const [pending, setPending] = useState<ReadonlyArray<Chord>>([]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteMode, setPaletteMode] = useState<CommandPaletteMode>("commands");
+  const [fileFinderOpen, setFileFinderOpen] = useState(false);
   const [rename, setRename] = useState<{ open: boolean; initial: string }>({
     open: false,
     initial: "",
@@ -72,6 +74,7 @@ export function App() {
       setPaletteMode("commands");
       setPaletteOpen(true);
     };
+    booted.onFileFinderOpenRequested = () => setFileFinderOpen(true);
     booted.onThemeSelectorOpenRequested = () => {
       setPaletteMode("themes");
       setPaletteOpen(true);
@@ -128,6 +131,7 @@ export function App() {
             booted.commands.execute("files.toggleTree").pipe(Effect.catchAll(() => Effect.void)),
           );
         },
+        findFile: () => setFileFinderOpen(true),
         vcsDebug: () => ({
           branch: booted.vcs?.branch() ?? null,
           status: booted.vcs?.treeStatusEntries() ?? [],
@@ -185,6 +189,14 @@ export function App() {
         onOpenChange={handlePaletteOpenChange}
         commands={runtime.commands}
         themes={runtime.themes}
+      />
+      <FileFinder
+        open={fileFinderOpen}
+        runtime={runtime}
+        onOpenChange={(open) => {
+          setFileFinderOpen(open);
+          if (!open) window.requestAnimationFrame(() => runtime.focusActivePanel());
+        }}
       />
       {intel !== null && <IntelView controller={intel} />}
       <RenameDialog

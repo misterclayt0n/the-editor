@@ -9,6 +9,51 @@ const devServerUrl = process.env.VITE_DEV_SERVER_URL?.trim();
 /** Native modules (node-pty) are externalized; require them at runtime. */
 const nodeRequire = createRequire(import.meta.url);
 
+type FffResult<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: string };
+type FffLocation =
+  | { readonly type: "line"; readonly line: number }
+  | { readonly type: "position"; readonly line: number; readonly col: number }
+  | {
+      readonly type: "range";
+      readonly start: { readonly line: number; readonly col: number };
+      readonly end: { readonly line: number; readonly col: number };
+    };
+type FffFileItem = {
+  readonly relativePath: string;
+  readonly fileName: string;
+  readonly size: number;
+  readonly gitStatus: string;
+};
+type FffSearchResult = {
+  readonly items: readonly FffFileItem[];
+  readonly totalMatched: number;
+  readonly totalFiles: number;
+  readonly location?: FffLocation;
+};
+type FffFileFinder = {
+  readonly isDestroyed: boolean;
+  destroy(): void;
+  fileSearch(
+    query: string,
+    options?: { readonly pageSize?: number; readonly currentFile?: string },
+  ): FffResult<FffSearchResult>;
+  glob(
+    pattern: string,
+    options?: { readonly pageSize?: number; readonly currentFile?: string },
+  ): FffResult<FffSearchResult>;
+  waitForScan(timeoutMs?: number): Promise<FffResult<boolean>>;
+  trackQuery(query: string, selectedFilePath: string): FffResult<boolean>;
+};
+type FffModule = {
+  readonly FileFinder: {
+    create(options: {
+      readonly basePath: string;
+      readonly enableHomeDirScanning?: boolean;
+      readonly enableFsRootScanning?: boolean;
+    }): FffResult<FffFileFinder>;
+  };
+};
+
 /**
  * File system host: the main-process half of the renderer's FileSystemPort.
  * The renderer is sandboxed; every IO crosses this boundary.
@@ -173,6 +218,109 @@ function registerProcessHandlers(): void {
 }
 
 /**
+ * fff host: one native index for the active project root. The renderer sends
+ * only queries and receives serializable file items; @ff-labs/fff-node stays in
+ * the trusted Node side where native libraries can load.
+ */
+let fffModule: FffModule | null = null;
+let fffLoad: Promise<FffModule | null> | null = null;
+let fffState: { readonly root: string; readonly finder: FffFileFinder } | null = null;
+let fffPending: { readonly root: string; readonly promise: Promise<FffFileFinder> } | null = null;
+
+async function loadFff(): Promise<FffModule | null> {
+  if (fffModule !== null) return fffModule;
+  fffLoad ??= import("@ff-labs/fff-node")
+    .then((mod) => {
+      fffModule = mod as unknown as FffModule;
+      return fffModule;
+    })
+    .catch((error) => {
+      console.warn("[file-finder] @ff-labs/fff-node unavailable; file finder disabled.", error);
+      return null;
+    });
+  return fffLoad;
+}
+
+function normalizeRoot(root: string): string {
+  return root.replace(/\/+$/, "") || "/";
+}
+
+async function getFff(rootInput: string): Promise<FffResult<FffFileFinder>> {
+  const root = normalizeRoot(rootInput);
+  if (fffState?.root === root && !fffState.finder.isDestroyed) return { ok: true, value: fffState.finder };
+  if (fffPending?.root === root) {
+    try {
+      return { ok: true, value: await fffPending.promise };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  fffState?.finder.destroy();
+  fffState = null;
+  const mod = await loadFff();
+  if (mod === null) return { ok: false, error: "fff is unavailable in this desktop build" };
+
+  const promise = (async () => {
+    const created = mod.FileFinder.create({
+      basePath: root,
+      enableHomeDirScanning: true,
+      enableFsRootScanning: false,
+    });
+    if (!created.ok) throw new Error(created.error);
+    const finder = created.value;
+    await finder.waitForScan(2_000);
+    fffState = { root, finder };
+    return finder;
+  })();
+  fffPending = { root, promise };
+  try {
+    return { ok: true, value: await promise };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  } finally {
+    if (fffPending?.promise === promise) fffPending = null;
+  }
+}
+
+function registerFileFinderHandlers(): void {
+  ipcMain.handle(
+    "finder:search",
+    async (
+      _event,
+      input: { root: string; query: string; limit: number; currentFile?: string },
+    ): Promise<FffResult<FffSearchResult>> => {
+      const found = await getFff(input.root);
+      if (!found.ok) return found;
+      const query = input.query.trim();
+      const pageSize = Math.min(Math.max(input.limit, 1), 200);
+      const options = {
+        pageSize,
+        ...(input.currentFile !== undefined ? { currentFile: input.currentFile } : {}),
+      };
+      return query.length === 0
+        ? found.value.glob("**/*", options)
+        : found.value.fileSearch(query, options);
+    },
+  );
+  ipcMain.handle(
+    "finder:track",
+    async (
+      _event,
+      input: { root: string; query: string; relativePath: string },
+    ): Promise<FffResult<boolean>> => {
+      const found = await getFff(input.root);
+      if (!found.ok) return found;
+      return found.value.trackQuery(input.query, input.relativePath);
+    },
+  );
+  app.on("will-quit", () => {
+    fffState?.finder.destroy();
+    fffState = null;
+  });
+}
+
+/**
  * Terminal host: the main-process half of the renderer's TerminalPort. Real
  * PTYs need node-pty (native); the require is guarded so a missing/unbuilt
  * binary degrades to "no terminal" instead of crashing the app. Run
@@ -295,6 +443,7 @@ function createWindow(): void {
 void app.whenReady().then(() => {
   registerFileSystemHandlers();
   registerProcessHandlers();
+  registerFileFinderHandlers();
   registerTerminalHandlers();
   createWindow();
   app.on("activate", () => {

@@ -55,13 +55,6 @@ const DRAG_THRESHOLD = 5;
 /** Edge bands of the pane body that mean "split here" instead of "move here". */
 const EDGE_RATIO = 0.27;
 
-/**
- * The visible editor of the focused pane. A pane shows exactly one panel (its
- * active tab); other tabs' containers are parked detached, so the focused pane
- * holds at most one `.editor` in the document.
- */
-export const FOCUSED_EDITOR_SELECTOR = ".wb-pane--focused .editor";
-
 function hitTest(x: number, y: number): DropTarget | null {
   const el = document.elementFromPoint(x, y);
   if (el === null) return null;
@@ -152,6 +145,12 @@ export function WorkbenchView({ runtime, onActiveSnapshot }: WorkbenchViewProps)
   const focusedActivePanelId =
     focusedStack !== undefined ? focusedStack.panels[focusedStack.active] : undefined;
 
+  // Single focus authority: whenever the focused pane or its active panel
+  // changes, hand the keyboard to that surface (editor, terminal, file tree).
+  useEffect(() => {
+    runtime.focusActivePanel();
+  }, [runtime, wb.focusedSlot, focusedActivePanelId]);
+
   const beginTabDrag = useCallback(
     (
       event: React.PointerEvent,
@@ -186,13 +185,9 @@ export function WorkbenchView({ runtime, onActiveSnapshot }: WorkbenchViewProps)
         window.removeEventListener("pointerup", onUp);
         setDrag(null);
         commit(up);
-        // Tab gestures land DOM focus on inert chrome; hand it back to the
-        // editor of whichever pane ended up focused.
-        window.requestAnimationFrame(() => {
-          document
-            .querySelector<HTMLElement>(FOCUSED_EDITOR_SELECTOR)
-            ?.focus({ preventScroll: true });
-        });
+        // A tab gesture lands DOM focus on inert chrome; hand it back to the
+        // active surface of whichever pane ended up focused.
+        runtime.focusActivePanel();
       };
 
       const commit = (up: PointerEvent) => {
@@ -315,9 +310,9 @@ function PanelBody({
 }) {
   const pane = runtime.pane(panelId);
   if (pane !== undefined) {
-    return <EditorView pane={pane} {...(focused && onSnapshot ? { onSnapshot } : {})} />;
+    return <EditorView runtime={runtime} pane={pane} {...(focused && onSnapshot ? { onSnapshot } : {})} />;
   }
-  return <CustomPanelView runtime={runtime} panelId={panelId} focused={focused} />;
+  return <CustomPanelView runtime={runtime} panelId={panelId} />;
 }
 
 type TreeProps = {
@@ -454,17 +449,6 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
   // panel pool at the workbench root; this stack only homes its active panel's
   // live container via an OutPortal.
   const focused = focusedSlot === stack.id;
-  const bodyRef = useRef<HTMLDivElement>(null);
-
-  // Keep DOM focus with workbench focus: when this stack is (or becomes) the
-  // focused slot, the visible editor should receive keys without a click.
-  useEffect(() => {
-    if (!focused) return;
-    const editor = bodyRef.current?.querySelector<HTMLElement>(".editor");
-    if (editor != null && !editor.contains(document.activeElement)) {
-      editor.focus({ preventScroll: true });
-    }
-  }, [focused, activePanelId]);
 
   const dropZone =
     drag !== null && drag.target?.kind === "zone" && drag.target.slotId === stack.id
@@ -527,7 +511,6 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
       </div>
       )}
       <div
-        ref={bodyRef}
         className="wb-body"
         data-wb-body
         data-slot-id={stack.id}
@@ -544,11 +527,9 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
 function CustomPanelView({
   runtime,
   panelId,
-  focused,
 }: {
   readonly runtime: AppRuntime;
   readonly panelId: PanelId;
-  readonly focused: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const mountRef = useRef<PanelMount | null>(null);
@@ -570,31 +551,13 @@ function CustomPanelView({
     };
   }, [runtime, panelId, epoch]);
 
-  // Hand the panel the keyboard when the workbench focuses its slot — the
-  // analog of StackView auto-focusing a pane's `.editor`. Retry across frames:
-  // a panel's focusable content (e.g. @pierre/trees rows) can populate async,
-  // so the first attempt may land nothing. Stop as soon as focus is inside, so
-  // we never fight a user who clicked a row or moved focus out.
-  useEffect(() => {
-    if (!focused) return;
-    const element = hostRef.current;
-    if (element === null) return;
-    let raf = 0;
-    let tries = 0;
-    const attempt = () => {
-      raf = 0;
-      if (element.contains(document.activeElement)) return;
-      mountRef.current?.focus?.();
-      if (!element.contains(document.activeElement) && tries < 40) {
-        tries += 1;
-        raf = requestAnimationFrame(attempt);
-      }
-    };
-    attempt();
-    return () => {
-      if (raf !== 0) cancelAnimationFrame(raf);
-    };
-  }, [focused, panelId, epoch]);
+  // Register how this panel focuses itself; the runtime's focus authority
+  // invokes it whenever this panel becomes the focused pane's active surface,
+  // retrying for content (e.g. @pierre/trees rows) that mounts async.
+  useEffect(
+    () => runtime.registerPanelFocuser(panelId, () => mountRef.current?.focus?.()),
+    [runtime, panelId],
+  );
 
   // A click anywhere in the panel that doesn't already land focus inside (empty
   // area, gaps a leaf doesn't focus) should still hand the panel the keyboard —

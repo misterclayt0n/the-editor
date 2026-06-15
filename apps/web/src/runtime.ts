@@ -294,6 +294,15 @@ export class AppRuntime {
    *  released from the toggle (Zed: a terminal dragged out of the dock is no
    *  longer "the dock terminal"; the next toggle creates a fresh one). */
   private readonly dockedPanels = new Map<SurfaceKind, PanelId>();
+  /**
+   * How to focus each live panel's surface, registered by its renderer (the
+   * editor focuses its `.editor`; the terminal calls `term.focus()`; the file
+   * tree focuses its rows). The single focus authority: `focusActivePanel`
+   * invokes the focused panel's entry so every focus change — tab switch, ⌘J
+   * toggle, split, dialog dismissal — lands the keyboard in its surface.
+   */
+  private readonly panelFocusers = new Map<PanelId, () => void>();
+  private focusTimer: ReturnType<typeof setTimeout> | null = null;
 
   private constructor(
     private readonly scope: Scope.CloseableScope,
@@ -520,6 +529,44 @@ export class AppRuntime {
     const current = this.workbenchSnapshot.focusedSlot;
     if (current === slotId) return;
     Effect.runSync(this.workbench.setFocus(slotId).pipe(Effect.ignore));
+  }
+
+  /** A surface registers how to focus itself; returns an unregister disposer. */
+  registerPanelFocuser(panelId: PanelId, focus: () => void): () => void {
+    this.panelFocusers.set(panelId, focus);
+    return () => {
+      if (this.panelFocusers.get(panelId) === focus) this.panelFocusers.delete(panelId);
+    };
+  }
+
+  /**
+   * Land the keyboard in the focused pane's surface. Retries across frames: a
+   * freshly created terminal's input (or a relocated container) appears only
+   * after async setup / the next paint. Never steals focus from an overlay
+   * (palette, dialog) that lives outside the workbench.
+   */
+  focusActivePanel(): void {
+    if (this.focusTimer !== null) clearTimeout(this.focusTimer);
+    this.focusTimer = null;
+    const focused = Effect.runSync(this.workbench.focusedPanel);
+    if (Option.isNone(focused)) return;
+    const id = focused.value.id;
+    let ticks = 0;
+    const attempt = () => {
+      this.focusTimer = null;
+      const active = document.activeElement;
+      if (active !== null && active !== document.body && active.closest(".workbench") === null) {
+        return; // an overlay (palette, dialog) outside the workbench owns focus
+      }
+      // Re-assert focus while it isn't already in the focused pane, over a short
+      // window rather than once: relocating/detaching a panel container (tab
+      // move, toggle hide/show) on the same tick blurs what we just focused, so
+      // a single focus would be undone. A timer (not rAF) fires while hidden too.
+      const pane = document.querySelector(".wb-pane--focused");
+      if (pane !== null && !pane.contains(active)) this.panelFocusers.get(id)?.();
+      if (ticks++ < 12) this.focusTimer = setTimeout(attempt, 16);
+    };
+    attempt();
   }
 
   activateTab(slotId: SlotId, panelId: PanelId): void {

@@ -4,7 +4,7 @@ import type { EditorSnapshot } from "@the-editor/editor";
 import { formatChords, type Chord } from "@the-editor/keymaps";
 import type { Tile } from "@the-editor/workbench";
 import { AppRuntime, type EditorPane } from "./runtime";
-import { WorkbenchView, FOCUSED_EDITOR_SELECTOR } from "./workbench/WorkbenchView";
+import { WorkbenchView } from "./workbench/WorkbenchView";
 import { CommandPalette } from "./ui/CommandPalette";
 import { RenameDialog } from "./ui/RenameDialog";
 import { IntelController } from "./intel/controller";
@@ -144,22 +144,16 @@ export function App() {
     promptResolve.current = null;
     setPrompt(null);
     resolve?.(value);
-    window.requestAnimationFrame(() => {
-      document.querySelector<HTMLElement>(FOCUSED_EDITOR_SELECTOR)?.focus({ preventScroll: true });
-    });
-  }, []);
+    window.requestAnimationFrame(() => runtime?.focusActivePanel());
+  }, [runtime]);
   const handlePaletteOpenChange = useCallback((open: boolean) => {
     setPaletteOpen(open);
     // Radix restores focus to the previously focused element, but command
     // execution may have swapped the layout out from under it.
     if (!open) {
-      window.requestAnimationFrame(() => {
-        document
-          .querySelector<HTMLElement>(FOCUSED_EDITOR_SELECTOR)
-          ?.focus({ preventScroll: true });
-      });
+      window.requestAnimationFrame(() => runtime?.focusActivePanel());
     }
-  }, []);
+  }, [runtime]);
 
   if (runtime === null) return <div className="app" />;
 
@@ -186,11 +180,7 @@ export function App() {
         onSubmit={(value) => void runtime.performRename(value)}
         onClose={() => {
           setRename((state) => ({ ...state, open: false }));
-          window.requestAnimationFrame(() => {
-            document
-              .querySelector<HTMLElement>(FOCUSED_EDITOR_SELECTOR)
-              ?.focus({ preventScroll: true });
-          });
+          window.requestAnimationFrame(() => runtime?.focusActivePanel());
         }}
       />
       <RenameDialog

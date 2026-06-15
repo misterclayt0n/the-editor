@@ -1,9 +1,10 @@
 import { useLayoutEffect, useRef } from "react";
 import type { EditorSnapshot } from "@the-editor/editor";
-import type { EditorPane } from "../runtime";
+import type { AppRuntime, EditorPane } from "../runtime";
 import { EditorRenderer } from "./renderer";
 
 type EditorViewProps = {
+  readonly runtime: AppRuntime;
   readonly pane: EditorPane;
   readonly onSnapshot?: (snapshot: EditorSnapshot) => void;
 };
@@ -15,17 +16,24 @@ type EditorViewProps = {
  * Keyboard input is NOT handled here — one document-level dispatcher in the
  * runtime routes every keystroke (so every surface is keyboard-driven).
  */
-export function EditorView({ pane, onSnapshot }: EditorViewProps) {
+export function EditorView({ runtime, pane, onSnapshot }: EditorViewProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const callbacks = useRef({ onSnapshot });
   callbacks.current = { onSnapshot };
 
   useLayoutEffect(() => {
-    const renderer = new EditorRenderer(rootRef.current!, pane, {
+    const root = rootRef.current!;
+    const renderer = new EditorRenderer(root, pane, {
       onSnapshot: (snapshot) => callbacks.current.onSnapshot?.(snapshot),
     });
-    return () => renderer.dispose();
-  }, [pane]);
+    const unregister = runtime.registerPanelFocuser(pane.panelId, () =>
+      root.focus({ preventScroll: true }),
+    );
+    return () => {
+      unregister();
+      renderer.dispose();
+    };
+  }, [runtime, pane]);
 
   return <div ref={rootRef} className="editor" tabIndex={0} />;
 }

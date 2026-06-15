@@ -39,6 +39,34 @@ const paletteDefinition = (
   if (typeof palette === "object" && palette.enabled !== false) return palette;
   return undefined;
 };
+const normalizeSearch = (value: string): string => value.trim().toLowerCase();
+
+const actionRank = (action: PaletteAction, query: string): number => {
+  if (query.length === 0) return 0;
+  const terms = [action.title, action.command, ...action.aliases].map(normalizeSearch);
+  if (terms.some((term) => term === query)) return 0;
+  if (terms.some((term) => term.startsWith(query))) return 1;
+  if (terms.some((term) => term.split(/\s+/).some((word) => word.startsWith(query)))) return 2;
+  if (terms.some((term) => term.includes(query))) return 3;
+  return 4;
+};
+
+const compareActions = (left: PaletteAction, right: PaletteAction, query: string): number =>
+  actionRank(left, query) - actionRank(right, query) ||
+  left.title.localeCompare(right.title) ||
+  left.command.localeCompare(right.command);
+
+const commandFilter = (value: string, search: string, keywords: readonly string[] = []): number => {
+  const query = normalizeSearch(search);
+  if (query.length === 0) return 1;
+  const terms = [value, ...keywords].map(normalizeSearch);
+  if (terms.some((term) => term === query)) return 4;
+  if (terms.some((term) => term.startsWith(query))) return 3;
+  if (terms.some((term) => term.split(/\s+/).some((word) => word.startsWith(query)))) return 2;
+  if (terms.some((term) => term.includes(query))) return 1;
+  return 0;
+};
+
 
 export interface CommandPaletteProps {
   readonly open: boolean;
@@ -135,20 +163,14 @@ export function CommandPalette({ open, mode, onOpenChange, commands, themes }: C
   }, [mode, open, selectedValue, themes]);
 
   const groupedActions = useMemo(() => {
+    const query = normalizeSearch(search);
+    const ranked = query.length === 0 ? actions : [...actions].sort((left, right) => compareActions(left, right, query));
     const groups = new Map<string, readonly PaletteAction[]>();
-    for (const action of actions) {
+    for (const action of ranked) {
       groups.set(action.group, [...(groups.get(action.group) ?? []), action]);
     }
     return [...groups.entries()];
-  }, [actions]);
-
-  const exactAliasAction = useMemo(() => {
-    const normalizedSearch = search.trim().toLowerCase();
-    if (!normalizedSearch || mode !== "commands") return undefined;
-    return actions.find((action) =>
-      action.aliases.some((alias) => alias.toLowerCase() === normalizedSearch),
-    );
-  }, [actions, mode, search]);
+  }, [actions, search]);
 
   const requestOpenChange = (nextOpen: boolean) => {
     if (!nextOpen && mode === "themes" && !confirmedTheme.current) {
@@ -185,12 +207,7 @@ export function CommandPalette({ open, mode, onOpenChange, commands, themes }: C
         className="command-palette"
         value={selectedValue}
         onValueChange={setSelectedValue}
-        onKeyDownCapture={(event) => {
-          if (event.key !== "Enter" || event.nativeEvent.isComposing || !exactAliasAction) return;
-          event.preventDefault();
-          event.stopPropagation();
-          run(exactAliasAction);
-        }}
+        {...(mode === "commands" ? { filter: commandFilter } : {})}
       >
         <CommandInput
           ref={inputRef}

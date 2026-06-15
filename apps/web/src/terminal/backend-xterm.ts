@@ -1,3 +1,4 @@
+import type { TerminalKeyHandlerResult } from "./keys";
 /**
  * Terminal engine: xterm.js. Interchangeable with the ghostty backend behind
  * `./backend`. No WASM (ensureReady is a no-op) and the fit addon lives in a
@@ -33,13 +34,17 @@ export function attachAutoFit(fit: FitAddon, container: HTMLElement): () => void
  */
 export function attachGlobalKeyHandler(
   term: Terminal,
-  claim: (event: KeyboardEvent) => boolean,
+  claim: (event: KeyboardEvent) => TerminalKeyHandlerResult,
 ): void {
   term.attachCustomKeyEventHandler((event) => {
     if (event.type !== "keydown") return true;
-    if (claim(event)) {
+    const result = claim(event);
+    if (result === "skip") {
       event.stopPropagation();
       return false;
+    }
+    if (result === "process-prevent-default") {
+      event.preventDefault();
     }
     return true;
   });

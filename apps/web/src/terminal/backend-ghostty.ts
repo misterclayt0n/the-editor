@@ -5,6 +5,7 @@
  */
 
 import { init, Terminal, FitAddon } from "ghostty-web";
+import type { TerminalKeyHandlerResult } from "./keys";
 
 export { Terminal, FitAddon };
 
@@ -24,13 +25,17 @@ export function attachAutoFit(fit: FitAddon, _container: HTMLElement): () => voi
  */
 export function attachGlobalKeyHandler(
   term: Terminal,
-  claim: (event: KeyboardEvent) => boolean,
+  claim: (event: KeyboardEvent) => TerminalKeyHandlerResult,
 ): void {
   term.attachCustomKeyEventHandler((event) => {
     if (event.type !== "keydown") return false;
-    if (claim(event)) {
+    const result = claim(event);
+    if (result === "skip") {
       event.stopPropagation();
       return true;
+    }
+    if (result === "process-prevent-default") {
+      event.preventDefault();
     }
     return false;
   });

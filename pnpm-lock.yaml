@@ -161,11 +161,11 @@ importers:
         specifier: workspace:*
         version: link:../../packages/workbench
       '@xterm/addon-fit':
-        specifier: ^0.10.0
-        version: 0.10.0(@xterm/xterm@5.5.0)
+        specifier: ^0.12.0-beta.191
+        version: 0.12.0-beta.287(@xterm/xterm@6.1.0-beta.287)
       '@xterm/xterm':
-        specifier: ^5.5.0
-        version: 5.5.0
+        specifier: ^6.1.0-beta.191
+        version: 6.1.0-beta.287
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -2736,13 +2736,13 @@ packages:
   '@vitest/utils@3.2.4':
     resolution: {integrity: sha512-fB2V0JFrQSMsCo9HiSq3Ezpdv4iYaXRG1Sx8edX3MwxfyNn83mKiGzOcH+Fkxt4MHxr3y42fQi1oeAInqgX2QA==}
 
-  '@xterm/addon-fit@0.10.0':
-    resolution: {integrity: sha512-UFYkDm4HUahf2lnEyHvio51TNGiLK66mqP2JoATy7hRZeXaGMRDr00JiSF7m63vR5WKATF605yEggJKsw0JpMQ==}
+  '@xterm/addon-fit@0.12.0-beta.287':
+    resolution: {integrity: sha512-2MDj+J4x67bjOS/SuBPxSYEWH38NbX6ENV18RbKVOhfRYCX3yERnuHBOrgH9hYdY8rCtsLQmuVgF6cmvCJiV2w==}
     peerDependencies:
-      '@xterm/xterm': ^5.0.0
+      '@xterm/xterm': ^6.1.0-beta.287
 
-  '@xterm/xterm@5.5.0':
-    resolution: {integrity: sha512-hqJHYaQb5OptNunnyAnkHyM8aCjZ1MEIDTQu1iIbbTD/xops91NB5yq1ZK/dC2JDbVWtF23zUtl9JE2NqwT87A==}
+  '@xterm/xterm@6.1.0-beta.287':
+    resolution: {integrity: sha512-3aOHVlxlRVb3tOHI4b/z2O/OsRnqpW5u0qq8OqpqbwLVTbUhThmQ7mBKaehGdbsmcCCBTP1cBwhG0qcvuOjowA==}
 
   abbrev@3.0.1:
     resolution: {integrity: sha512-AO2ac6pjRB3SJmGJo+v5/aK6Omggp6fsLrs6wN9bd35ulu4cCwaAU9+7ZhXjeqHVkaHThLuzH0nZr0YpCDhygg==}
@@ -5769,11 +5769,11 @@ snapshots:
       loupe: 3.2.1
       tinyrainbow: 2.0.0
 
-  '@xterm/addon-fit@0.10.0(@xterm/xterm@5.5.0)':
+  '@xterm/addon-fit@0.12.0-beta.287(@xterm/xterm@6.1.0-beta.287)':
     dependencies:
-      '@xterm/xterm': 5.5.0
+      '@xterm/xterm': 6.1.0-beta.287
 
-  '@xterm/xterm@5.5.0': {}
+  '@xterm/xterm@6.1.0-beta.287': {}
 
   abbrev@3.0.1: {}
 

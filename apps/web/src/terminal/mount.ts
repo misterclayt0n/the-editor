@@ -9,52 +9,13 @@ import { ensureReady, Terminal, FitAddon, attachAutoFit, attachGlobalKeyHandler 
 import type { AppRuntime } from "../runtime";
 import type { PanelRenderer } from "../workbench/panelRenderers";
 import { terminalTheme } from "../theme/dom";
+import { createTerminalOptions, macEditingSequence, terminalKeyHandlerResult } from "./keys";
 
 /** Some engines (ghostty) load WASM once; gate construction on it, lazily. */
 let readyPromise: Promise<void> | null = null;
 const ensureEngine = (): Promise<void> => (readyPromise ??= ensureReady());
-
 export const TERMINAL_TITLE = "Terminal";
 
-const FONT_FAMILY = '"SF Mono", Menlo, Monaco, "Cascadia Code", monospace';
-
-/**
- * macOS "natural text editing": Cmd/Option line- and word-motions that every
- * native terminal (Terminal.app, iTerm) maps to readline control bytes. xterm
- * sends NOTHING for Meta-modified keys, so without this the terminal feels dead
- * to ⌘⌫ etc. Returns the bytes to write to the PTY, or null to leave the key.
- * (zsh/bash default to emacs readline, where these control codes apply.)
- */
-function macEditingSequence(event: KeyboardEvent): string | null {
-  if (event.ctrlKey || event.shiftKey) return null;
-  if (event.metaKey && !event.altKey) {
-    switch (event.key) {
-      case "Backspace":
-        return "\x15"; // Ctrl+U — delete to start of line
-      case "ArrowLeft":
-        return "\x01"; // Ctrl+A — start of line
-      case "ArrowRight":
-        return "\x05"; // Ctrl+E — end of line
-      default:
-        return null;
-    }
-  }
-  if (event.altKey && !event.metaKey) {
-    switch (event.key) {
-      case "Backspace":
-        return "\x17"; // Ctrl+W — delete word backward
-      case "ArrowLeft":
-        return "\x1bb"; // Esc b — word backward
-      case "ArrowRight":
-        return "\x1bf"; // Esc f — word forward
-      case "Delete":
-        return "\x1bd"; // Esc d — delete word forward
-      default:
-        return null;
-    }
-  }
-  return null;
-}
 
 export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
   return {
@@ -86,33 +47,28 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
       void (async () => {
         await ensureEngine();
         if (disposed) return;
-        term = new Terminal({
-          fontSize: 12.5,
-          fontFamily: FONT_FAMILY,
-          cursorBlink: true,
-          theme: terminalTheme(runtime.themeSnapshot()),
-        });
+        term = new Terminal(createTerminalOptions(runtime.themeSnapshot()));
         const fit = new FitAddon();
         term.loadAddon(fit);
         term.open(body);
         fit.fit();
         disposeFit = attachAutoFit(fit, body);
 
-        // The terminal swallows every keydown (it encodes them for the PTY), so
-        // routing happens in this claim, in order: (1) app GLOBAL shortcuts
-        // (⌘⇧P, toggle terminal) — else the terminal is a keyboard trap;
-        // (2) macOS natural-editing chords (⌘⌫, ⌥←, …) which xterm would drop —
-        // we send the readline bytes to the PTY ourselves; (3) everything else
-        // goes to the shell. The backend normalizes the inverted custom-key
-        // polarity between ghostty and xterm.
+        // The terminal swallows every keydown before it reaches the PTY, so the
+        // browser gate runs first: (1) reserve app-global shortcuts so the
+        // terminal is never a keyboard trap; (2) emit a tiny set of native macOS
+        // readline chords ourselves; (3) let xterm encode everything else,
+        // including kitty keyboard protocol sequences for apps that opt into
+        // richer modified-key reporting; (4) keep Shift+Tab inside the terminal
+        // instead of letting browser focus move.
         attachGlobalKeyHandler(term, (event) => {
-          if (runtime.handleGlobalKey(event)) return true;
+          if (runtime.handleGlobalKey(event)) return "skip";
           const sequence = macEditingSequence(event);
           if (sequence !== null && termId !== null) {
             port.write(termId, sequence);
-            return true;
+            return "skip";
           }
-          return false;
+          return terminalKeyHandlerResult(event);
         });
 
         const id = await port.spawn({

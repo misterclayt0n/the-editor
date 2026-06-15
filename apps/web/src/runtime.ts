@@ -236,6 +236,9 @@ export class EditorPane implements PaneHost {
 export type WorkbenchSnapshot = {
   readonly arrangement: Arrangement;
   readonly focusedSlot: SlotId | null;
+  /** Every live panel (placed AND alive-but-undisplayed), so the panel pool
+   *  keeps a hidden panel's content mounted instead of disposing it. */
+  readonly panelIds: ReadonlyArray<PanelId>;
 };
 
 export class AppRuntime {
@@ -286,6 +289,11 @@ export class AppRuntime {
   private workbenchSnapshot: WorkbenchSnapshot;
   private readonly workbenchListeners = new Set<() => void>();
   private mirrorFibers: ReadonlyArray<Fiber.RuntimeFiber<unknown, unknown>> = [];
+  /** The panel each toggle (terminal, file tree) currently owns as its dock.
+   *  Cleared when the user moves or closes it, so a manually-placed panel is
+   *  released from the toggle (Zed: a terminal dragged out of the dock is no
+   *  longer "the dock terminal"; the next toggle creates a fresh one). */
+  private readonly dockedPanels = new Map<SurfaceKind, PanelId>();
 
   private constructor(
     private readonly scope: Scope.CloseableScope,
@@ -297,6 +305,7 @@ export class AppRuntime {
     this.workbenchSnapshot = {
       arrangement: Effect.runSync(workbench.arrangement),
       focusedSlot: Option.getOrNull(Effect.runSync(workbench.focusedSlot)),
+      panelIds: Effect.runSync(workbench.panels).map((panel) => panel.id),
     };
   }
 
@@ -475,6 +484,7 @@ export class AppRuntime {
       this.workbenchSnapshot = {
         arrangement: Effect.runSync(this.workbench.arrangement),
         focusedSlot: Option.getOrNull(Effect.runSync(this.workbench.focusedSlot)),
+        panelIds: Effect.runSync(this.workbench.panels).map((panel) => panel.id),
       };
       for (const listener of this.workbenchListeners) listener();
     };
@@ -521,8 +531,14 @@ export class AppRuntime {
 
   /** Close a tab: the panel dies; the document follows when unreferenced. */
   closeTab(panelId: PanelId): void {
+    this.releaseDock(panelId);
     const pane = this.panes.get(panelId);
-    if (pane === undefined) return;
+    if (pane === undefined) {
+      // Custom panel (terminal, file tree): closing its scope disposes the
+      // renderer (the pool unmounts it once it leaves the live panel set).
+      Effect.runSync(this.workbench.closePanel(panelId));
+      return;
+    }
     this.panes.delete(panelId);
     Effect.runSync(this.workbench.closePanel(panelId));
     Effect.runSync(closeViewScope(pane.view));
@@ -568,31 +584,53 @@ export class AppRuntime {
   }
 
   /**
-   * Toggle a singleton panel of `kind`: open docked at an edge, or close
-   * the existing one. Custom panels render through PanelRenderers.
+   * Toggle a singleton panel of `kind` (terminal, file tree). The panel is
+   * created once and shown/hidden thereafter (Zed's dock model): toggling a
+   * visible panel un-places it but keeps it alive, so its content (a terminal's
+   * PTY + screen) survives; toggling a hidden one re-docks it. Disposal is
+   * closing its tab, never toggling.
    */
   togglePanel(
     kind: SurfaceKind,
     options?: { readonly dock?: "left" | "right" | "top" | "bottom"; readonly ratio?: number },
   ): void {
-    const panels = Effect.runSync(this.workbench.panels);
-    const existing = panels.find((panel) => panel.kind === kind);
-    if (existing !== undefined) {
-      Effect.runSync(
-        this.workbench.updateArrangement((a) => removePanel(a, existing.id)).pipe(Effect.orDie),
-      );
-      Effect.runSync(this.workbench.closePanel(existing.id));
+    const dock = options?.dock ?? "left";
+    const ratio = options?.ratio ?? 0.22;
+    const trackedId = this.dockedPanels.get(kind);
+    const tracked = trackedId !== undefined ? this.panelById(trackedId) : undefined;
+    if (tracked !== undefined) {
+      const arrangement = Effect.runSync(this.workbench.arrangement);
+      if (slotOfPanel(arrangement, tracked.id) !== undefined) {
+        // Visible → hide it, kept alive (content survives in the panel pool).
+        Effect.runSync(
+          this.workbench.updateArrangement((a) => removePanel(a, tracked.id)).pipe(Effect.orDie),
+        );
+      } else {
+        // Hidden → re-dock and focus.
+        Effect.runSync(
+          this.workbench.updateArrangement((a) => dockEdge(a, tracked.id, dock, { ratio })).pipe(Effect.orDie),
+        );
+        this.focusSlotOfPanel(tracked.id);
+      }
       return;
     }
+    // No dock panel (never created, or the previous one was moved/closed):
+    // create a fresh one and remember it as this kind's dock.
     const panel = Effect.runSync(this.workbench.createPanel({ kind }));
+    this.dockedPanels.set(kind, panel.id);
     Effect.runSync(
-      this.workbench
-        .updateArrangement((a) =>
-          dockEdge(a, panel.id, options?.dock ?? "left", { ratio: options?.ratio ?? 0.22 }),
-        )
-        .pipe(Effect.orDie),
+      this.workbench.updateArrangement((a) => dockEdge(a, panel.id, dock, { ratio })).pipe(Effect.orDie),
     );
     this.focusSlotOfPanel(panel.id);
+  }
+
+  /** Drop the dock association for a panel that was moved or closed, so the
+   *  toggle stops managing it and the next toggle creates a fresh dock panel. */
+  private releaseDock(panelId: PanelId): void {
+    const panel = this.panelById(panelId);
+    if (panel !== undefined && this.dockedPanels.get(panel.kind) === panelId) {
+      this.dockedPanels.delete(panel.kind);
+    }
   }
 
   /** Show/hide the focused stack's tab strip (e.g. a single-panel file tree).
@@ -637,6 +675,7 @@ export class AppRuntime {
         .pipe(Effect.orDie),
     );
     this.focusSlot(toSlot);
+    this.releaseDock(panelId);
   }
 
   /** Drag commit: tear a tab out into a new split beside the target stack. */
@@ -660,6 +699,7 @@ export class AppRuntime {
         .pipe(Effect.orDie),
     );
     this.focusSlotOfPanel(panelId);
+    this.releaseDock(panelId);
   }
 
   /** Resize commit: replace the weights of a split node (path from root). */

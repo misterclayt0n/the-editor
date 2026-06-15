@@ -131,15 +131,16 @@ export function WorkbenchView({ runtime, onActiveSnapshot }: WorkbenchViewProps)
     return node;
   }, []);
 
-  // Keep every visited tab mounted (lazy: a never-shown tab isn't built;
-  // sticky: a visited tab stays alive while inactive). Prune panels that left
-  // the arrangement so their content unmounts and disposes.
+  // Keep every visited panel mounted (lazy: a never-shown panel isn't built).
+  // Liveness follows the panel LIFECYCLE, not placement: a panel hidden from
+  // the arrangement (e.g. a toggled-off terminal) stays alive — its content is
+  // disposed only when the panel closes and leaves `wb.panelIds`.
   const activatedRef = useRef<Set<PanelId> | null>(null);
   const activated = (activatedRef.current ??= new Set<PanelId>());
   const nodes = (nodesRef.current ??= new Map<PanelId, PortalNode>());
   const stacks: Stack[] = [];
   if (wb.arrangement.tiles !== null) collectStacks(wb.arrangement.tiles, stacks);
-  const allPanels = new Set<PanelId>(stacks.flatMap((s) => s.panels));
+  const allPanels = new Set<PanelId>(wb.panelIds);
   for (const id of activated) if (!allPanels.has(id)) activated.delete(id);
   for (const id of nodes.keys()) if (!allPanels.has(id)) nodes.delete(id);
   for (const s of stacks) {
@@ -224,9 +225,18 @@ export function WorkbenchView({ runtime, onActiveSnapshot }: WorkbenchViewProps)
   );
 
   if (wb.arrangement.tiles === null) {
+    // No visible tiles, but hidden-yet-alive panels (a toggled-off terminal)
+    // still render into their parked containers so their state survives.
     return (
       <div className="workbench">
         <div className="wb-empty">no open files — ⌘O to open, ⇧⌘P for commands</div>
+        <PanelInPortals
+          runtime={runtime}
+          nodeFor={nodeFor}
+          livePanels={livePanels}
+          focusedActivePanelId={focusedActivePanelId}
+          {...(onActiveSnapshot ? { onActiveSnapshot } : {})}
+        />
       </div>
     );
   }

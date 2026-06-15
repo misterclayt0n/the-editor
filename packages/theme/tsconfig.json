@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "declarationMap": true,
+    "noEmit": true,
+    "lib": ["ES2023"],
+    "paths": {
+      "@the-editor/extensions": ["../extensions/src/index.ts"],
+      "@the-editor/kernel": ["../kernel/src/index.ts"]
+    }
+  },
+  "include": ["src", "test", "../extensions/src", "../kernel/src"]
+}

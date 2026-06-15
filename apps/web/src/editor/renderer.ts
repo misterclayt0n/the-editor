@@ -55,7 +55,7 @@ import {
   type ViewportLayoutSnapshot,
   type VisualsSnapshot,
 } from "@the-editor/editor";
-import { highlightColor } from "./highlightColors";
+import { resolveSyntaxStyle } from "../theme/dom";
 import { Selection, type TextBuffer } from "@the-editor/engine";
 import type { PaneHost } from "../runtime";
 import { cancelRender, queueRender } from "./frame";
@@ -157,6 +157,7 @@ export class EditorRenderer {
   private readonly unsubscribe: () => void;
   private readonly unsubscribeHighlights: () => void;
   private readonly unsubscribeFloats: () => void;
+  private readonly unsubscribeTheme: () => void;
   private readonly renderPass = () => this.render();
   private readonly handleMouseDown = (event: MouseEvent) => {
     if (
@@ -444,6 +445,11 @@ export class EditorRenderer {
         this.pendingVisualChanges = null;
         queueRender(this.renderPass);
       }) ?? (() => {});
+    this.unsubscribeTheme = runtime.subscribeTheme(() => {
+      this.visualsDirty = true;
+      this.pendingVisualChanges = null;
+      queueRender(this.renderPass);
+    });
 
     queueRender(this.renderPass);
   }
@@ -453,6 +459,7 @@ export class EditorRenderer {
     cancelRender(this.renderPass);
     this.unsubscribe();
     this.unsubscribeHighlights();
+    this.unsubscribeTheme();
     this.unsubscribeFloats();
     if (this.hoverRaf !== 0) cancelAnimationFrame(this.hoverRaf);
     this.viewport.removeEventListener("mousemove", this.handleMouseMove);
@@ -511,9 +518,9 @@ export class EditorRenderer {
     if (highlights === undefined) return [];
     const out: TextStyleRun[] = [];
     for (const run of highlights.runsBetween(from, to)) {
-      const color = highlightColor(run.kind);
-      if (color === undefined) continue;
-      out.push({ from: run.from, to: run.to, style: { color }, priority: -100 });
+      const style = resolveSyntaxStyle(run.kind);
+      if (style?.color === undefined) continue;
+      out.push({ from: run.from, to: run.to, style: { color: style.color }, priority: -100 });
     }
     return out;
   }

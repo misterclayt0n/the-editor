@@ -154,6 +154,9 @@ importers:
       '@the-editor/lsp':
         specifier: workspace:*
         version: link:../../packages/lsp
+      '@the-editor/theme':
+        specifier: workspace:*
+        version: link:../../packages/theme
       '@the-editor/workbench':
         specifier: workspace:*
         version: link:../../packages/workbench
@@ -439,6 +442,31 @@ importers:
       tsx:
         specifier: 'catalog:'
         version: 4.22.4
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 3.2.4(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)
+
+  packages/theme:
+    dependencies:
+      '@the-editor/extensions':
+        specifier: workspace:*
+        version: link:../extensions
+      '@the-editor/kernel':
+        specifier: workspace:*
+        version: link:../kernel
+      effect:
+        specifier: 'catalog:'
+        version: 3.21.2
+    devDependencies:
+      '@effect/vitest':
+        specifier: 'catalog:'
+        version: 0.29.0(effect@3.21.2)(vitest@3.2.4(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4))
+      tsdown:
+        specifier: 'catalog:'
+        version: 0.20.3(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(@typescript/native-preview@7.0.0-dev.20260522.1)(typescript@5.9.3)
       typescript:
         specifier: 'catalog:'
         version: 5.9.3

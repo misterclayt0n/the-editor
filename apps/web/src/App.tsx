@@ -5,7 +5,7 @@ import { formatChords, type Chord } from "@the-editor/keymaps";
 import type { Tile } from "@the-editor/workbench";
 import { AppRuntime, type EditorPane } from "./runtime";
 import { WorkbenchView } from "./workbench/WorkbenchView";
-import { CommandPalette } from "./ui/CommandPalette";
+import { CommandPalette, type CommandPaletteMode } from "./ui/CommandPalette";
 import { RenameDialog } from "./ui/RenameDialog";
 import { IntelController } from "./intel/controller";
 import { IntelView } from "./intel/IntelView";
@@ -54,6 +54,7 @@ export function App() {
   const [snapshot, setSnapshot] = useState<EditorSnapshot | null>(null);
   const [pending, setPending] = useState<ReadonlyArray<Chord>>([]);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteMode, setPaletteMode] = useState<CommandPaletteMode>("commands");
   const [rename, setRename] = useState<{ open: boolean; initial: string }>({
     open: false,
     initial: "",
@@ -67,9 +68,17 @@ export function App() {
   useEffect(() => {
     const booted = AppRuntime.boot("");
     booted.onFileStateChanged = () => setStatusEpoch((epoch) => epoch + 1);
-    booted.onPaletteOpenRequested = () => setPaletteOpen(true);
+    booted.onPaletteOpenRequested = () => {
+      setPaletteMode("commands");
+      setPaletteOpen(true);
+    };
+    booted.onThemeSelectorOpenRequested = () => {
+      setPaletteMode("themes");
+      setPaletteOpen(true);
+    };
     booted.onDiagnosticsChanged = () => setStatusEpoch((epoch) => epoch + 1);
     const unsubscribeVcs = booted.vcs?.subscribe(() => setStatusEpoch((epoch) => epoch + 1));
+    const unsubscribeTheme = booted.subscribeTheme(() => setStatusEpoch((epoch) => epoch + 1));
     booted.onRenameRequested = (currentName) => setRename({ open: true, initial: currentName });
     booted.onPrompt = (options) =>
       new Promise<string | null>((resolve) => {
@@ -130,6 +139,7 @@ export function App() {
       document.removeEventListener("keydown", onKeyDown);
       unsubscribe();
       unsubscribeVcs?.();
+      unsubscribeTheme();
       controller.dispose();
       setIntel(null);
       setRuntime(null);
@@ -152,6 +162,7 @@ export function App() {
     // execution may have swapped the layout out from under it.
     if (!open) {
       window.requestAnimationFrame(() => runtime?.focusActivePanel());
+      setPaletteMode("commands");
     }
   }, [runtime]);
 
@@ -170,8 +181,10 @@ export function App() {
       />
       <CommandPalette
         open={paletteOpen}
+        mode={paletteMode}
         onOpenChange={handlePaletteOpenChange}
         commands={runtime.commands}
+        themes={runtime.themes}
       />
       {intel !== null && <IntelView controller={intel} />}
       <RenameDialog

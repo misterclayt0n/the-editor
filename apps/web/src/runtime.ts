@@ -22,6 +22,7 @@ import { Context, Effect, Exit, Fiber, Layer, Option, Scope, Stream } from "effe
 import { makePackageRuntime } from "@the-editor/kernel";
 import { toPackageDescriptor } from "@the-editor/extensions";
 import { Commands, makeCommands } from "@the-editor/commands";
+import { makeThemes, Themes, themeDefaults, type ResolvedTheme } from "@the-editor/theme";
 import {
   chordFromKeyboardEvent,
   isTextInputChord,
@@ -83,6 +84,7 @@ import { lineNumbers } from "./product/lineNumbers";
 import { filesPackage, HostFileActions } from "./product/files";
 import { palettePackage, HostPaletteActions } from "./product/palette";
 import { viewPackage, HostViewActions } from "./product/view";
+import { themeCommands, HostThemeActions } from "./product/themes";
 import { createFileSystemPort } from "./platform/fs";
 import { createProcessPort } from "./platform/process";
 import { createTerminalPort, type TerminalPort } from "./platform/terminal";
@@ -113,6 +115,7 @@ import {
 } from "./intel/types";
 import { uriToPath, type lsp } from "@the-editor/lsp";
 import { MountHub } from "./editor/mounts";
+import { applyThemeToDocument } from "./theme/dom";
 
 export type KeyOutcome = "handled" | "pending" | "passthrough";
 
@@ -148,6 +151,7 @@ export interface PaneHost {
   snapshot(): EditorSnapshot;
   visualsSnapshot(): VisualsSnapshot;
   setSelection(selection: Selection): void;
+  subscribeTheme(listener: () => void): () => void;
   subscribe(
     listener: (notification: EditorNotification, source: "document" | "view") => void,
   ): () => void;
@@ -184,6 +188,10 @@ export class EditorPane implements PaneHost {
 
   visualsSnapshot(): VisualsSnapshot {
     return this.runIn(Effect.flatMap(EditorVisuals, (visuals) => visuals.snapshot));
+  }
+
+  subscribeTheme(listener: () => void): () => void {
+    return this.runtime.subscribeTheme(listener);
   }
 
   setSelection(selection: Selection): void {
@@ -246,6 +254,8 @@ export class AppRuntime {
   onFileStateChanged?: () => void;
   /** Host UI hooks: the palette.open command fired (show the dialog). */
   onPaletteOpenRequested?: () => void;
+  /** Host UI hooks: theme selector command fired (show themed palette mode). */
+  onThemeSelectorOpenRequested?: () => void;
   /** Host UI hooks: diagnostics changed for a document (status surfaces). */
   onDiagnosticsChanged?: (docId: string) => void;
   /** Host UI hooks: rename was requested at the caret (show the prompt). */
@@ -291,6 +301,10 @@ export class AppRuntime {
   private workbenchSnapshot: WorkbenchSnapshot;
   private readonly workbenchListeners = new Set<() => void>();
   private mirrorFibers: ReadonlyArray<Fiber.RuntimeFiber<unknown, unknown>> = [];
+  private themeFiber: Fiber.RuntimeFiber<unknown, unknown> | undefined;
+  private readonly themeListeners = new Set<() => void>();
+  private systemAppearanceMedia: MediaQueryList | undefined;
+  private systemAppearanceListener: (() => void) | undefined;
   /** The panel each toggle (terminal, file tree) currently owns as its dock.
    *  Cleared when the user moves or closes it, so a manually-placed panel is
    *  released from the toggle (Zed: a terminal dragged out of the dock is no
@@ -311,6 +325,7 @@ export class AppRuntime {
     readonly workbench: Workbench.Service,
     readonly commands: Commands.Service,
     readonly keymaps: Keymaps.Service,
+    readonly themes: Themes.Service,
   ) {
     this.workbenchSnapshot = {
       arrangement: Effect.runSync(workbench.arrangement),
@@ -345,7 +360,9 @@ export class AppRuntime {
         const completionProviders = yield* makeCompletionProviders;
         const hoverProviders = yield* makeHoverProviders;
         const signatureProviders = yield* makeSignatureProviders;
+        const themes = yield* makeThemes();
         const services = Layer.mergeAll(
+          Layer.succeed(Themes, themes),
           Layer.succeed(PanelRenderers, panelRenderers),
           Layer.succeed(VcsProviders, vcsProviders),
           Layer.succeed(HostVcsDefaults, {
@@ -401,6 +418,9 @@ export class AppRuntime {
           Layer.succeed(HostPaletteActions, {
             open: () => instance.onPaletteOpenRequested?.(),
           }),
+          Layer.succeed(HostThemeActions, {
+            openSelector: () => instance.onThemeSelectorOpenRequested?.(),
+          }),
           Layer.succeed(HostLspActions, {
             goToDefinition: () => void instance.goToDefinition(),
             formatDocument: () => void instance.formatActiveDocument(),
@@ -419,10 +439,12 @@ export class AppRuntime {
         );
         yield* runtime
           .activateGraph([
+            toPackageDescriptor(themeDefaults, services),
             toPackageDescriptor(editorDefaults, services),
             toPackageDescriptor(lineNumbers, services),
             toPackageDescriptor(filesPackage, services),
             toPackageDescriptor(palettePackage, services),
+            toPackageDescriptor(themeCommands, services),
             toPackageDescriptor(viewPackage, services),
             toPackageDescriptor(lspDefaults, services),
             toPackageDescriptor(lspActions, services),
@@ -435,7 +457,7 @@ export class AppRuntime {
           ])
           .pipe(Effect.orDie);
 
-        const appRuntime = new AppRuntime(scope, workspace, workbench, commands, keymaps);
+        const appRuntime = new AppRuntime(scope, workspace, workbench, commands, keymaps, themes);
         appRuntime.panelRenderers = panelRenderers;
         appRuntime.intel = {
           completions: completionProviders,
@@ -465,6 +487,7 @@ export class AppRuntime {
     );
     instance.focusSlotOfPanel(pane.panelId);
     instance.startWorkbenchMirror();
+    instance.startThemeMirror();
     return instance;
   }
 
@@ -478,6 +501,33 @@ export class AppRuntime {
   subscribeWorkbench(listener: () => void): () => void {
     this.workbenchListeners.add(listener);
     return () => this.workbenchListeners.delete(listener);
+  }
+
+  themeSnapshot(): ResolvedTheme {
+    return Effect.runSync(this.themes.active);
+  }
+
+  subscribeTheme(listener: () => void): () => void {
+    this.themeListeners.add(listener);
+    return () => void this.themeListeners.delete(listener);
+  }
+
+  private startThemeMirror(): void {
+    const publish = (theme: ResolvedTheme) => {
+      applyThemeToDocument(theme);
+      for (const listener of this.themeListeners) listener();
+    };
+    publish(Effect.runSync(this.themes.active));
+    this.themeFiber = Effect.runFork(
+      Stream.runForEach(this.themes.changes, (theme) => Effect.sync(() => publish(theme))),
+    );
+    this.systemAppearanceMedia = window.matchMedia("(prefers-color-scheme: light)");
+    this.systemAppearanceListener = () => {
+      const appearance = this.systemAppearanceMedia?.matches ? "light" : "dark";
+      Effect.runFork(this.themes.setSystemAppearance(appearance).pipe(Effect.ignore));
+    };
+    this.systemAppearanceMedia.addEventListener("change", this.systemAppearanceListener);
+    this.systemAppearanceListener();
   }
 
   pane(panelId: PanelId): EditorPane | undefined {
@@ -1139,6 +1189,10 @@ export class AppRuntime {
     for (const highlights of this.highlightsByDoc.values()) highlights.close();
     this.highlightsByDoc.clear();
     for (const fiber of this.mirrorFibers) Effect.runFork(Fiber.interrupt(fiber));
+    if (this.themeFiber !== undefined) Effect.runFork(Fiber.interrupt(this.themeFiber));
+    if (this.systemAppearanceMedia !== undefined && this.systemAppearanceListener !== undefined) {
+      this.systemAppearanceMedia.removeEventListener("change", this.systemAppearanceListener);
+    }
     const views = [...this.panes.values()].map((pane) => pane.view);
     this.panes.clear();
     Effect.runFork(

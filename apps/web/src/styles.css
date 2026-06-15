@@ -1,16 +1,16 @@
 :root {
-  color-scheme: dark;
-  /* Layered surfaces, RustRover-style: chrome < panel < editor. */
-  --bg: #141415;
-  --bg-panel: #19191b;
-  --bg-editor: #1e1e21;
-  --fg: #e2e3e5;
-  --fg-dim: #85878d;
-  --caret: #f5f5f5;
-  --accent: #4d80f0;
-  --selection: rgba(77, 128, 240, 0.28);
-  --status-bg: #141415;
-  --border: #27272b;
+  color-scheme: var(--theme-color-scheme);
+  /* The active theme service writes --theme-* and legacy bridge vars here. */
+  --bg: var(--theme-background);
+  --bg-panel: var(--theme-panel-background);
+  --bg-editor: var(--theme-editor-background);
+  --fg: var(--theme-text);
+  --fg-dim: var(--theme-text-muted);
+  --caret: var(--theme-player-cursor);
+  --accent: var(--theme-text-accent);
+  --selection: var(--theme-player-selection);
+  --status-bg: var(--theme-status-bar-background);
+  --border: var(--theme-border);
 
   /* Rounding system, matched to @pierre/trees (6px rows) and JetBrains'
    * floating-card chrome. Surfaces (panes, popovers) carry the large radius;
@@ -118,7 +118,7 @@ body {
 .editor-scrollbar-thumb {
   position: absolute;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--theme-scrollbar-thumb-background);
   transition: background 100ms;
 }
 
@@ -136,7 +136,7 @@ body {
 
 .editor-scrollbar-thumb:hover,
 .editor-scrollbar-thumb:active {
-  background: rgba(255, 255, 255, 0.24);
+  background: var(--theme-scrollbar-thumb-hover-background);
 }
 
 /* Text indent (gutter bands + padding) is set inline on .editor-rows. */
@@ -157,7 +157,7 @@ body {
 .editor-widget {
   position: relative;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.04);
+  background: color-mix(in srgb, var(--theme-text) 4%, transparent);
 }
 
 /* x-pinned gutter host; columns are positioned, background lives on them. */
@@ -229,7 +229,7 @@ body {
 }
 
 .editor-decoration-background {
-  background: rgba(86, 156, 214, 0.16);
+  background: var(--theme-editor-document-highlight-read-background);
 }
 
 .editor-decoration-underline {
@@ -400,7 +400,7 @@ body {
 }
 
 .wb-tab-name--conflict {
-  color: #d16969;
+  color: var(--theme-error);
 }
 
 .wb-tab-dot {
@@ -508,7 +508,7 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-editor);
-  box-shadow: 0 8px 24px color-mix(in srgb, #000 45%, transparent);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--theme-background) 45%, transparent);
   color: var(--fg);
   font-size: 12px;
   pointer-events: none;
@@ -613,23 +613,23 @@ body {
 
 .intel-kind--function,
 .intel-kind--method {
-  color: #dcdcaa;
+  color: var(--theme-function);
 }
 
 .intel-kind--variable,
 .intel-kind--field,
 .intel-kind--property {
-  color: #9cdcfe;
+  color: var(--theme-variable);
 }
 
 .intel-kind--class,
 .intel-kind--interface,
 .intel-kind--struct {
-  color: #4ec9b0;
+  color: var(--theme-type);
 }
 
 .intel-kind--keyword {
-  color: #569cd6;
+  color: var(--theme-keyword);
 }
 
 .intel-item__label {
@@ -653,13 +653,13 @@ body {
 }
 
 .intel-hover--diagnostic {
-  border-color: color-mix(in srgb, #f48771 45%, var(--border));
-  background: color-mix(in srgb, #f48771 6%, var(--bg-editor));
+  border-color: color-mix(in srgb, var(--theme-diagnostic-error) 45%, var(--border));
+  background: color-mix(in srgb, var(--theme-diagnostic-error) 6%, var(--bg-editor));
 }
 
 /* The text range a hover card describes. */
 .intel-hover-range {
-  background: rgba(86, 156, 214, 0.16);
+  background: var(--theme-editor-document-highlight-read-background);
 }
 
 .intel-hover {
@@ -721,7 +721,7 @@ body {
 }
 
 .intel-hover__md a {
-  color: #569cd6;
+  color: var(--theme-link-text-hover);
 }
 
 .intel-hover__md pre {
@@ -807,7 +807,7 @@ body {
 
 .intel-signature__active {
   border-radius: 3px;
-  background: color-mix(in srgb, #569cd6 22%, var(--bg-editor));
+  background: color-mix(in srgb, var(--theme-text-accent) 22%, var(--bg-editor));
   font-weight: 600;
 }
 
@@ -854,11 +854,11 @@ body {
 }
 
 .status-diagnostics-errors {
-  color: #f48771;
+  color: var(--theme-diagnostic-error);
 }
 
 .status-diagnostics-warnings {
-  color: #cca700;
+  color: var(--theme-diagnostic-warning);
 }
 
 .status-bar {
@@ -893,18 +893,18 @@ body {
 }
 
 .editor-band-cell.vcs-gutter-added {
-  background: #4ec975;
+  background: var(--theme-version-control-added);
 }
 
 .editor-band-cell.vcs-gutter-modified {
-  background: #569cd6;
+  background: var(--theme-version-control-modified);
 }
 
 /* Deletion marker: a short block at the boundary, not a full bar. */
 .editor-band-cell.vcs-gutter-deleted {
   height: 7px;
   margin-top: -3px;
-  background: #f48771;
+  background: var(--theme-version-control-deleted);
 }
 
 /* Terminal panel host: ghostty-web canvas fills the panel body. */

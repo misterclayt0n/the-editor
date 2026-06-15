@@ -8,6 +8,7 @@
 import { ensureReady, Terminal, FitAddon, attachAutoFit, attachGlobalKeyHandler } from "./backend";
 import type { AppRuntime } from "../runtime";
 import type { PanelRenderer } from "../workbench/panelRenderers";
+import { terminalTheme } from "../theme/dom";
 
 /** Some engines (ghostty) load WASM once; gate construction on it, lazily. */
 let readyPromise: Promise<void> | null = null;
@@ -78,10 +79,10 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
         return { dispose: () => void (disposed = true) };
       }
 
-      // Palette colors → terminal theme (read the CSS variables we theme with).
-      const css = getComputedStyle(document.documentElement);
-      const v = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
 
+      const unsubscribeTheme = runtime.subscribeTheme(() => {
+        if (term !== null) term.options.theme = terminalTheme(runtime.themeSnapshot());
+      });
       void (async () => {
         await ensureEngine();
         if (disposed) return;
@@ -89,11 +90,7 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
           fontSize: 12.5,
           fontFamily: FONT_FAMILY,
           cursorBlink: true,
-          theme: {
-            background: v("--bg-editor", "#1e1e21"),
-            foreground: v("--fg", "#e2e3e5"),
-            cursor: v("--caret", "#f5f5f5"),
-          },
+          theme: terminalTheme(runtime.themeSnapshot()),
         });
         const fit = new FitAddon();
         term.loadAddon(fit);
@@ -148,6 +145,7 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
           disposeFit?.();
           if (termId !== null) port.kill(termId);
           term?.dispose();
+          unsubscribeTheme();
           element.replaceChildren();
         },
         focus: () => {

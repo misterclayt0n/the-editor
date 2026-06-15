@@ -65,10 +65,10 @@ const SPAWN_RETRY_MS = 30_000;
 export type DiagnosticCounts = { readonly errors: number; readonly warnings: number };
 
 const severityStyle: Record<number, { className: string; color: string }> = {
-  1: { className: "lsp-diagnostic-error", color: "#f48771" },
-  2: { className: "lsp-diagnostic-warning", color: "#cca700" },
-  3: { className: "lsp-diagnostic-info", color: "#75beff" },
-  4: { className: "lsp-diagnostic-hint", color: "#8a8a8a" },
+  1: { className: "lsp-diagnostic-error", color: "var(--theme-diagnostic-error)" },
+  2: { className: "lsp-diagnostic-warning", color: "var(--theme-diagnostic-warning)" },
+  3: { className: "lsp-diagnostic-info", color: "var(--theme-diagnostic-info)" },
+  4: { className: "lsp-diagnostic-hint", color: "var(--theme-diagnostic-hint)" },
 };
 
 type ClientHandle = {

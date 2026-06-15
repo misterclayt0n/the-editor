@@ -10,7 +10,7 @@
  */
 
 import { createSyntaxPort, type SyntaxPort } from "../platform/syntax";
-import { highlightColor } from "./highlightColors";
+import { resolveSyntaxStyle } from "../theme/dom";
 
 export type SnippetSpan = { readonly text: string; readonly color?: string };
 
@@ -77,7 +77,7 @@ export function highlightSnippet(code: string, languageTag: string): SnippetSpan
       const to = Math.min(code.length, run.to);
       if (to <= from) continue;
       if (from > position) spans.push({ text: code.slice(position, from) });
-      const color = highlightColor(run.kind);
+      const color = resolveSyntaxStyle(run.kind)?.color;
       spans.push({ text: code.slice(from, to), ...(color !== undefined ? { color } : {}) });
       position = to;
     }

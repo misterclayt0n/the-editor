@@ -21,6 +21,7 @@
     "@the-editor/kernel": "workspace:*",
     "@the-editor/keymaps": "workspace:*",
     "@the-editor/lsp": "workspace:*",
+    "@the-editor/theme": "workspace:*",
     "@the-editor/workbench": "workspace:*",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",

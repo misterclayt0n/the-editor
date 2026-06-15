@@ -16,6 +16,7 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -147,7 +148,9 @@ export function WorkbenchView({ runtime, onActiveSnapshot }: WorkbenchViewProps)
 
   // Single focus authority: whenever the focused pane or its active panel
   // changes, hand the keyboard to that surface (editor, terminal, file tree).
-  useEffect(() => {
+  // useLayoutEffect so the focus lands before the browser paints, which matters
+  // when a reverse-portal host is re-attached (terminal toggle on/off).
+  useLayoutEffect(() => {
     runtime.focusActivePanel();
   }, [runtime, wb.focusedSlot, focusedActivePanelId]);
 
@@ -283,17 +286,53 @@ function PanelInPortals({
   readonly focusedActivePanelId: PanelId | undefined;
   readonly onActiveSnapshot?: (snapshot: EditorSnapshot) => void;
 }): ReactNode {
-  return livePanels.map((panelId) =>
-    createPortal(
-      <PanelBody
-        runtime={runtime}
-        panelId={panelId}
-        focused={panelId === focusedActivePanelId}
-        {...(onActiveSnapshot ? { onSnapshot: onActiveSnapshot } : {})}
-      />,
-      nodeFor(panelId).element,
-      panelId,
-    ),
+  return livePanels.map((panelId) => (
+    <PortalPanel
+      key={panelId}
+      runtime={runtime}
+      panelId={panelId}
+      node={nodeFor(panelId)}
+      focused={panelId === focusedActivePanelId}
+      {...(onActiveSnapshot ? { onSnapshot: onActiveSnapshot } : {})}
+    />
+  ));
+}
+
+/**
+ * One live panel rendered into its persistent host. A native `focusin` listener
+ * on the host updates the workbench's focused slot whenever the keyboard lands
+ * inside this panel — React synthetic events do NOT bubble through the reverse
+ * portal, so the host must observe focus directly.
+ */
+function PortalPanel({
+  runtime,
+  panelId,
+  node,
+  focused,
+  onSnapshot,
+}: {
+  readonly runtime: AppRuntime;
+  readonly panelId: PanelId;
+  readonly node: PortalNode;
+  readonly focused: boolean;
+  readonly onSnapshot?: (snapshot: EditorSnapshot) => void;
+}) {
+  useEffect(() => {
+    const element = node.element;
+    const onFocusIn = () => runtime.focusSlotOfPanel(panelId);
+    element.addEventListener("focusin", onFocusIn);
+    return () => element.removeEventListener("focusin", onFocusIn);
+  }, [runtime, panelId, node]);
+
+  return createPortal(
+    <PanelBody
+      runtime={runtime}
+      panelId={panelId}
+      focused={focused}
+      {...(onSnapshot ? { onSnapshot } : {})}
+    />,
+    node.element,
+    panelId,
   );
 }
 
@@ -514,7 +553,6 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
         className="wb-body"
         data-wb-body
         data-slot-id={stack.id}
-        onFocusCapture={() => runtime.focusSlot(stack.id)}
       >
         {activePanelId !== undefined && <OutPortal node={tree.nodeFor(activePanelId)} />}
         {dropZone !== null && <div className={`wb-drop wb-drop-${dropZone}`} />}
@@ -559,23 +597,11 @@ function CustomPanelView({
     [runtime, panelId],
   );
 
-  // A click anywhere in the panel that doesn't already land focus inside (empty
-  // area, gaps a leaf doesn't focus) should still hand the panel the keyboard —
-  // next frame, after the click's own focus settles.
-  const onPointerDown = () => {
-    requestAnimationFrame(() => {
-      const element = hostRef.current;
-      if (element === null || element.contains(document.activeElement)) return;
-      mountRef.current?.focus?.();
-    });
-  };
-
   return (
     <div
       ref={hostRef}
       className="wb-custom-panel"
       data-panel-id={panelId}
-      onPointerDown={onPointerDown}
     />
   );
 }

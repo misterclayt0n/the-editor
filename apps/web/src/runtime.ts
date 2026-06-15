@@ -281,6 +281,8 @@ export class AppRuntime {
    * never hijacks file opens. Focusing a tool panel leaves it unchanged.
    */
   private lastEditorSlot: SlotId | null = null;
+  /** Re-emit the workbench snapshot (set by the mirror); see closePanel paths. */
+  private republishWorkbench: () => void = () => {};
   private syntaxPort: SyntaxPort | undefined;
   private lsp: LspManager | undefined;
   private terminal: TerminalPort | undefined;
@@ -302,7 +304,6 @@ export class AppRuntime {
    * toggle, split, dialog dismissal — lands the keyboard in its surface.
    */
   private readonly panelFocusers = new Map<PanelId, () => void>();
-  private focusTimer: ReturnType<typeof setTimeout> | null = null;
 
   private constructor(
     private readonly scope: Scope.CloseableScope,
@@ -497,6 +498,10 @@ export class AppRuntime {
       };
       for (const listener of this.workbenchListeners) listener();
     };
+    // Closing a panel mutates only the panel REGISTRY (no arrangement/focus
+    // change), so it must force a republish — otherwise `panelIds` goes stale
+    // and the chrome keeps a closed panel's portal mounted (leaking its PTY).
+    this.republishWorkbench = publish;
     publish();
     this.mirrorFibers = [
       Effect.runFork(
@@ -540,33 +545,16 @@ export class AppRuntime {
   }
 
   /**
-   * Land the keyboard in the focused pane's surface. Retries across frames: a
-   * freshly created terminal's input (or a relocated container) appears only
-   * after async setup / the next paint. Never steals focus from an overlay
-   * (palette, dialog) that lives outside the workbench.
+   * Land the keyboard in the focused pane's surface. The single focus authority
+   * delegates to the panel's own focuser, so every focus change — tab switch,
+   * ⌘J toggle, split, dialog dismissal — puts keys in the right surface without
+   * guessing at DOM state. A panel whose content mounts async (the terminal)
+   * calls its own focuser once ready.
    */
   focusActivePanel(): void {
-    if (this.focusTimer !== null) clearTimeout(this.focusTimer);
-    this.focusTimer = null;
     const focused = Effect.runSync(this.workbench.focusedPanel);
     if (Option.isNone(focused)) return;
-    const id = focused.value.id;
-    let ticks = 0;
-    const attempt = () => {
-      this.focusTimer = null;
-      const active = document.activeElement;
-      if (active !== null && active !== document.body && active.closest(".workbench") === null) {
-        return; // an overlay (palette, dialog) outside the workbench owns focus
-      }
-      // Re-assert focus while it isn't already in the focused pane, over a short
-      // window rather than once: relocating/detaching a panel container (tab
-      // move, toggle hide/show) on the same tick blurs what we just focused, so
-      // a single focus would be undone. A timer (not rAF) fires while hidden too.
-      const pane = document.querySelector(".wb-pane--focused");
-      if (pane !== null && !pane.contains(active)) this.panelFocusers.get(id)?.();
-      if (ticks++ < 12) this.focusTimer = setTimeout(attempt, 16);
-    };
-    attempt();
+    this.panelFocusers.get(focused.value.id)?.();
   }
 
   activateTab(slotId: SlotId, panelId: PanelId): void {
@@ -584,10 +572,15 @@ export class AppRuntime {
       // Custom panel (terminal, file tree): closing its scope disposes the
       // renderer (the pool unmounts it once it leaves the live panel set).
       Effect.runSync(this.workbench.closePanel(panelId));
+      // closePanel mutates only the registry; force the snapshot to refresh so
+      // the chrome prunes the panel's portal and unmounts it (its dispose kills
+      // the PTY). Without this, panelIds stays stale and the content leaks.
+      this.republishWorkbench();
       return;
     }
     this.panes.delete(panelId);
     Effect.runSync(this.workbench.closePanel(panelId));
+    this.republishWorkbench();
     Effect.runSync(closeViewScope(pane.view));
     const documentStillShown = [...this.panes.values()].some(
       (other) => other.document.id === pane.document.id,
@@ -779,7 +772,7 @@ export class AppRuntime {
     );
   }
 
-  private focusSlotOfPanel(panelId: PanelId): void {
+  focusSlotOfPanel(panelId: PanelId): void {
     const arrangement = Effect.runSync(this.workbench.arrangement);
     const slot = slotOfPanel(arrangement, panelId);
     if (slot !== undefined) this.focusSlot(slot);

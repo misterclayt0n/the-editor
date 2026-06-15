@@ -809,7 +809,7 @@ export class LspManager {
       if (!binding.handle.alive) continue;
       const pending = binding.fullSyncTimer !== null;
       if (pending) {
-        window.clearTimeout(binding.fullSyncTimer);
+        window.clearTimeout(binding.fullSyncTimer ?? undefined);
         binding.fullSyncTimer = null;
       }
       if (pending || binding.syncedVersion < currentVersion) {

@@ -167,6 +167,9 @@ export class EditorRenderer {
     // Clicks inside a float (hover card, completion list) belong to the
     // float's own UI — moving the caret would kill text selection in it.
     if ((event.target as HTMLElement).closest?.(".editor-float") !== null) return;
+    // Put the keyboard in this pane so the workbench knows the editor was
+    // activated; preventScroll keeps the viewport from jumping on focus.
+    this.root.focus({ preventScroll: true });
     const rect = this.viewport.getBoundingClientRect();
     // Vertical geometry goes through the model (widget-aware); the column
     // resolver gets a synthetic widget-less y for the resolved line.

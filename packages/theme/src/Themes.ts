@@ -112,6 +112,23 @@ const toStyle = (content: HighlightStyleContent | undefined): HighlightStyle | u
   return Object.keys(out).length === 0 ? undefined : out;
 };
 
+const zedCompatibleCaptureName = (captureName: string): string => {
+  if (captureName === "variable.other.member" || captureName.startsWith("variable.other.member.")) {
+    return "property";
+  }
+  if (captureName === "constant.numeric" || captureName.startsWith("constant.numeric.")) {
+    return "number";
+  }
+  if (captureName === "constant.character.escape") return "string.escape";
+  if (captureName === "string.regexp" || captureName.startsWith("string.regexp.")) {
+    return "string.regex";
+  }
+  if (captureName === "variable.builtin" || captureName.startsWith("variable.builtin.")) {
+    return "variable.special";
+  }
+  return captureName;
+};
+
 const mergeSyntax = (
   base: Readonly<Record<string, HighlightStyleContent>>,
   override: Readonly<Record<string, HighlightStyleContent>> | undefined,
@@ -128,8 +145,7 @@ const mergeSyntax = (
   }
   const entries = [...map.entries()] as readonly (readonly [string, HighlightStyle])[];
   const cache = new Map<string, HighlightStyle | undefined>();
-  const resolve = (captureName: string): HighlightStyle | undefined => {
-    if (cache.has(captureName)) return cache.get(captureName);
+  const bestStyle = (captureName: string): HighlightStyle | undefined => {
     let best: HighlightStyle | undefined;
     let bestScore = -1;
     const parts = captureName.split(".");
@@ -139,6 +155,15 @@ const mergeSyntax = (
         best = style;
         bestScore = keyParts.length;
       }
+    }
+    return best;
+  };
+  const resolve = (captureName: string): HighlightStyle | undefined => {
+    if (cache.has(captureName)) return cache.get(captureName);
+    let best = map.get(captureName);
+    if (best === undefined) {
+      const alias = zedCompatibleCaptureName(captureName);
+      best = alias === captureName ? bestStyle(captureName) : (map.get(alias) ?? bestStyle(alias));
     }
     cache.set(captureName, best);
     return best;

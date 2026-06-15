@@ -175,6 +175,12 @@ describe("parse, state, edits, highlights", () => {
         { byteRange: { start: 2, end: 4 }, kind: outer },
       ]),
     ).toEqual([{ byteRange: { start: 0, end: 4 }, kind: outer }]);
+    expect(
+      normalizeHighlightRuns([
+        { byteRange: { start: 0, end: 4 }, kind: outer },
+        { byteRange: { start: 0, end: 4 }, kind: inner },
+      ]),
+    ).toEqual([{ byteRange: { start: 0, end: 4 }, kind: inner }]);
     const registry = LanguageRegistry.create(config, resources);
     const id = registry.languageForName("json")!;
     const text = syntaxTextFromString('{"a":1}');

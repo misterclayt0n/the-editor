@@ -67,6 +67,24 @@ describe("Themes", () => {
     expect(color?.color).toBe("#73ade9ff");
   });
 
+  it("maps Helix capture names onto Zed syntax slots", () => {
+    const styles = Effect.runSync(
+      Effect.scoped(Effect.gen(function* () {
+        const themes = yield* makeThemes();
+        yield* provideActivation(themes.registerFamily(oneThemeFamily));
+        return {
+          property: yield* themes.syntaxStyle("variable.other.member"),
+          number: yield* themes.syntaxStyle("constant.numeric.integer"),
+          regex: yield* themes.syntaxStyle("string.regexp"),
+        };
+      })),
+    );
+
+    expect(styles.property?.color).toBe("#d07277ff");
+    expect(styles.number?.color).toBe("#bf956aff");
+    expect(styles.regex?.color).toBe("#bf956aff");
+  });
+
   it("validates the JSON boundary", () => {
     const parsed = Effect.runSync(
       parseThemeFamily({

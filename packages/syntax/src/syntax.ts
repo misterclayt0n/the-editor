@@ -1140,15 +1140,18 @@ export function normalizeHighlightRuns(
     const pos = events[i]![0];
     if (prev !== -1 && pos > prev && active.size > 0) {
       let winner: SyntaxHighlightRun | null = null;
+      let winnerIndex = -1;
       for (const index of active) {
         const run = captures[index]!;
         if (
           winner === null ||
           run.byteRange.start > winner.byteRange.start ||
           (run.byteRange.start === winner.byteRange.start &&
-            run.byteRange.end < winner.byteRange.end)
+            (run.byteRange.end < winner.byteRange.end ||
+              (run.byteRange.end === winner.byteRange.end && index > winnerIndex)))
         ) {
           winner = run;
+          winnerIndex = index;
         }
       }
       const last = out[out.length - 1];

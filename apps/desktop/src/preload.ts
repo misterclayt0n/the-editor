@@ -88,6 +88,38 @@ contextBridge.exposeInMainWorld("theEditorProc", {
   },
 });
 
+type FileFinderGrepMode = "plain" | "regex" | "fuzzy";
+type FileFinderGrepCursor = { readonly __brand: "GrepCursor"; readonly _offset: number };
+type FileFinderGrepMatch = {
+  readonly relativePath: string;
+  readonly fileName: string;
+  readonly gitStatus: string;
+  readonly size: number;
+  readonly modified: number;
+  readonly isBinary: boolean;
+  readonly totalFrecencyScore: number;
+  readonly accessFrecencyScore: number;
+  readonly modificationFrecencyScore: number;
+  readonly lineNumber: number;
+  readonly col: number;
+  readonly byteOffset: number;
+  readonly lineContent: string;
+  readonly matchRanges: Array<[number, number]>;
+  readonly fuzzyScore?: number;
+  readonly contextBefore?: string[];
+  readonly contextAfter?: string[];
+  readonly isDefinition?: boolean;
+};
+type FileFinderGrepResult = {
+  readonly items: FileFinderGrepMatch[];
+  readonly totalMatched: number;
+  readonly totalFilesSearched: number;
+  readonly totalFiles: number;
+  readonly filteredFileCount: number;
+  readonly nextCursor: FileFinderGrepCursor | null;
+  readonly regexFallbackError?: string;
+};
+
 contextBridge.exposeInMainWorld("theEditorFileFinder", {
   search: (input: {
     root: string;
@@ -113,6 +145,36 @@ contextBridge.exposeInMainWorld("theEditorFileFinder", {
       }
     | { ok: false; error: string }
   > => ipcRenderer.invoke("finder:search", input),
+  grep: (input: {
+    root: string;
+    query: string;
+    limit: number;
+    mode?: FileFinderGrepMode;
+    cursor?: FileFinderGrepCursor | null;
+    maxFileSize?: number;
+    maxMatchesPerFile?: number;
+    smartCase?: boolean;
+    timeBudgetMs?: number;
+    beforeContext?: number;
+    afterContext?: number;
+    classifyDefinitions?: boolean;
+  }): Promise<{ ok: true; value: FileFinderGrepResult } | { ok: false; error: string }> =>
+    ipcRenderer.invoke("finder:grep", input),
+  multiGrep: (input: {
+    root: string;
+    patterns: string[];
+    constraints?: string;
+    limit: number;
+    cursor?: FileFinderGrepCursor | null;
+    maxFileSize?: number;
+    maxMatchesPerFile?: number;
+    smartCase?: boolean;
+    timeBudgetMs?: number;
+    beforeContext?: number;
+    afterContext?: number;
+    classifyDefinitions?: boolean;
+  }): Promise<{ ok: true; value: FileFinderGrepResult } | { ok: false; error: string }> =>
+    ipcRenderer.invoke("finder:multi-grep", input),
   track: (input: {
     root: string;
     query: string;

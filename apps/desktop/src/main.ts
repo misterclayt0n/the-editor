@@ -30,6 +30,49 @@ type FffSearchResult = {
   readonly totalFiles: number;
   readonly location?: FffLocation;
 };
+type FffGrepMode = "plain" | "regex" | "fuzzy";
+type FffGrepCursor = { readonly __brand: "GrepCursor"; readonly _offset: number };
+type FffGrepMatch = FffFileItem & {
+  readonly isBinary: boolean;
+  readonly totalFrecencyScore: number;
+  readonly accessFrecencyScore: number;
+  readonly modificationFrecencyScore: number;
+  readonly modified: number;
+  readonly lineNumber: number;
+  readonly col: number;
+  readonly byteOffset: number;
+  readonly lineContent: string;
+  readonly matchRanges: readonly (readonly [number, number])[];
+  readonly fuzzyScore?: number;
+  readonly contextBefore?: readonly string[];
+  readonly contextAfter?: readonly string[];
+  readonly isDefinition?: boolean;
+};
+type FffGrepResult = {
+  readonly items: readonly FffGrepMatch[];
+  readonly totalMatched: number;
+  readonly totalFilesSearched: number;
+  readonly totalFiles: number;
+  readonly filteredFileCount: number;
+  readonly nextCursor: FffGrepCursor | null;
+  readonly regexFallbackError?: string;
+};
+type FffGrepOptions = {
+  readonly maxFileSize?: number;
+  readonly maxMatchesPerFile?: number;
+  readonly smartCase?: boolean;
+  readonly cursor?: FffGrepCursor | null;
+  readonly mode?: FffGrepMode;
+  readonly timeBudgetMs?: number;
+  readonly beforeContext?: number;
+  readonly afterContext?: number;
+  readonly pageSize?: number;
+  readonly classifyDefinitions?: boolean;
+};
+type FffMultiGrepOptions = Omit<FffGrepOptions, "mode"> & {
+  readonly patterns: readonly string[];
+  readonly constraints?: string;
+};
 type FffFileFinder = {
   readonly isDestroyed: boolean;
   destroy(): void;
@@ -41,7 +84,10 @@ type FffFileFinder = {
     pattern: string,
     options?: { readonly pageSize?: number; readonly currentFile?: string },
   ): FffResult<FffSearchResult>;
+  grep(query: string, options?: FffGrepOptions): FffResult<FffGrepResult>;
+  multiGrep(options: FffMultiGrepOptions): FffResult<FffGrepResult>;
   waitForScan(timeoutMs?: number): Promise<FffResult<boolean>>;
+  waitForIndexReady(timeoutMs?: number): Promise<FffResult<boolean>>;
   trackQuery(query: string, selectedFilePath: string): FffResult<boolean>;
 };
 type FffModule = {
@@ -283,6 +329,60 @@ async function getFff(rootInput: string): Promise<FffResult<FffFileFinder>> {
   }
 }
 
+type FinderGrepInput = {
+  readonly root: string;
+  readonly query: string;
+  readonly limit: number;
+  readonly mode?: FffGrepMode;
+  readonly cursor?: FffGrepCursor | null;
+  readonly maxFileSize?: number;
+  readonly maxMatchesPerFile?: number;
+  readonly smartCase?: boolean;
+  readonly timeBudgetMs?: number;
+  readonly beforeContext?: number;
+  readonly afterContext?: number;
+  readonly classifyDefinitions?: boolean;
+};
+
+type FinderMultiGrepInput = Omit<FinderGrepInput, "query" | "mode"> & {
+  readonly patterns: readonly string[];
+  readonly constraints?: string;
+};
+
+function boundedInt(value: number, fallback: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(Math.max(Math.trunc(value), min), max);
+}
+
+function grepOptions(input: FinderGrepInput | FinderMultiGrepInput): FffGrepOptions {
+  return {
+    pageSize: boundedInt(input.limit, 50, 1, 10_000),
+    ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
+    ...(input.maxFileSize !== undefined ? { maxFileSize: boundedInt(input.maxFileSize, 10 * 1024 * 1024, 1, Number.MAX_SAFE_INTEGER) } : {}),
+    ...(input.maxMatchesPerFile !== undefined ? { maxMatchesPerFile: boundedInt(input.maxMatchesPerFile, 200, 0, 100_000) } : {}),
+    ...(input.smartCase !== undefined ? { smartCase: input.smartCase } : {}),
+    ...(input.timeBudgetMs !== undefined ? { timeBudgetMs: boundedInt(input.timeBudgetMs, 0, 0, 60_000) } : {}),
+    ...(input.beforeContext !== undefined ? { beforeContext: boundedInt(input.beforeContext, 0, 0, 1_000) } : {}),
+    ...(input.afterContext !== undefined ? { afterContext: boundedInt(input.afterContext, 0, 0, 1_000) } : {}),
+    ...(input.classifyDefinitions !== undefined ? { classifyDefinitions: input.classifyDefinitions } : {}),
+    ...("mode" in input && input.mode !== undefined ? { mode: input.mode } : {}),
+  };
+}
+
+async function waitForFffContentIndex(finder: FffFileFinder): Promise<FffResult<boolean>> {
+  const ready = await finder.waitForIndexReady(2_000);
+  return ready.ok ? ready : { ok: false, error: ready.error };
+}
+
+function multiGrepOptions(input: FinderMultiGrepInput): FffMultiGrepOptions {
+  const { mode: _mode, ...options } = grepOptions(input);
+  return {
+    ...options,
+    patterns: input.patterns,
+    ...(input.constraints !== undefined ? { constraints: input.constraints } : {}),
+  };
+}
+
 function registerFileFinderHandlers(): void {
   ipcMain.handle(
     "finder:search",
@@ -301,6 +401,28 @@ function registerFileFinderHandlers(): void {
       return query.length === 0
         ? found.value.glob("**/*", options)
         : found.value.fileSearch(query, options);
+    },
+  );
+  ipcMain.handle(
+    "finder:grep",
+    async (_event, input: FinderGrepInput): Promise<FffResult<FffGrepResult>> => {
+      const found = await getFff(input.root);
+      if (!found.ok) return found;
+      const ready = await waitForFffContentIndex(found.value);
+      if (!ready.ok) return ready;
+      return found.value.grep(input.query, grepOptions(input));
+    },
+  );
+  ipcMain.handle(
+    "finder:multi-grep",
+    async (_event, input: FinderMultiGrepInput): Promise<FffResult<FffGrepResult>> => {
+      const found = await getFff(input.root);
+      if (!found.ok) return found;
+      const patterns = input.patterns.filter((pattern) => pattern.length > 0);
+      if (patterns.length === 0) return { ok: false, error: "multiGrep requires at least one non-empty pattern" };
+      const ready = await waitForFffContentIndex(found.value);
+      if (!ready.ok) return ready;
+      return found.value.multiGrep(multiGrepOptions({ ...input, patterns }));
     },
   );
   ipcMain.handle(

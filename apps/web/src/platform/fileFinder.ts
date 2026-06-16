@@ -27,6 +27,56 @@ export type FileFinderSearchResult = {
   readonly location?: FileFinderLocation;
 };
 
+export type FileFinderGrepMode = "plain" | "regex" | "fuzzy";
+export type FileFinderGrepCursor = { readonly __brand: "GrepCursor"; readonly _offset: number };
+
+export type FileFinderGrepMatch = FileFinderItem & {
+  readonly modified: number;
+  readonly isBinary: boolean;
+  readonly totalFrecencyScore: number;
+  readonly accessFrecencyScore: number;
+  readonly modificationFrecencyScore: number;
+  readonly lineNumber: number;
+  readonly col: number;
+  readonly byteOffset: number;
+  readonly lineContent: string;
+  readonly matchRanges: readonly (readonly [number, number])[];
+  readonly fuzzyScore?: number;
+  readonly contextBefore?: readonly string[];
+  readonly contextAfter?: readonly string[];
+  readonly isDefinition?: boolean;
+};
+
+export type FileFinderGrepResult = {
+  readonly items: readonly FileFinderGrepMatch[];
+  readonly totalMatched: number;
+  readonly totalFilesSearched: number;
+  readonly totalFiles: number;
+  readonly filteredFileCount: number;
+  readonly nextCursor: FileFinderGrepCursor | null;
+  readonly regexFallbackError?: string;
+};
+
+export type FileFinderGrepInput = {
+  readonly root: string;
+  readonly query: string;
+  readonly limit: number;
+  readonly mode?: FileFinderGrepMode;
+  readonly cursor?: FileFinderGrepCursor | null;
+  readonly maxFileSize?: number;
+  readonly maxMatchesPerFile?: number;
+  readonly smartCase?: boolean;
+  readonly timeBudgetMs?: number;
+  readonly beforeContext?: number;
+  readonly afterContext?: number;
+  readonly classifyDefinitions?: boolean;
+};
+
+export type FileFinderMultiGrepInput = Omit<FileFinderGrepInput, "query" | "mode"> & {
+  readonly patterns: readonly string[];
+  readonly constraints?: string;
+};
+
 export interface FileFinderPort {
   readonly search: (input: {
     readonly root: string;
@@ -34,6 +84,8 @@ export interface FileFinderPort {
     readonly limit: number;
     readonly currentFile?: string;
   }) => Promise<FileFinderSearchResult>;
+  readonly grep: (input: FileFinderGrepInput) => Promise<FileFinderGrepResult>;
+  readonly multiGrep: (input: FileFinderMultiGrepInput) => Promise<FileFinderGrepResult>;
   readonly track: (input: {
     readonly root: string;
     readonly query: string;
@@ -50,6 +102,8 @@ type Bridge = {
     readonly limit: number;
     readonly currentFile?: string;
   }) => Promise<BridgeResult<FileFinderSearchResult>>;
+  readonly grep: (input: FileFinderGrepInput) => Promise<BridgeResult<FileFinderGrepResult>>;
+  readonly multiGrep: (input: FileFinderMultiGrepInput) => Promise<BridgeResult<FileFinderGrepResult>>;
   readonly track: (input: {
     readonly root: string;
     readonly query: string;
@@ -69,6 +123,16 @@ export function createFileFinderPort(): FileFinderPort | undefined {
   return {
     search: async (input) => {
       const result = await bridge.search(input);
+      if (!result.ok) throw new Error(result.error);
+      return result.value;
+    },
+    grep: async (input) => {
+      const result = await bridge.grep(input);
+      if (!result.ok) throw new Error(result.error);
+      return result.value;
+    },
+    multiGrep: async (input) => {
+      const result = await bridge.multiGrep(input);
       if (!result.ok) throw new Error(result.error);
       return result.value;
     },

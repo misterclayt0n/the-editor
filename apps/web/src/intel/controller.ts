@@ -171,6 +171,19 @@ const wordStart = (text: { sliceString(from: number, to: number): string }, offs
   return start;
 };
 
+/** The word range surrounding an offset, or null off any word. Used as the
+ * "same symbol" region for hovers whose provider returned no range, so the
+ * card survives small cursor jitter the same way a ranged hover does. */
+const wordRangeAt = (
+  text: { length: number; sliceString(from: number, to: number): string },
+  offset: number,
+): { from: number; to: number } | null => {
+  const from = wordStart(text, offset);
+  let to = offset;
+  while (to < text.length && WORD_CHAR.test(text.sliceString(to, to + 1))) to++;
+  return to > from ? { from, to } : null;
+};
+
 const withTimeout = async <T>(
   value: Promise<T> | T | null,
   fallback: T,
@@ -208,6 +221,8 @@ export class IntelController {
   private hoverGeneration = 0;
   /** True while the pointer is inside the hover card (stickiness). */
   private hoverCardHovered = false;
+  /** Caret at the last view notification — a hover only dies on a REAL move. */
+  private lastCaretHead = -1;
   /**
    * Memoized item resolutions (LSP completionItem/resolve). Kicked off when
    * an item becomes SELECTED in the popup so accept has the result in hand —
@@ -316,6 +331,7 @@ export class IntelController {
     this.unsubscribePane = null;
     this.pane = pane;
     if (pane === null) return;
+    this.lastCaretHead = pane.snapshot().selection.primary.head;
 
     this.completionFloat = pane.floats.create();
     this.hoverFloat = pane.floats.create();
@@ -903,7 +919,11 @@ export class IntelController {
     // Caret moves re-query signature help: the server answers null once
     // the caret leaves the call, which closes the widget.
     if (this.signatureSession !== null) this.scheduleSignatureQuery({ kind: "contentChange" });
-    this.dismissHover();
+    // Only a REAL caret move dismisses the hover. The view bus can re-publish
+    // SelectionInvalidated (selection re-mapped through an edit elsewhere)
+    // with the caret unmoved — that must not kill a shown card.
+    if (caret !== this.lastCaretHead) this.dismissHover();
+    this.lastCaretHead = caret;
   }
 
   private isTriggerCharacter(character: string): boolean {
@@ -923,9 +943,10 @@ export class IntelController {
   }
 
   /**
-   * Scrolling hides hover IMMEDIATELY and disarms any pending dwell —
-   * Zed's model: a hover may only re-arm from a real mouse move after the
-   * scroll, never from text sliding under a stationary cursor.
+   * Scrolling disarms a PENDING dwell — its offset goes stale as the text
+   * slides under a stationary cursor. A SHOWN card is glued to its text
+   * offset, so it rides the scroll like Zed's popover instead of being
+   * dismissed; the next real mouse move re-evaluates against its range.
    */
   private onScrolled(): void {
     if (this.hoverTimer !== null) {
@@ -933,7 +954,6 @@ export class IntelController {
       this.hoverTimer = null;
     }
     this.hoverOffset = null;
-    this.dismissHover();
   }
 
   /** IntelView reports pointer enter/leave on the card itself. */
@@ -979,27 +999,45 @@ export class IntelController {
   private onPointerHover(offset: number | null): void {
     this.ptrCalls++;
     if (offset === null) {
+      // Off into empty space. (The renderer FREEZES pointer-hover entirely
+      // while the pointer is over a float, so this never fires for the card
+      // itself — moving onto the card keeps the offset and the card.)
       if (this.hoverTimer !== null) {
         window.clearTimeout(this.hoverTimer);
         this.hoverTimer = null;
       }
-      this.scheduleHoverHide();
       this.hoverOffset = null;
+      this.scheduleHoverHide(); // may be travelling toward the card
       return;
     }
-    // Same position: let any pending dwell timer keep running.
+    // STILL inside the shown card's symbol range: keep the exact same card —
+    // no re-query, no re-armed dwell. This is the core anti-flicker rule
+    // (Zed's same_info_hover reuse). Without it, cursor jitter within a word
+    // re-queries and can momentarily resolve empty at a word edge, blinking
+    // the card out "from nowhere".
+    if (
+      this.hover !== null &&
+      this.hover.range !== null &&
+      offset >= this.hover.range.from &&
+      offset <= this.hover.range.to
+    ) {
+      this.cancelHoverHide();
+      if (this.hoverTimer !== null) {
+        window.clearTimeout(this.hoverTimer);
+        this.hoverTimer = null;
+      }
+      this.hoverOffset = offset;
+      return;
+    }
+    // Same offset as the pending dwell: let it keep running.
     if (offset === this.hoverOffset) return;
     if (this.hoverTimer !== null) {
       window.clearTimeout(this.hoverTimer);
       this.hoverTimer = null;
     }
-    if (this.hover !== null && this.hover.range !== null) {
-      if (offset < this.hover.range.from || offset > this.hover.range.to) {
-        this.scheduleHoverHide();
-      } else {
-        this.cancelHoverHide(); // back on the hovered range: keep the card
-      }
-    }
+    // Moved off a shown card's range — start the grace hide. The pointer may
+    // still be heading for the card; reaching it cancels this.
+    if (this.hover !== null) this.scheduleHoverHide();
     this.hoverOffset = offset;
     this.hoverTimer = window.setTimeout(() => {
       this.hoverTimer = null;
@@ -1035,7 +1073,11 @@ export class IntelController {
     const sorted = [...parts].sort(
       (a, b) => (a.kind === "diagnostic" ? 0 : 1) - (b.kind === "diagnostic" ? 0 : 1),
     );
-    const range = sorted.find((part) => part.range !== undefined)?.range ?? null;
+    // Prefer a provider's range; otherwise fall back to the hovered word, so
+    // the card has a stable "same symbol" region and survives cursor jitter.
+    const range =
+      sorted.find((part) => part.range !== undefined)?.range ??
+      wordRangeAt(snapshot.text, offset);
     this.cancelHoverHide(); // the new card supersedes any pending hide
     this.hover = { parts: sorted, anchor: range?.from ?? offset, range };
     this.hoverFloat?.setAnchor({ offset: this.hover.anchor, placement: "above" });

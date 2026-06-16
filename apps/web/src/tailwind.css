@@ -253,21 +253,26 @@
   text-align: left;
 }
 
-/* File finder: command-palette shell over fff search results. */
-.file-finder-dialog.command-dialog-content[data-slot="dialog-content"] {
-  width: min(640px, calc(100vw - 96px));
-}
-
+/* File finder: command-palette shell over fff search results. It inherits
+ * the palette's dialog width and list sizing — only the meta row and the
+ * two-line file items are file-specific. */
 .file-finder.command-root[data-slot="command"] {
   overflow: hidden;
 }
 
 .file-finder__body {
   display: flex;
-  height: min(480px, calc(100vh - 176px));
-  min-height: 320px;
+  /* Cap the meta row + list at the palette's list height so the two dialogs
+   * reach the exact same size; the list flexes and scrolls within. */
+  max-height: 300px;
   min-width: 0;
   flex-direction: column;
+}
+
+.command-palette .file-finder__list.command-list[data-slot="command-list"] {
+  max-height: none;
+  min-height: 0;
+  flex: 1;
 }
 
 .file-finder__meta {
@@ -278,12 +283,6 @@
   font-size: 11.5px;
   line-height: 28px;
   white-space: nowrap;
-}
-
-.command-palette .file-finder__list.command-list[data-slot="command-list"] {
-  max-height: none;
-  min-height: 0;
-  flex: 1;
 }
 
 .command-palette .file-finder__item.command-item[data-slot="command-item"] {

@@ -170,7 +170,7 @@ export function FileFinder({ open, runtime, onOpenChange }: FileFinderProps) {
       onOpenChange={onOpenChange}
       title="Find File"
       description="Search files in the current workspace"
-      className="file-finder-dialog command-palette-dialog"
+      className="command-palette-dialog"
     >
       <Command
         className="command-palette file-finder"

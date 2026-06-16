@@ -48,8 +48,9 @@ import type {
 } from "./types";
 
 const HOVER_DELAY_MS = 300;
-/** Grace before a shown hover hides — long enough to mouse INTO the card. */
-const HOVER_HIDE_GRACE_MS = 300;
+/** Grace before a shown hover hides — long enough to mouse INTO the card.
+ * 200ms matches Pierre's hover-intent dismiss: snappy but not twitchy. */
+const HOVER_HIDE_GRACE_MS = 200;
 const PROVIDER_TIMEOUT_MS = 1500;
 /**
  * Accept-time resolve budget. Generous: it runs in the background after the
@@ -73,8 +74,13 @@ export type IntelState = {
     readonly selected: number;
     readonly anchor: number;
   };
-  /** Docs for the SELECTED completion item (eager + resolve-updated). */
-  readonly completionDocs: { readonly detail?: string; readonly documentation?: string } | null;
+  /** Docs for the SELECTED completion item (eager + resolve-updated). The
+   * language is the document's file extension, for highlighting the detail. */
+  readonly completionDocs: {
+    readonly detail?: string;
+    readonly documentation?: string;
+    readonly language?: string;
+  } | null;
   readonly hover: { readonly open: boolean; readonly parts: readonly HoverResult[] };
   readonly signature: {
     readonly open: boolean;
@@ -1076,6 +1082,9 @@ export class IntelController {
     const resolved = selectedItem !== undefined ? this.resolvedDocs.get(selectedItem) : undefined;
     const documentation = resolved?.documentation ?? selectedItem?.documentation;
     const detail = resolved?.detail ?? selectedItem?.detail;
+    const basename = this.pane?.fileInfo()?.path?.split("/").pop() ?? "";
+    const dot = basename.lastIndexOf(".");
+    const language = dot > 0 ? basename.slice(dot + 1) : undefined;
     this.state = {
       completion: {
         open: this.session !== null && this.session.scored.length > 0,
@@ -1088,6 +1097,7 @@ export class IntelController {
           ? {
               ...(detail !== undefined ? { detail } : {}),
               ...(documentation !== undefined ? { documentation } : {}),
+              ...(language !== undefined ? { language } : {}),
             }
           : null,
       hover: { open: this.hover !== null, parts: this.hover?.parts ?? [] },

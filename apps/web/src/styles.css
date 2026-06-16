@@ -587,26 +587,31 @@ body {
 .intel-docs {
   width: 340px;
   max-height: 264px;
-  padding: 8px 10px;
+  padding: 10px 12px;
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--bg-editor);
-  box-shadow: 0 10px 32px color-mix(in srgb, var(--bg-editor) 54%, transparent);
+  box-shadow: 0 12px 32px color-mix(in srgb, #000 30%, transparent);
   color: var(--fg);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.5;
   user-select: text;
+  animation: intel-pop-in 100ms ease-out;
 }
 
+/* The selected item's signature — syntax-highlighted mono, like the hover sig. */
 .intel-docs__detail {
-  margin-bottom: 4px;
-  padding-bottom: 4px;
+  margin-bottom: 6px;
+  padding-bottom: 6px;
   border-bottom: 1px solid var(--border);
-  color: var(--fg-dim);
+  color: var(--fg);
   font-family: "SF Mono", Menlo, Monaco, "Cascadia Code", monospace;
+  font-size: 12.5px;
+  line-height: 1.45;
   white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .intel-completion {
@@ -618,8 +623,9 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--bg-editor);
-  box-shadow: 0 10px 32px color-mix(in srgb, var(--bg-editor) 54%, transparent);
+  box-shadow: 0 12px 32px color-mix(in srgb, #000 30%, transparent);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  animation: intel-pop-in 100ms ease-out;
 }
 
 .intel-item {
@@ -701,28 +707,64 @@ body {
 
 .intel-hover--diagnostic {
   border-color: color-mix(in srgb, var(--theme-diagnostic-error) 45%, var(--border));
-  background: color-mix(in srgb, var(--theme-diagnostic-error) 6%, var(--bg-editor));
+  background: color-mix(in srgb, var(--theme-diagnostic-error) 7%, var(--bg-editor));
 }
 
-/* The text range a hover card describes. */
+/* The text range a hover card describes — a tactile, in-palette tint
+ * (currentColor = the range's own text color), Pierre-style. */
 .intel-hover-range {
-  background: var(--theme-editor-document-highlight-read-background);
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  border-radius: 2px;
 }
 
 .intel-hover {
-  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   min-width: 120px;
-  max-width: 520px;
-  padding: 8px 26px 8px 10px;
+  max-width: 400px;
+  padding: 10px 12px;
   user-select: text;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--bg-editor);
-  box-shadow: 0 10px 32px color-mix(in srgb, var(--bg-editor) 54%, transparent);
+  box-shadow: 0 12px 32px color-mix(in srgb, #000 30%, transparent);
   color: var(--fg);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.5;
+  animation: intel-pop-in 100ms ease-out;
+}
+
+/* Shared entrance for every intel popup (hover, completion, docs, signature). */
+@keyframes intel-pop-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .intel-hover,
+  .intel-completion,
+  .intel-docs,
+  .intel-signature {
+    animation-duration: 1ms;
+  }
+}
+
+/* The signature line: syntax-highlighted, monospace. */
+.intel-hover__sig {
+  font-family: "SF Mono", Menlo, Monaco, "Cascadia Code", monospace;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--accent);
 }
 
 .intel-hover__md {
@@ -795,35 +837,6 @@ body {
   background: none;
 }
 
-/* Zed-style copy button, top-right of each card. */
-.intel-hover__copy {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--fg-dim);
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 80ms ease;
-}
-
-.intel-hover:hover .intel-hover__copy {
-  opacity: 1;
-}
-
-.intel-hover__copy:hover {
-  background: var(--border);
-  color: var(--fg);
-}
-
 /* Signature help: the call's label with the active parameter highlighted. */
 .intel-signature {
   min-width: 160px;
@@ -832,10 +845,11 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--bg-editor);
-  box-shadow: 0 10px 32px color-mix(in srgb, var(--bg-editor) 54%, transparent);
+  box-shadow: 0 12px 32px color-mix(in srgb, #000 30%, transparent);
   color: var(--fg);
   font-size: 12px;
   line-height: 1.5;
+  animation: intel-pop-in 100ms ease-out;
 }
 
 .intel-signature__line {

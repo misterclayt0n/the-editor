@@ -4,11 +4,11 @@
  * to text through scrolling, like the caret).
  */
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
-import { highlightSnippet } from "../editor/snippetHighlight";
+import { highlightSnippet, type SnippetSpan } from "../editor/snippetHighlight";
 import type { IntelController } from "./controller";
 import type { SignatureInfo } from "./types";
 
@@ -77,34 +77,59 @@ function Markdown({ contents }: { readonly contents: string }) {
   return <div className="intel-hover__md" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-/** Copies the card's raw markdown, Zed-style. */
-function CopyButton({ contents }: { readonly contents: string }) {
-  const [copied, setCopied] = useState(false);
+/** A code string rendered with the editor's syntax highlighting (the hover
+ * signature and the completion docs detail share this look). */
+function HighlightedCode({
+  code,
+  language,
+  className,
+}: {
+  readonly code: string;
+  readonly language: string | undefined;
+  readonly className?: string;
+}) {
+  const spans = language !== undefined ? highlightSnippet(code, language) : null;
   return (
-    <button
-      type="button"
-      className="intel-hover__copy"
-      title="Copy"
-      onClick={() => {
-        void navigator.clipboard.writeText(contents).then(() => {
-          setCopied(true);
-          window.setTimeout(() => setCopied(false), 1200);
-        });
-      }}
-    >
-      {copied ? (
-        <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
-          <path d="M3 8.5 6.5 12 13 4.5" stroke="currentColor" strokeWidth="1.6" />
-        </svg>
-      ) : (
-        <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
-          <rect x="5" y="5" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
-          <path d="M11 5V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h1" stroke="currentColor" strokeWidth="1.3" />
-        </svg>
-      )}
-    </button>
+    <div className={className}>
+      {spans !== null
+        ? spans.map((span, index) => (
+            <span key={index} style={span.color !== undefined ? { color: span.color } : undefined}>
+              {span.text}
+            </span>
+          ))
+        : code}
+    </div>
   );
 }
+
+/**
+ * A hover card split into a Pierre-style header (the signature) and a body.
+ * LSP hover is conventionally a leading fenced code block (the symbol's
+ * signature) followed by markdown docs — so we lift that fence out, syntax
+ * highlight it as the header, and render the rest as the body.
+ */
+type HoverHead = {
+  readonly sigSpans: SnippetSpan[] | null;
+  readonly sigText: string | null;
+  readonly body: string;
+};
+
+const LEADING_FENCE = /^```([\w+#.-]*)[ \t]*\r?\n([\s\S]*?)\r?\n?```/;
+
+const splitHover = (contents: string): HoverHead => {
+  const trimmed = contents.trim();
+  const match = LEADING_FENCE.exec(trimmed);
+  if (match === null) {
+    return { sigSpans: null, sigText: null, body: trimmed };
+  }
+  const lang = (match[1] ?? "").trim();
+  const code = (match[2] ?? "").replace(/\s+$/, "");
+  return {
+    sigSpans: lang.length > 0 ? highlightSnippet(code, lang) : null,
+    sigText: code,
+    body: trimmed.slice(match[0].length).trim(),
+  };
+};
 
 export function IntelView({ controller }: { readonly controller: IntelController }) {
   const state = useSyncExternalStore(
@@ -169,7 +194,11 @@ export function IntelView({ controller }: { readonly controller: IntelController
             {state.completionDocs !== null && (
               <div className="intel-docs">
                 {state.completionDocs.detail !== undefined && (
-                  <div className="intel-docs__detail">{state.completionDocs.detail}</div>
+                  <HighlightedCode
+                    code={state.completionDocs.detail}
+                    language={state.completionDocs.language}
+                    className="intel-docs__detail"
+                  />
                 )}
                 {state.completionDocs.documentation !== undefined && (
                   <Markdown contents={state.completionDocs.documentation} />
@@ -207,15 +236,31 @@ export function IntelView({ controller }: { readonly controller: IntelController
             onMouseEnter={() => controller.setHoverCardHovered(true)}
             onMouseLeave={() => controller.setHoverCardHovered(false)}
           >
-            {state.hover.parts.map((part, index) => (
-              <div
-                key={index}
-                className={`intel-hover${part.kind === "diagnostic" ? " intel-hover--diagnostic" : ""}`}
-              >
-                <CopyButton contents={part.contents} />
-                <Markdown contents={part.contents} />
-              </div>
-            ))}
+            {state.hover.parts.map((part, index) => {
+              const head = splitHover(part.contents);
+              return (
+                <div
+                  key={index}
+                  className={`intel-hover${part.kind === "diagnostic" ? " intel-hover--diagnostic" : ""}`}
+                >
+                  {head.sigText !== null && (
+                    <span className="intel-hover__sig">
+                      {head.sigSpans !== null
+                        ? head.sigSpans.map((span, spanIndex) => (
+                            <span
+                              key={spanIndex}
+                              style={span.color !== undefined ? { color: span.color } : undefined}
+                            >
+                              {span.text}
+                            </span>
+                          ))
+                        : head.sigText}
+                    </span>
+                  )}
+                  {head.body.length > 0 && <Markdown contents={head.body} />}
+                </div>
+              );
+            })}
           </div>,
           hoverHost,
         )}

@@ -108,6 +108,56 @@ function visualColumn(text: string): number {
   return column;
 }
 
+// Mouse selection helpers --------------------------------------------------
+
+const WORD_CHAR = /[\p{L}\p{N}_$]/u;
+type CharKind = "word" | "space" | "punct";
+const charKind = (ch: string): CharKind =>
+  /\s/.test(ch) ? "space" : WORD_CHAR.test(ch) ? "word" : "punct";
+const kindRank = (kind: CharKind): number => (kind === "word" ? 2 : kind === "punct" ? 1 : 0);
+
+/**
+ * The "word" surrounding an offset for double-click selection — a run of the
+ * same character kind (word/punct), Zed's `surrounding_word`. When the offset
+ * sits between two kinds, the higher-priority side wins (word > punct); never
+ * crosses a line break.
+ */
+function wordRangeAt(text: TextBuffer, offset: number): OffsetRange {
+  const len = text.length;
+  const before = offset > 0 ? text.sliceString(offset - 1, offset) : "";
+  const after = offset < len ? text.sliceString(offset, offset + 1) : "";
+  const beforeKind = before === "" || before === "\n" ? null : charKind(before);
+  const afterKind = after === "" || after === "\n" ? null : charKind(after);
+  let kind: CharKind | null;
+  if (beforeKind !== null && afterKind !== null) {
+    kind = kindRank(beforeKind) >= kindRank(afterKind) ? beforeKind : afterKind;
+  } else {
+    kind = beforeKind ?? afterKind;
+  }
+  if (kind === null) return { from: offset, to: offset };
+  let from = offset;
+  let to = offset;
+  while (from > 0) {
+    const ch = text.sliceString(from - 1, from);
+    if (ch === "\n" || charKind(ch) !== kind) break;
+    from--;
+  }
+  while (to < len) {
+    const ch = text.sliceString(to, to + 1);
+    if (ch === "\n" || charKind(ch) !== kind) break;
+    to++;
+  }
+  return { from, to };
+}
+
+/** The whole line including its trailing break (so triple-click selects the
+ * line and the selection wraps to the next line's start), clamped at EOF. */
+function lineSelectRange(text: TextBuffer, offset: number): OffsetRange {
+  const line = text.lineRangeAt(offset);
+  const to = line.index < text.lineCount - 1 ? text.lineRange(line.index + 1).from : line.to;
+  return { from: line.from, to };
+}
+
 function renderRowContent(el: HTMLDivElement, segments: readonly LayoutInlineSegment[]): void {
   if (segments.length === 1) {
     const only = segments[0]!;
@@ -159,7 +209,12 @@ export class EditorRenderer {
   private readonly unsubscribeFloats: () => void;
   private readonly unsubscribeTheme: () => void;
   private readonly renderPass = () => this.render();
+  /** Active mouse selection: the fixed "anchor unit" and the click mode. The
+   * anchor is a single offset for char mode, or the clicked word/line range
+   * for word/line mode (so drag extends by whole words/lines, Zed-style). */
+  private drag: { mode: "char" | "word" | "line"; anchor: OffsetRange } | null = null;
   private readonly handleMouseDown = (event: MouseEvent) => {
+    if (event.button !== 0) return; // left button only
     if (
       this.vScrollbar.contains(event.target as Node) ||
       this.hScrollbar.contains(event.target as Node)
@@ -168,16 +223,62 @@ export class EditorRenderer {
     // Clicks inside a float (hover card, completion list) belong to the
     // float's own UI — moving the caret would kill text selection in it.
     if ((event.target as HTMLElement).closest?.(".editor-float") !== null) return;
+    // Own the gesture: stop the browser starting a native selection over our
+    // row DOM (we render our own selection from the engine model).
+    event.preventDefault();
     // Put the keyboard in this pane so the workbench knows the editor was
     // activated; preventScroll keeps the viewport from jumping on focus.
     this.root.focus({ preventScroll: true });
+    const offset = this.offsetAt(event.clientX, event.clientY);
+    const text = this.snapshot.text;
+
+    // Shift+click extends the current selection from its existing anchor.
+    if (event.shiftKey) {
+      const anchor = this.snapshot.selection.primary.anchor;
+      this.drag = { mode: "char", anchor: { from: anchor, to: anchor } };
+      this.runtime.setSelection(Selection.single(anchor, offset));
+      this.beginDragTracking();
+      return;
+    }
+
+    // event.detail is the platform click count (1 single, 2 double, …).
+    const clickCount = event.detail;
+    if (clickCount >= 4) {
+      this.drag = null; // quadruple-click selects all; nothing to drag
+      this.runtime.setSelection(Selection.single(0, text.length));
+      return;
+    }
+    if (clickCount === 3) {
+      const line = lineSelectRange(text, offset);
+      this.drag = { mode: "line", anchor: line };
+      this.runtime.setSelection(Selection.single(line.from, line.to));
+    } else if (clickCount === 2) {
+      const word = wordRangeAt(text, offset);
+      this.drag = { mode: "word", anchor: word };
+      this.runtime.setSelection(Selection.single(word.from, word.to));
+    } else {
+      this.drag = { mode: "char", anchor: { from: offset, to: offset } };
+      this.runtime.setSelection(Selection.point(offset));
+    }
+    this.beginDragTracking();
+  };
+
+  private beginDragTracking(): void {
+    // Window-level so the drag keeps extending and releases even when the
+    // pointer leaves the viewport. Same ref → addEventListener de-dupes.
+    window.addEventListener("mousemove", this.handleDragMove);
+    window.addEventListener("mouseup", this.handleDragEnd);
+  }
+
+  /** Pixel → document offset, clamped to a valid position ("nearest" bias). */
+  private offsetAt(clientX: number, clientY: number): number {
     const rect = this.viewport.getBoundingClientRect();
     // Vertical geometry goes through the model (widget-aware); the column
     // resolver gets a synthetic widget-less y for the resolved line.
-    const line = this.geometry.lineAt(event.clientY - rect.top + this.scrollY);
+    const line = this.geometry.lineAt(clientY - rect.top + this.scrollY);
     const hit = hitTestTextPosition({
       text: this.snapshot.text,
-      x: event.clientX - rect.left + this.scrollX,
+      x: clientX - rect.left + this.scrollX,
       y: PADDING_TOP + line * LINE_HEIGHT + 1,
       lineHeight: LINE_HEIGHT,
       charWidth: this.charWidth,
@@ -187,12 +288,94 @@ export class EditorRenderer {
       bias: "nearest",
       virtualText: this.lineVirtuals(line),
     });
-    this.runtime.setSelection(Selection.point(hit.offset));
+    return hit.offset;
+  }
+
+  private readonly handleDragMove = (event: MouseEvent) => {
+    if (this.drag === null) return;
+    this.lastDragClientX = event.clientX;
+    this.lastDragClientY = event.clientY;
+    this.updateDragSelection(event.clientX, event.clientY);
+    this.updateAutoscroll(event.clientY);
+  };
+
+  private readonly handleDragEnd = () => {
+    this.drag = null;
+    this.autoscrollVel = 0;
+    if (this.autoscrollRaf !== 0) {
+      cancelAnimationFrame(this.autoscrollRaf);
+      this.autoscrollRaf = 0;
+    }
+    window.removeEventListener("mousemove", this.handleDragMove);
+    window.removeEventListener("mouseup", this.handleDragEnd);
+  };
+
+  /** Extend the live selection to the pointer. The pointer is clamped into the
+   * viewport so dragging past an edge resolves the edge line (autoscroll then
+   * advances it), instead of jumping straight to the document end. */
+  private updateDragSelection(clientX: number, clientY: number): void {
+    if (this.drag === null) return;
+    const rect = this.viewport.getBoundingClientRect();
+    const x = Math.max(rect.left, Math.min(rect.right - 1, clientX));
+    const y = Math.max(rect.top, Math.min(rect.bottom - 1, clientY));
+    const offset = this.offsetAt(x, y);
+    const { mode, anchor } = this.drag;
+    if (mode === "char") {
+      this.runtime.setSelection(Selection.single(anchor.from, offset));
+      return;
+    }
+    // Word/line: extend by whole units. The fixed end is the anchor unit; the
+    // head snaps to the unit boundary on the side the pointer is dragging to.
+    const unit = mode === "word" ? wordRangeAt(this.snapshot.text, offset) : lineSelectRange(this.snapshot.text, offset);
+    if (unit.from < anchor.from) {
+      this.runtime.setSelection(Selection.single(anchor.to, unit.from)); // reversed
+    } else {
+      this.runtime.setSelection(Selection.single(anchor.from, unit.to));
+    }
+  }
+
+  private autoscrollRaf = 0;
+  private autoscrollVel = 0;
+  private lastDragClientX = 0;
+  private lastDragClientY = 0;
+  /** Scroll speed (px/frame) for a pointer `dist` px past the autoscroll
+   * margin — a gentle ramp, capped so it never outruns the eye. */
+  private static autoscrollSpeed(dist: number): number {
+    return Math.min(LINE_HEIGHT * 2, 2 + dist * 0.4);
+  }
+
+  private updateAutoscroll(clientY: number): void {
+    const rect = this.viewport.getBoundingClientRect();
+    const margin = Math.min(LINE_HEIGHT, rect.height / 3);
+    let vel = 0;
+    if (clientY < rect.top + margin) {
+      vel = -EditorRenderer.autoscrollSpeed(rect.top + margin - clientY);
+    } else if (clientY > rect.bottom - margin) {
+      vel = EditorRenderer.autoscrollSpeed(clientY - (rect.bottom - margin));
+    }
+    this.autoscrollVel = vel;
+    if (vel !== 0 && this.autoscrollRaf === 0) {
+      this.autoscrollRaf = requestAnimationFrame(this.autoscrollTick);
+    }
+  }
+
+  private readonly autoscrollTick = () => {
+    this.autoscrollRaf = 0;
+    if (this.drag === null || this.autoscrollVel === 0) return;
+    const before = this.scrollY;
+    this.setScroll(this.scrollY + this.autoscrollVel);
+    // Re-extend at the (held) pointer; the newly revealed edge line is now
+    // under the clamped pointer, so the selection grows as we scroll.
+    this.updateDragSelection(this.lastDragClientX, this.lastDragClientY);
+    if (this.scrollY !== before) this.autoscrollRaf = requestAnimationFrame(this.autoscrollTick);
   };
   private hoverRaf = 0;
   private lastPointerClient: { x: number; y: number } | null = null;
   private readonly handleMouseMove = (event: MouseEvent) => {
     if (this.runtime.pointerHover === undefined) return;
+    // Dragging a selection — the window-level handler owns the pointer; don't
+    // also arm hover.
+    if (this.drag !== null) return;
     // Chromium re-synthesizes mousemove at the SAME client position when
     // the DOM changes under a stationary cursor (scrolling rebuilds rows).
     // Those are not user movement: consecutive identical coordinates never
@@ -462,6 +645,7 @@ export class EditorRenderer {
     this.unsubscribeTheme();
     this.unsubscribeFloats();
     if (this.hoverRaf !== 0) cancelAnimationFrame(this.hoverRaf);
+    this.handleDragEnd(); // drop any in-flight selection drag + window listeners
     this.viewport.removeEventListener("mousemove", this.handleMouseMove);
     this.viewport.removeEventListener("mouseleave", this.handleMouseLeave);
     this.viewport.removeEventListener("scroll", this.handleNativeScrollLeak);

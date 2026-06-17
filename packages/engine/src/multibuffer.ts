@@ -167,8 +167,6 @@ const checkExcerptSpans = (excerpt: Excerpt, bufferLength: number): void => {
     excerpt.primaryRange.end > excerpt.sourceRange.end
   )
     throw new RangeError(`primary range must be inside source range for excerpt ${excerpt.id}`);
-  if (excerpt.sourceRange.start === excerpt.sourceRange.end)
-    throw new RangeError(`empty source range for excerpt ${excerpt.id}`);
 };
 
 /**
@@ -282,13 +280,20 @@ export class MultiBufferSnapshot {
     let multibufferStart = 0;
     const entries: ExcerptEntry[] = [];
     const byDocument = new Map<DocumentId, SourceIndexEntry[]>();
+    const hasLaterText: boolean[] = new Array(sized.length);
+    let laterText = false;
+    for (let i = sized.length - 1; i >= 0; i--) {
+      hasLaterText[i] = laterText;
+      if (sized[i]!.textLength > 0) laterText = true;
+    }
     for (let i = 0; i < sized.length; i++) {
       const { excerpt, buffer, textLength, textLineBreaks } = sized[i]!;
       checkExcerptSpans(excerpt, buffer.length);
-      // Every excerpt but the last is followed by a synthetic "\n" so each
-      // excerpt always begins on its own row, regardless of whether its
-      // source slice ends in a newline. The separator belongs to no document.
-      const hasTrailingNewline = i < sized.length - 1;
+      // Non-empty excerpts get a synthetic "\n" before the next non-empty
+      // excerpt so every visible source slice starts on its own row. Empty
+      // excerpts are block-widget-only headers (folded files) and must not
+      // allocate a blank text row.
+      const hasTrailingNewline = textLength > 0 && hasLaterText[i]!;
       const summary: MultiBufferSummary = hasTrailingNewline
         ? { length: textLength + 1, lineBreaks: textLineBreaks + 1 }
         : { length: textLength, lineBreaks: textLineBreaks };
@@ -522,8 +527,9 @@ export class MultiBufferSnapshot {
       }
       if (change.length !== entry.buffer.length)
         throw new RangeError(`change length mismatch for document ${entry.documentId}`);
+      const wasEmpty = entry.sourceRange.start === entry.sourceRange.end;
       const sourceRange = change.mapRange(entry.sourceRange, rangeMapOptions);
-      if (sourceRange.start === sourceRange.end) continue;
+      if (sourceRange.start === sourceRange.end && !wasEmpty) continue;
       const primaryRange = change.mapRange(entry.primaryRange, rangeMapOptions);
       const buffer = documents.get(entry.documentId);
       if (buffer === undefined) throw new RangeError(`unknown document ${entry.documentId}`);

@@ -585,7 +585,7 @@ export class MultiBufferPane implements PaneHost {
     return line > this.snapshotData.offsetToLine(header.startOffset) ? header : null;
   }
 
-  /** Derive the active excerpts: folded files collapse to a single row. */
+  /** Derive the active excerpts: folded files keep only a block-widget header. */
   private applyFold(): Excerpt[] {
     if (this.foldedDocs.size === 0) return this.baseExcerpts;
     const out: Excerpt[] = [];
@@ -596,16 +596,11 @@ export class MultiBufferPane implements PaneHost {
         i++;
         continue;
       }
-      const buffer = this.documents.get(excerpt.documentId);
-      const firstLine = buffer?.lineRangeAt(excerpt.sourceRange.start);
-      const end = firstLine
-        ? Math.max(firstLine.to, Math.min(excerpt.sourceRange.end, firstLine.from + 1))
-        : excerpt.sourceRange.end;
       out.push({
         id: excerpt.id,
         documentId: excerpt.documentId,
-        sourceRange: { start: excerpt.sourceRange.start, end },
-        primaryRange: { start: excerpt.sourceRange.start, end },
+        sourceRange: { start: excerpt.sourceRange.start, end: excerpt.sourceRange.start },
+        primaryRange: { start: excerpt.sourceRange.start, end: excerpt.sourceRange.start },
       });
       let j = i + 1;
       while (j < this.baseExcerpts.length && this.baseExcerpts[j]!.documentId === excerpt.documentId)

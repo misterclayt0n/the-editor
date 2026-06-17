@@ -1,11 +1,10 @@
 /**
  * Chrome painted into an excerpt's reserved block rows. A file's first excerpt
- * gets the full header card (fold chevron + name + path + expand/Open File);
- * subsequent excerpts of the same file get a thin divider with expand chevrons.
- * React portals this into the renderer-owned, correctly-sized container.
+ * gets the full header card (fold chevron + name + path + Open File);
+ * subsequent excerpts of the same file get a thin divider.
  */
 
-import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 
 import { FileIcon } from "../workbench/fileIcons";
 import type { ExcerptMeta } from "./builder";
@@ -13,36 +12,11 @@ import type { ExcerptMeta } from "./builder";
 export type HeaderActions = {
   readonly onOpen: () => void;
   readonly onFold: () => void;
-  readonly onExpandUp: () => void;
-  readonly onExpandDown: () => void;
 };
 
-function ExpandChevrons({ meta, onExpandUp, onExpandDown }: { meta: ExcerptMeta } & Pick<HeaderActions, "onExpandUp" | "onExpandDown">) {
-  if (meta.folded) return null;
-  return (
-    <>
-      {meta.canExpandUp && (
-        <button type="button" className="mb-expand" title="Show more above" onClick={onExpandUp}>
-          <ChevronUpIcon aria-hidden="true" />
-        </button>
-      )}
-      {meta.canExpandDown && (
-        <button type="button" className="mb-expand" title="Show more below" onClick={onExpandDown}>
-          <ChevronDownIcon aria-hidden="true" />
-        </button>
-      )}
-    </>
-  );
-}
 
-export function HeaderCard({ meta, onOpen, onFold, onExpandUp, onExpandDown }: { meta: ExcerptMeta } & HeaderActions) {
-  if (!meta.isFirstOfFile) {
-    return (
-      <div className="mb-divider">
-        <ExpandChevrons meta={meta} onExpandUp={onExpandUp} onExpandDown={onExpandDown} />
-      </div>
-    );
-  }
+export function HeaderCard({ meta, onOpen, onFold }: { meta: ExcerptMeta } & HeaderActions) {
+  if (!meta.isFirstOfFile) return <div className="mb-divider" />;
   return (
     <div className="mb-header" data-diffs-header="default">
       <div className="mb-header-content" data-header-content="">
@@ -74,7 +48,6 @@ export function HeaderCard({ meta, onOpen, onFold, onExpandUp, onExpandDown }: {
             {meta.fileMatchCount} {meta.fileMatchCount === 1 ? "match" : "matches"}
           </span>
         ) : null}
-        <ExpandChevrons meta={meta} onExpandUp={onExpandUp} onExpandDown={onExpandDown} />
         <button type="button" className="mb-header-open" onClick={onOpen}>
           Open File
         </button>

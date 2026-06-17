@@ -223,6 +223,10 @@ export class EditorRenderer {
     // Clicks inside a float (hover card, completion list) belong to the
     // float's own UI — moving the caret would kill text selection in it.
     if ((event.target as HTMLElement).closest?.(".editor-float") !== null) return;
+    // Block widgets own their own controls. A header chevron lives inside the
+    // gutter x-range, but it must fold the multibuffer entry, not trigger the
+    // gutter's "open source line" action or move the caret.
+    if ((event.target as HTMLElement).closest?.(".editor-widget") !== null) return;
     // Own the gesture: stop the browser starting a native selection over our
     // row DOM (we render our own selection from the engine model).
     event.preventDefault();
@@ -518,6 +522,7 @@ export class EditorRenderer {
   private hDragOffset: number | null = null;
   private lastTransform = "";
   private lastBandTransform = "";
+  private lastViewportVars = "";
   private lastVThumbCss = "";
   private lastHThumbCss = "";
   private anchor: { offset: number; topPx: number } | null = null;
@@ -557,7 +562,7 @@ export class EditorRenderer {
     this.selectionLayer.className = "editor-layer";
     this.rowLayer = document.createElement("div");
     this.rowLayer.className = "editor-rows";
-    this.rowLayer.style.paddingLeft = `${this.textOriginX}px`;
+    this.root.style.setProperty("--editor-text-origin-x", `${this.textOriginX}px`);
     this.decoFgLayer = document.createElement("div");
     this.decoFgLayer.className = "editor-layer editor-layer-fg";
     this.caretEl = document.createElement("div");
@@ -858,7 +863,7 @@ export class EditorRenderer {
         return resolved;
       });
     this.textOriginX = x + PADDING_LEFT;
-    this.rowLayer.style.paddingLeft = `${this.textOriginX}px`;
+    this.root.style.setProperty("--editor-text-origin-x", `${this.textOriginX}px`);
     // Rebuild band columns.
     const columns = this.bands.map((band) => {
       const el = document.createElement("div");
@@ -950,6 +955,7 @@ export class EditorRenderer {
     }
     this.scrollY = Math.max(0, Math.min(this.maxScrollY(), this.scrollY));
     this.scrollX = Math.max(0, Math.min(this.maxScrollX(), this.scrollX));
+    this.syncViewportCssVars();
 
     const scrollY = this.scrollY;
     const visStart = this.geometry.lineAt(scrollY);
@@ -1041,6 +1047,7 @@ export class EditorRenderer {
       );
       this.maxRowChars = docDirty ? windowCols : Math.max(this.maxRowChars, windowCols);
       this.scrollX = Math.max(0, Math.min(this.maxScrollX(), this.scrollX));
+      this.syncViewportCssVars();
       this.windowStart = start;
       this.windowEnd = end;
       this.renderBands(layout);
@@ -1223,12 +1230,21 @@ export class EditorRenderer {
     };
   }
 
+  private syncViewportCssVars(): void {
+    const key = `${this.scrollX}:${this.viewportWidth}`;
+    if (key === this.lastViewportVars) return;
+    this.lastViewportVars = key;
+    this.root.style.setProperty("--editor-scroll-x", `${this.scrollX}px`);
+    this.root.style.setProperty("--editor-viewport-width", `${this.viewportWidth}px`);
+  }
+
   private buildRowEl(segments: readonly LayoutInlineSegment[]): HTMLDivElement {
     const el = document.createElement("div");
     el.className = "editor-row";
     renderRowContent(el, segments);
     return el;
   }
+
 
   /** Gutter band cells for the current window (cheap full rebuild). */
   private renderBands(layout: ViewportLayoutSnapshot<unknown>): void {

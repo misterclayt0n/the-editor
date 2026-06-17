@@ -74,7 +74,7 @@ export function multiBufferVisuals(
     id: headerId(m.excerpt.id),
     atOffset: m.startOffset,
     // afterLine -1 => leading block before the first line (see layoutViewport).
-    afterLine: snapshot.offsetToLine(m.startOffset) - 1,
+    afterLine: m.headerAfterLine,
     heightRows: m.isFirstOfFile ? FILE_HEADER_ROWS : EXCERPT_DIVIDER_ROWS,
     owner: MB_OWNER,
   }));

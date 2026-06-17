@@ -58,8 +58,6 @@ export function MultiBufferView({ runtime, pane }: { runtime: AppRuntime; pane: 
   const actionsFor = (meta: ExcerptMeta): HeaderActions => ({
     onOpen: () => pane.openExcerpt(meta),
     onFold: () => pane.toggleFold(meta.excerpt.documentId),
-    onExpandUp: () => pane.expandExcerpt(meta.excerpt.id, "up"),
-    onExpandDown: () => pane.expandExcerpt(meta.excerpt.id, "down"),
   });
 
   const metaByHeader = useMemo(() => {

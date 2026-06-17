@@ -32,6 +32,8 @@ export type ExcerptMeta = {
   readonly excerpt: Excerpt;
   /** Unified offset of the excerpt's first character. */
   readonly startOffset: number;
+  /** Editor line after which the header block is inserted. */
+  readonly headerAfterLine: number;
   readonly path: string;
   readonly fileName: string;
   /** Parent directory (display), without the file name. */
@@ -98,6 +100,12 @@ type Window = { startLine: number; endLine: number; matches: Span[] };
 /** Derive per-excerpt metadata for the snapshot's CURRENT (active) excerpts. */
 export function metasFor(snapshot: MultiBufferSnapshot, context: MetaContext): ExcerptMeta[] {
   const excerpts = snapshot.excerpts();
+  const headerAfterLine = (excerpt: Excerpt, startOffset: number): number => {
+    if (startOffset === 0) return -1;
+    if (excerpt.sourceRange.start === excerpt.sourceRange.end)
+      return snapshot.offsetToLine(startOffset - 1);
+    return snapshot.offsetToLine(startOffset) - 1;
+  };
   const boundaries = snapshot.excerptBoundariesBetween(0, snapshot.length);
   return excerpts.map((excerpt, i): ExcerptMeta => {
     const path = context.pathByDoc.get(excerpt.documentId) ?? excerpt.documentId;
@@ -108,9 +116,11 @@ export function metasFor(snapshot: MultiBufferSnapshot, context: MetaContext): E
       : (context.matchesByExcerptId.get(excerpt.id) ?? [])
           .map((m) => clampSpan(m, excerpt.sourceRange.start, excerpt.sourceRange.end))
           .filter((m) => m.end > m.start);
+    const startOffset = boundaries[i]!.offset;
     return {
       excerpt,
-      startOffset: boundaries[i]!.offset,
+      startOffset,
+      headerAfterLine: headerAfterLine(excerpt, startOffset),
       path,
       fileName: baseName(path),
       dir: dirName(path),

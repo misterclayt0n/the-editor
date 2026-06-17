@@ -184,9 +184,10 @@ body {
   background: var(--theme-scrollbar-thumb-hover-background);
 }
 
-/* Text indent (gutter bands + padding) is set inline on .editor-rows. */
+/* Text rows carry the gutter/text inset; block widgets stay full-width chrome. */
 .editor-row {
   height: 20px;
+  padding-left: var(--editor-text-origin-x, 12px);
   line-height: 20px;
   white-space: pre;
   tab-size: 4;
@@ -205,24 +206,28 @@ body {
   background: color-mix(in srgb, var(--theme-text) 4%, transparent);
 }
 
-/* x-pinned gutter host; columns are positioned, background lives on them. */
+/* x-pinned gutter host. Text-row cells paint their own background; block-row
+ * spacers are transparent so full-width widgets (multibuffer headers) are not
+ * masked by the gutter columns. */
 .editor-bands {
   position: absolute;
   top: 0;
   left: 0;
   z-index: 2;
+  pointer-events: none;
 }
 
 .editor-band {
   position: absolute;
   top: 0;
-  background: var(--bg-editor);
+  background: transparent;
 }
 
 .editor-band-cell {
   height: 20px;
   line-height: 20px;
   padding: 0 8px;
+  background: var(--bg-editor);
   text-align: right;
   color: var(--fg-dim);
   user-select: none;
@@ -1050,12 +1055,26 @@ body {
   inset: 0;
 }
 
-/* Header/divider rows are chrome, not code, so they drop the code-row tint. */
+/* Header/divider rows are chrome, not code. They visually pin to the viewport
+ * while text scrolls horizontally, matching the sticky header's full-width
+ * behavior. */
 .multibuffer .editor-widget {
+  width: var(--editor-viewport-width, 100%);
   background: transparent;
+  transform: translateX(var(--editor-scroll-x, 0px));
 }
 
-/* The pinned header shown while scrolled into a file's body. */
+.multibuffer .editor-widget > .mb-header {
+  width: calc(var(--editor-viewport-width, 100%) - 16px);
+}
+
+.multibuffer .editor-widget > .mb-divider {
+  width: var(--editor-viewport-width, 100%);
+}
+
+/* The pinned header shown while scrolled into a file's body. It owns an opaque
+ * strip, not just the card itself, so scrolled code can never peek through the
+ * small top/bottom breathing room around the fixed card. */
 .mb-sticky {
   position: absolute;
   top: 0;
@@ -1063,6 +1082,8 @@ body {
   right: 0;
   height: 40px;
   z-index: 5;
+  overflow: hidden;
+  background: var(--bg-editor);
   box-shadow: 0 2px 8px color-mix(in srgb, var(--theme-background) 50%, transparent);
 }
 
@@ -1186,36 +1207,6 @@ body {
   font-size: 11.5px;
 }
 
-.mb-expand {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--fg-dim);
-  cursor: pointer;
-  transition: background-color 80ms ease, border-color 80ms ease, color 80ms ease, transform 120ms ease-out;
-}
-
-.mb-expand svg {
-  width: 14px;
-  height: 14px;
-  stroke-width: 2.1;
-}
-
-.mb-expand:hover {
-  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  color: var(--fg);
-}
-
-.mb-expand:active {
-  transform: scale(0.97);
-}
 
 .mb-header-open {
   flex: none;
@@ -1269,10 +1260,6 @@ body {
   );
 }
 
-.mb-divider .mb-expand {
-  position: relative;
-  background: var(--bg-editor);
-}
 
 /* The search match inside an excerpt (background decoration layer). */
 .mb-match {

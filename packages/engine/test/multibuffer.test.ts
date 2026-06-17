@@ -70,6 +70,46 @@ describe("MultiBufferSnapshot", () => {
     ]);
   });
 
+  test("empty excerpts reserve no text row or synthetic separator", () => {
+    const a = doc("alpha");
+    const b = doc("one\ntwo");
+    const snapshot = MultiBufferSnapshot.fromExcerpts(
+      new Map([
+        ["a", a],
+        ["b", b],
+      ]),
+      [
+        { id: "a-empty", documentId: "a", sourceRange: span(0, 0), primaryRange: span(0, 0) },
+        { id: "b1", documentId: "b", sourceRange: span(0, 3), primaryRange: span(0, 3) },
+      ],
+    );
+
+    expect(snapshot.excerptCount).toBe(2);
+    expect(snapshot.textBetween(0, snapshot.length)).toBe("one");
+    expect(snapshot.lineCount).toBe(1);
+    expect(snapshot.excerptBoundariesBetween(0, snapshot.length).map((b) => b.offset)).toEqual([0, 0]);
+    expect(snapshot.sourceToOffset("b", 0)).toBe(0);
+  });
+
+  test("empty trailing excerpts do not force a blank final row", () => {
+    const a = doc("alpha");
+    const b = doc("one");
+    const snapshot = MultiBufferSnapshot.fromExcerpts(
+      new Map([
+        ["a", a],
+        ["b", b],
+      ]),
+      [
+        { id: "a1", documentId: "a", sourceRange: span(0, 5), primaryRange: span(0, 5) },
+        { id: "b-empty", documentId: "b", sourceRange: span(0, 0), primaryRange: span(0, 0) },
+      ],
+    );
+
+    expect(snapshot.textBetween(0, snapshot.length)).toBe("alpha");
+    expect(snapshot.lineCount).toBe(1);
+    expect(snapshot.excerptBoundariesBetween(0, snapshot.length).map((b) => b.offset)).toEqual([0, 5]);
+  });
+
   test("iterates visible chunks without concatenating whole excerpts", () => {
     const buffer = doc("0123456789\nabcdefghij\n");
     const snapshot = MultiBufferSnapshot.fromExcerpts(new Map([["doc", buffer]]), [

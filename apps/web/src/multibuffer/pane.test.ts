@@ -147,12 +147,14 @@ describe("MultiBufferPane", () => {
     expect(pane.snapshot().selection.primary.head).toBe(0);
   });
 
-  test("folding a file collapses it; unfolding restores it", () => {
+  test("folding a file collapses it to its header only; unfolding restores it", () => {
     const { pane } = makePane();
     const full = pane.snapshot().text.lineCount;
     pane.toggleFold("doc:a");
-    expect(pane.snapshot().text.lineCount).toBeLessThan(full);
-    expect(pane.metas.find((m) => m.excerpt.documentId === "doc:a")?.folded).toBe(true);
+    const folded = pane.metas.find((m) => m.excerpt.documentId === "doc:a")!;
+    expect(folded.folded).toBe(true);
+    expect(folded.excerpt.sourceRange.start).toBe(folded.excerpt.sourceRange.end);
+    expect(pane.snapshot().text.sliceString(0, pane.snapshot().text.length)).not.toContain("beta");
     pane.toggleFold("doc:a");
     expect(pane.snapshot().text.lineCount).toBe(full);
   });

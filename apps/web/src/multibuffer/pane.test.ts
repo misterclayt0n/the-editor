@@ -7,7 +7,14 @@ import {
   type ChangeDesc,
   type TextEdit,
 } from "@the-editor/engine";
-import { DocumentInvalidated, payloadsOf, type DocumentChangeRange } from "@the-editor/editor";
+import {
+  DocumentInvalidated,
+  hasInvalidation,
+  payloadsOf,
+  SelectionInvalidated,
+  type DocumentChangeRange,
+  type ResolvedGutterBand,
+} from "@the-editor/editor";
 import type { KeyboardEventLike } from "@the-editor/keymaps";
 import type { PanelId } from "@the-editor/workbench";
 import { buildMultiBuffer } from "./builder";
@@ -17,7 +24,7 @@ const key = (key: string): KeyboardEventLike =>
   ({ key, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false }) as KeyboardEventLike;
 
 /** A host whose commits apply edits to in-memory buffers (mirrors the runtime). */
-function makeHost(buffers: Map<string, TextBuffer>) {
+function makeHost(buffers: Map<string, TextBuffer>, gutterBands: readonly ResolvedGutterBand[] = []) {
   const versions = new Map<string, number>();
   const subscribers = new Map<string, Set<() => void>>();
   const notify = (docId: string) => subscribers.get(docId)?.forEach((listener) => listener());
@@ -51,7 +58,7 @@ function makeHost(buffers: Map<string, TextBuffer>) {
       virtualTextBetween: () => [],
       widgets: () => [],
       totalWidgetRows: 0,
-      gutterBands: [],
+      gutterBands,
     }),
     subscribeDocument: (docId, listener) => {
       if (!subscribers.has(docId)) subscribers.set(docId, new Set());
@@ -63,7 +70,7 @@ function makeHost(buffers: Map<string, TextBuffer>) {
   };
   return { host, notify };
 }
-const makePane = () => {
+const makePane = (gutterBands: readonly ResolvedGutterBand[] = []) => {
   const a = TextBuffer.fromString("alpha\nbeta\ngamma\ndelta\nepsilon\n");
   const b = TextBuffer.fromString("one\ntwo\nthree\nfour\n");
   const buffers = new Map([
@@ -77,7 +84,7 @@ const makePane = () => {
     ],
     { contextLines: 1 },
   );
-  const { host, notify } = makeHost(buffers);
+  const { host, notify } = makeHost(buffers, gutterBands);
   const pane = new MultiBufferPane("panel:test" as unknown as PanelId, "test", build, host);
   return { pane, buffers, build, host, notify };
 };
@@ -139,6 +146,36 @@ describe("MultiBufferPane", () => {
     expect(pane.snapshot().text.sliceString(changes[0]!.fromB, changes[0]!.toB)).toBe("X");
   });
 
+  test("editing reveals the caret: its selection change rides the view bus", () => {
+    const { pane } = makePane();
+    pane.setSelection(Selection.point(0));
+    let viewSelections = 0;
+    pane.subscribe((notification, source) => {
+      if (source === "view" && hasInvalidation(notification, SelectionInvalidated)) viewSelections++;
+    });
+    // A user edit in THIS view must emit a view-bus selection change — that is
+    // what makes the renderer scroll the caret into view. Regression: a
+    // document-bus-only selection left the caret off-screen (under the gutter)
+    // after typing while horizontally scrolled.
+    pane.keyInterceptor(key("X"));
+    expect(viewSelections).toBe(1);
+  });
+
+  test("external source edits stay off the view bus (no caret yank)", async () => {
+    const { pane, buffers, notify } = makePane();
+    await attachViewport(pane);
+    pane.setSelection(Selection.point(0));
+    let viewSelections = 0;
+    pane.subscribe((notification, source) => {
+      if (source === "view" && hasInvalidation(notification, SelectionInvalidated)) viewSelections++;
+    });
+    // An edit from ANOTHER view only drifts the caret through remapping; the
+    // viewport must not chase it.
+    buffers.set("doc:a", TextBuffer.fromString("alpha\nXXbeta\ngamma\ndelta\nepsilon\n"));
+    notify("doc:a");
+    expect(viewSelections).toBe(0);
+  });
+
   test("Backspace deletes through editPlan; caret follows", () => {
     const { pane, buffers } = makePane();
     pane.setSelection(Selection.point(1)); // after the first char of the excerpt
@@ -186,5 +223,35 @@ describe("MultiBufferPane", () => {
     expect(decorations.some((d) => d.layer === "underline" && d.className === "diag")).toBe(true);
     // Match-highlight backgrounds still come through too.
     expect(decorations.some((d) => d.className === "mb-match")).toBe(true);
+  });
+
+  test("source gutter bands (VCS) are mapped into the unified gutter", async () => {
+    // A per-document VCS-style band that marks source line index 2 as "added".
+    const vcsBand: ResolvedGutterBand = {
+      id: "vcs-diff",
+      side: "left",
+      widthCh: 0,
+      widthPx: 3,
+      priority: 1,
+      owner: "vcs",
+      cell: (sourceLine) => (sourceLine === 2 ? { text: "", className: "vcs-gutter-added" } : null),
+    };
+    const { pane } = makePane([vcsBand]);
+    await attachViewport(pane);
+    const bands = pane.visualsSnapshot().gutterBands;
+
+    // Line numbers use the shared band id (one factory with the editor view),
+    // and the consumed VCS band rides alongside at its source width.
+    expect(bands.some((b) => b.id === "line-numbers")).toBe(true);
+    const vcs = bands.find((b) => b.id === "vcs-diff");
+    expect(vcs?.widthPx).toBe(3);
+
+    // The unified cell maps each row back to its SOURCE line: doc:a line index 2
+    // ("gamma") sits in the excerpt, so some unified row carries the mark.
+    let added = false;
+    for (let line = 0; line < pane.snapshot().text.lineCount; line++) {
+      if (vcs?.cell?.(line)?.className === "vcs-gutter-added") added = true;
+    }
+    expect(added).toBe(true);
   });
 });

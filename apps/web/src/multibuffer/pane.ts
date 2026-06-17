@@ -382,7 +382,7 @@ export class MultiBufferPane implements PaneHost {
       caret === undefined
         ? this.clampSelection(this.selection)
         : Selection.single(caret, caret);
-    this.notifyDocument();
+    this.notifyDocument([], { reveal: true });
   }
 
   /** Release viewport intel subscriptions (the runtime then frees the docs). */
@@ -429,7 +429,7 @@ export class MultiBufferPane implements PaneHost {
       changeRanges.push({ fromA: edit.from, toA: edit.to, fromB, toB: fromB + edit.insert.length });
       shift += edit.insert.length - (edit.to - edit.from);
     }
-    this.notifyDocument(changeRanges);
+    this.notifyDocument(changeRanges, { reveal: true });
   }
 
   /** Slide canonical excerpts + matches through committed document changes. */
@@ -569,6 +569,10 @@ export class MultiBufferPane implements PaneHost {
   /** A source document's diagnostics/syntax changed (or attach set changed): repaint. */
   private invalidateVisuals(): void {
     this.visualsGeneration++;
+    // Gutter bands are built eagerly (the renderer reads the band SET, not a
+    // per-line query), so rebuild the visuals when the attach set or source
+    // diagnostics change — that is when consumed source bands (VCS) appear.
+    this.visualsData = multiBufferVisuals(this.snapshotData, this.metasData, this.sourceVisualsFor);
     this.notify([invalidate(VisualsInvalidated, { generation: this.visualsGeneration })], "document");
     for (const listener of this.highlightListeners) listener();
   }
@@ -643,15 +647,29 @@ export class MultiBufferPane implements PaneHost {
     );
   }
 
-  private notifyDocument(changes: readonly DocumentChangeRange[] = []): void {
+  /**
+   * Document + visuals always ride the document bus (serial tracking + repaint).
+   * The selection change rides the VIEW bus only when the caret moved as a
+   * direct result of the user editing in THIS view — that is what tells the
+   * renderer to scroll the caret into view, exactly like a normal editor view
+   * (renderer reveals on `source === "view"`). External source-sync edits from
+   * another view must NOT reveal: the caret only drifts through remapping, and
+   * yanking the viewport to it would be wrong.
+   */
+  private notifyDocument(
+    changes: readonly DocumentChangeRange[] = [],
+    options?: { readonly reveal?: boolean },
+  ): void {
+    const reveal = options?.reveal === true;
     this.notify(
       [
         invalidate(DocumentInvalidated, { version: this.version, changes }),
         invalidate(VisualsInvalidated, { generation: this.visualsGeneration }),
-        invalidate(SelectionInvalidated),
+        ...(reveal ? [] : [invalidate(SelectionInvalidated)]),
       ],
       "document",
     );
+    if (reveal) this.notify([invalidate(SelectionInvalidated)], "view");
     for (const listener of this.highlightListeners) listener();
   }
 

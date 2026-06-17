@@ -20,6 +20,7 @@ import type {
 } from "@the-editor/editor";
 import type { MultiBufferSnapshot } from "@the-editor/engine";
 import type { ExcerptMeta } from "./builder";
+import { lineNumberBand } from "../editor/gutter";
 
 /** A slice of one excerpt overlapping a unified range, with its source mapping. */
 export type ExcerptSlice = {
@@ -62,8 +63,6 @@ export const headerId = (excerptId: string): string => `${HEADER_PREFIX}${excerp
 export const excerptIdFromHeader = (id: string): string | undefined =>
   id.startsWith(HEADER_PREFIX) ? id.slice(HEADER_PREFIX.length) : undefined;
 
-const digits = (n: number): number => String(Math.max(1, n)).length;
-
 export function multiBufferVisuals(
   snapshot: MultiBufferSnapshot,
   metas: readonly ExcerptMeta[],
@@ -101,23 +100,20 @@ export function multiBufferVisuals(
   }
   decorations.sort((a, b) => a.from - b.from || a.to - b.to);
 
-  const gutter: ResolvedGutterBand = {
-    id: "mb-line-numbers",
-    side: "left",
-    widthCh: digits(maxSourceLine) + 1,
-    priority: 0,
-    owner: MB_OWNER,
-    cell: (line) => {
+  // Line numbers are synthesized here (not consumed from the source bands) so
+  // they are present immediately, before per-excerpt intel attaches — but the
+  // band's shape/width/styling come from the SAME factory the editor's
+  // lineNumbers package uses, so gutter changes mirror to both.
+  const lineNumbers: ResolvedGutterBand = {
+    ...lineNumberBand(maxSourceLine, (line) => {
       if (line < 0 || line >= snapshot.lineCount) return null;
       const src = snapshot.offsetToSource(snapshot.lineToOffset(line));
       if (src === undefined) return null;
       const buffer = snapshot.document(src.documentId);
       if (buffer === undefined) return null;
-      return {
-        text: String(buffer.lineRangeAt(src.offset).index + 1),
-        className: "gutter-line-number",
-      };
-    },
+      return buffer.lineRangeAt(src.offset).index + 1;
+    }),
+    owner: MB_OWNER,
   };
 
   return {
@@ -150,6 +146,54 @@ export function multiBufferVisuals(
     },
     widgets: () => widgets,
     totalWidgetRows,
-    gutterBands: [gutter],
+    gutterBands: [lineNumbers, ...mapSourceGutterBands(snapshot, metas, sourceVisuals)],
   };
+}
+
+/**
+ * Map every NON-line-number gutter band contributed to the on-screen source
+ * documents (today: the VCS diff strip) into unified coordinates, so the
+ * multibuffer gutter carries the same bands a plain editor view would. Bands
+ * are grouped by id across documents; each unified cell maps its row back to
+ * the owning source line and defers to that document's own cell. Attach-gated
+ * like diagnostics — a band appears once its excerpt's intel is live.
+ */
+function mapSourceGutterBands(
+  snapshot: MultiBufferSnapshot,
+  metas: readonly ExcerptMeta[],
+  sourceVisuals?: (documentId: string) => VisualsSnapshot | undefined,
+): ResolvedGutterBand[] {
+  if (sourceVisuals === undefined) return [];
+  const byId = new Map<string, { sample: ResolvedGutterBand; perDoc: Map<string, ResolvedGutterBand> }>();
+  for (const docId of new Set(metas.map((m) => m.excerpt.documentId))) {
+    const visuals = sourceVisuals(docId);
+    if (visuals === undefined) continue;
+    for (const band of visuals.gutterBands) {
+      if (band.id === "line-numbers") continue; // synthesized separately, always present
+      const entry = byId.get(band.id) ?? { sample: band, perDoc: new Map<string, ResolvedGutterBand>() };
+      entry.perDoc.set(docId, band);
+      byId.set(band.id, entry);
+    }
+  }
+  const out: ResolvedGutterBand[] = [];
+  for (const [id, { sample, perDoc }] of byId) {
+    out.push({
+      id,
+      side: sample.side,
+      widthCh: sample.widthCh,
+      ...(sample.priority !== undefined ? { priority: sample.priority } : {}),
+      owner: MB_OWNER,
+      ...(sample.widthPx !== undefined ? { widthPx: sample.widthPx } : {}),
+      cell: (line) => {
+        if (line < 0 || line >= snapshot.lineCount) return null;
+        const src = snapshot.offsetToSource(snapshot.lineToOffset(line));
+        if (src === undefined) return null;
+        const band = perDoc.get(src.documentId);
+        const buffer = snapshot.document(src.documentId);
+        if (band?.cell === undefined || buffer === undefined) return null;
+        return band.cell(buffer.lineRangeAt(src.offset).index);
+      },
+    });
+  }
+  return out;
 }

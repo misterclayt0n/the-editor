@@ -29,19 +29,10 @@ import {
   type EditorVisualSet,
 } from "@the-editor/editor";
 import { TextDocument } from "@the-editor/engine";
-
-const digits = (n: number): number => String(Math.max(1, n)).length;
+import { digits, lineNumberBand } from "../editor/gutter";
 
 const band = (lineCount: number): EditorVisualSet => ({
-  gutterBands: [
-    {
-      id: "line-numbers",
-      side: "left",
-      widthCh: digits(lineCount) + 1,
-      priority: 0,
-      cell: (line) => ({ text: String(line + 1), className: "gutter-line-number" }),
-    },
-  ],
+  gutterBands: [lineNumberBand(lineCount, (line) => line + 1)],
 });
 
 const attach = (document: DocumentScope) =>

@@ -23,6 +23,7 @@ export class HostFileActions extends Context.Tag("the-editor/web/HostFileActions
     readonly open: () => void;
     readonly openFolder: () => void;
     readonly find: () => void;
+    readonly findInProject: () => void;
   }
 >() {}
 
@@ -54,6 +55,13 @@ export const filesPackage = definePackage("the-editor/files", () =>
       run: () => Effect.sync(() => host.find()),
     });
 
+    yield* commands.register("file.findInProject", {
+      title: "Find in Files…",
+      scope: SurfaceScope.global,
+      palette: { group: "File", aliases: ["search", "grep", "find in files", "rg"] },
+      run: () => Effect.sync(() => host.findInProject()),
+    });
+
     yield* commands.register("file.openFolder", {
       title: "Open Folder…",
       scope: SurfaceScope.global,
@@ -68,6 +76,8 @@ export const filesPackage = definePackage("the-editor/files", () =>
       { keys: "ctrl+o", command: "file.open", scope: editorScope },
       { keys: "meta+p", command: "file.find", scope: SurfaceScope.global },
       { keys: "ctrl+p", command: "file.find", scope: SurfaceScope.global },
+      { keys: "meta+shift+f", command: "file.findInProject", scope: SurfaceScope.global },
+      { keys: "ctrl+shift+f", command: "file.findInProject", scope: SurfaceScope.global },
     ]);
   }),
 );

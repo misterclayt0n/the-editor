@@ -1,4 +1,4 @@
-import { TextBuffer } from "./text/buffer";
+import { TextBuffer, type LineRange } from "./text/buffer";
 import type { ChangeDesc, RangeMapOptions, Span } from "./text/transaction";
 
 export type DocumentId = string;
@@ -47,6 +47,13 @@ export type MultiBufferEditPlan = {
 type ExcerptEntry = Excerpt & {
   readonly buffer: TextBuffer;
   readonly multibufferStart: number;
+  /** Length of the excerpt's own source text (excludes the trailing separator). */
+  readonly textLength: number;
+  /** Line breaks inside the excerpt's own source text (excludes the separator). */
+  readonly textLineBreaks: number;
+  /** Whether a synthetic "\n" separator follows this excerpt in unified space. */
+  readonly hasTrailingNewline: boolean;
+  /** Effective summary used by the tree: source text PLUS the separator. */
   readonly summary: MultiBufferSummary;
 };
 
@@ -143,6 +150,26 @@ const summarizeExcerpt = (buffer: TextBuffer, range: Span): MultiBufferSummary =
   lineBreaks: countLineBreaks(buffer, range.start, range.end),
 });
 
+/**
+ * Grow a line-aligned excerpt source range by `lines` rows in `direction`,
+ * clamped to the buffer. The returned range is line-aligned and excludes the
+ * last line's trailing newline (the multibuffer's synthetic separator supplies
+ * the row break). This is the engine analog of Zed's expand_excerpt.
+ */
+export const expandExcerptRange = (
+  buffer: TextBuffer,
+  range: Span,
+  direction: "up" | "down" | "both",
+  lines: number,
+): Span => {
+  const grow = Math.max(0, Math.trunc(lines));
+  const startLine = buffer.lineRangeAt(range.start).index;
+  const endLine = buffer.lineRangeAt(Math.max(range.start, range.end - 1)).index;
+  const newStartLine = direction === "down" ? startLine : Math.max(0, startLine - grow);
+  const newEndLine = direction === "up" ? endLine : Math.min(buffer.lineCount - 1, endLine + grow);
+  return { start: buffer.lineRange(newStartLine).from, end: buffer.lineRange(newEndLine).to };
+};
+
 const buildTree = (entries: readonly ExcerptEntry[]): Node | undefined => {
   if (entries.length === 0) return undefined;
   let level: Node[] = [];
@@ -211,7 +238,8 @@ export class MultiBufferSnapshot {
     let multibufferStart = 0;
     const entries: ExcerptEntry[] = [];
     const byDocument = new Map<DocumentId, SourceIndexEntry[]>();
-    for (const excerpt of excerpts) {
+    for (let i = 0; i < excerpts.length; i++) {
+      const excerpt = excerpts[i]!;
       const buffer = documents.get(excerpt.documentId);
       if (buffer === undefined) throw new RangeError(`unknown document ${excerpt.documentId}`);
       checkSpan(excerpt.sourceRange, buffer.length, "source range");
@@ -223,8 +251,23 @@ export class MultiBufferSnapshot {
         throw new RangeError(`primary range must be inside source range for excerpt ${excerpt.id}`);
       if (excerpt.sourceRange.start === excerpt.sourceRange.end)
         throw new RangeError(`empty source range for excerpt ${excerpt.id}`);
-      const summary = summarizeExcerpt(buffer, excerpt.sourceRange);
-      const entry: ExcerptEntry = { ...excerpt, buffer, multibufferStart, summary };
+      const text = summarizeExcerpt(buffer, excerpt.sourceRange);
+      // Every excerpt but the last is followed by a synthetic "\n" so each
+      // excerpt always begins on its own row, regardless of whether its
+      // source slice ends in a newline. The separator belongs to no document.
+      const hasTrailingNewline = i < excerpts.length - 1;
+      const summary: MultiBufferSummary = hasTrailingNewline
+        ? { length: text.length + 1, lineBreaks: text.lineBreaks + 1 }
+        : text;
+      const entry: ExcerptEntry = {
+        ...excerpt,
+        buffer,
+        multibufferStart,
+        textLength: text.length,
+        textLineBreaks: text.lineBreaks,
+        hasTrailingNewline,
+        summary,
+      };
       entries.push(entry);
       const indexed: SourceIndexEntry = {
         sourceStart: excerpt.sourceRange.start,
@@ -263,7 +306,7 @@ export class MultiBufferSnapshot {
   offsetToSource(offset: number, assoc: "before" | "after" = "after"): MultiBufferSourcePoint | undefined {
     const entry = this.entryAtOffset(offset, assoc);
     if (entry === undefined) return undefined;
-    const local = Math.max(0, Math.min(entry.summary.length, offset - entry.multibufferStart));
+    const local = Math.max(0, Math.min(entry.textLength, offset - entry.multibufferStart));
     return { excerpt: entry, documentId: entry.documentId, offset: entry.sourceRange.start + local };
   }
 
@@ -349,6 +392,34 @@ export class MultiBufferSnapshot {
     checkOffset(offset, this.length);
     if (offset === 0 || this.root === undefined) return 0;
     return this.lineBreaksBefore(this.root, 0, offset);
+  }
+
+  /** Alias of {@link textBetween}; part of the RenderableText surface. */
+  sliceString(from: number, to: number = this.length): string {
+    return this.textBetween(from, to);
+  }
+
+  lineRange(index: number): LineRange {
+    if (!Number.isInteger(index) || index < 0 || index >= this.lineCount)
+      throw new RangeError(`invalid line ${index}`);
+    return this.lineRangeFrom(index, this.lineToOffset(index));
+  }
+
+  lineRangeAt(offset: number): LineRange {
+    checkOffset(offset, this.length);
+    const index = this.offsetToLine(offset);
+    return this.lineRangeFrom(index, this.lineToOffset(index));
+  }
+
+  private lineRangeFrom(index: number, from: number): LineRange {
+    if (index >= this.lineCount - 1)
+      return { index, from, to: this.length, breakFrom: this.length, breakTo: this.length };
+    // lineToOffset(index + 1) sits one past the line break that ends this line.
+    const breakTo = this.lineToOffset(index + 1);
+    const lineEnd = breakTo - 1;
+    const breakFrom =
+      lineEnd > from && this.textBetween(lineEnd - 1, lineEnd) === "\r" ? lineEnd - 1 : lineEnd;
+    return { index, from, to: breakFrom, breakFrom, breakTo };
   }
 
   editPlan(edits: readonly TextEdit[]): MultiBufferEditPlan {
@@ -471,10 +542,10 @@ export class MultiBufferSnapshot {
   ): void {
     for (const entry of this.entries) {
       const entryFrom = entry.multibufferStart;
-      const entryTo = entryFrom + entry.summary.length;
-      if (entryTo <= from) continue;
+      const textTo = entryFrom + entry.textLength;
+      if (textTo <= from) continue;
       if (entryFrom >= to) break;
-      emit(entry, Math.max(from, entryFrom), Math.min(to, entryTo));
+      emit(entry, Math.max(from, entryFrom), Math.min(to, textTo));
     }
   }
 
@@ -498,20 +569,26 @@ export class MultiBufferSnapshot {
     }
     for (const entry of node.entries) {
       const entryFrom = entry.multibufferStart;
+      const textTo = entryFrom + entry.textLength;
       const entryTo = entryFrom + entry.summary.length;
       if (entryTo > from && entryFrom < to) {
-        const localFrom = Math.max(from, entryFrom) - entryFrom;
-        const localTo = Math.min(to, entryTo) - entryFrom;
-        let pos = entryFrom + localFrom;
-        entry.buffer.chunksBetween(
-          entry.sourceRange.start + localFrom,
-          entry.sourceRange.start + localTo,
-          (text) => {
-            const chunkFrom = pos;
-            pos += text.length;
-            emit({ from: chunkFrom, to: pos, text, excerpt: entry });
-          },
-        );
+        const fromClamped = Math.max(from, entryFrom);
+        const textToClamped = Math.min(to, textTo);
+        if (textToClamped > fromClamped) {
+          let pos = fromClamped;
+          entry.buffer.chunksBetween(
+            entry.sourceRange.start + (fromClamped - entryFrom),
+            entry.sourceRange.start + (textToClamped - entryFrom),
+            (text) => {
+              const chunkFrom = pos;
+              pos += text.length;
+              emit({ from: chunkFrom, to: pos, text, excerpt: entry });
+            },
+          );
+        }
+        // The synthetic separator is a single "\n" at [textTo, entryTo).
+        if (entry.hasTrailingNewline && from < entryTo && to > textTo)
+          emit({ from: textTo, to: entryTo, text: "\n", excerpt: entry });
       }
       if (entryTo >= to) break;
     }
@@ -534,13 +611,17 @@ export class MultiBufferSnapshot {
     let remaining = breakIndex;
     for (const entry of node.entries) {
       if (remaining < entry.summary.lineBreaks) {
-        const sourceBreak = findLineBreakInRange(
-          entry.buffer,
-          entry.sourceRange.start,
-          entry.sourceRange.end,
-          remaining,
-        );
-        return pos + sourceBreak - entry.sourceRange.start;
+        if (remaining < entry.textLineBreaks) {
+          const sourceBreak = findLineBreakInRange(
+            entry.buffer,
+            entry.sourceRange.start,
+            entry.sourceRange.end,
+            remaining,
+          );
+          return pos + sourceBreak - entry.sourceRange.start;
+        }
+        // The remaining break is the synthetic separator at the text end.
+        return pos + entry.textLength;
       }
       remaining -= entry.summary.lineBreaks;
       pos += entry.summary.length;
@@ -566,11 +647,14 @@ export class MultiBufferSnapshot {
     let total = 0;
     for (const entry of node.entries) {
       const entryFrom = entry.multibufferStart;
+      const textTo = entryFrom + entry.textLength;
       const entryTo = entryFrom + entry.summary.length;
       if (offset >= entryTo) total += entry.summary.lineBreaks;
-      else if (offset > entryFrom)
+      else if (offset <= entryFrom) return total;
+      else if (offset <= textTo)
         return total + countLineBreaks(entry.buffer, entry.sourceRange.start, entry.sourceRange.start + offset - entryFrom);
-      else return total;
+      // offset sits on the synthetic separator: all text breaks precede it.
+      else return total + entry.textLineBreaks;
     }
     return total;
   }

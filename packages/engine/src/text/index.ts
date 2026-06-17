@@ -4,6 +4,7 @@ export {
   type TextBufferDebugState,
   type TextSnapshot,
   type LineRange,
+  type RenderableText,
   type VisibleLine,
   type LineChunk,
   type VisibleChunk,

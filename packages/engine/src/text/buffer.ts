@@ -32,6 +32,20 @@ export type LineRange = {
   readonly breakFrom: number;
   readonly breakTo: number;
 };
+
+/**
+ * The minimal read surface the layout engine, column math, cursor-movement
+ * commands, and renderer require from a text source. `TextBuffer` satisfies
+ * it structurally; a multibuffer adapter implements it over its unified
+ * coordinate space, so one renderer can paint either without knowing which.
+ */
+export type RenderableText = {
+  readonly length: number;
+  readonly lineCount: number;
+  lineRange(index: number): LineRange;
+  lineRangeAt(offset: number): LineRange;
+  sliceString(from: number, to?: number): string;
+};
 export type { MutationStats, TextStats } from "./stats";
 export type Replacement = { readonly from: number; readonly to: number; readonly text: string };
 export type ChangeSet = { readonly replacements: readonly Replacement[] };

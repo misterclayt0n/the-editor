@@ -66,8 +66,7 @@ export const lspActions = definePackage("the-editor/lsp-actions", () =>
     yield* keymaps.registerAll([
       { keys: "f12", command: "lsp.definition", scope: editorScope },
       { keys: "f2", command: "lsp.rename", scope: editorScope },
-      { keys: "meta+shift+f", command: "lsp.format", scope: editorScope },
-      { keys: "ctrl+shift+f", command: "lsp.format", scope: editorScope },
+      { keys: "alt+shift+f", command: "lsp.format", scope: editorScope },
     ]);
   }),
 );

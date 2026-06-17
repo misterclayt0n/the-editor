@@ -23,7 +23,7 @@
  */
 
 import { Context, Effect, Ref, type Scope } from "effect";
-import { RangeSet, type ChangeDesc, type TextBuffer } from "@the-editor/engine";
+import { RangeSet, type ChangeDesc, type RenderableText } from "@the-editor/engine";
 import {
   type DecorationLayer,
   type RangeDecoration,
@@ -112,7 +112,7 @@ export type VisualsSnapshot = {
   readonly decorationsBetween: (from: number, to: number) => RangeDecoration[];
   readonly virtualTextBetween: (from: number, to: number) => VirtualText[];
   /** All widgets, resolved to lines against `text`, sorted by line. */
-  readonly widgets: (text: TextBuffer) => AnchoredBlockWidget[];
+  readonly widgets: (text: RenderableText) => AnchoredBlockWidget[];
   readonly totalWidgetRows: number;
   /** Bands sorted by (side, priority, owner). */
   readonly gutterBands: ReadonlyArray<ResolvedGutterBand>;

@@ -11,7 +11,7 @@
  */
 
 import { Context, Effect, Ref, Scope } from "effect";
-import type { TextBuffer } from "@the-editor/engine";
+import type { RenderableText } from "@the-editor/engine";
 
 export type CompletionTrigger =
   | { readonly kind: "invoked" } // explicit (ctrl+space)
@@ -70,7 +70,7 @@ export type CompletionItem = {
 export type CompletionContext = {
   readonly docId: string;
   readonly path: string | null;
-  readonly text: TextBuffer;
+  readonly text: RenderableText;
   readonly offset: number;
   /** The word prefix being completed (anchor..offset). */
   readonly prefix: string;
@@ -100,7 +100,7 @@ export interface CompletionProvider {
 export type HoverContext = {
   readonly docId: string;
   readonly path: string | null;
-  readonly text: TextBuffer;
+  readonly text: RenderableText;
   readonly offset: number;
 };
 
@@ -144,7 +144,7 @@ export type SignatureResult = {
 export type SignatureContext = {
   readonly docId: string;
   readonly path: string | null;
-  readonly text: TextBuffer;
+  readonly text: RenderableText;
   readonly offset: number;
   readonly trigger: SignatureTrigger;
   /** True when a widget is already showing (the session is re-querying). */

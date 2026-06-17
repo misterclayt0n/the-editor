@@ -345,6 +345,34 @@ describe("layout viewport", () => {
     ).toBe(20);
   });
 
+  test("a leading block widget (afterLine -1) renders before the first line", () => {
+    const buffer = text("a\nb");
+    const widgets = [{ id: "h", afterLine: -1, heightRows: 2, owner: "mb" }];
+    const snapshot = layoutViewport({
+      text: buffer,
+      version: 1,
+      startLine: 0,
+      lineCount: 2,
+      lineHeight: 10,
+      visuals: { blockWidgets: widgets },
+    });
+    // The header block is row 0; the first text line is pushed below it.
+    expect(snapshot.rows.map((r) => [r.kind, r.row, r.top])).toEqual([
+      ["block", 0, 0],
+      ["text", 2, 20],
+      ["text", 3, 30],
+    ]);
+    expect(snapshot.blockWidgets).toEqual([
+      {
+        id: "h",
+        afterLine: -1,
+        row: 0,
+        rect: { top: 0, left: 0, width: 0, height: 20 },
+        owner: "mb",
+      },
+    ]);
+  });
+
   test("block widgets shift following visual geometry", () => {
     const snapshot = layoutViewport({
       text: text("a\nb\nc"),

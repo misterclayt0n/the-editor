@@ -1,10 +1,10 @@
 import { Effect } from "effect";
-import { SelectionState, TextDocument, type Selection, type TextBuffer } from "@the-editor/engine";
+import { SelectionState, TextDocument, type RenderableText, type Selection } from "@the-editor/engine";
 import { ActiveEditorScopeId, type EditorScopeId } from "./services";
 
 export type EditorSnapshot = {
   readonly id: EditorScopeId;
-  readonly text: TextBuffer;
+  readonly text: RenderableText;
   readonly version: number;
   readonly dirty: boolean;
   readonly selection: Selection;

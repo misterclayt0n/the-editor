@@ -8,6 +8,7 @@ import { WorkbenchView } from "./workbench/WorkbenchView";
 import { TitleBar } from "./ui/TitleBar";
 import { CommandPalette, type CommandPaletteMode } from "./ui/CommandPalette";
 import { FileFinder } from "./ui/FileFinder";
+import { SearchDialog } from "./ui/SearchDialog";
 import { RenameDialog } from "./ui/RenameDialog";
 import { IntelController } from "./intel/controller";
 import { IntelView } from "./intel/IntelView";
@@ -58,6 +59,7 @@ export function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteMode, setPaletteMode] = useState<CommandPaletteMode>("commands");
   const [fileFinderOpen, setFileFinderOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [rename, setRename] = useState<{ open: boolean; initial: string }>({
     open: false,
     initial: "",
@@ -76,6 +78,7 @@ export function App() {
       setPaletteOpen(true);
     };
     booted.onFileFinderOpenRequested = () => setFileFinderOpen(true);
+    booted.onSearchOpenRequested = () => setSearchOpen(true);
     booted.onThemeSelectorOpenRequested = () => {
       setPaletteMode("themes");
       setPaletteOpen(true);
@@ -133,6 +136,11 @@ export function App() {
           );
         },
         findFile: () => setFileFinderOpen(true),
+        searchProject: (query: string) => booted.searchProject(query),
+        multiBuffer: (
+          specs: readonly { path: string; text: string; matches: readonly { start: number; end: number }[] }[],
+          title?: string,
+        ) => booted.openMultiBufferFromText(specs, title ?? "Search results"),
         vcsDebug: () => ({
           branch: booted.vcs?.branch() ?? null,
           status: booted.vcs?.treeStatusEntries() ?? [],
@@ -197,6 +205,14 @@ export function App() {
         runtime={runtime}
         onOpenChange={(open) => {
           setFileFinderOpen(open);
+          if (!open) window.requestAnimationFrame(() => runtime.focusActivePanel());
+        }}
+      />
+      <SearchDialog
+        open={searchOpen}
+        runtime={runtime}
+        onOpenChange={(open) => {
+          setSearchOpen(open);
           if (!open) window.requestAnimationFrame(() => runtime.focusActivePanel());
         }}
       />

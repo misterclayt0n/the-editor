@@ -40,10 +40,19 @@ describe("GeometryModel", () => {
 
   test("invalid widgets are ignored", () => {
     const model = new GeometryModel(10, 20, 0, [
-      { afterLine: -1, heightRows: 2 },
       { afterLine: 50, heightRows: 2 },
       { afterLine: 3, heightRows: 0 },
     ]);
     expect(model.contentHeight()).toBe(10 * 20);
+  });
+
+  test("a leading widget (afterLine -1) shifts every line down", () => {
+    const model = new GeometryModel(10, 20, 8, [{ afterLine: -1, heightRows: 2 }]);
+    expect(model.widgetRowsBefore(0)).toBe(2);
+    expect(model.lineTop(0)).toBe(8 + 2 * 20); // line 0 pushed below the 2-row header
+    expect(model.lineAt(8 + 20)).toBe(0); // a click inside the leading header → line 0
+    expect(model.lineAt(8 + 2 * 20)).toBe(0); // line 0's own row
+    expect(model.lineAt(8 + 3 * 20)).toBe(1); // first line after line 0
+    expect(model.contentHeight()).toBe(8 + (10 + 2) * 20 + 8);
   });
 });

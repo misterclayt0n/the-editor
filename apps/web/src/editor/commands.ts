@@ -6,7 +6,7 @@ import {
   Selection,
   SelectionRange,
   Transaction,
-  type TextBuffer,
+  type RenderableText,
 } from "@the-editor/engine";
 
 /**
@@ -21,9 +21,20 @@ export type CommandResult = {
   readonly selection: Selection;
 };
 
-type Edit = { readonly from: number; readonly to: number; readonly insert: string };
+export type Edit = { readonly from: number; readonly to: number; readonly insert: string };
 
-function buildResult(text: TextBuffer, edits: readonly Edit[]): CommandResult | undefined {
+/** Carets at the end of each edit, shifted by the edits before them. */
+export function editsToSelection(edits: readonly Edit[]): Selection {
+  let delta = 0;
+  const carets = edits.map((edit) => {
+    const caret = edit.from + edit.insert.length + delta;
+    delta += edit.insert.length - (edit.to - edit.from);
+    return SelectionRange.point(caret);
+  });
+  return Selection.create(carets);
+}
+
+function buildResult(text: RenderableText, edits: readonly Edit[]): CommandResult | undefined {
   const effective = edits.filter((edit) => edit.from < edit.to || edit.insert.length > 0);
   if (effective.length === 0) return undefined;
   const transaction = Effect.runSync(
@@ -32,40 +43,23 @@ function buildResult(text: TextBuffer, edits: readonly Edit[]): CommandResult | 
       effective.map((edit) => ({ from: edit.from, to: edit.to, text: edit.insert })),
     ).pipe(Effect.orDie),
   );
-  // Place one collapsed caret at the end of each edit, shifted by the edits before it.
-  let delta = 0;
-  const carets = effective.map((edit) => {
-    const caret = edit.from + edit.insert.length + delta;
-    delta += edit.insert.length - (edit.to - edit.from);
-    return SelectionRange.point(caret);
-  });
-  return { transaction, selection: Selection.create(carets) };
+  return { transaction, selection: editsToSelection(effective) };
 }
 
-export function insertText(snapshot: EditorSnapshot, text: string): CommandResult | undefined {
-  return buildResult(
-    snapshot.text,
-    snapshot.selection.ranges.map((range) => ({
-      from: range.from,
-      to: range.to,
-      insert: text,
-    })),
-  );
+/** The raw edits for each operation, in document coordinates. Exposed so the
+ * multibuffer can route them through editPlan instead of a single transaction. */
+export function insertEdits(snapshot: EditorSnapshot, text: string): Edit[] {
+  return snapshot.selection.ranges.map((range) => ({ from: range.from, to: range.to, insert: text }));
 }
 
-export function insertNewline(snapshot: EditorSnapshot): CommandResult | undefined {
-  return insertText(snapshot, "\n");
-}
-
-export function deleteBackward(snapshot: EditorSnapshot): CommandResult | undefined {
+export function deleteBackwardEdits(snapshot: EditorSnapshot): Edit[] {
   const text = snapshot.text;
-  const edits = snapshot.selection.ranges.map((range): Edit => {
+  return snapshot.selection.ranges.map((range): Edit => {
     if (!range.isCollapsed) return { from: range.from, to: range.to, insert: "" };
     const offset = range.head;
     if (offset === 0) return { from: 0, to: 0, insert: "" };
     const line = text.lineRangeAt(offset);
     if (offset === line.from) {
-      // Delete the line break (handles CRLF) instead of scanning line text.
       const breakLength = offset >= 2 && text.sliceString(offset - 2, offset) === "\r\n" ? 2 : 1;
       return { from: offset - breakLength, to: offset, insert: "" };
     }
@@ -73,12 +67,11 @@ export function deleteBackward(snapshot: EditorSnapshot): CommandResult | undefi
     const previous = line.from + previousGraphemeBoundary(lineText, offset - line.from);
     return { from: previous, to: offset, insert: "" };
   });
-  return buildResult(text, edits);
 }
 
-export function deleteForward(snapshot: EditorSnapshot): CommandResult | undefined {
+export function deleteForwardEdits(snapshot: EditorSnapshot): Edit[] {
   const text = snapshot.text;
-  const edits = snapshot.selection.ranges.map((range): Edit => {
+  return snapshot.selection.ranges.map((range): Edit => {
     if (!range.isCollapsed) return { from: range.from, to: range.to, insert: "" };
     const offset = range.head;
     if (offset === text.length) return { from: offset, to: offset, insert: "" };
@@ -92,10 +85,25 @@ export function deleteForward(snapshot: EditorSnapshot): CommandResult | undefin
     const next = line.from + nextGraphemeBoundary(lineText, offset - line.from);
     return { from: offset, to: next, insert: "" };
   });
-  return buildResult(text, edits);
 }
 
-function moveHead(text: TextBuffer, offset: number, direction: -1 | 1): number {
+export function insertText(snapshot: EditorSnapshot, text: string): CommandResult | undefined {
+  return buildResult(snapshot.text, insertEdits(snapshot, text));
+}
+
+export function insertNewline(snapshot: EditorSnapshot): CommandResult | undefined {
+  return insertText(snapshot, "\n");
+}
+
+export function deleteBackward(snapshot: EditorSnapshot): CommandResult | undefined {
+  return buildResult(snapshot.text, deleteBackwardEdits(snapshot));
+}
+
+export function deleteForward(snapshot: EditorSnapshot): CommandResult | undefined {
+  return buildResult(snapshot.text, deleteForwardEdits(snapshot));
+}
+
+function moveHead(text: RenderableText, offset: number, direction: -1 | 1): number {
   const line = text.lineRangeAt(offset);
   if (direction === -1) {
     if (offset === 0) return 0;
@@ -109,7 +117,7 @@ function moveHead(text: TextBuffer, offset: number, direction: -1 | 1): number {
   return line.from + nextGraphemeBoundary(lineText, offset - line.from);
 }
 
-function verticalTarget(text: TextBuffer, offset: number, direction: -1 | 1): number {
+function verticalTarget(text: RenderableText, offset: number, direction: -1 | 1): number {
   const line = text.lineRangeAt(offset);
   const targetIndex = line.index + direction;
   if (targetIndex < 0) return 0;

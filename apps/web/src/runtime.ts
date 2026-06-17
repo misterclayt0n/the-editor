@@ -57,6 +57,8 @@ import {
 import {
   closeViewScope,
   closeWorkspaceScope,
+  commitDocumentTransaction,
+  DocumentId,
   DocumentNotifications,
   DocumentRegistry,
   editorSnapshot,
@@ -78,7 +80,14 @@ import {
   type VisualsSnapshot,
   type WorkspaceScope,
 } from "@the-editor/editor";
-import { Selection } from "@the-editor/engine";
+import {
+  Selection,
+  TextDocument,
+  Transaction,
+  type ChangeDesc,
+  type Span,
+  type TextBuffer,
+} from "@the-editor/engine";
 import { editorDefaults, EditorSurface } from "./product/editorDefaults";
 import { lineNumbers } from "./product/lineNumbers";
 import { filesPackage, HostFileActions } from "./product/files";
@@ -117,6 +126,8 @@ import {
 import { uriToPath, type lsp } from "@the-editor/lsp";
 import { MountHub } from "./editor/mounts";
 import { applyThemeToDocument } from "./theme/dom";
+import { buildMultiBuffer, type MultiBufferMatchFile } from "./multibuffer/builder";
+import { MultiBufferPane, MultiBufferSurface } from "./multibuffer/pane";
 
 export type KeyOutcome = "handled" | "pending" | "passthrough";
 
@@ -149,6 +160,10 @@ export interface PaneHost {
   pointerHover?: ((offset: number | null) => void) | undefined;
   /** Scroll position changed: hover must hide NOW (Zed semantics). */
   pointerScrolled?: (() => void) | undefined;
+  /** A click in the gutter at `line`; return true if the pane handled it. */
+  gutterClick?: ((line: number) => boolean) | undefined;
+  /** The first visible line changed (drives the multibuffer's sticky header). */
+  viewportChanged?: ((topLine: number) => void) | undefined;
   snapshot(): EditorSnapshot;
   visualsSnapshot(): VisualsSnapshot;
   setSelection(selection: Selection): void;
@@ -257,6 +272,8 @@ export class AppRuntime {
   onPaletteOpenRequested?: () => void;
   /** Host UI hooks: file.find command fired (show the fff picker). */
   onFileFinderOpenRequested?: () => void;
+  /** Host UI hooks: file.findInProject command fired (show the search dialog). */
+  onSearchOpenRequested?: () => void;
   /** Host UI hooks: theme selector command fired (show themed palette mode). */
   onThemeSelectorOpenRequested?: () => void;
   /** Host UI hooks: diagnostics changed for a document (status surfaces). */
@@ -286,6 +303,8 @@ export class AppRuntime {
   };
 
   private readonly panes = new Map<PanelId, EditorPane>();
+  /** Multibuffer panes (read-only stitched search views), keyed like `panes`. */
+  private readonly multiBufferPanes = new Map<PanelId, MultiBufferPane>();
   /**
    * The "active editor group": the last stack the user focused that hosts an
    * editor pane. Opening a file targets THIS, not the raw focused slot — so
@@ -419,6 +438,7 @@ export class AppRuntime {
             open: () => void instance.openFileViaDialog(),
             openFolder: () => void instance.openFolderViaDialog(),
             find: () => instance.onFileFinderOpenRequested?.(),
+            findInProject: () => instance.onSearchOpenRequested?.(),
           }),
           Layer.succeed(HostPaletteActions, {
             open: () => instance.onPaletteOpenRequested?.(),
@@ -544,6 +564,17 @@ export class AppRuntime {
     return Option.isNone(focused) ? undefined : this.panes.get(focused.value.id);
   }
 
+  multiBufferPane(panelId: PanelId): MultiBufferPane | undefined {
+    return this.multiBufferPanes.get(panelId);
+  }
+
+  /** The focused pane host, whether a single-file editor or a multibuffer. */
+  focusedPaneHost(): PaneHost | undefined {
+    const focused = Effect.runSync(this.workbench.focusedPanel);
+    if (Option.isNone(focused)) return undefined;
+    return this.panes.get(focused.value.id) ?? this.multiBufferPanes.get(focused.value.id);
+  }
+
   private startWorkbenchMirror(): void {
     const publish = () => {
       this.workbenchSnapshot = {
@@ -580,7 +611,7 @@ export class AppRuntime {
   /** Does this slot's stack currently host at least one editor pane? */
   private stackHostsEditors(slotId: SlotId): boolean {
     const slot = findSlot(this.workbenchSnapshot.arrangement, slotId);
-    return slot?.kind === "stack" && slot.stack.panels.some((id) => this.panes.has(id));
+    return slot?.kind === "stack" && slot.stack.panels.some((id) => this.panes.has(id) || this.multiBufferPanes.has(id));
   }
 
   // ------------------------------------------------------------- gestures
@@ -624,6 +655,7 @@ export class AppRuntime {
     this.releaseDock(panelId);
     const pane = this.panes.get(panelId);
     if (pane === undefined) {
+      this.multiBufferPanes.delete(panelId);
       // Custom panel (terminal, file tree): closing its scope disposes the
       // renderer (the pool unmounts it once it leaves the live panel set).
       Effect.runSync(this.workbench.closePanel(panelId));
@@ -968,7 +1000,7 @@ export class AppRuntime {
     this.vcs?.attach(document, path);
 
     const { arrangement, focusedSlot } = this.workbenchSnapshot;
-    const hostsEditors = (s: Stack) => s.panels.some((id) => this.panes.has(id));
+    const hostsEditors = (s: Stack) => s.panels.some((id) => this.panes.has(id) || this.multiBufferPanes.has(id));
     const editorStacks = collectSlots(arrangement).flatMap((s) =>
       s.kind === "stack" && hostsEditors(s.stack) ? [s.stack] : [],
     );
@@ -1008,6 +1040,161 @@ export class AppRuntime {
         .pipe(Effect.orDie),
     );
     this.focusSlotOfPanel(pane.panelId);
+  }
+
+  /**
+   * Open a read-only multibuffer (stitched search excerpts) as a CENTER editor
+   * tab. The same EditorRenderer paints it; cards are block widgets portaled by
+   * MultiBufferView. Returns the pane (or undefined when there are no excerpts).
+   */
+  openMultiBuffer(
+    title: string,
+    files: readonly MultiBufferMatchFile[],
+    options?: { readonly contextLines?: number },
+  ): MultiBufferPane | undefined {
+    const build = buildMultiBuffer(files, options);
+    if (build.metas.length === 0) return undefined;
+    // Attach syntax to each source document so the multibuffer can color it.
+    const registry = Context.get(this.workspace.context, DocumentRegistry);
+    for (const [docId, path] of build.pathByDoc) {
+      const scope = Effect.runSync(registry.get(DocumentId.make(docId)));
+      if (Option.isSome(scope)) this.attachHighlights(scope.value, path);
+    }
+    const panel = Effect.runSync(this.workbench.createPanel({ kind: MultiBufferSurface }));
+    const pane = new MultiBufferPane(panel.id, title, build, this);
+    this.multiBufferPanes.set(panel.id, pane);
+    this.placeAsCenterTab(panel.id);
+    return pane;
+  }
+
+  /**
+   * Open a multibuffer from in-memory text (dev tooling / tests). Each spec
+   * becomes a real scratch document so editing and syntax work end to end.
+   */
+  openMultiBufferFromText(
+    specs: readonly {
+      readonly path: string;
+      readonly text: string;
+      readonly matches: readonly { readonly start: number; readonly end: number }[];
+    }[],
+    title: string,
+  ): MultiBufferPane | undefined {
+    const registry = Context.get(this.workspace.context, DocumentRegistry);
+    const files: MultiBufferMatchFile[] = specs.map((spec) => {
+      const scope = Effect.runSync(registry.open({ text: spec.text }));
+      const buffer = Effect.runSync(Context.get(scope.context, TextDocument).get);
+      return { path: spec.path, documentId: String(scope.id), buffer, matches: spec.matches };
+    });
+    return this.openMultiBuffer(title, files);
+  }
+
+  /** Commit edits to a source document (MultiBufferHost) and report the change. */
+  commitDocumentEdits(
+    docId: string,
+    edits: readonly { readonly span: Span; readonly text: string }[],
+  ): { readonly change: ChangeDesc; readonly buffer: TextBuffer } | undefined {
+    const registry = Context.get(this.workspace.context, DocumentRegistry);
+    const scope = Effect.runSync(registry.get(DocumentId.make(docId)));
+    if (Option.isNone(scope)) return undefined;
+    const text = Context.get(scope.value.context, TextDocument);
+    const before = Effect.runSync(text.get);
+    // Build defensively: if the edits don't fit the CURRENT buffer (the doc was
+    // changed elsewhere since the multibuffer last synced), drop the edit rather
+    // than corrupt the document.
+    const transaction = Effect.runSync(
+      Transaction.fromReplacements(before.length, edits).pipe(Effect.option),
+    );
+    if (Option.isNone(transaction)) return undefined;
+    Effect.runSync(
+      commitDocumentTransaction(transaction.value).pipe(Effect.provide(scope.value.context), Effect.orDie),
+    );
+    return { change: transaction.value.changes.desc(), buffer: Effect.runSync(text.get) };
+  }
+
+  /** A source document's syntax highlighter (MultiBufferHost). */
+  documentHighlights(docId: string): PaneHighlights | undefined {
+    return this.highlightsByDoc.get(docId);
+  }
+
+  /** A source document's current version (MultiBufferHost). */
+  documentVersion(docId: string): number {
+    const registry = Context.get(this.workspace.context, DocumentRegistry);
+    const scope = Effect.runSync(registry.get(DocumentId.make(docId)));
+    if (Option.isNone(scope)) return 0;
+    return Effect.runSync(Context.get(scope.value.context, TextDocument).version);
+  }
+
+  /**
+   * Run a global content search (fff) and open the results as a multibuffer.
+   * No-op without the native finder / a workspace root (capability-gated).
+   */
+  async searchProject(
+    query: string,
+    options?: { readonly contextLines?: number; readonly limit?: number },
+  ): Promise<MultiBufferPane | undefined> {
+    const root = this.workspaceRoot;
+    const finder = this.fileFinderPort();
+    const files = Context.getOption(this.workspace.context, Files);
+    if (root === null || finder === undefined || Option.isNone(files) || query.length === 0) {
+      return undefined;
+    }
+    const result = await finder.grep({ root, query, limit: options?.limit ?? 200 });
+    const byPath = new Map<string, (typeof result.items)[number][]>();
+    for (const item of result.items) {
+      const list = byPath.get(item.relativePath);
+      if (list) list.push(item);
+      else byPath.set(item.relativePath, [item]);
+    }
+    const matchFiles: MultiBufferMatchFile[] = [];
+    for (const [relativePath, items] of byPath) {
+      const path = root === "/" ? `/${relativePath}` : `${root}/${relativePath}`;
+      const document = await Effect.runPromise(files.value.openPath(path));
+      const buffer = Effect.runSync(Context.get(document.context, TextDocument).get);
+      const matches = items.flatMap((item) => {
+        const line = Math.max(0, item.lineNumber - 1);
+        if (line >= buffer.lineCount) return [];
+        const lineRange = buffer.lineRange(line);
+        const ranges =
+          item.matchRanges.length > 0
+            ? item.matchRanges
+            : ([[0, lineRange.to - lineRange.from]] as const);
+        return ranges.map(([from, to]) => ({
+          start: Math.min(lineRange.to, lineRange.from + Math.max(0, from)),
+          end: Math.min(lineRange.to, lineRange.from + Math.max(0, to)),
+        }));
+      });
+      if (matches.length > 0) {
+        matchFiles.push({ path, documentId: String(document.id), buffer, matches });
+      }
+    }
+    return this.openMultiBuffer(query, matchFiles, options);
+  }
+
+  /** Place a panel as a tab in the active editor group (or dock one). */
+  private placeAsCenterTab(panelId: PanelId): void {
+    const { arrangement, focusedSlot } = this.workbenchSnapshot;
+    const hosts = (s: Stack) =>
+      s.panels.some((id) => this.panes.has(id) || this.multiBufferPanes.has(id));
+    const editorStacks = collectSlots(arrangement).flatMap((s) =>
+      s.kind === "stack" && hosts(s.stack) ? [s.stack] : [],
+    );
+    const focusedSlotStack = focusedSlot === null ? undefined : findSlot(arrangement, focusedSlot);
+    const focusedEditor =
+      focusedSlotStack?.kind === "stack" && hosts(focusedSlotStack.stack)
+        ? focusedSlotStack.stack
+        : undefined;
+    const stack =
+      editorStacks.find((s) => s.id === this.lastEditorSlot) ?? focusedEditor ?? editorStacks[0];
+    Effect.runSync(
+      this.workbench
+        .updateArrangement((a) => {
+          if (a.tiles === null) return { ...a, tiles: makeStack([panelId]) };
+          if (stack !== undefined) return placeInStack(a, stack.id, panelId);
+          return dockEdge(a, panelId, "right", { ratio: 0.78 });
+        })
+        .pipe(Effect.orDie),
+    );
+    this.focusSlotOfPanel(panelId);
   }
 
   /** The project root: the file tree's root and the VCS detect target. */
@@ -1097,7 +1284,7 @@ export class AppRuntime {
 
     // The focused editor's completion/snippet interceptor runs before keymaps
     // (never over an editable surface — completion only lives in the editor).
-    if (!editable && this.focusedPane()?.keyInterceptor?.(event) === true) {
+    if (!editable && this.focusedPaneHost()?.keyInterceptor?.(event) === true) {
       event.preventDefault();
       this.onPendingChords?.(this.pendingChords());
       return;
@@ -1206,6 +1393,7 @@ export class AppRuntime {
     }
     const views = [...this.panes.values()].map((pane) => pane.view);
     this.panes.clear();
+    this.multiBufferPanes.clear();
     Effect.runFork(
       Scope.close(this.scope, Exit.void).pipe(
         Effect.andThen(Effect.forEach(views, closeViewScope, { discard: true })),

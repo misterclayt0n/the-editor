@@ -1,7 +1,7 @@
 import {
   columnAtOffset as engineColumnAtOffset,
   offsetAtColumn,
-  type TextBuffer,
+  type RenderableText,
 } from "@the-editor/engine";
 
 export type EditorVisualOwner = string;
@@ -70,7 +70,7 @@ export type LayoutAnchor<Payload = unknown> =
     };
 
 export type ViewportLayoutRequest<Payload = unknown> = {
-  readonly text: TextBuffer;
+  readonly text: RenderableText;
   readonly version: number;
   readonly startLine: number;
   readonly lineCount: number;
@@ -203,14 +203,14 @@ export type HitTestResult = {
 
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 const priority = (x: { readonly priority?: number }) => x.priority ?? 0;
-function lineRange(text: TextBuffer, line: number): { from: number; to: number } {
+function lineRange(text: RenderableText, line: number): { from: number; to: number } {
   const r = text.lineRange(line);
   return { from: r.from, to: r.to };
 }
-function lineIndexAtOffset(text: TextBuffer, offset: number): number {
+function lineIndexAtOffset(text: RenderableText, offset: number): number {
   return text.lineRangeAt(clamp(offset, 0, text.length)).index;
 }
-function columnAtOffset(text: TextBuffer, line: number, offset: number, tabWidth: number): number {
+function columnAtOffset(text: RenderableText, line: number, offset: number, tabWidth: number): number {
   return engineColumnAtOffset({ text, line, offset, tabWidth });
 }
 
@@ -224,7 +224,7 @@ function columnAtOffset(text: TextBuffer, line: number, offset: number, tabWidth
  */
 export function virtualColsBefore(
   virtuals: readonly VirtualText[] | undefined,
-  text: TextBuffer,
+  text: RenderableText,
   line: number,
   offset: number,
 ): number {
@@ -244,7 +244,7 @@ export function virtualColsBefore(
 /** Virtuals anchored on `line`, in visual order. */
 function lineVirtuals(
   virtuals: readonly VirtualText[] | undefined,
-  text: TextBuffer,
+  text: RenderableText,
   line: number,
 ): VirtualText[] {
   if (virtuals === undefined || virtuals.length === 0) return [];
@@ -264,7 +264,7 @@ function rowTop(row: number, lineHeight: number, paddingTop: number): number {
   return paddingTop + row * lineHeight;
 }
 function rectForLine(
-  text: TextBuffer,
+  text: RenderableText,
   line: number,
   visualRow: number,
   from: number,
@@ -291,7 +291,7 @@ type Metrics = {
 };
 
 export function layoutContentHeight(args: {
-  readonly text: TextBuffer;
+  readonly text: RenderableText;
   readonly lineHeight: number;
   readonly paddingTop?: number;
   readonly paddingBottom?: number;
@@ -308,7 +308,7 @@ export function layoutContentHeight(args: {
 }
 
 export function hitTestTextPosition(args: {
-  readonly text: TextBuffer;
+  readonly text: RenderableText;
   readonly x: number;
   readonly y: number;
   readonly lineHeight: number;
@@ -387,7 +387,7 @@ export function hitTestTextPosition(args: {
  * offset makes empty space to the right of a line "hover" its last token.
  */
 export function hitTestTextPositionExact(args: {
-  readonly text: TextBuffer;
+  readonly text: RenderableText;
   readonly x: number;
   readonly y: number;
   readonly lineHeight: number;
@@ -424,7 +424,7 @@ function normalizeRange(
   return b > a ? { from: a, to: b } : undefined;
 }
 function styleSegments(
-  text: TextBuffer,
+  text: RenderableText,
   rowFrom: number,
   rowTo: number,
   rowText: string,
@@ -552,7 +552,26 @@ export function layoutViewport<Payload = unknown>(
   // without knowing what lies outside the window. Block rows that sit entirely
   // above the window shift the whole window down.
   let row = start;
-  for (const b of blockItems) if (b.afterLine < start) row += b.heightRows;
+  // Blocks above the window shift it down. A "leading" block (afterLine < 0)
+  // belongs before the first line: at the very top it is EMITTED as the first
+  // row(s); off the top of the window it only contributes its height.
+  for (const b of blockItems) {
+    if (b.afterLine >= start) break;
+    if (start === 0 && b.afterLine < 0) {
+      if (b.type === "anchor") blockRowById.set(b.id, row);
+      else widgetByRow.set(b.id, row);
+      rows.push({
+        kind: "block",
+        row,
+        afterLine: b.afterLine,
+        heightRows: b.heightRows,
+        top: rowTop(row, m.lineHeight, m.paddingTop),
+        left: m.paddingLeft,
+        height: b.heightRows * m.lineHeight,
+      });
+    }
+    row += b.heightRows;
+  }
   for (let line = start; line < end; line++) {
     const r = request.text.lineRange(line),
       rowText = request.text.sliceString(r.from, r.to);
@@ -690,7 +709,7 @@ export function layoutViewport<Payload = unknown>(
 }
 
 function addRangePlacement<Payload>(
-  text: TextBuffer,
+  text: RenderableText,
   start: number,
   end: number,
   lineToRow: Map<number, number>,
@@ -729,7 +748,7 @@ function addRangePlacement<Payload>(
   }
 }
 function layoutDecorations(
-  text: TextBuffer,
+  text: RenderableText,
   start: number,
   end: number,
   lineToRow: Map<number, number>,

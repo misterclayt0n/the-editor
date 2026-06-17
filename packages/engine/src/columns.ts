@@ -12,9 +12,9 @@
 import { codePointAt, codePointIsZeroWidthWhitespace } from "./chars";
 import { graphemeSegments } from "./grapheme";
 import type { SyntaxText } from "@the-editor/syntax";
-import type { TextBuffer } from "./text/buffer";
+import type { RenderableText } from "./text/buffer";
 
-export type ColumnText = SyntaxText | TextBuffer;
+export type ColumnText = SyntaxText | RenderableText;
 
 export type OffsetBias = "before" | "after";
 
@@ -122,12 +122,12 @@ function assertColumn(column: number): void {
   }
 }
 
-function isTextBuffer(text: ColumnText): text is TextBuffer {
-  return "lineCount" in text && typeof (text as TextBuffer).lineRange === "function";
+function isRenderableText(text: ColumnText): text is RenderableText {
+  return "lineCount" in text && typeof (text as RenderableText).lineRange === "function";
 }
 
 function lineCount(text: ColumnText): number {
-  if (isTextBuffer(text)) return text.lineCount;
+  if (isRenderableText(text)) return text.lineCount;
   let count = 1;
   for (let i = 0; i < text.length; i++) if (text.sliceString(i, i + 1) === "\n") count++;
   return count;
@@ -138,7 +138,7 @@ function lineRange(text: ColumnText, line: number): { readonly from: number; rea
   if (!Number.isInteger(line) || line < 0 || line >= count) {
     throw new RangeError(`line ${line} is out of bounds for ${count} lines`);
   }
-  if (isTextBuffer(text)) {
+  if (isRenderableText(text)) {
     const range = text.lineRange(line);
     return { from: range.from, to: range.to };
   }
@@ -160,7 +160,7 @@ function lineIndexAtOffset(text: ColumnText, offset: number): number {
   if (!Number.isInteger(offset) || offset < 0 || offset > text.length) {
     throw new RangeError(`offset ${offset} is out of bounds for text length ${text.length}`);
   }
-  if (isTextBuffer(text)) return text.lineRangeAt(offset).index;
+  if (isRenderableText(text)) return text.lineRangeAt(offset).index;
   let line = 0;
   for (let i = 0; i < offset; i++) if (text.sliceString(i, i + 1) === "\n") line++;
   return line;

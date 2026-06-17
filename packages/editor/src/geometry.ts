@@ -30,7 +30,9 @@ export class GeometryModel {
     readonly paddingBottom: number = paddingTop,
   ) {
     const valid = widgets
-      .filter((w) => w.heightRows > 0 && w.afterLine >= 0 && w.afterLine < lineCount)
+      // afterLine === -1 is a leading widget: it sits before line 0 and shifts
+      // every line down (widgetRowsBefore(line) counts it for all lines >= 0).
+      .filter((w) => w.heightRows > 0 && w.afterLine >= -1 && w.afterLine < lineCount)
       .sort((a, b) => a.afterLine - b.afterLine);
     this.widgets = valid;
     const prefix: number[] = [];

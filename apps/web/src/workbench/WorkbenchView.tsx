@@ -27,6 +27,7 @@ import type { EditorSnapshot } from "@the-editor/editor";
 import type { PanelId, SlotId, Stack, Tile } from "@the-editor/workbench";
 import type { AppRuntime, EditorPane } from "../runtime";
 import { EditorView } from "../editor/EditorView";
+import { MultiBufferView } from "../multibuffer/MultiBufferView";
 import { FileIcon } from "./fileIcons";
 import type { PanelMount } from "./panelRenderers";
 import { createPortalNode, OutPortal, type PortalNode } from "./panelPortal";
@@ -351,6 +352,10 @@ function PanelBody({
   if (pane !== undefined) {
     return <EditorView runtime={runtime} pane={pane} {...(focused && onSnapshot ? { onSnapshot } : {})} />;
   }
+  const multiBuffer = runtime.multiBufferPane(panelId);
+  if (multiBuffer !== undefined) {
+    return <MultiBufferView runtime={runtime} pane={multiBuffer} />;
+  }
   return <CustomPanelView runtime={runtime} panelId={panelId} />;
 }
 
@@ -507,8 +512,14 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
           if (tabPane === undefined) {
             // Non-editor panel: title comes from the renderer registry.
             const panel = runtime.panelById(panelId);
+            const multiBuffer = runtime.multiBufferPane(panelId);
             const renderer = panel !== undefined ? runtime.panelRenderers.get(panel.kind) : undefined;
-            const title = panel !== undefined && renderer !== undefined ? renderer.title(panel) : "panel";
+            const title =
+              multiBuffer !== undefined
+                ? multiBuffer.title
+                : panel !== undefined && renderer !== undefined
+                  ? renderer.title(panel)
+                  : "panel";
             return (
               <Fragment key={panelId}>
                 {dropTabIndex === i && <div className="wb-tab-insert" />}

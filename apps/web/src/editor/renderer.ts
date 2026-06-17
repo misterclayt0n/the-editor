@@ -56,7 +56,7 @@ import {
   type VisualsSnapshot,
 } from "@the-editor/editor";
 import { resolveSyntaxStyle } from "../theme/dom";
-import { Selection, type TextBuffer } from "@the-editor/engine";
+import { Selection, type RenderableText } from "@the-editor/engine";
 import type { PaneHost } from "../runtime";
 import { cancelRender, queueRender } from "./frame";
 
@@ -122,7 +122,7 @@ const kindRank = (kind: CharKind): number => (kind === "word" ? 2 : kind === "pu
  * sits between two kinds, the higher-priority side wins (word > punct); never
  * crosses a line break.
  */
-function wordRangeAt(text: TextBuffer, offset: number): OffsetRange {
+function wordRangeAt(text: RenderableText, offset: number): OffsetRange {
   const len = text.length;
   const before = offset > 0 ? text.sliceString(offset - 1, offset) : "";
   const after = offset < len ? text.sliceString(offset, offset + 1) : "";
@@ -152,7 +152,7 @@ function wordRangeAt(text: TextBuffer, offset: number): OffsetRange {
 
 /** The whole line including its trailing break (so triple-click selects the
  * line and the selection wraps to the next line's start), clamped at EOF. */
-function lineSelectRange(text: TextBuffer, offset: number): OffsetRange {
+function lineSelectRange(text: RenderableText, offset: number): OffsetRange {
   const line = text.lineRangeAt(offset);
   const to = line.index < text.lineCount - 1 ? text.lineRange(line.index + 1).from : line.to;
   return { from: line.from, to };
@@ -229,6 +229,15 @@ export class EditorRenderer {
     // Put the keyboard in this pane so the workbench knows the editor was
     // activated; preventScroll keeps the viewport from jumping on focus.
     this.root.focus({ preventScroll: true });
+    // A click in the gutter (left of the text) can be claimed by the pane
+    // (the multibuffer jumps to that source line); fall through otherwise.
+    if (this.runtime.gutterClick !== undefined) {
+      const rect = this.viewport.getBoundingClientRect();
+      if (event.clientX - rect.left < this.textOriginX) {
+        const line = this.geometry.lineAt(event.clientY - rect.top + this.scrollY);
+        if (this.runtime.gutterClick(line)) return;
+      }
+    }
     const offset = this.offsetAt(event.clientX, event.clientY);
     const text = this.snapshot.text;
 
@@ -1041,7 +1050,7 @@ export class EditorRenderer {
     }
     this.lastLineCount = lineCount;
 
-    const windowTop = this.geometry.lineTop(this.windowStart);
+    const windowTop = this.windowTop();
     const dpr = window.devicePixelRatio || 1;
     const ty = Math.round((windowTop - scrollY) * dpr) / dpr;
     const tx = Math.round(-this.scrollX * dpr) / dpr;
@@ -1095,6 +1104,7 @@ export class EditorRenderer {
     };
 
     this.positionFloats();
+    this.runtime.viewportChanged?.(this.geometry.lineAt(this.scrollY));
 
     if (docDirty || selDirty) this.options.onSnapshot?.(this.snapshot);
   }
@@ -1246,9 +1256,24 @@ export class EditorRenderer {
     }
   }
 
+  /**
+   * Document-absolute top of the window's first RENDERED row. Normally that is
+   * windowStart's text row, but a leading block (afterLine < 0, rendered above
+   * line 0) shifts the window origin up by its height — without this the flow
+   * row layer and the absolutely-positioned decoration/overlay layers disagree
+   * by exactly the leading block's height.
+   */
+  private windowTop(): number {
+    const base = this.geometry.lineTop(this.windowStart);
+    if (this.windowStart !== 0) return base;
+    let leadingRows = 0;
+    for (const widget of this.widgets) if (widget.afterLine < 0) leadingRows += widget.heightRows;
+    return base - leadingRows * LINE_HEIGHT;
+  }
+
   /** Decoration rect layers (window-local), rebuilt with the window. */
   private renderDecorations(layout: ViewportLayoutSnapshot<unknown>): void {
-    const windowTop = this.geometry.lineTop(layout.startLine);
+    const windowTop = this.windowTop();
     const bg: HTMLDivElement[] = [];
     const fg: HTMLDivElement[] = [];
     for (const decoration of layout.decorations) {

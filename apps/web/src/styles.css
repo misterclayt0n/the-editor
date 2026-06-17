@@ -91,6 +91,93 @@ body {
   background: color-mix(in srgb, var(--fg) 16%, transparent);
 }
 
+/* Workspace tabs: one chip per open session, next to the traffic lights.
+ * Same pill language as the editor tab bar — inactive ones are quiet, the
+ * active one is a filled accent chip. */
+.workspace-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  -webkit-app-region: no-drag;
+}
+
+.workspace-tab {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 200px;
+  padding-right: 2px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--fg-dim);
+  transition: color 80ms ease, background-color 80ms ease, border-color 80ms ease;
+}
+
+.workspace-tab:hover {
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  color: var(--fg);
+}
+
+.workspace-tab[data-active] {
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-editor));
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: var(--fg);
+}
+
+.workspace-tab-label {
+  max-width: 168px;
+  padding: 4px 6px 4px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 12.5px;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.workspace-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-dim);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 80ms ease, background-color 80ms ease, color 80ms ease;
+  -webkit-app-region: no-drag;
+}
+
+.workspace-tab:hover .workspace-tab-close,
+.workspace-tab[data-active] .workspace-tab-close {
+  opacity: 1;
+}
+
+.workspace-tab-close:hover {
+  background: var(--border);
+  color: var(--fg);
+}
+
+.workspace-add {
+  flex: none;
+  width: 24px;
+  height: 24px;
+}
+
+/* Push the file-tree toggle to the far right of the bar. */
+.titlebar-tree-toggle {
+  margin-left: auto;
+}
+
 .editor {
   position: absolute;
   inset: 0;

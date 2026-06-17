@@ -35,6 +35,10 @@ import { createPortalNode, OutPortal, type PortalNode } from "./panelPortal";
 
 type WorkbenchViewProps = {
   readonly runtime: AppRuntime;
+  /** Only the active workspace shows and drives focus. Inactive sessions stay
+   *  mounted — their terminals, editor scroll, and portal DOM survive — but are
+   *  hidden and never grab the keyboard. */
+  readonly active: boolean;
   /** Snapshot stream of the FOCUSED pane (status bar fodder). */
   readonly onActiveSnapshot?: (snapshot: EditorSnapshot) => void;
 };
@@ -104,7 +108,7 @@ function collectStacks(tile: Tile, out: Stack[]): void {
   for (const child of tile.children) collectStacks(child.tile, out);
 }
 
-export function WorkbenchView({ runtime, onActiveSnapshot }: WorkbenchViewProps) {
+export function WorkbenchView({ runtime, active, onActiveSnapshot }: WorkbenchViewProps) {
   const wb = useSyncExternalStore(
     useCallback((cb) => runtime.subscribeWorkbench(cb), [runtime]),
     () => runtime.getWorkbenchSnapshot(),
@@ -153,8 +157,8 @@ export function WorkbenchView({ runtime, onActiveSnapshot }: WorkbenchViewProps)
   // useLayoutEffect so the focus lands before the browser paints, which matters
   // when a reverse-portal host is re-attached (terminal toggle on/off).
   useLayoutEffect(() => {
-    runtime.focusActivePanel();
-  }, [runtime, wb.focusedSlot, focusedActivePanelId]);
+    if (active) runtime.focusActivePanel();
+  }, [runtime, active, wb.focusedSlot, focusedActivePanelId]);
 
   const beginTabDrag = useCallback(
     (
@@ -228,7 +232,7 @@ export function WorkbenchView({ runtime, onActiveSnapshot }: WorkbenchViewProps)
     // No visible tiles, but hidden-yet-alive panels (a toggled-off terminal)
     // still render into their parked containers so their state survives.
     return (
-      <div className="workbench">
+      <div className="workbench" style={active ? undefined : { display: "none" }}>
         <div className="wb-empty">no open files — ⌘O to open, ⇧⌘P for commands</div>
         <PanelInPortals
           runtime={runtime}
@@ -242,7 +246,7 @@ export function WorkbenchView({ runtime, onActiveSnapshot }: WorkbenchViewProps)
   }
 
   return (
-    <div className="workbench">
+    <div className="workbench" style={active ? undefined : { display: "none" }}>
       <TileView
         tile={wb.arrangement.tiles}
         path={[]}

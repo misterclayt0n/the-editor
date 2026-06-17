@@ -270,8 +270,15 @@ function registerProcessHandlers(): void {
  */
 let fffModule: FffModule | null = null;
 let fffLoad: Promise<FffModule | null> | null = null;
-let fffState: { readonly root: string; readonly finder: FffFileFinder } | null = null;
-let fffPending: { readonly root: string; readonly promise: Promise<FffFileFinder> } | null = null;
+type FffEntry = { readonly finder: FffFileFinder; lastUsed: number };
+/**
+ * One native index per workspace root. Switching workspaces must NOT destroy
+ * the previous index (re-scanning is expensive), so finders stay warm in an
+ * LRU map; only the least-recently-used is evicted once past the cap.
+ */
+const fffFinders = new Map<string, FffEntry>();
+const fffPending = new Map<string, Promise<FffFileFinder>>();
+const MAX_FFF_FINDERS = 4;
 
 async function loadFff(): Promise<FffModule | null> {
   if (fffModule !== null) return fffModule;
@@ -293,17 +300,21 @@ function normalizeRoot(root: string): string {
 
 async function getFff(rootInput: string): Promise<FffResult<FffFileFinder>> {
   const root = normalizeRoot(rootInput);
-  if (fffState?.root === root && !fffState.finder.isDestroyed) return { ok: true, value: fffState.finder };
-  if (fffPending?.root === root) {
+  const existing = fffFinders.get(root);
+  if (existing !== undefined && !existing.finder.isDestroyed) {
+    existing.lastUsed = Date.now();
+    return { ok: true, value: existing.finder };
+  }
+  const pending = fffPending.get(root);
+  if (pending !== undefined) {
     try {
-      return { ok: true, value: await fffPending.promise };
+      return { ok: true, value: await pending };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
 
-  fffState?.finder.destroy();
-  fffState = null;
+  if (existing !== undefined) fffFinders.delete(root); // destroyed: drop the stale entry
   const mod = await loadFff();
   if (mod === null) return { ok: false, error: "fff is unavailable in this desktop build" };
 
@@ -316,16 +327,35 @@ async function getFff(rootInput: string): Promise<FffResult<FffFileFinder>> {
     if (!created.ok) throw new Error(created.error);
     const finder = created.value;
     await finder.waitForScan(2_000);
-    fffState = { root, finder };
+    fffFinders.set(root, { finder, lastUsed: Date.now() });
+    evictFffFinders();
     return finder;
   })();
-  fffPending = { root, promise };
+  fffPending.set(root, promise);
   try {
     return { ok: true, value: await promise };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   } finally {
-    if (fffPending?.promise === promise) fffPending = null;
+    if (fffPending.get(root) === promise) fffPending.delete(root);
+  }
+}
+
+/** Destroy least-recently-used finders once the warm set exceeds the cap. The
+ *  just-created finder carries the newest timestamp, so it is never evicted. */
+function evictFffFinders(): void {
+  while (fffFinders.size > MAX_FFF_FINDERS) {
+    let oldestRoot: string | undefined;
+    let oldest = Infinity;
+    for (const [candidate, entry] of fffFinders) {
+      if (entry.lastUsed < oldest) {
+        oldest = entry.lastUsed;
+        oldestRoot = candidate;
+      }
+    }
+    if (oldestRoot === undefined) break;
+    fffFinders.get(oldestRoot)?.finder.destroy();
+    fffFinders.delete(oldestRoot);
   }
 }
 
@@ -437,8 +467,8 @@ function registerFileFinderHandlers(): void {
     },
   );
   app.on("will-quit", () => {
-    fffState?.finder.destroy();
-    fffState = null;
+    for (const entry of fffFinders.values()) entry.finder.destroy();
+    fffFinders.clear();
   });
 }
 

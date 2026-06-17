@@ -4,6 +4,7 @@ import type { EditorSnapshot } from "@the-editor/editor";
 import { formatChords, type Chord } from "@the-editor/keymaps";
 import type { Tile } from "@the-editor/workbench";
 import { AppRuntime, type EditorPane } from "./runtime";
+import { Shell } from "./shell";
 import { WorkbenchView } from "./workbench/WorkbenchView";
 import { TitleBar } from "./ui/TitleBar";
 import { CommandPalette, type CommandPaletteMode } from "./ui/CommandPalette";
@@ -29,135 +30,278 @@ const layoutSummary = (runtime: AppRuntime): unknown => {
   const walk = (tile: Tile): unknown =>
     tile.kind === "stack"
       ? {
-          stack: tile.id,
+          kind: "stack",
+          id: tile.id,
           focused: tile.id === focusedSlot,
-          tabsHidden: tile.tabsHidden === true,
           active: tile.active,
-          tabs: tile.panels.map((panelId) => ({
-            panel: panelId,
-            file: runtime.pane(panelId)?.fileInfo()?.path ?? null,
-          })),
+          panels: tile.panels,
         }
       : {
-          split: tile.direction,
-          children: tile.children.map((child) => ({
-            weight: Number(child.weight.toFixed(3)),
-            tile: walk(child.tile),
-          })),
+          kind: "split",
+          direction: tile.direction,
+          children: tile.children.map((child) => walk(child.tile)),
         };
   return arrangement.tiles === null ? null : walk(arrangement.tiles);
 };
 
+type WorkspaceId = string;
+
+/**
+ * One open workspace: a fully isolated editor session (its own AppRuntime,
+ * documents, layout, LSP/VCS/terminals) plus its intel controller. Sessions
+ * stay mounted while inactive so their terminals and editor state survive a
+ * switch; only the active one shows, receives the keyboard, and drives the
+ * shared chrome (dialogs, status bar).
+ */
+type WorkspaceSession = {
+  readonly id: WorkspaceId;
+  readonly runtime: AppRuntime;
+  readonly intel: IntelController;
+  readonly root: string | null;
+  readonly dispose: () => void;
+};
+
+let nextWorkspaceId = 1;
+
+/** Tab label: the workspace folder's basename, or "untitled" before a folder
+ *  is opened into the session. */
+const workspaceLabel = (root: string | null): string => {
+  if (root === null) return "untitled";
+  const trimmed = root.replace(/\/+$/, "");
+  return trimmed.split("/").pop() || trimmed || "untitled";
+};
+
 export function App() {
-  // The runtime is an external resource, so the owning effect creates AND
-  // disposes it: under React StrictMode's mount -> cleanup -> remount cycle,
-  // each mount gets a fresh runtime instead of reusing a disposed one.
-  const [runtime, setRuntime] = useState<AppRuntime | null>(null);
-  const [intel, setIntel] = useState<IntelController | null>(null);
+  // The shell (shared theme + appearance) and the workspace sessions are
+  // external resources, so the owning effect creates AND disposes them: under
+  // React StrictMode's mount -> cleanup -> remount cycle, each mount gets a
+  // fresh shell + sessions instead of reusing disposed ones.
+  const [shell, setShell] = useState<Shell | null>(null);
+  const [sessions, setSessions] = useState<ReadonlyArray<WorkspaceSession>>([]);
+  const [activeId, setActiveId] = useState<WorkspaceId | null>(null);
+
   const [snapshot, setSnapshot] = useState<EditorSnapshot | null>(null);
   const [pending, setPending] = useState<ReadonlyArray<Chord>>([]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteMode, setPaletteMode] = useState<CommandPaletteMode>("commands");
   const [fileFinderOpen, setFileFinderOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [rename, setRename] = useState<{ open: boolean; initial: string }>({
-    open: false,
-    initial: "",
-  });
+  const [rename, setRename] = useState<{ open: boolean; initial: string }>({ open: false, initial: "" });
   // Generic string prompt (new file/folder names, etc.); resolves null on cancel.
   const [prompt, setPrompt] = useState<{ initial: string; placeholder: string } | null>(null);
   const promptResolve = useRef<((value: string | null) => void) | null>(null);
   // Bumped on focus/file changes so the status bar re-reads the focused pane.
   const [, setStatusEpoch] = useState(0);
 
-  useEffect(() => {
-    const booted = AppRuntime.boot("");
-    booted.onFileStateChanged = () => setStatusEpoch((epoch) => epoch + 1);
-    booted.onPaletteOpenRequested = () => {
+  const active = sessions.find((session) => session.id === activeId) ?? null;
+  // Stable handles for the document-level listener and dialog callbacks, which
+  // outlive any single session and must always reach whichever one is active.
+  const activeIdRef = useRef<WorkspaceId | null>(null);
+  activeIdRef.current = activeId;
+  const sessionsRef = useRef<ReadonlyArray<WorkspaceSession>>(sessions);
+  sessionsRef.current = sessions;
+  const activeRuntimeRef = useRef<AppRuntime | null>(null);
+  activeRuntimeRef.current = active?.runtime ?? null;
+  const activeIntelRef = useRef<IntelController | null>(null);
+  activeIntelRef.current = active?.intel ?? null;
+
+  // Build a session: boot a runtime, wire its host hooks to the shared chrome,
+  // and attach its intel controller. Callbacks that fire from BACKGROUND work
+  // (status, diagnostics, snapshots) are gated to the active session so a
+  // hidden workspace never clobbers what the chrome shows; dialog-open hooks
+  // need no gate (only the active session receives the keys that trigger them).
+  const makeSession = useCallback((host: Shell, root: string | null): WorkspaceSession => {
+    const id = `ws-${nextWorkspaceId++}`;
+    const runtime = AppRuntime.boot("", host);
+    const isActive = () => activeIdRef.current === id;
+
+    runtime.onFileStateChanged = () => {
+      if (isActive()) setStatusEpoch((epoch) => epoch + 1);
+    };
+    runtime.onPaletteOpenRequested = () => {
       setPaletteMode("commands");
       setPaletteOpen(true);
     };
-    booted.onFileFinderOpenRequested = () => setFileFinderOpen(true);
-    booted.onSearchOpenRequested = () => setSearchOpen(true);
-    booted.onThemeSelectorOpenRequested = () => {
+    runtime.onFileFinderOpenRequested = () => setFileFinderOpen(true);
+    runtime.onSearchOpenRequested = () => setSearchOpen(true);
+    runtime.onThemeSelectorOpenRequested = () => {
       setPaletteMode("themes");
       setPaletteOpen(true);
     };
-    booted.onDiagnosticsChanged = () => setStatusEpoch((epoch) => epoch + 1);
-    const unsubscribeVcs = booted.vcs?.subscribe(() => setStatusEpoch((epoch) => epoch + 1));
-    const unsubscribeTheme = booted.subscribeTheme(() => setStatusEpoch((epoch) => epoch + 1));
-    booted.onRenameRequested = (currentName) => setRename({ open: true, initial: currentName });
-    booted.onPrompt = (options) =>
+    runtime.onDiagnosticsChanged = () => {
+      if (isActive()) setStatusEpoch((epoch) => epoch + 1);
+    };
+    runtime.onRenameRequested = (currentName) => setRename({ open: true, initial: currentName });
+    runtime.onPrompt = (options) =>
       new Promise<string | null>((resolve) => {
         promptResolve.current = resolve;
         setPrompt({ initial: options.initial ?? "", placeholder: options.placeholder ?? "New name" });
       });
-    const controller = new IntelController(
-      booted,
-      booted.intel.completions,
-      booted.intel.hovers,
-      booted.intel.signatures,
-    );
-    booted.onTriggerCompletion = () => controller.triggerCompletion();
-    booted.onTriggerSignatureHelp = () => controller.triggerSignatureHelp();
-    booted.onPendingChords = (chords) => setPending(chords);
-    controller.setPane(booted.focusedPaneHost() ?? null);
 
-    // ONE keyboard entry point for the whole app: bubble-phase, document-level.
-    // Cooperative leaves (the owned editor, @pierre/trees) stop propagation on
-    // the keys they own, so those never reach here; everything else (the global
-    // palette binding, splits, etc.) bubbles up and the runtime dispatches it —
-    // which is what makes every surface, file tree included, keyboard-driven.
-    const onKeyDown = (event: KeyboardEvent) => booted.dispatchKeyboardEvent(event);
-    document.addEventListener("keydown", onKeyDown);
-    setIntel(controller);
-    const unsubscribe = booted.subscribeWorkbench(() => {
-      setStatusEpoch((epoch) => epoch + 1);
-      setSnapshot(booted.focusedPaneHost()?.snapshot() ?? null);
-      controller.setPane(booted.focusedPaneHost() ?? null);
+    const intel = new IntelController(
+      runtime,
+      runtime.intel.completions,
+      runtime.intel.hovers,
+      runtime.intel.signatures,
+    );
+    runtime.onTriggerCompletion = () => intel.triggerCompletion();
+    runtime.onTriggerSignatureHelp = () => intel.triggerSignatureHelp();
+    runtime.onPendingChords = (chords) => {
+      if (isActive()) setPending(chords);
+    };
+    intel.setPane(runtime.focusedPaneHost() ?? null);
+
+    const unsubscribeWorkbench = runtime.subscribeWorkbench(() => {
+      intel.setPane(runtime.focusedPaneHost() ?? null);
+      if (isActive()) {
+        setStatusEpoch((epoch) => epoch + 1);
+        setSnapshot(runtime.focusedPaneHost()?.snapshot() ?? null);
+      }
     });
-    setRuntime(booted);
-    setSnapshot(booted.focusedPaneHost()?.snapshot() ?? null);
+    const unsubscribeVcs = runtime.vcs?.subscribe(() => {
+      if (isActive()) setStatusEpoch((epoch) => epoch + 1);
+    });
+    const unsubscribeRoot = runtime.subscribeWorkspaceRoot((nextRoot) =>
+      setSessions((prev) => prev.map((session) => (session.id === id ? { ...session, root: nextRoot } : session))),
+    );
+
+    if (root !== null) runtime.openFolder(root);
+
+    const dispose = () => {
+      unsubscribeWorkbench();
+      unsubscribeVcs?.();
+      unsubscribeRoot();
+      intel.dispose();
+      runtime.dispose();
+    };
+    return { id, runtime, intel, root, dispose };
+  }, []);
+
+  useEffect(() => {
+    const bootedShell = Shell.boot();
+    const unsubscribeTheme = bootedShell.subscribeTheme(() => setStatusEpoch((epoch) => epoch + 1));
+    const first = makeSession(bootedShell, null);
+    setShell(bootedShell);
+    setSessions([first]);
+    setActiveId(first.id);
+
+    // ONE keyboard entry point for the whole app: bubble-phase, document-level,
+    // routed to the ACTIVE session. Cooperative leaves (the owned editor,
+    // @pierre/trees) stop propagation on the keys they own; everything else
+    // bubbles here and the active runtime dispatches it.
+    const onKeyDown = (event: KeyboardEvent) => activeRuntimeRef.current?.dispatchKeyboardEvent(event);
+    document.addEventListener("keydown", onKeyDown);
+
     const isDev = location.hostname === "localhost" || location.hostname === "127.0.0.1";
     if (isDev) {
+      const host = () => activeRuntimeRef.current;
       (window as unknown as Record<string, unknown>).__editorHost = {
-        open: (path: string) => booted.openPath(path),
-        save: () => booted.saveActiveFile(),
-        info: () => booted.focusedPane()?.fileInfo() ?? null,
-        layout: () => layoutSummary(booted),
-        definition: () => booted.goToDefinition(),
-        format: () => booted.formatActiveDocument(),
-        intel: () => JSON.parse(JSON.stringify(controller.getState())),
-        intelDebug: () => controller.debugInfo(),
-        openFolder: (path: string) => booted.openFolder(path),
+        open: (path: string) => host()?.openPath(path),
+        save: () => host()?.saveActiveFile(),
+        info: () => host()?.focusedPane()?.fileInfo() ?? null,
+        layout: () => {
+          const runtime = host();
+          return runtime ? layoutSummary(runtime) : null;
+        },
+        definition: () => host()?.goToDefinition(),
+        format: () => host()?.formatActiveDocument(),
+        intel: () => {
+          const controller = activeIntelRef.current;
+          return controller ? JSON.parse(JSON.stringify(controller.getState())) : null;
+        },
+        intelDebug: () => activeIntelRef.current?.debugInfo(),
+        openFolder: (path: string) => host()?.openFolder(path),
         toggleTree: () => {
+          const runtime = host();
+          if (runtime === null) return;
           void Effect.runPromise(
-            booted.commands.execute("files.toggleTree").pipe(Effect.catchAll(() => Effect.void)),
+            runtime.commands.execute("files.toggleTree").pipe(Effect.catchAll(() => Effect.void)),
           );
         },
         findFile: () => setFileFinderOpen(true),
-        searchProject: (query: string) => booted.searchProject(query),
+        searchProject: (query: string) => host()?.searchProject(query),
         multiBuffer: (
           specs: readonly { path: string; text: string; matches: readonly { start: number; end: number }[] }[],
           title?: string,
-        ) => booted.openMultiBufferFromText(specs, title ?? "Search results"),
+        ) => host()?.openMultiBufferFromText(specs, title ?? "Search results"),
         vcsDebug: () => ({
-          branch: booted.vcs?.branch() ?? null,
-          status: booted.vcs?.treeStatusEntries() ?? [],
-          ...(booted.vcs?.debugInfo() ?? {}),
+          branch: host()?.vcs?.branch() ?? null,
+          status: host()?.vcs?.treeStatusEntries() ?? [],
+          ...(host()?.vcs?.debugInfo() ?? {}),
         }),
+        // Workspace controls for headless verification.
+        workspaces: () =>
+          sessionsRef.current.map((session) => ({
+            id: session.id,
+            root: session.root,
+            active: session.id === activeIdRef.current,
+          })),
+        addWorkspace: (path?: string) => {
+          const session = makeSession(bootedShell, path ?? null);
+          setSessions((prev) => [...prev, session]);
+          setActiveId(session.id);
+          return session.id;
+        },
+        switchWorkspace: (id: string) => setActiveId(id),
       };
     }
+
     return () => {
       document.removeEventListener("keydown", onKeyDown);
-      unsubscribe();
-      unsubscribeVcs?.();
       unsubscribeTheme();
-      controller.dispose();
-      setIntel(null);
-      setRuntime(null);
-      booted.dispose();
+      setSessions((prev) => {
+        for (const session of prev) session.dispose();
+        return [];
+      });
+      setActiveId(null);
+      setShell(null);
+      bootedShell.dispose();
     };
+  }, [makeSession]);
+
+  // On switch (only): close dialogs so they don't act on the previous session,
+  // re-sync the chrome to the new active session, and land the keyboard in it.
+  useEffect(() => {
+    if (activeId === null) return;
+    const session = sessionsRef.current.find((entry) => entry.id === activeId);
+    if (session === undefined) return;
+    setPaletteOpen(false);
+    setFileFinderOpen(false);
+    setSearchOpen(false);
+    setPending([]);
+    setSnapshot(session.runtime.focusedPaneHost()?.snapshot() ?? null);
+    setStatusEpoch((epoch) => epoch + 1);
+    window.requestAnimationFrame(() => {
+      sessionsRef.current.find((entry) => entry.id === activeId)?.runtime.focusActivePanel();
+    });
+  }, [activeId]);
+
+  const addWorkspace = useCallback(() => {
+    if (shell === null) return;
+    // A new tab appears immediately (untitled), then prompts for a folder;
+    // cancelling leaves an untitled scratch workspace the user can close.
+    const session = makeSession(shell, null);
+    setSessions((prev) => [...prev, session]);
+    setActiveId(session.id);
+    void session.runtime.openFolderViaDialog();
+  }, [shell, makeSession]);
+
+  const switchWorkspace = useCallback((id: WorkspaceId) => setActiveId(id), []);
+
+  const closeWorkspace = useCallback((id: WorkspaceId) => {
+    const prev = sessionsRef.current;
+    if (prev.length <= 1) return; // never close the last workspace
+    const index = prev.findIndex((session) => session.id === id);
+    if (index === -1) return;
+    const target = prev[index];
+    const next = prev.filter((session) => session.id !== id);
+    setSessions(next);
+    if (activeIdRef.current === id) {
+      setActiveId(next[Math.min(index, next.length - 1)]?.id ?? null);
+    }
+    // Defer teardown until React has unmounted this session's WorkbenchView
+    // (portals torn down) so we never dispose a runtime its view still renders.
+    if (target !== undefined) window.requestAnimationFrame(() => target.dispose());
   }, []);
 
   const handleActiveSnapshot = useCallback((next: EditorSnapshot) => setSnapshot(next), []);
@@ -167,66 +311,82 @@ export function App() {
     promptResolve.current = null;
     setPrompt(null);
     resolve?.(value);
-    window.requestAnimationFrame(() => runtime?.focusActivePanel());
-  }, [runtime]);
+    window.requestAnimationFrame(() => activeRuntimeRef.current?.focusActivePanel());
+  }, []);
   const handlePaletteOpenChange = useCallback((open: boolean) => {
     setPaletteOpen(open);
     // Radix restores focus to the previously focused element, but command
     // execution may have swapped the layout out from under it.
     if (!open) {
-      window.requestAnimationFrame(() => runtime?.focusActivePanel());
+      window.requestAnimationFrame(() => activeRuntimeRef.current?.focusActivePanel());
       setPaletteMode("commands");
     }
-  }, [runtime]);
+  }, []);
 
-  if (runtime === null) return <div className="app" />;
+  if (shell === null || active === null) return <div className="app" />;
 
-  const focusedPane = runtime.focusedPane();
+  const activeRuntime = active.runtime;
+  const focusedPane = activeRuntime.focusedPane();
   const head = snapshot?.selection.primary.head;
   const line = snapshot && head !== undefined ? snapshot.text.lineRangeAt(head) : null;
   // Diagnostics for the focused document — the caret's SOURCE doc in a multibuffer.
   const diagnosticDocId =
-    head !== undefined ? (runtime.focusedPaneHost()?.resolveSource(head)?.docId ?? null) : null;
-  const diagnostics = diagnosticDocId !== null ? runtime.diagnosticsFor(diagnosticDocId) : null;
+    head !== undefined ? (activeRuntime.focusedPaneHost()?.resolveSource(head)?.docId ?? null) : null;
+  const diagnostics = diagnosticDocId !== null ? activeRuntime.diagnosticsFor(diagnosticDocId) : null;
 
   return (
     <div className="app">
-      <TitleBar runtime={runtime} />
-      <WorkbenchView
-        runtime={runtime}
-        onActiveSnapshot={handleActiveSnapshot}
+      <TitleBar
+        tabs={sessions.map((session) => ({ id: session.id, label: workspaceLabel(session.root) }))}
+        activeId={activeId}
+        onSelect={switchWorkspace}
+        onAdd={addWorkspace}
+        onClose={closeWorkspace}
+        onToggleTree={() =>
+          void Effect.runPromise(
+            activeRuntime.commands.execute("files.toggleTree").pipe(Effect.catchAll(() => Effect.void)),
+          )
+        }
       />
+      {sessions.map((session) => (
+        <WorkbenchView
+          key={session.id}
+          runtime={session.runtime}
+          active={session.id === activeId}
+          {...(session.id === activeId ? { onActiveSnapshot: handleActiveSnapshot } : {})}
+        />
+      ))}
       <CommandPalette
         open={paletteOpen}
         mode={paletteMode}
         onOpenChange={handlePaletteOpenChange}
-        commands={runtime.commands}
-        themes={runtime.themes}
+        commands={activeRuntime.commands}
+        themes={activeRuntime.themes}
       />
       <FileFinder
         open={fileFinderOpen}
-        runtime={runtime}
+        runtime={activeRuntime}
         onOpenChange={(open) => {
           setFileFinderOpen(open);
-          if (!open) window.requestAnimationFrame(() => runtime.focusActivePanel());
+          if (!open) window.requestAnimationFrame(() => activeRuntime.focusActivePanel());
         }}
       />
       <SearchDialog
         open={searchOpen}
-        runtime={runtime}
+        runtime={activeRuntime}
         onOpenChange={(open) => {
           setSearchOpen(open);
-          if (!open) window.requestAnimationFrame(() => runtime.focusActivePanel());
+          if (!open) window.requestAnimationFrame(() => activeRuntime.focusActivePanel());
         }}
       />
-      {intel !== null && <IntelView controller={intel} />}
+      <IntelView key={activeId} controller={active.intel} />
       <RenameDialog
         open={rename.open}
         initialValue={rename.initial}
-        onSubmit={(value) => void runtime.performRename(value)}
+        onSubmit={(value) => void activeRuntime.performRename(value)}
         onClose={() => {
           setRename((state) => ({ ...state, open: false }));
-          window.requestAnimationFrame(() => runtime?.focusActivePanel());
+          window.requestAnimationFrame(() => activeRuntime.focusActivePanel());
         }}
       />
       <RenameDialog
@@ -239,8 +399,8 @@ export function App() {
       />
       <div className="status-bar">
         <span>
-          {runtime?.vcs?.branch() != null && (
-            <span className="status-branch">{runtime.vcs.branch()} · </span>
+          {activeRuntime.vcs?.branch() != null && (
+            <span className="status-branch">{activeRuntime.vcs.branch()} · </span>
           )}
           {fileLabel(focusedPane)}
           {line !== null && head !== undefined

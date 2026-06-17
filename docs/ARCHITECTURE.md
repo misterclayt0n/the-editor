@@ -107,6 +107,10 @@ Each kind of truth should have one owner.
 The intended ownership model:
 
 ```txt
+Shell (window host)
+  one per window: the shared theme + OS appearance, platform capability
+  bridges, the active workspace, and routing input/dialogs/status to it
+
 Kernel
   package lifecycle, registries, stores, ownership
 
@@ -137,6 +141,12 @@ LSP/language workers
 VCS/diff workers
   background metadata and diff computation; never blocks typing
 ```
+
+Each open workspace is an independent session: its own kernel package graph,
+workbench, working copy, LSP, VCS, and terminals. The shell keeps inactive
+sessions mounted but hidden so their state (terminals, scroll, editor buffers)
+survives a switch, and owns the one concern that is genuinely process-global —
+the theme — so sessions never fight over the window's appearance.
 
 React, when present, renders and dispatches. It should not own editor truth.
 

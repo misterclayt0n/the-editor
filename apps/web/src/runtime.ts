@@ -21,8 +21,9 @@
 import { Context, Effect, Exit, Fiber, Layer, Option, Scope, Stream } from "effect";
 import { makePackageRuntime } from "@the-editor/kernel";
 import { toPackageDescriptor } from "@the-editor/extensions";
+import { Shell } from "./shell";
 import { Commands, makeCommands } from "@the-editor/commands";
-import { makeThemes, Themes, themeDefaults, type ResolvedTheme } from "@the-editor/theme";
+import { Themes, type ResolvedTheme } from "@the-editor/theme";
 import {
   chordFromKeyboardEvent,
   isTextInputChord,
@@ -133,7 +134,6 @@ import {
 } from "./intel/types";
 import { uriToPath, type lsp } from "@the-editor/lsp";
 import { MountHub } from "./editor/mounts";
-import { applyThemeToDocument } from "./theme/dom";
 import { buildMultiBuffer, type MultiBufferMatchFile } from "./multibuffer/builder";
 import { MultiBufferPane, MultiBufferSurface } from "./multibuffer/pane";
 /** A multibuffer is an editor surface for command/keymap availability. */
@@ -358,8 +358,6 @@ export class AppRuntime {
   private mirrorFibers: ReadonlyArray<Fiber.RuntimeFiber<unknown, unknown>> = [];
   private themeFiber: Fiber.RuntimeFiber<unknown, unknown> | undefined;
   private readonly themeListeners = new Set<() => void>();
-  private systemAppearanceMedia: MediaQueryList | undefined;
-  private systemAppearanceListener: (() => void) | undefined;
   /** The panel each toggle (terminal, file tree) currently owns as its dock.
    *  Cleared when the user moves or closes it, so a manually-placed panel is
    *  released from the toggle (Zed: a terminal dragged out of the dock is no
@@ -389,7 +387,7 @@ export class AppRuntime {
     };
   }
 
-  static boot(initialText: string): AppRuntime {
+  static boot(initialText: string, shell: Shell): AppRuntime {
     const fileSystem = createFileSystemPort();
     let instance!: AppRuntime;
     instance = Effect.runSync(
@@ -415,7 +413,7 @@ export class AppRuntime {
         const completionProviders = yield* makeCompletionProviders;
         const hoverProviders = yield* makeHoverProviders;
         const signatureProviders = yield* makeSignatureProviders;
-        const themes = yield* makeThemes();
+        const themes = shell.themes;
         const services = Layer.mergeAll(
           Layer.succeed(Themes, themes),
           Layer.succeed(PanelRenderers, panelRenderers),
@@ -496,7 +494,6 @@ export class AppRuntime {
         );
         yield* runtime
           .activateGraph([
-            toPackageDescriptor(themeDefaults, services),
             toPackageDescriptor(editorDefaults, services),
             toPackageDescriptor(lineNumbers, services),
             toPackageDescriptor(filesPackage, services),
@@ -544,7 +541,7 @@ export class AppRuntime {
     );
     instance.focusSlotOfPanel(pane.panelId);
     instance.startWorkbenchMirror();
-    instance.startThemeMirror();
+    instance.startThemeListener();
     return instance;
   }
 
@@ -569,22 +566,19 @@ export class AppRuntime {
     return () => void this.themeListeners.delete(listener);
   }
 
-  private startThemeMirror(): void {
-    const publish = (theme: ResolvedTheme) => {
-      applyThemeToDocument(theme);
+  /**
+   * Repaint this session's surfaces when the shared theme changes. The shell
+   * owns the DOM and the `activeTheme` singleton; a session only tells its own
+   * renderers (editor canvas, terminal) to repaint via the same listener set.
+   */
+  private startThemeListener(): void {
+    const notify = () => {
       for (const listener of this.themeListeners) listener();
     };
-    publish(Effect.runSync(this.themes.active));
+    notify();
     this.themeFiber = Effect.runFork(
-      Stream.runForEach(this.themes.changes, (theme) => Effect.sync(() => publish(theme))),
+      Stream.runForEach(this.themes.changes, () => Effect.sync(notify)),
     );
-    this.systemAppearanceMedia = window.matchMedia("(prefers-color-scheme: light)");
-    this.systemAppearanceListener = () => {
-      const appearance = this.systemAppearanceMedia?.matches ? "light" : "dark";
-      Effect.runFork(this.themes.setSystemAppearance(appearance).pipe(Effect.ignore));
-    };
-    this.systemAppearanceMedia.addEventListener("change", this.systemAppearanceListener);
-    this.systemAppearanceListener();
   }
 
   pane(panelId: PanelId): EditorPane | undefined {
@@ -1502,9 +1496,6 @@ export class AppRuntime {
     this.highlightsByDoc.clear();
     for (const fiber of this.mirrorFibers) Effect.runFork(Fiber.interrupt(fiber));
     if (this.themeFiber !== undefined) Effect.runFork(Fiber.interrupt(this.themeFiber));
-    if (this.systemAppearanceMedia !== undefined && this.systemAppearanceListener !== undefined) {
-      this.systemAppearanceMedia.removeEventListener("change", this.systemAppearanceListener);
-    }
     const views = [...this.panes.values()].map((pane) => pane.view);
     this.panes.clear();
     for (const pane of this.multiBufferPanes.values()) pane.dispose();

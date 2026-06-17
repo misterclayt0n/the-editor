@@ -1,17 +1,19 @@
 /**
  * A multibuffer view as a PaneHost, painted by the existing EditorRenderer.
  *
- * State is canonical -> derived. The canonical state is the live source buffers,
- * the unfolded `baseExcerpts` (source ranges that edits + expands mutate), the
- * set of folded documents, and the per-excerpt match spans. `rebuild()` derives
- * the active MultiBufferSnapshot (folds collapse a file to a single row), the
- * render metas, and the synthesized visuals from it.
+ * Scale model (mirrors Zed):
+ *  - EDITS are incremental: a keystroke commits to the source document and the
+ *    snapshot is patched via `mapDocumentChanges` (which reuses unchanged
+ *    excerpts' summaries), never re-scanning every excerpt.
+ *  - INTEL (LSP + syntax) is attached only for documents with a VISIBLE excerpt,
+ *    ref-counted, debounced on scroll, and detached when scrolled away/closed —
+ *    so a 1000-match search never opens 150 language-server documents at once.
+ *  - DIAGNOSTICS are read per-document, windowed and cached, and mapped into the
+ *    unified coordinate space (no global decoration set, no full-visuals merge).
  *
- * Editing routes the standard editing commands through `editPlan`: a unified
- * edit becomes per-document edits, each committed to the REAL source document
- * (so it persists, is undoable, and updates any other view), then the canonical
- * excerpts/matches are mapped through the document changes and the snapshot is
- * rebuilt. Selection is set from the command result (clamped).
+ * State is canonical -> derived: the live buffers, the unfolded `baseExcerpts`
+ * (ranges that edits/expands mutate), the folded-doc set, and per-excerpt match
+ * spans; `rebuild()`/`recomputeDerived()` derive the snapshot, metas, visuals.
  */
 
 import {
@@ -30,6 +32,7 @@ import {
   invalidate,
   SelectionInvalidated,
   VisualsInvalidated,
+  type DocumentChangeRange,
   type EditorNotification,
   type EditorSnapshot,
   type Invalidation,
@@ -51,15 +54,19 @@ import {
 import { FloatHub } from "../editor/floats";
 import { MountHub } from "../editor/mounts";
 import type { HighlightRun } from "../platform/syntax";
-import type { PaneHighlights, PaneHost } from "../runtime";
+import type { IntelLocation, PaneHighlights, PaneHost } from "../runtime";
 import { metasFor, type ExcerptMeta, type MultiBufferBuild } from "./builder";
-import { multiBufferVisuals } from "./visuals";
+import { excerptSlicesInRange, multiBufferVisuals } from "./visuals";
 
 /** Surface kind for multibuffer panels (its own keymap/command scope). */
 export const MultiBufferSurface = SurfaceKind("the-editor/multibuffer");
 
 /** Lines added per expand-context click. */
 const EXPAND_LINES = 5;
+/** Debounce before (de)attaching intel as the viewport settles. */
+const VIEWPORT_DEBOUNCE_MS = 50;
+
+const rangeMapOptions = { startAssoc: "before", endAssoc: "after" } as const;
 
 /** The slice of the app runtime a multibuffer pane needs. */
 export interface MultiBufferHost {
@@ -74,8 +81,15 @@ export interface MultiBufferHost {
   documentHighlights(docId: string): PaneHighlights | undefined;
   /** The source document's current version (for syntax sync). */
   documentVersion(docId: string): number;
+  /** The source document's EditorVisuals (LSP diagnostics + inlay hints). */
+  documentVisuals(docId: string): VisualsSnapshot | undefined;
+  /** Subscribe to a source document's changes (diagnostics, edits); repaint. */
+  subscribeDocument(docId: string, listener: () => void): () => void;
+  /** Attach LSP + syntax + VCS to a source document (idempotent, ref-counted). */
+  attachDocumentIntel(docId: string, path: string): void;
+  /** Release intel for a source document when no longer visible anywhere. */
+  detachDocumentIntel(docId: string): void;
 }
-const rangeMapOptions = { startAssoc: "before", endAssoc: "after" } as const;
 
 let scopeSeq = 0;
 
@@ -90,10 +104,19 @@ export class MultiBufferPane implements PaneHost {
   private readonly pathByDoc: ReadonlyMap<string, string>;
   private readonly foldedDocs = new Set<string>();
 
-  // Derived state (recomputed by rebuild()).
+  // Derived state (recomputed by rebuild()/recomputeDerived()).
   private snapshotData!: MultiBufferSnapshot;
   private metasData!: ExcerptMeta[];
   private visualsData!: VisualsSnapshot;
+  private visualsGeneration = 0;
+
+  // Viewport-scoped intel: LSP/syntax attached only for visible documents.
+  private readonly attachedDocs = new Set<string>();
+  private readonly docSubscriptions = new Map<string, () => void>();
+  private readonly sourceVisualsCache = new Map<string, VisualsSnapshot>();
+  private viewportScheduled = false;
+  private disposed = false;
+  private pendingViewport: { start: number; end: number } | null = null;
 
   private readonly editorId: string;
   private selection = Selection.single(0, 0);
@@ -102,6 +125,8 @@ export class MultiBufferPane implements PaneHost {
   private readonly listeners = new Set<
     (notification: EditorNotification, source: "document" | "view") => void
   >();
+  private readonly highlightListeners = new Set<() => void>();
+  private stickyListener: ((meta: ExcerptMeta | null) => void) | null = null;
 
   constructor(
     readonly panelId: PanelId,
@@ -121,6 +146,16 @@ export class MultiBufferPane implements PaneHost {
     return this.metasData;
   }
 
+  /** Every source document referenced by the multibuffer (for cleanup). */
+  sourceDocumentIds(): readonly string[] {
+    return [...this.documents.keys()];
+  }
+
+  /** Whether the document currently has a visible (intel-attached) excerpt. */
+  usesDocument(docId: string): boolean {
+    return this.attachedDocs.has(docId);
+  }
+
   snapshot(): EditorSnapshot {
     return {
       id: this.editorId as EditorSnapshot["id"],
@@ -132,7 +167,7 @@ export class MultiBufferPane implements PaneHost {
   }
 
   visualsSnapshot(): VisualsSnapshot {
-    return this.visualsData;
+    return { ...this.visualsData, generation: this.visualsGeneration };
   }
 
   setSelection(selection: Selection): void {
@@ -153,66 +188,49 @@ export class MultiBufferPane implements PaneHost {
     return this.host.subscribeTheme(listener);
   }
 
-  /** Per-excerpt syntax: map each source doc's highlight runs into unified coords. */
+  /** Resolve a unified offset to the underlying source document + offset. The
+   * common ground for LSP/intel: the IntelController treats this exactly like a
+   * single-file pane (which returns itself). */
+  resolveSource(offset: number): IntelLocation | null {
+    const clamped = Math.max(0, Math.min(this.snapshotData.length, offset));
+    const source = this.snapshotData.offsetToSource(clamped);
+    if (source === undefined) return null;
+    const text = this.documents.get(source.documentId);
+    if (text === undefined) return null;
+    return {
+      docId: source.documentId,
+      path: this.pathByDoc.get(source.documentId) ?? null,
+      text,
+      offset: source.offset,
+    };
+  }
+
+  /** Per-excerpt syntax: map each visible source doc's runs into unified coords. */
   readonly highlights: PaneHighlights = {
     ensureSynced: () => {
-      for (const docId of this.documents.keys()) {
+      for (const docId of this.attachedDocs) {
         this.host.documentHighlights(docId)?.ensureSynced(this.host.documentVersion(docId), null);
       }
     },
     runsBetween: (from: number, to: number): readonly HighlightRun[] => {
       const out: HighlightRun[] = [];
-      for (const meta of this.metasData) {
-        const start = meta.startOffset;
-        const end = start + (meta.excerpt.sourceRange.end - meta.excerpt.sourceRange.start);
-        if (end <= from || start >= to) continue;
-        const docHighlights = this.host.documentHighlights(meta.excerpt.documentId);
+      for (const slice of excerptSlicesInRange(this.metasData, from, to)) {
+        if (!this.attachedDocs.has(slice.meta.excerpt.documentId)) continue;
+        const docHighlights = this.host.documentHighlights(slice.meta.excerpt.documentId);
         if (docHighlights === undefined) continue;
-        const base = start - meta.excerpt.sourceRange.start;
-        const sourceFrom = meta.excerpt.sourceRange.start + Math.max(0, from - start);
-        const sourceTo = meta.excerpt.sourceRange.start + Math.min(end - start, to - start);
-        for (const run of docHighlights.runsBetween(sourceFrom, sourceTo)) {
-          out.push({ from: base + run.from, to: base + run.to, kind: run.kind });
+        for (const run of docHighlights.runsBetween(slice.sourceFrom, slice.sourceTo)) {
+          out.push({ from: slice.base + run.from, to: slice.base + run.to, kind: run.kind });
         }
       }
       return out;
     },
     subscribe: (listener: () => void): (() => void) => {
-      const unsubscribes = [...this.documents.keys()].map(
-        (docId) => this.host.documentHighlights(docId)?.subscribe(listener) ?? (() => {}),
-      );
+      this.highlightListeners.add(listener);
       return () => {
-        for (const unsubscribe of unsubscribes) unsubscribe();
+        this.highlightListeners.delete(listener);
       };
     },
   };
-
-  // The view registers here to render a sticky header for the top excerpt.
-  private stickyListener: ((meta: ExcerptMeta | null) => void) | null = null;
-
-  onViewport(listener: (meta: ExcerptMeta | null) => void): () => void {
-    this.stickyListener = listener;
-    return () => {
-      if (this.stickyListener === listener) this.stickyListener = null;
-    };
-  }
-
-  readonly viewportChanged = (topLine: number): void => {
-    this.stickyListener?.(this.stickyHeaderForLine(topLine));
-  };
-
-  /** The file header to pin while scrolled into a file's body (null at its top). */
-  private stickyHeaderForLine(line: number): ExcerptMeta | null {
-    if (line <= 0 || line >= this.snapshotData.lineCount) return null;
-    const source = this.snapshotData.offsetToSource(this.snapshotData.lineToOffset(line));
-    if (source === undefined) return null;
-    const header = this.metasData.find(
-      (meta) => meta.isFirstOfFile && meta.excerpt.documentId === source.documentId,
-    );
-    if (header === undefined) return null;
-    // Only pin once the real header has scrolled above the top line.
-    return line > this.snapshotData.offsetToLine(header.startOffset) ? header : null;
-  }
 
   /** A click on a gutter line number jumps to that line in the source file. */
   gutterClick(line: number): boolean {
@@ -279,6 +297,29 @@ export class MultiBufferPane implements PaneHost {
     }
   };
 
+  // The view registers here to render a sticky header for the top excerpt.
+  onViewport(listener: (meta: ExcerptMeta | null) => void): () => void {
+    this.stickyListener = listener;
+    return () => {
+      if (this.stickyListener === listener) this.stickyListener = null;
+    };
+  }
+
+  /** Renderer reports the top visible line (sticky) + the rendered line window
+   * (intel attach). Attach is debounced so scrolling doesn't thrash servers. */
+  readonly viewportChanged = (topLine: number, startLine: number, endLine: number): void => {
+    this.stickyListener?.(this.stickyHeaderForLine(topLine));
+    this.pendingViewport = { start: startLine, end: endLine };
+    if (this.viewportScheduled) return;
+    this.viewportScheduled = true;
+    setTimeout(() => {
+      this.viewportScheduled = false;
+      const pending = this.pendingViewport;
+      this.pendingViewport = null;
+      if (!this.disposed && pending !== null) this.updateAttachments(pending.start, pending.end);
+    }, VIEWPORT_DEBOUNCE_MS);
+  };
+
   /** Grow an excerpt's context by EXPAND_LINES rows, clamped to neighbors. */
   expandExcerpt(excerptId: string, direction: "up" | "down"): void {
     const index = this.baseExcerpts.findIndex((excerpt) => excerpt.id === excerptId);
@@ -316,6 +357,35 @@ export class MultiBufferPane implements PaneHost {
     void this.host.jumpToLocation(meta.path, { line: at.line, character: at.column });
   }
 
+  /** Apply LSP/completion edits (in SOURCE coordinates) to a source document,
+   * incrementally remap the multibuffer, and place the caret after the edit.
+   * The completion accept routes here so the menu can edit through the view. */
+  commitToSource(docId: string, replacements: readonly TextEdit[], sourceCaret: number): void {
+    if (replacements.length === 0) return;
+    const result = this.host.commitDocumentEdits(docId, replacements);
+    if (result === undefined) return;
+    this.documents.set(docId, result.buffer);
+    const changes = new Map<string, ChangeDesc>([[docId, result.change]]);
+    this.snapshotData = this.snapshotData.mapDocumentChanges(changes, this.documents);
+    this.remapCanonical(changes);
+    this.recomputeDerived();
+    const caret = this.snapshotData.sourceToOffset(
+      docId,
+      Math.max(0, Math.min(result.buffer.length, sourceCaret)),
+    );
+    this.selection =
+      caret === undefined
+        ? this.clampSelection(this.selection)
+        : Selection.single(caret, caret);
+    this.notifyDocument();
+  }
+
+  /** Release viewport intel subscriptions (the runtime then frees the docs). */
+  dispose(): void {
+    this.disposed = true;
+    for (const docId of [...this.attachedDocs]) this.detachIntel(docId);
+  }
+
   // --- internals -----------------------------------------------------------
 
   private applyEdit(edits: readonly Edit[]): void {
@@ -331,7 +401,7 @@ export class MultiBufferPane implements PaneHost {
     } catch {
       return; // overlapping/invalid edit
     }
-    if (documentEdits.size === 0) return; // e.g. deleting a synthetic excerpt separator
+    if (documentEdits.size === 0) return; // e.g. deleting a synthetic separator
     const changes = new Map<string, ChangeDesc>();
     for (const [docId, docEdits] of documentEdits) {
       const result = this.host.commitDocumentEdits(docId, docEdits);
@@ -339,10 +409,22 @@ export class MultiBufferPane implements PaneHost {
       this.documents.set(docId, result.buffer);
       changes.set(docId, result.change);
     }
+    // Incremental: patch only the changed documents' excerpts (reuse summaries).
+    this.snapshotData = this.snapshotData.mapDocumentChanges(changes, this.documents);
     this.remapCanonical(changes);
-    this.rebuild();
+    this.recomputeDerived();
     this.selection = this.clampSelection(editsToSelection(effective));
-    this.notifyDocument();
+    // Report unified change spans so the controller can spot a typed char and
+    // auto-trigger completion/signature. effective edits are already unified
+    // coords; accumulate the shift across a multi-cursor batch.
+    const changeRanges: DocumentChangeRange[] = [];
+    let shift = 0;
+    for (const edit of [...effective].sort((a, b) => a.from - b.from)) {
+      const fromB = edit.from + shift;
+      changeRanges.push({ fromA: edit.from, toA: edit.to, fromB, toB: fromB + edit.insert.length });
+      shift += edit.insert.length - (edit.to - edit.from);
+    }
+    this.notifyDocument(changeRanges);
   }
 
   /** Slide canonical excerpts + matches through committed document changes. */
@@ -379,10 +461,16 @@ export class MultiBufferPane implements PaneHost {
     this.matchesByExcerptId = nextMatches;
   }
 
+  /** Full structural rebuild (fold/expand/initial): re-derives the snapshot. */
   private rebuild(): void {
+    this.snapshotData = MultiBufferSnapshot.fromExcerpts(this.documents, this.applyFold());
+    this.recomputeDerived();
+  }
+
+  /** Recompute metas + visuals from the CURRENT snapshot (no text scan). */
+  private recomputeDerived(): void {
     this.version++;
-    const active = this.applyFold();
-    this.snapshotData = MultiBufferSnapshot.fromExcerpts(this.documents, active);
+    this.visualsGeneration++;
     const matchCountByDoc = new Map<string, number>();
     for (const excerpt of this.baseExcerpts) {
       const count = (this.matchesByExcerptId.get(excerpt.id) ?? []).length;
@@ -395,7 +483,87 @@ export class MultiBufferPane implements PaneHost {
       foldedDocs: this.foldedDocs,
       documents: this.documents,
     });
-    this.visualsData = multiBufferVisuals(this.snapshotData, this.metasData, this.version);
+    this.visualsData = multiBufferVisuals(this.snapshotData, this.metasData, this.sourceVisualsFor);
+  }
+
+  /** Cached, viewport-gated source-document visuals (LSP diagnostics + inlays). */
+  private readonly sourceVisualsFor = (docId: string): VisualsSnapshot | undefined => {
+    if (!this.attachedDocs.has(docId)) return undefined;
+    let cached = this.sourceVisualsCache.get(docId);
+    if (cached === undefined) {
+      cached = this.host.documentVisuals(docId);
+      if (cached !== undefined) this.sourceVisualsCache.set(docId, cached);
+    }
+    return cached;
+  };
+
+  private updateAttachments(startLine: number, endLine: number): void {
+    if (this.snapshotData.length === 0) return;
+    const lastLine = this.snapshotData.lineCount - 1;
+    const from = this.snapshotData.lineToOffset(Math.max(0, Math.min(lastLine, startLine)));
+    const to = this.snapshotData.lineToOffset(Math.max(0, Math.min(lastLine, endLine + 1)));
+    const visible = new Set<string>();
+    for (const slice of excerptSlicesInRange(this.metasData, from, to)) {
+      visible.add(slice.meta.excerpt.documentId);
+    }
+    let changed = false;
+    for (const docId of visible) {
+      if (!this.attachedDocs.has(docId)) {
+        this.attachIntel(docId);
+        changed = true;
+      }
+    }
+    for (const docId of [...this.attachedDocs]) {
+      if (!visible.has(docId)) {
+        this.detachIntel(docId);
+        changed = true;
+      }
+    }
+    if (changed) this.invalidateVisuals();
+  }
+
+
+  private attachIntel(docId: string): void {
+    const path = this.pathByDoc.get(docId);
+    if (path === undefined) return;
+    this.attachedDocs.add(docId);
+    this.host.attachDocumentIntel(docId, path);
+    this.docSubscriptions.set(
+      docId,
+      this.host.subscribeDocument(docId, () => this.onSourceChanged(docId)),
+    );
+  }
+
+  private detachIntel(docId: string): void {
+    this.attachedDocs.delete(docId);
+    this.docSubscriptions.get(docId)?.();
+    this.docSubscriptions.delete(docId);
+    this.sourceVisualsCache.delete(docId);
+    this.host.detachDocumentIntel(docId);
+  }
+
+  private onSourceChanged(docId: string): void {
+    this.sourceVisualsCache.delete(docId);
+    this.invalidateVisuals();
+  }
+
+  /** A source document's diagnostics/syntax changed (or attach set changed): repaint. */
+  private invalidateVisuals(): void {
+    this.visualsGeneration++;
+    this.notify([invalidate(VisualsInvalidated, { generation: this.visualsGeneration })], "document");
+    for (const listener of this.highlightListeners) listener();
+  }
+
+  /** The file header to pin while scrolled into a file's body (null at its top). */
+  private stickyHeaderForLine(line: number): ExcerptMeta | null {
+    if (line <= 0 || line >= this.snapshotData.lineCount) return null;
+    const source = this.snapshotData.offsetToSource(this.snapshotData.lineToOffset(line));
+    if (source === undefined) return null;
+    const header = this.metasData.find(
+      (meta) => meta.isFirstOfFile && meta.excerpt.documentId === source.documentId,
+    );
+    if (header === undefined) return null;
+    return line > this.snapshotData.offsetToLine(header.startOffset) ? header : null;
   }
 
   /** Derive the active excerpts: folded files collapse to a single row. */
@@ -420,7 +588,6 @@ export class MultiBufferPane implements PaneHost {
         sourceRange: { start: excerpt.sourceRange.start, end },
         primaryRange: { start: excerpt.sourceRange.start, end },
       });
-      // Skip the rest of this file's consecutive excerpts.
       let j = i + 1;
       while (j < this.baseExcerpts.length && this.baseExcerpts[j]!.documentId === excerpt.documentId)
         j++;
@@ -462,15 +629,16 @@ export class MultiBufferPane implements PaneHost {
     );
   }
 
-  private notifyDocument(): void {
+  private notifyDocument(changes: readonly DocumentChangeRange[] = []): void {
     this.notify(
       [
-        invalidate(DocumentInvalidated, { version: this.version, changes: [] }),
-        invalidate(VisualsInvalidated, { generation: this.version }),
+        invalidate(DocumentInvalidated, { version: this.version, changes }),
+        invalidate(VisualsInvalidated, { generation: this.visualsGeneration }),
         invalidate(SelectionInvalidated),
       ],
       "document",
     );
+    for (const listener of this.highlightListeners) listener();
   }
 
   private notify(invalidations: readonly Invalidation[], source: "document" | "view"): void {

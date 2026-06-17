@@ -85,6 +85,7 @@ import {
   TextDocument,
   Transaction,
   type ChangeDesc,
+  type RenderableText,
   type Span,
   type TextBuffer,
 } from "@the-editor/engine";
@@ -95,7 +96,12 @@ import { palettePackage, HostPaletteActions } from "./product/palette";
 import { viewPackage, HostViewActions } from "./product/view";
 import { themeCommands, HostThemeActions } from "./product/themes";
 import { createFileSystemPort } from "./platform/fs";
-import { createFileFinderPort, type FileFinderPort } from "./platform/fileFinder";
+import {
+  createFileFinderPort,
+  type FileFinderGrepCursor,
+  type FileFinderGrepMatch,
+  type FileFinderPort,
+} from "./platform/fileFinder";
 import { createProcessPort } from "./platform/process";
 import { createTerminalPort, type TerminalPort } from "./platform/terminal";
 import { createSyntaxPort, type HighlightRun, type SyntaxPort } from "./platform/syntax";
@@ -149,6 +155,16 @@ export interface PaneHighlights {
   subscribe(listener: () => void): () => void;
 }
 
+/** A resolved source-document location for LSP/intel. The "common ground": any
+ * pane maps a caret offset to (document, offset) the project LSP store is keyed
+ * by — a single-file pane returns itself, a multibuffer maps unified→source. */
+export interface IntelLocation {
+  readonly docId: string;
+  readonly path: string | null;
+  readonly text: RenderableText;
+  readonly offset: number;
+}
+
 /** What the per-pane renderer consumes. */
 export interface PaneHost {
   readonly mounts: MountHub;
@@ -162,8 +178,10 @@ export interface PaneHost {
   pointerScrolled?: (() => void) | undefined;
   /** A click in the gutter at `line`; return true if the pane handled it. */
   gutterClick?: ((line: number) => boolean) | undefined;
-  /** The first visible line changed (drives the multibuffer's sticky header). */
-  viewportChanged?: ((topLine: number) => void) | undefined;
+  /** Viewport changed: top visible line (sticky header) + the rendered line window. */
+  viewportChanged?: ((topLine: number, startLine: number, endLine: number) => void) | undefined;
+  /** Map a pane offset to its underlying source document + offset (LSP/intel). */
+  resolveSource(offset: number): IntelLocation | null;
   snapshot(): EditorSnapshot;
   visualsSnapshot(): VisualsSnapshot;
   setSelection(selection: Selection): void;
@@ -204,6 +222,16 @@ export class EditorPane implements PaneHost {
 
   visualsSnapshot(): VisualsSnapshot {
     return this.runIn(Effect.flatMap(EditorVisuals, (visuals) => visuals.snapshot));
+  }
+
+  /** A single-file pane resolves to itself (identity); the multibuffer maps. */
+  resolveSource(offset: number): IntelLocation | null {
+    return {
+      docId: String(this.document.id),
+      path: this.fileInfo()?.path ?? null,
+      text: this.snapshot().text,
+      offset,
+    };
   }
 
   subscribeTheme(listener: () => void): () => void {
@@ -655,13 +683,20 @@ export class AppRuntime {
     this.releaseDock(panelId);
     const pane = this.panes.get(panelId);
     if (pane === undefined) {
-      this.multiBufferPanes.delete(panelId);
+      const multiBuffer = this.multiBufferPanes.get(panelId);
+      if (multiBuffer !== undefined) {
+        const sourceDocs = multiBuffer.sourceDocumentIds();
+        multiBuffer.dispose();
+        this.multiBufferPanes.delete(panelId);
+        Effect.runSync(this.workbench.closePanel(panelId));
+        this.republishWorkbench();
+        // Drop source documents no editor/other multibuffer still references.
+        for (const docId of sourceDocs) this.releaseDocument(DocumentId.make(docId));
+        return;
+      }
       // Custom panel (terminal, file tree): closing its scope disposes the
       // renderer (the pool unmounts it once it leaves the live panel set).
       Effect.runSync(this.workbench.closePanel(panelId));
-      // closePanel mutates only the registry; force the snapshot to refresh so
-      // the chrome prunes the panel's portal and unmounts it (its dispose kills
-      // the PTY). Without this, panelIds stays stale and the content leaks.
       this.republishWorkbench();
       return;
     }
@@ -669,19 +704,44 @@ export class AppRuntime {
     Effect.runSync(this.workbench.closePanel(panelId));
     this.republishWorkbench();
     Effect.runSync(closeViewScope(pane.view));
-    const documentStillShown = [...this.panes.values()].some(
-      (other) => other.document.id === pane.document.id,
-    );
-    if (!documentStillShown) {
-      this.lsp?.detach(String(pane.document.id));
-      this.vcs?.detach(String(pane.document.id));
-      this.highlightsByDoc.get(String(pane.document.id))?.close();
-      this.highlightsByDoc.delete(String(pane.document.id));
-      const files = Context.getOption(this.workspace.context, Files);
-      if (Option.isSome(files)) Effect.runSync(files.value.unbind(pane.document.id));
-      const registry = Context.get(this.workspace.context, DocumentRegistry);
-      Effect.runSync(registry.close(pane.document.id));
-    }
+    this.releaseDocument(pane.document.id);
+  }
+
+  /** Tear down a document's services + registry entry once nothing references it
+   * (no editor pane shows it, no multibuffer sources it). */
+  private releaseDocument(docId: DocumentId): void {
+    const id = String(docId);
+    for (const other of this.panes.values()) if (String(other.document.id) === id) return;
+    for (const mb of this.multiBufferPanes.values()) if (mb.sourceDocumentIds().includes(id)) return;
+    this.lsp?.detach(id);
+    this.vcs?.detach(id);
+    this.highlightsByDoc.get(id)?.close();
+    this.highlightsByDoc.delete(id);
+    const files = Context.getOption(this.workspace.context, Files);
+    if (Option.isSome(files)) Effect.runSync(files.value.unbind(docId));
+    const registry = Context.get(this.workspace.context, DocumentRegistry);
+    Effect.runSync(registry.close(docId));
+  }
+
+  /** MultiBufferHost: attach intel for a now-visible source document (idempotent). */
+  attachDocumentIntel(docId: string, path: string): void {
+    const registry = Context.get(this.workspace.context, DocumentRegistry);
+    const scope = Effect.runSync(registry.get(DocumentId.make(docId)));
+    if (Option.isNone(scope)) return;
+    this.attachHighlights(scope.value, path);
+    void this.lsp?.attach(scope.value, path);
+    this.vcs?.attach(scope.value, path);
+  }
+
+  /** MultiBufferHost: detach intel once no pane shows the document (keeps the
+   * buffer registered so a scrolled-away excerpt still renders on return). */
+  detachDocumentIntel(docId: string): void {
+    for (const other of this.panes.values()) if (String(other.document.id) === docId) return;
+    for (const mb of this.multiBufferPanes.values()) if (mb.usesDocument(docId)) return;
+    this.lsp?.detach(docId);
+    this.vcs?.detach(docId);
+    this.highlightsByDoc.get(docId)?.close();
+    this.highlightsByDoc.delete(docId);
   }
 
   closeFocusedTab(): void {
@@ -877,10 +937,11 @@ export class AppRuntime {
   }
 
   async goToDefinition(): Promise<void> {
-    const pane = this.focusedPane();
+    const pane = this.focusedPaneHost();
     if (pane === undefined || this.lsp === undefined) return;
-    const head = pane.snapshot().selection.primary.head;
-    const locations = await this.lsp.definition(String(pane.document.id), head);
+    const location = pane.resolveSource(pane.snapshot().selection.primary.head);
+    if (location === null) return;
+    const locations = await this.lsp.definition(location.docId, location.offset);
     const target = locations[0];
     if (target === undefined) return;
     const path = uriToPath(target.uri);
@@ -1054,12 +1115,8 @@ export class AppRuntime {
   ): MultiBufferPane | undefined {
     const build = buildMultiBuffer(files, options);
     if (build.metas.length === 0) return undefined;
-    // Attach syntax to each source document so the multibuffer can color it.
-    const registry = Context.get(this.workspace.context, DocumentRegistry);
-    for (const [docId, path] of build.pathByDoc) {
-      const scope = Effect.runSync(registry.get(DocumentId.make(docId)));
-      if (Option.isSome(scope)) this.attachHighlights(scope.value, path);
-    }
+    // Intel (LSP + syntax + VCS) attaches lazily, per VISIBLE excerpt, via the
+    // pane's viewport hook — never all matched files at once (memory).
     const panel = Effect.runSync(this.workbench.createPanel({ kind: MultiBufferSurface }));
     const pane = new MultiBufferPane(panel.id, title, build, this);
     this.multiBufferPanes.set(panel.id, pane);
@@ -1124,6 +1181,28 @@ export class AppRuntime {
     return Effect.runSync(Context.get(scope.value.context, TextDocument).version);
   }
 
+  /** A source document's EditorVisuals snapshot — LSP diagnostics + inlay hints. */
+  documentVisuals(docId: string): VisualsSnapshot | undefined {
+    const registry = Context.get(this.workspace.context, DocumentRegistry);
+    const scope = Effect.runSync(registry.get(DocumentId.make(docId)));
+    if (Option.isNone(scope)) return undefined;
+    return Effect.runSync(Context.get(scope.value.context, EditorVisuals).snapshot);
+  }
+
+  /** Subscribe to a source document's notifications (diagnostics/edits republish). */
+  subscribeDocument(docId: string, listener: () => void): () => void {
+    const registry = Context.get(this.workspace.context, DocumentRegistry);
+    const scope = Effect.runSync(registry.get(DocumentId.make(docId)));
+    if (Option.isNone(scope)) return () => {};
+    const bus = Context.get(scope.value.context, DocumentNotifications);
+    const fiber = Effect.runFork(
+      Stream.runForEach(bus.notifications, () => Effect.sync(() => listener())),
+    );
+    return () => {
+      Effect.runFork(Fiber.interrupt(fiber));
+    };
+  }
+
   /**
    * Run a global content search (fff) and open the results as a multibuffer.
    * No-op without the native finder / a workspace root (capability-gated).
@@ -1138,9 +1217,25 @@ export class AppRuntime {
     if (root === null || finder === undefined || Option.isNone(files) || query.length === 0) {
       return undefined;
     }
-    const result = await finder.grep({ root, query, limit: options?.limit ?? 200 });
-    const byPath = new Map<string, (typeof result.items)[number][]>();
-    for (const item of result.items) {
+    // Page through ALL matches (fff caps each call; nextCursor continues), up to
+    // a safety ceiling, so the multibuffer shows the whole result set, not 200.
+    const pageSize = 1000;
+    const ceiling = options?.limit ?? 5000;
+    const allMatches: FileFinderGrepMatch[] = [];
+    let cursor: FileFinderGrepCursor | null = null;
+    do {
+      const result = await finder.grep({
+        root,
+        query,
+        limit: pageSize,
+        maxMatchesPerFile: 2000,
+        ...(cursor !== null ? { cursor } : {}),
+      });
+      for (const item of result.items) allMatches.push(item);
+      cursor = result.nextCursor;
+    } while (cursor !== null && allMatches.length < ceiling);
+    const byPath = new Map<string, FileFinderGrepMatch[]>();
+    for (const item of allMatches) {
       const list = byPath.get(item.relativePath);
       if (list) list.push(item);
       else byPath.set(item.relativePath, [item]);
@@ -1393,6 +1488,7 @@ export class AppRuntime {
     }
     const views = [...this.panes.values()].map((pane) => pane.view);
     this.panes.clear();
+    for (const pane of this.multiBufferPanes.values()) pane.dispose();
     this.multiBufferPanes.clear();
     Effect.runFork(
       Scope.close(this.scope, Exit.void).pipe(

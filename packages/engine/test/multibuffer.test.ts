@@ -171,6 +171,100 @@ describe("MultiBufferSnapshot", () => {
       expect(snapshot.lineRangeAt(range.from)).toEqual(range);
     }
   });
+
+  test("incremental mapDocumentChanges matches a full rebuild from post-change excerpts", () => {
+    const a = doc("alpha\nbeta\ngamma\ndelta\n");
+    const b = doc("one\ntwo\nthree\nfour\n");
+    const snapshot = MultiBufferSnapshot.fromExcerpts(
+      new Map([
+        ["a", a],
+        ["b", b],
+      ]),
+      [
+        { id: "a1", documentId: "a", sourceRange: span(0, 5), primaryRange: span(0, 5) },
+        { id: "b1", documentId: "b", sourceRange: span(0, 3), primaryRange: span(0, 3) },
+        { id: "a2", documentId: "a", sourceRange: span(6, 16), primaryRange: span(6, 10) },
+        { id: "b2", documentId: "b", sourceRange: span(4, 13), primaryRange: span(4, 7) },
+        { id: "a3", documentId: "a", sourceRange: span(17, 22), primaryRange: span(17, 22) },
+      ],
+    );
+
+    // Edit ONLY document "a"; "b" stays out of the change set entirely.
+    const change = Effect.runSync(ChangeSet.fromReplacements(a.length, [{ from: 2, to: 2, text: "XYZ" }]));
+    const after = change.apply(a);
+    const newDocuments = new Map([
+      ["a", after],
+      ["b", b],
+    ]);
+
+    const incremental = snapshot.mapDocumentChanges(new Map([["a", change.desc()]]), newDocuments);
+    // A from-scratch rebuild over the SAME post-change excerpts + documents.
+    const full = MultiBufferSnapshot.fromExcerpts(newDocuments, incremental.excerpts());
+
+    expect(incremental.excerptCount).toBe(full.excerptCount);
+    expect(incremental.length).toBe(full.length);
+    expect(incremental.lineCount).toBe(full.lineCount);
+    expect(incremental.textBetween(0, incremental.length)).toBe(full.textBetween(0, full.length));
+
+    const sourcePoint = (s: MultiBufferSnapshot, offset: number) => {
+      const point = s.offsetToSource(offset);
+      return point === undefined
+        ? undefined
+        : {
+            documentId: point.documentId,
+            offset: point.offset,
+            id: point.excerpt.id,
+            sourceRange: point.excerpt.sourceRange,
+            primaryRange: point.excerpt.primaryRange,
+          };
+    };
+    for (let offset = 0; offset <= incremental.length; offset++) {
+      expect(incremental.offsetToLine(offset)).toBe(full.offsetToLine(offset));
+      expect(sourcePoint(incremental, offset)).toEqual(sourcePoint(full, offset));
+    }
+  });
+
+  test("preserves an unchanged document's excerpts when only another document changes", () => {
+    const a = doc("alpha\nbeta\n");
+    const b = doc("one\ntwo\nthree\n");
+    const snapshot = MultiBufferSnapshot.fromExcerpts(
+      new Map([
+        ["a", a],
+        ["b", b],
+      ]),
+      [
+        { id: "a1", documentId: "a", sourceRange: span(0, 10), primaryRange: span(0, 5) },
+        { id: "b1", documentId: "b", sourceRange: span(0, 3), primaryRange: span(0, 3) },
+        { id: "b2", documentId: "b", sourceRange: span(4, 13), primaryRange: span(4, 7) },
+      ],
+    );
+
+    // Insert "ZZZ" into document "a" only; "b" is not in the change set.
+    const change = Effect.runSync(ChangeSet.fromReplacements(a.length, [{ from: 0, to: 0, text: "ZZZ" }]));
+    const after = change.apply(a);
+    const mapped = snapshot.mapDocumentChanges(
+      new Map([["a", change.desc()]]),
+      new Map([
+        ["a", after],
+        ["b", b],
+      ]),
+    );
+
+    // Document "b" excerpts are untouched: same ids, source ranges, primary ranges.
+    expect(mapped.excerpts().filter((e) => e.documentId === "b")).toEqual([
+      { id: "b1", documentId: "b", sourceRange: span(0, 3), primaryRange: span(0, 3) },
+      { id: "b2", documentId: "b", sourceRange: span(4, 13), primaryRange: span(4, 7) },
+    ]);
+    // The unchanged document's buffer object is reused, not rebuilt.
+    expect(mapped.document("b")).toBe(b);
+    // Its projected text still reads exactly as before the edit to "a".
+    const b1 = mapped.sourceToOffset("b", 0)!;
+    expect(mapped.textBetween(b1, b1 + 3)).toBe("one");
+    const b2 = mapped.sourceToOffset("b", 4)!;
+    expect(mapped.textBetween(b2, b2 + 9)).toBe("two\nthree");
+    // Whole projection: only "a"'s region grew by the inserted text.
+    expect(mapped.textBetween(0, mapped.length)).toBe("ZZZalpha\nbeta\none\ntwo\nthree");
+  });
 });
 
 describe("expandExcerptRange", () => {

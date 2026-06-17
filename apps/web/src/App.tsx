@@ -101,7 +101,7 @@ export function App() {
     booted.onTriggerCompletion = () => controller.triggerCompletion();
     booted.onTriggerSignatureHelp = () => controller.triggerSignatureHelp();
     booted.onPendingChords = (chords) => setPending(chords);
-    controller.setPane(booted.focusedPane() ?? null);
+    controller.setPane(booted.focusedPaneHost() ?? null);
 
     // ONE keyboard entry point for the whole app: bubble-phase, document-level.
     // Cooperative leaves (the owned editor, @pierre/trees) stop propagation on
@@ -113,11 +113,11 @@ export function App() {
     setIntel(controller);
     const unsubscribe = booted.subscribeWorkbench(() => {
       setStatusEpoch((epoch) => epoch + 1);
-      setSnapshot(booted.focusedPane()?.snapshot() ?? null);
-      controller.setPane(booted.focusedPane() ?? null);
+      setSnapshot(booted.focusedPaneHost()?.snapshot() ?? null);
+      controller.setPane(booted.focusedPaneHost() ?? null);
     });
     setRuntime(booted);
-    setSnapshot(booted.focusedPane()?.snapshot() ?? null);
+    setSnapshot(booted.focusedPaneHost()?.snapshot() ?? null);
     const isDev = location.hostname === "localhost" || location.hostname === "127.0.0.1";
     if (isDev) {
       (window as unknown as Record<string, unknown>).__editorHost = {
@@ -184,7 +184,10 @@ export function App() {
   const focusedPane = runtime.focusedPane();
   const head = snapshot?.selection.primary.head;
   const line = snapshot && head !== undefined ? snapshot.text.lineRangeAt(head) : null;
-  const diagnostics = focusedPane ? runtime.diagnosticsFor(focusedPane.document.id) : null;
+  // Diagnostics for the focused document — the caret's SOURCE doc in a multibuffer.
+  const diagnosticDocId =
+    head !== undefined ? (runtime.focusedPaneHost()?.resolveSource(head)?.docId ?? null) : null;
+  const diagnostics = diagnosticDocId !== null ? runtime.diagnosticsFor(diagnosticDocId) : null;
 
   return (
     <div className="app">

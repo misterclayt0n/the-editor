@@ -15,10 +15,42 @@ import type {
   AnchoredBlockWidget,
   RangeDecoration,
   ResolvedGutterBand,
+  VirtualText,
   VisualsSnapshot,
 } from "@the-editor/editor";
 import type { MultiBufferSnapshot } from "@the-editor/engine";
 import type { ExcerptMeta } from "./builder";
+
+/** A slice of one excerpt overlapping a unified range, with its source mapping. */
+export type ExcerptSlice = {
+  readonly meta: ExcerptMeta;
+  /** Add to a SOURCE offset to get the UNIFIED offset (and vice versa). */
+  readonly base: number;
+  readonly sourceFrom: number;
+  readonly sourceTo: number;
+};
+
+/** Excerpts overlapping [from, to) in unified coords, with source sub-ranges. */
+export function excerptSlicesInRange(
+  metas: readonly ExcerptMeta[],
+  from: number,
+  to: number,
+): ExcerptSlice[] {
+  const out: ExcerptSlice[] = [];
+  for (const meta of metas) {
+    const start = meta.startOffset;
+    const end = start + (meta.excerpt.sourceRange.end - meta.excerpt.sourceRange.start);
+    if (end <= from || start >= to) continue;
+    const base = start - meta.excerpt.sourceRange.start;
+    out.push({
+      meta,
+      base,
+      sourceFrom: meta.excerpt.sourceRange.start + Math.max(0, from - start),
+      sourceTo: meta.excerpt.sourceRange.start + Math.min(end - start, to - start),
+    });
+  }
+  return out;
+}
 
 export const MB_OWNER = "the-editor/multibuffer";
 /** Display rows reserved for a file header card vs an intra-file divider. */
@@ -35,7 +67,8 @@ const digits = (n: number): number => String(Math.max(1, n)).length;
 export function multiBufferVisuals(
   snapshot: MultiBufferSnapshot,
   metas: readonly ExcerptMeta[],
-  generation: number,
+  /** Live per-source-document visuals (LSP diagnostics + inlay hints). */
+  sourceVisuals?: (documentId: string) => VisualsSnapshot | undefined,
 ): VisualsSnapshot {
   const widgets: AnchoredBlockWidget[] = metas.map((m) => ({
     id: headerId(m.excerpt.id),
@@ -88,10 +121,33 @@ export function multiBufferVisuals(
   };
 
   return {
-    generation,
+    generation: 0, // the pane owns the generation (bumps on rebuild + diagnostics)
     textStylesBetween: () => [],
-    decorationsBetween: (from, to) => decorations.filter((d) => d.to > from && d.from < to),
-    virtualTextBetween: () => [],
+    decorationsBetween: (from, to) => {
+      const out = decorations.filter((d) => d.to > from && d.from < to);
+      if (sourceVisuals !== undefined) {
+        for (const slice of excerptSlicesInRange(metas, from, to)) {
+          const source = sourceVisuals(slice.meta.excerpt.documentId);
+          if (source === undefined) continue;
+          for (const d of source.decorationsBetween(slice.sourceFrom, slice.sourceTo)) {
+            out.push({ ...d, from: slice.base + d.from, to: slice.base + d.to });
+          }
+        }
+      }
+      return out;
+    },
+    virtualTextBetween: (from, to) => {
+      if (sourceVisuals === undefined) return [];
+      const out: VirtualText[] = [];
+      for (const slice of excerptSlicesInRange(metas, from, to)) {
+        const source = sourceVisuals(slice.meta.excerpt.documentId);
+        if (source === undefined) continue;
+        for (const vt of source.virtualTextBetween(slice.sourceFrom, slice.sourceTo)) {
+          out.push({ ...vt, at: slice.base + vt.at });
+        }
+      }
+      return out;
+    },
     widgets: () => widgets,
     totalWidgetRows,
     gutterBands: [gutter],

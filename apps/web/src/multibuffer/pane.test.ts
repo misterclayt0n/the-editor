@@ -7,6 +7,7 @@ import {
   type ChangeDesc,
   type TextEdit,
 } from "@the-editor/engine";
+import { DocumentInvalidated, payloadsOf, type DocumentChangeRange } from "@the-editor/editor";
 import type { KeyboardEventLike } from "@the-editor/keymaps";
 import type { PanelId } from "@the-editor/workbench";
 import { buildMultiBuffer } from "./builder";
@@ -38,6 +39,20 @@ function makeHost(buffers: Map<string, TextBuffer>): MultiBufferHost {
       subscribe: () => () => {},
     }),
     documentVersion: (docId) => versions.get(docId) ?? 0,
+    documentVisuals: () => ({
+      generation: 1,
+      textStylesBetween: () => [],
+      // A stub "diagnostic" underline at the start of any queried range.
+      decorationsBetween: (from, to) =>
+        to > from ? [{ from, to: Math.min(to, from + 3), layer: "underline", className: "diag" }] : [],
+      virtualTextBetween: () => [],
+      widgets: () => [],
+      totalWidgetRows: 0,
+      gutterBands: [],
+    }),
+    subscribeDocument: () => () => {},
+    attachDocumentIntel: () => {},
+    detachDocumentIntel: () => {},
   };
 }
 
@@ -59,6 +74,13 @@ const makePane = () => {
   return { pane, buffers, build };
 };
 
+/** Intel attaches per visible excerpt and the attach is debounced; cover the
+ * whole buffer and wait out the debounce so syntax/diagnostics are live. */
+const attachViewport = async (pane: MultiBufferPane): Promise<void> => {
+  pane.viewportChanged(0, 0, 10_000);
+  await new Promise((resolve) => setTimeout(resolve, 80));
+};
+
 describe("MultiBufferPane", () => {
   test("typing routes through editPlan to the real source document", () => {
     const { pane, buffers } = makePane();
@@ -69,6 +91,23 @@ describe("MultiBufferPane", () => {
     // ...and so does the underlying source document (excerpt starts at "beta").
     const source = buffers.get("doc:a")!;
     expect(source.sliceString(0, 7)).toBe("alpha\nX");
+  });
+
+  test("a typed char emits its unified change range (so completion can auto-trigger)", () => {
+    const { pane } = makePane();
+    const changes: DocumentChangeRange[] = [];
+    pane.subscribe((notification, source) => {
+      if (source !== "document") return;
+      for (const payload of payloadsOf(notification, DocumentInvalidated)) {
+        if (payload.changes !== undefined) changes.push(...payload.changes);
+      }
+    });
+    pane.setSelection(Selection.point(0));
+    pane.keyInterceptor(key("X"));
+    // Exactly one single-char insert at offset 0; the controller reads the new
+    // text at [fromB, toB) to learn the typed char — here "X".
+    expect(changes).toEqual([{ fromA: 0, toA: 0, fromB: 0, toB: 1 }]);
+    expect(pane.snapshot().text.sliceString(changes[0]!.fromB, changes[0]!.toB)).toBe("X");
   });
 
   test("Backspace deletes through editPlan; caret follows", () => {
@@ -96,8 +135,9 @@ describe("MultiBufferPane", () => {
     expect(pane.snapshot().text.length).toBeGreaterThan(before);
   });
 
-  test("syntax adapter maps source runs into unified coordinates", () => {
+  test("syntax adapter maps source runs into unified coordinates", async () => {
     const { pane } = makePane();
+    await attachViewport(pane);
     const runs = pane.highlights!.runsBetween(0, 4);
     expect(runs.length).toBeGreaterThan(0);
     for (const run of runs) {
@@ -105,5 +145,15 @@ describe("MultiBufferPane", () => {
       expect(run.to).toBeLessThanOrEqual(pane.snapshot().text.length);
       expect(run.kind).toBe("keyword");
     }
+  });
+
+  test("source-doc diagnostics surface as unified decorations", async () => {
+    const { pane } = makePane();
+    await attachViewport(pane);
+    const decorations = pane.visualsSnapshot().decorationsBetween(0, pane.snapshot().text.length);
+    // The stub LSP underline from documentVisuals is mapped into the unified view.
+    expect(decorations.some((d) => d.layer === "underline" && d.className === "diag")).toBe(true);
+    // Match-highlight backgrounds still come through too.
+    expect(decorations.some((d) => d.className === "mb-match")).toBe(true);
   });
 });

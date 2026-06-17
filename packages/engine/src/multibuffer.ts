@@ -87,6 +87,15 @@ type SourceIndexEntry = {
   readonly entry: ExcerptEntry;
 };
 
+type SizedExcerpt = {
+  readonly excerpt: Excerpt;
+  readonly buffer: TextBuffer;
+  /** Length of the excerpt's own source text (excludes the trailing separator). */
+  readonly textLength: number;
+  /** Line breaks inside the excerpt's own source text (excludes the separator). */
+  readonly textLineBreaks: number;
+};
+
 const LeafMaxExcerpts = 64;
 const BranchMaxChildren = 32;
 const emptySummary: MultiBufferSummary = { length: 0, lineBreaks: 0 };
@@ -149,6 +158,18 @@ const summarizeExcerpt = (buffer: TextBuffer, range: Span): MultiBufferSummary =
   length: range.end - range.start,
   lineBreaks: countLineBreaks(buffer, range.start, range.end),
 });
+
+const checkExcerptSpans = (excerpt: Excerpt, bufferLength: number): void => {
+  checkSpan(excerpt.sourceRange, bufferLength, "source range");
+  checkSpan(excerpt.primaryRange, bufferLength, "primary range");
+  if (
+    excerpt.primaryRange.start < excerpt.sourceRange.start ||
+    excerpt.primaryRange.end > excerpt.sourceRange.end
+  )
+    throw new RangeError(`primary range must be inside source range for excerpt ${excerpt.id}`);
+  if (excerpt.sourceRange.start === excerpt.sourceRange.end)
+    throw new RangeError(`empty source range for excerpt ${excerpt.id}`);
+};
 
 /**
  * Grow a line-aligned excerpt source range by `lines` rows in `direction`,
@@ -235,36 +256,48 @@ export class MultiBufferSnapshot {
     documents: ReadonlyMap<DocumentId, TextBuffer>,
     excerpts: readonly Excerpt[],
   ): MultiBufferSnapshot {
+    const sized: SizedExcerpt[] = [];
+    for (const excerpt of excerpts) {
+      const buffer = documents.get(excerpt.documentId);
+      if (buffer === undefined) throw new RangeError(`unknown document ${excerpt.documentId}`);
+      // Validate up front so an out-of-range source span reports "invalid source
+      // range" rather than chunksBetween's generic "invalid range" from summarize.
+      checkExcerptSpans(excerpt, buffer.length);
+      const text = summarizeExcerpt(buffer, excerpt.sourceRange);
+      sized.push({ excerpt, buffer, textLength: text.length, textLineBreaks: text.lineBreaks });
+    }
+    return MultiBufferSnapshot.buildSnapshot(documents, sized);
+  }
+
+  /**
+   * Assemble entries, the source index, and the tree from per-excerpt text
+   * summaries that are ALREADY known — never rescans buffer text. Initial builds
+   * compute those summaries with {@link summarizeExcerpt}; incremental remaps
+   * reuse the cached summaries of excerpts whose document did not change.
+   */
+  private static buildSnapshot(
+    documents: ReadonlyMap<DocumentId, TextBuffer>,
+    sized: readonly SizedExcerpt[],
+  ): MultiBufferSnapshot {
     let multibufferStart = 0;
     const entries: ExcerptEntry[] = [];
     const byDocument = new Map<DocumentId, SourceIndexEntry[]>();
-    for (let i = 0; i < excerpts.length; i++) {
-      const excerpt = excerpts[i]!;
-      const buffer = documents.get(excerpt.documentId);
-      if (buffer === undefined) throw new RangeError(`unknown document ${excerpt.documentId}`);
-      checkSpan(excerpt.sourceRange, buffer.length, "source range");
-      checkSpan(excerpt.primaryRange, buffer.length, "primary range");
-      if (
-        excerpt.primaryRange.start < excerpt.sourceRange.start ||
-        excerpt.primaryRange.end > excerpt.sourceRange.end
-      )
-        throw new RangeError(`primary range must be inside source range for excerpt ${excerpt.id}`);
-      if (excerpt.sourceRange.start === excerpt.sourceRange.end)
-        throw new RangeError(`empty source range for excerpt ${excerpt.id}`);
-      const text = summarizeExcerpt(buffer, excerpt.sourceRange);
+    for (let i = 0; i < sized.length; i++) {
+      const { excerpt, buffer, textLength, textLineBreaks } = sized[i]!;
+      checkExcerptSpans(excerpt, buffer.length);
       // Every excerpt but the last is followed by a synthetic "\n" so each
       // excerpt always begins on its own row, regardless of whether its
       // source slice ends in a newline. The separator belongs to no document.
-      const hasTrailingNewline = i < excerpts.length - 1;
+      const hasTrailingNewline = i < sized.length - 1;
       const summary: MultiBufferSummary = hasTrailingNewline
-        ? { length: text.length + 1, lineBreaks: text.lineBreaks + 1 }
-        : text;
+        ? { length: textLength + 1, lineBreaks: textLineBreaks + 1 }
+        : { length: textLength, lineBreaks: textLineBreaks };
       const entry: ExcerptEntry = {
         ...excerpt,
         buffer,
         multibufferStart,
-        textLength: text.length,
-        textLineBreaks: text.lineBreaks,
+        textLength,
+        textLineBreaks,
         hasTrailingNewline,
         summary,
       };
@@ -470,11 +503,21 @@ export class MultiBufferSnapshot {
     changes: ReadonlyMap<DocumentId, ChangeDesc>,
     documents: ReadonlyMap<DocumentId, TextBuffer> = this.documents,
   ): MultiBufferSnapshot {
-    const mapped: Excerpt[] = [];
+    const sized: SizedExcerpt[] = [];
     for (const entry of this.entries) {
       const change = changes.get(entry.documentId);
       if (change === undefined) {
-        mapped.push(entry);
+        // Unchanged document: reuse the excerpt's cached text summary instead of
+        // rescanning the buffer. This is what makes a keystroke in one document
+        // O(changed excerpts) rather than O(total excerpt text).
+        const buffer = documents.get(entry.documentId);
+        if (buffer === undefined) throw new RangeError(`unknown document ${entry.documentId}`);
+        sized.push({
+          excerpt: entry,
+          buffer,
+          textLength: entry.textLength,
+          textLineBreaks: entry.textLineBreaks,
+        });
         continue;
       }
       if (change.length !== entry.buffer.length)
@@ -482,7 +525,9 @@ export class MultiBufferSnapshot {
       const sourceRange = change.mapRange(entry.sourceRange, rangeMapOptions);
       if (sourceRange.start === sourceRange.end) continue;
       const primaryRange = change.mapRange(entry.primaryRange, rangeMapOptions);
-      mapped.push({
+      const buffer = documents.get(entry.documentId);
+      if (buffer === undefined) throw new RangeError(`unknown document ${entry.documentId}`);
+      const excerpt: Excerpt = {
         id: entry.id,
         documentId: entry.documentId,
         sourceRange,
@@ -490,9 +535,14 @@ export class MultiBufferSnapshot {
           start: Math.max(sourceRange.start, Math.min(sourceRange.end, primaryRange.start)),
           end: Math.max(sourceRange.start, Math.min(sourceRange.end, primaryRange.end)),
         },
-      });
+      };
+      // The document changed, so this excerpt's text must be re-summarized against
+      // the new buffer; validate first to match fromExcerpts' error messages.
+      checkExcerptSpans(excerpt, buffer.length);
+      const text = summarizeExcerpt(buffer, sourceRange);
+      sized.push({ excerpt, buffer, textLength: text.length, textLineBreaks: text.lineBreaks });
     }
-    return MultiBufferSnapshot.fromExcerpts(documents, mapped);
+    return MultiBufferSnapshot.buildSnapshot(documents, sized);
   }
 
   private pushDocumentEdit(byDocument: Map<DocumentId, TextEdit[]>, documentId: DocumentId, edit: TextEdit): void {

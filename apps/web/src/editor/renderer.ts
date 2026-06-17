@@ -1104,7 +1104,7 @@ export class EditorRenderer {
     };
 
     this.positionFloats();
-    this.runtime.viewportChanged?.(this.geometry.lineAt(this.scrollY));
+    this.runtime.viewportChanged?.(this.geometry.lineAt(this.scrollY), this.windowStart, this.windowEnd);
 
     if (docDirty || selDirty) this.options.onSnapshot?.(this.snapshot);
   }

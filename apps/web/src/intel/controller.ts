@@ -29,7 +29,8 @@ import {
 } from "@the-editor/editor";
 import { RangeSet, Transaction, Selection, SelectionRange } from "@the-editor/engine";
 import type { KeyboardEventLike } from "@the-editor/keymaps";
-import type { AppRuntime, EditorPane } from "../runtime";
+import { EditorPane, type AppRuntime, type IntelLocation, type PaneHost } from "../runtime";
+import { MultiBufferPane } from "../multibuffer/pane";
 import type { FloatHandle } from "../editor/floats";
 import { fuzzyScore } from "./fuzzy";
 import { looksLikeSnippet, parseSnippet, type SnippetStop } from "./snippet";
@@ -91,7 +92,7 @@ export type IntelState = {
 };
 
 type CompletionSession = {
-  pane: EditorPane;
+  pane: PaneHost; // EditorPane or MultiBufferPane; accept branches on the kind
   docId: string;
   anchor: number; // word start; the float anchors here
   generation: number;
@@ -131,7 +132,7 @@ type SnippetSessionState = {
  * it leaves — that closes the widget). ArrowUp/Down cycle overloads.
  */
 type SignatureSessionState = {
-  pane: EditorPane;
+  pane: PaneHost;
   anchor: number;
   result: SignatureResult;
   selected: number;
@@ -198,8 +199,10 @@ const withTimeout = async <T>(
 };
 
 export class IntelController {
-  private pane: EditorPane | null = null;
+  private pane: PaneHost | null = null;
   private unsubscribePane: (() => void) | null = null;
+  /** The focused pane's own keyInterceptor, chained under the controller's. */
+  private paneKeyInterceptor: ((event: KeyboardEventLike) => boolean) | undefined;
   private completionFloat: FloatHandle | null = null;
   private hoverFloat: FloatHandle | null = null;
   /** Highlights the text range a hover card describes. */
@@ -261,7 +264,7 @@ export class IntelController {
   debugInfo(): Record<string, unknown> {
     return {
       paneAttached: this.pane !== null,
-      paneDoc: this.pane !== null ? String(this.pane.document.id) : null,
+      paneDoc: this.resolveCaret()?.docId ?? null,
       providers: Effect.runSync(this.completionProviders.list).map((p) => p.id),
       hoverProviders: Effect.runSync(this.hoverProviders.list).map((p) => p.id),
       ptrCalls: this.ptrCalls,
@@ -277,13 +280,13 @@ export class IntelController {
               signatures: this.signatureSession.result.signatures.map((s) => s.label),
             }
           : null,
-      signatureTriggers: Effect.runSync(this.signatureProviders.list).map((provider) => ({
-        id: provider.id,
-        triggers:
-          this.pane !== null
-            ? provider.triggerCharacters?.(String(this.pane.document.id)) ?? []
-            : [],
-      })),
+      signatureTriggers: ((): { id: string; triggers: readonly string[] }[] => {
+        const docId = this.resolveCaret()?.docId ?? null;
+        return Effect.runSync(this.signatureProviders.list).map((provider) => ({
+          id: provider.id,
+          triggers: docId !== null ? provider.triggerCharacters?.(docId) ?? [] : [],
+        }));
+      })(),
     };
   }
 
@@ -305,14 +308,15 @@ export class IntelController {
   }
 
   /** Follow workbench focus: one active pane at a time. */
-  setPane(pane: EditorPane | null): void {
+  setPane(pane: PaneHost | null): void {
     if (pane === this.pane) return;
     this.dismissCompletion();
     this.dismissHover();
     this.endSnippetSession();
     this.dismissSignature();
     if (this.pane !== null) {
-      this.pane.keyInterceptor = undefined;
+      // Restore the pane's own interceptor (the multibuffer uses it for nav).
+      this.pane.keyInterceptor = this.paneKeyInterceptor;
       this.pane.pointerHover = undefined;
       this.pane.pointerScrolled = undefined;
       this.completionFloat?.dispose();
@@ -329,6 +333,7 @@ export class IntelController {
     }
     this.unsubscribePane?.();
     this.unsubscribePane = null;
+    this.paneKeyInterceptor = undefined;
     this.pane = pane;
     if (pane === null) return;
     this.lastCaretHead = pane.snapshot().selection.primary.head;
@@ -336,21 +341,37 @@ export class IntelController {
     this.completionFloat = pane.floats.create();
     this.hoverFloat = pane.floats.create();
     this.signatureFloat = pane.floats.create();
-    const visuals = Context.get(
-      pane.document.context as Context.Context<EditorVisuals>,
-      EditorVisuals,
-    );
-    this.hoverRangeScope = Effect.runSync(Scope.make());
-    this.hoverRangeHandle = Effect.runSync(
-      visuals.contribute("intel-hover-range", {}).pipe(Scope.extend(this.hoverRangeScope)),
-    );
-    pane.keyInterceptor = (event) => this.interceptKey(event);
+    // The hover-range highlight lives in the document's EditorVisuals — only a
+    // single-file pane exposes one; the multibuffer skips the subtle highlight.
+    if (pane instanceof EditorPane) {
+      const visuals = Context.get(
+        pane.document.context as Context.Context<EditorVisuals>,
+        EditorVisuals,
+      );
+      this.hoverRangeScope = Effect.runSync(Scope.make());
+      this.hoverRangeHandle = Effect.runSync(
+        visuals.contribute("intel-hover-range", {}).pipe(Scope.extend(this.hoverRangeScope)),
+      );
+    }
+    // Chain BEFORE the pane's own interceptor (e.g. the multibuffer's nav/edit):
+    // completion navigation wins while open, everything else falls through.
+    this.paneKeyInterceptor = pane.keyInterceptor;
+    pane.keyInterceptor = (event) =>
+      this.interceptKey(event) || (this.paneKeyInterceptor?.(event) ?? false);
     pane.pointerHover = (offset) => this.onPointerHover(offset);
     pane.pointerScrolled = () => this.onScrolled();
     this.unsubscribePane = pane.subscribe((notification, source) => {
       if (source === "document") this.onDocumentChanged(notification);
       if (source === "view") this.onSelectionChanged();
     });
+  }
+
+  /** The focused caret as a source-document location (identity for editors,
+   * unified→source for the multibuffer). Null when no pane / unresolvable. */
+  private resolveCaret(): IntelLocation | null {
+    const pane = this.pane;
+    if (pane === null) return null;
+    return pane.resolveSource(pane.snapshot().selection.primary.head);
   }
 
   /** ctrl+space and the palette command land here. */
@@ -369,7 +390,8 @@ export class IntelController {
 
   private signatureTriggerKind(character: string): "trigger" | "retrigger" | null {
     if (character.length === 0 || this.pane === null) return null;
-    const docId = String(this.pane.document.id);
+    const docId = this.resolveCaret()?.docId;
+    if (docId === undefined) return null;
     const providers = Effect.runSync(this.signatureProviders.list);
     if (providers.some((p) => p.triggerCharacters?.(docId).includes(character))) return "trigger";
     if (providers.some((p) => p.retriggerCharacters?.(docId).includes(character)))
@@ -399,13 +421,14 @@ export class IntelController {
     if (pane === null) return;
     const generation = ++this.signatureGeneration;
     const snapshot = pane.snapshot();
-    const caret = snapshot.selection.primary.head;
+    const location = pane.resolveSource(snapshot.selection.primary.head);
+    if (location === null) return;
     const isRetrigger = this.signatureSession !== null;
     const context = {
-      docId: String(pane.document.id),
-      path: pane.fileInfo()?.path ?? null,
-      text: snapshot.text,
-      offset: caret,
+      docId: location.docId,
+      path: location.path,
+      text: location.text,
+      offset: location.offset,
       trigger,
       isRetrigger,
       ...(this.signatureSession !== null ? { active: this.signatureSession.result } : {}),
@@ -424,7 +447,7 @@ export class IntelController {
       this.dismissSignature();
       return;
     }
-    const anchor = this.signatureSession?.anchor ?? caret;
+    const anchor = this.signatureSession?.anchor ?? snapshot.selection.primary.head;
     const selected = Math.min(result.activeSignature ?? 0, result.signatures.length - 1);
     this.signatureSession = { pane, anchor, result, selected };
     this.signatureFloat?.setAnchor({ offset: anchor, placement: "above" });
@@ -465,6 +488,12 @@ export class IntelController {
     this.dismissCompletion();
     this.endSnippetSession();
     const item = scored.item;
+    if (pane instanceof MultiBufferPane) {
+      this.acceptInMultiBuffer(pane, anchor, item);
+      return;
+    }
+    // Single-file editor: pane offsets ARE source offsets, commit through the view.
+    if (!(pane instanceof EditorPane)) return;
     const snapshot = pane.snapshot();
     const caret = snapshot.selection.primary.head;
     const range = item.range ?? { from: anchor, to: caret };
@@ -540,6 +569,48 @@ export class IntelController {
     void this.finalizeAccept(pane, item, additional.length > 0);
   }
 
+  /**
+   * Accept a completion inside a multibuffer. The session anchor + caret are
+   * PANE offsets; resolve both to the underlying source document and compute the
+   * replace range in SOURCE coords (provider item ranges are already source
+   * coords — the request ran there), then commit through the source document.
+   * Snippets collapse to their plain text — no tab-stop session in a multibuffer.
+   */
+  private acceptInMultiBuffer(
+    pane: MultiBufferPane,
+    anchorPane: number,
+    item: CompletionItem,
+  ): void {
+    const caretLoc = pane.resolveSource(pane.snapshot().selection.primary.head);
+    const anchorLoc = pane.resolveSource(anchorPane);
+    // Both ends must resolve into the SAME source document (one excerpt).
+    if (caretLoc === null || anchorLoc === null || caretLoc.docId !== anchorLoc.docId) return;
+    const caret = caretLoc.offset;
+    const range = item.range ?? { from: anchorLoc.offset, to: caret };
+    const from = Math.min(range.from, caret);
+    const to = Math.max(range.to, caret);
+    let insert = item.insertText;
+    if (item.isSnippet === true && looksLikeSnippet(insert)) insert = parseSnippet(insert).text;
+    const sourceLen = caretLoc.text.length;
+    const additional = (item.additionalEdits ?? [])
+      .filter((edit) => edit.to <= from || edit.from >= to)
+      .filter((edit) => edit.from >= 0 && edit.to <= sourceLen);
+    const replacements = [...additional, { from, to, text: insert }].sort(
+      (a, b) => a.from - b.from || a.to - b.to,
+    );
+    const insertStart =
+      from +
+      additional
+        .filter((edit) => edit.to <= from)
+        .reduce((n, edit) => n + edit.text.length - (edit.to - edit.from), 0);
+    pane.commitToSource(
+      caretLoc.docId,
+      replacements.map((r) => ({ span: { start: r.from, end: r.to }, text: r.text })),
+      insertStart + insert.length,
+    );
+    void this.finalizeAccept(pane, item, additional.length > 0);
+  }
+
   /** Memoized resolve; proactively started when the item gets selected. */
   private resolveItem(item: CompletionItem): Promise<CompletionResolution | null> {
     if (item.resolve === undefined) return Promise.resolve(null);
@@ -566,7 +637,7 @@ export class IntelController {
   }
 
   private async finalizeAccept(
-    pane: EditorPane,
+    pane: PaneHost,
     item: CompletionItem,
     hadEagerEdits: boolean,
   ): Promise<void> {
@@ -574,22 +645,45 @@ export class IntelController {
       const resolution = await withTimeout(this.resolveItem(item), null, RESOLVE_TIMEOUT_MS);
       const edits = resolution?.additionalEdits;
       if (edits !== undefined && edits.length > 0 && this.pane === pane) {
-        const snapshot = pane.snapshot();
-        const sorted: CompletionEdit[] = [...edits]
-          .filter(
-            (edit) => edit.from >= 0 && edit.to <= snapshot.text.length && edit.from <= edit.to,
-          )
-          .sort((a, b) => a.from - b.from || a.to - b.to);
-        if (sorted.length > 0) {
-          const transaction = Effect.runSync(
-            Transaction.fromReplacements(snapshot.text.length, sorted),
-          );
-          Effect.runSync(
-            commitDocumentTransaction(transaction).pipe(
-              Effect.provide(pane.document.context as Context.Context<any>),
-              Effect.orDie,
-            ),
-          );
+        if (pane instanceof MultiBufferPane) {
+          // Lazy auto-import edits are SOURCE coords (the request ran there).
+          // Commit to the source doc; shift the caret past edits inserted before it.
+          const loc = pane.resolveSource(pane.snapshot().selection.primary.head);
+          if (loc !== null) {
+            const sorted: CompletionEdit[] = [...edits]
+              .filter(
+                (edit) => edit.from >= 0 && edit.to <= loc.text.length && edit.from <= edit.to,
+              )
+              .sort((a, b) => a.from - b.from || a.to - b.to);
+            if (sorted.length > 0) {
+              const caretShift = sorted
+                .filter((edit) => edit.to <= loc.offset)
+                .reduce((n, edit) => n + edit.text.length - (edit.to - edit.from), 0);
+              pane.commitToSource(
+                loc.docId,
+                sorted.map((e) => ({ span: { start: e.from, end: e.to }, text: e.text })),
+                loc.offset + caretShift,
+              );
+            }
+          }
+        } else if (pane instanceof EditorPane) {
+          const snapshot = pane.snapshot();
+          const sorted: CompletionEdit[] = [...edits]
+            .filter(
+              (edit) => edit.from >= 0 && edit.to <= snapshot.text.length && edit.from <= edit.to,
+            )
+            .sort((a, b) => a.from - b.from || a.to - b.to);
+          if (sorted.length > 0) {
+            const transaction = Effect.runSync(
+              Transaction.fromReplacements(snapshot.text.length, sorted),
+            );
+            Effect.runSync(
+              commitDocumentTransaction(transaction).pipe(
+                Effect.provide(pane.document.context as Context.Context<any>),
+                Effect.orDie,
+              ),
+            );
+          }
         }
       }
     }
@@ -721,14 +815,19 @@ export class IntelController {
   private async startSession(trigger: CompletionTrigger): Promise<void> {
     const pane = this.pane;
     if (pane === null) return;
+    // The LSP/word request runs in SOURCE coords (resolveSource); the float +
+    // fuzzy filter stay in PANE coords. For a single-file editor the two are
+    // identical (resolveSource is identity); the multibuffer accept (acceptIndex)
+    // branches to commit through the resolved source document.
     const snapshot = pane.snapshot();
-    const caret = snapshot.selection.primary.head;
+    const caret = snapshot.selection.primary.head; // PANE coords (anchors the float)
+    const location = pane.resolveSource(caret);
+    if (location === null) return;
     const anchor =
       trigger.kind === "triggerCharacter" ? caret : wordStart(snapshot.text, caret);
-    const docId = String(pane.document.id);
     const session: CompletionSession = {
       pane,
-      docId,
+      docId: location.docId,
       anchor,
       generation: (this.session?.generation ?? 0) + 1,
       loaded: false,
@@ -740,11 +839,13 @@ export class IntelController {
 
     const providers = Effect.runSync(this.completionProviders.list);
     const prefix = snapshot.text.sliceString(anchor, caret);
+    // The LSP request runs in SOURCE coords (resolveSource); the float/filter
+    // stay in PANE coords (anchor above).
     const context = {
-      docId,
-      path: pane.fileInfo()?.path ?? null,
-      text: snapshot.text,
-      offset: caret,
+      docId: location.docId,
+      path: location.path,
+      text: location.text,
+      offset: location.offset,
       prefix,
       trigger,
     };
@@ -928,7 +1029,8 @@ export class IntelController {
 
   private isTriggerCharacter(character: string): boolean {
     if (character.length === 0 || this.pane === null) return false;
-    const docId = String(this.pane.document.id);
+    const docId = this.resolveCaret()?.docId;
+    if (docId === undefined) return false;
     const providers = Effect.runSync(this.completionProviders.list);
     return providers.some((provider) =>
       provider.triggerCharacters?.(docId).includes(character),
@@ -1050,11 +1152,13 @@ export class IntelController {
     if (pane === null || this.session !== null) return;
     const generation = ++this.hoverGeneration;
     const snapshot = pane.snapshot();
+    const location = pane.resolveSource(offset);
+    if (location === null) return;
     const context = {
-      docId: String(pane.document.id),
-      path: pane.fileInfo()?.path ?? null,
-      text: snapshot.text,
-      offset,
+      docId: location.docId,
+      path: location.path,
+      text: location.text,
+      offset: location.offset,
     };
     const providers = Effect.runSync(this.hoverProviders.list);
     const parts: HoverResult[] = [];
@@ -1073,11 +1177,14 @@ export class IntelController {
     const sorted = [...parts].sort(
       (a, b) => (a.kind === "diagnostic" ? 0 : 1) - (b.kind === "diagnostic" ? 0 : 1),
     );
-    // Prefer a provider's range; otherwise fall back to the hovered word, so
-    // the card has a stable "same symbol" region and survives cursor jitter.
+    // Provider ranges come back in SOURCE coords; shift them to PANE coords (the
+    // pointer's delta, zero for a single-file pane) so the card anchors right.
+    const delta = offset - location.offset;
+    const providerRange = sorted.find((part) => part.range !== undefined)?.range;
     const range =
-      sorted.find((part) => part.range !== undefined)?.range ??
-      wordRangeAt(snapshot.text, offset);
+      providerRange !== undefined
+        ? { from: providerRange.from + delta, to: providerRange.to + delta }
+        : wordRangeAt(snapshot.text, offset);
     this.cancelHoverHide(); // the new card supersedes any pending hide
     this.hover = { parts: sorted, anchor: range?.from ?? offset, range };
     this.hoverFloat?.setAnchor({ offset: this.hover.anchor, placement: "above" });
@@ -1124,7 +1231,8 @@ export class IntelController {
     const resolved = selectedItem !== undefined ? this.resolvedDocs.get(selectedItem) : undefined;
     const documentation = resolved?.documentation ?? selectedItem?.documentation;
     const detail = resolved?.detail ?? selectedItem?.detail;
-    const basename = this.pane?.fileInfo()?.path?.split("/").pop() ?? "";
+    const basename =
+      selectedItem !== undefined ? this.resolveCaret()?.path?.split("/").pop() ?? "" : "";
     const dot = basename.lastIndexOf(".");
     const language = dot > 0 ? basename.slice(dot + 1) : undefined;
     this.state = {

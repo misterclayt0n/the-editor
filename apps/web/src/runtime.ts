@@ -523,7 +523,7 @@ export class AppRuntime {
         };
         const processPort = createProcessPort();
         if (processPort !== undefined) {
-          appRuntime.lsp = new LspManager(processPort, fileSystem, languageServers);
+          appRuntime.lsp = new LspManager(processPort, fileSystem, languageServers, () => appRuntime.workspaceRoot);
           appRuntime.lsp.onDiagnostics = (docId) => appRuntime.onDiagnosticsChanged?.(docId);
           appRuntime.vcs = new VcsManager(vcsProviders, fileSystem);
         }

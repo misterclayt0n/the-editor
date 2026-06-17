@@ -44,6 +44,7 @@ import {
 } from "@the-editor/lsp";
 import type { DecorationSpec, VirtualTextSpec } from "@the-editor/editor";
 import type { ProcessPort } from "../platform/process";
+import { chooseServerRoot } from "./roots";
 import type { LanguageServerDefinition, LanguageServers } from "../product/lsp";
 import type {
   CompletionContext,
@@ -61,6 +62,8 @@ const INLAY_HINT_DEBOUNCE_MS = 400;
 const INLAY_HINT_MAX_CHARS = 200_000;
 /** Don't respawn a server that just failed; wait this long. */
 const SPAWN_RETRY_MS = 30_000;
+/** Shut a server down this long after its last document detaches. */
+const IDLE_CLIENT_GRACE_MS = 15_000;
 
 export type DiagnosticCounts = { readonly errors: number; readonly warnings: number };
 
@@ -181,6 +184,8 @@ export class LspManager {
   private disposed = false;
   private enabled = true;
   private hintsEnabled = true;
+  /** Pending idle-server sweep (debounced after a detach). */
+  private reapTimer: number | null = null;
   /** Host hook: diagnostics for a document changed (status surfaces). */
   onDiagnostics?: (docId: string) => void;
 
@@ -188,6 +193,7 @@ export class LspManager {
     private readonly port: ProcessPort,
     private readonly fileSystem: FileSystemPort.Service | undefined,
     private readonly servers: LanguageServers.Service,
+    private readonly workspaceRoot: () => string | null = () => null,
   ) {}
 
   /** Attach a file-backed document; no matching server is a quiet no-op. */
@@ -223,7 +229,8 @@ export class LspManager {
 
     const handles = await Promise.all(
       candidates.map(async (candidate) => {
-        const root = await this.findRoot(path, candidate.definition.rootMarkers ?? []);
+        const markerRoot = await this.findRoot(path, candidate.definition.rootMarkers ?? []);
+        const root = chooseServerRoot(path, this.workspaceRoot(), markerRoot);
         const handle = await this.ensureClient(candidate.definition, root);
         if (handle === null || !(await handle.ready)) return null;
         return { candidate, handle };
@@ -305,6 +312,28 @@ export class LspManager {
     attachment.hintCancel?.cancel();
     Effect.runFork(Fiber.interrupt(attachment.busFiber));
     Effect.runFork(Scope.close(attachment.visualsScope, Exit.void));
+    // A server with no open documents is dead weight: shut it down after a
+    // grace window (so a scroll-away-and-back, or a tab reopen, reuses it).
+    if (this.reapTimer === null) {
+      this.reapTimer = window.setTimeout(() => {
+        this.reapTimer = null;
+        this.reapIdleClients();
+      }, IDLE_CLIENT_GRACE_MS);
+    }
+  }
+
+  /** Shut down every client no remaining attachment is using. */
+  private reapIdleClients(): void {
+    if (this.disposed) return;
+    const inUse = new Set<ClientHandle>();
+    for (const attachment of this.attachments.values()) {
+      for (const binding of attachment.bindings) inUse.add(binding.handle);
+    }
+    for (const [key, handle] of [...this.clients]) {
+      if (inUse.has(handle)) continue;
+      this.clients.delete(key);
+      if (handle.alive) void handle.client.shutdown().then(() => this.port.kill(handle.procId));
+    }
   }
 
   counts(docId: string): DiagnosticCounts | null {
@@ -694,6 +723,8 @@ export class LspManager {
     }
     this.clients.clear();
     this.failedSpawns.clear();
+    if (this.reapTimer !== null) window.clearTimeout(this.reapTimer);
+    this.reapTimer = null;
   }
 
   /** Re-enable attaching; the host calls attach() for each open document. */
@@ -712,6 +743,8 @@ export class LspManager {
       }
     }
     this.clients.clear();
+    if (this.reapTimer !== null) window.clearTimeout(this.reapTimer);
+    this.reapTimer = null;
   }
 
   // ------------------------------------------------------------- documents

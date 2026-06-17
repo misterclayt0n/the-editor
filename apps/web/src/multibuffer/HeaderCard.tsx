@@ -5,6 +5,9 @@
  * React portals this into the renderer-owned, correctly-sized container.
  */
 
+import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon } from "lucide-react";
+
+import { FileIcon } from "../workbench/fileIcons";
 import type { ExcerptMeta } from "./builder";
 
 export type HeaderActions = {
@@ -20,12 +23,12 @@ function ExpandChevrons({ meta, onExpandUp, onExpandDown }: { meta: ExcerptMeta 
     <>
       {meta.canExpandUp && (
         <button type="button" className="mb-expand" title="Show more above" onClick={onExpandUp}>
-          ⌃
+          <ChevronUpIcon aria-hidden="true" />
         </button>
       )}
       {meta.canExpandDown && (
         <button type="button" className="mb-expand" title="Show more below" onClick={onExpandDown}>
-          ⌄
+          <ChevronDownIcon aria-hidden="true" />
         </button>
       )}
     </>
@@ -41,25 +44,36 @@ export function HeaderCard({ meta, onOpen, onFold, onExpandUp, onExpandDown }: {
     );
   }
   return (
-    <div className="mb-header">
-      <button
-        type="button"
-        className="mb-fold"
-        title={meta.folded ? "Unfold file" : "Fold file"}
-        onClick={onFold}
-      >
-        {meta.folded ? "▸" : "▾"}
-      </button>
-      <button type="button" className="mb-header-path" title={`Open ${meta.path}`} onClick={onOpen}>
-        <span className="mb-header-name">{meta.fileName}</span>
-        {meta.dir ? <span className="mb-header-dir">{meta.dir}</span> : null}
+    <div className="mb-header" data-diffs-header="default">
+      <div className="mb-header-content" data-header-content="">
+        <button
+          type="button"
+          className="mb-fold"
+          title={meta.folded ? "Unfold file" : "Fold file"}
+          aria-label={meta.folded ? "Unfold file" : "Fold file"}
+          aria-pressed={meta.folded}
+          onClick={onFold}
+        >
+          {meta.folded ? <ChevronRightIcon aria-hidden="true" /> : <ChevronDownIcon aria-hidden="true" />}
+        </button>
+        <FileIcon fileName={meta.fileName} />
+        <button type="button" className="mb-header-path" title={`Open ${meta.path}`} onClick={onOpen}>
+          <span className="mb-header-name" data-title="">
+            <bdi>{meta.fileName}</bdi>
+          </span>
+          {meta.dir ? (
+            <span className="mb-header-dir" data-prev-name="">
+              <bdi>{meta.dir}</bdi>
+            </span>
+          ) : null}
+        </button>
+      </div>
+      <div className="mb-header-metadata" data-metadata="">
         {meta.folded ? (
           <span className="mb-header-count">
             {meta.fileMatchCount} {meta.fileMatchCount === 1 ? "match" : "matches"}
           </span>
         ) : null}
-      </button>
-      <div className="mb-header-actions">
         <ExpandChevrons meta={meta} onExpandUp={onExpandUp} onExpandDown={onExpandDown} />
         <button type="button" className="mb-header-open" onClick={onOpen}>
           Open File

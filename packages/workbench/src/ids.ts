@@ -39,9 +39,32 @@ export const SurfaceScope = {
   panel: (id: PanelId): SurfaceScope => ({ _tag: "panel", id }),
 };
 
+const surfaceFallbacks = new Map<SurfaceKind, SurfaceKind>();
+
+/**
+ * Declare that `kind` is a specialization of `parent`: any command or keybinding
+ * scoped to `parent` also applies when a panel of `kind` is focused. Setting a
+ * parent for a kind that already has one replaces the previous parent.
+ */
+export const registerSurfaceFallback = (kind: SurfaceKind, parent: SurfaceKind): void => {
+  surfaceFallbacks.set(kind, parent);
+};
+
+/** Walk the fallback chain to see if `focusedKind` satisfies `scopeKind`. */
+export function surfaceKindMatches(focusedKind: SurfaceKind, scopeKind: SurfaceKind): boolean {
+  let current: SurfaceKind | undefined = focusedKind;
+  while (current !== undefined) {
+    if (current === scopeKind) return true;
+    current = surfaceFallbacks.get(current);
+  }
+  return false;
+}
+
 /**
  * Does a contribution with this scope apply when the given panel is focused?
  * `undefined` means nothing is focused: only global contributions apply.
+ * Surface kinds with a registered fallback inherit contributions from their
+ * parent kind.
  */
 export function scopeApplies(
   scope: SurfaceScope,
@@ -51,7 +74,7 @@ export function scopeApplies(
     case "global":
       return true;
     case "surface":
-      return focused !== undefined && focused.kind === scope.kind;
+      return focused !== undefined && surfaceKindMatches(focused.kind, scope.kind);
     case "panel":
       return focused !== undefined && focused.id === scope.id;
   }

@@ -40,6 +40,7 @@ import {
   makeWorkbench,
   moveTab,
   placeInStack,
+  registerSurfaceFallback,
   removePanel,
   slotOfPanel,
   splitBeside,
@@ -54,6 +55,7 @@ import {
   type Stack,
   type Tile,
 } from "@the-editor/workbench";
+
 import {
   closeViewScope,
   closeWorkspaceScope,
@@ -134,6 +136,8 @@ import { MountHub } from "./editor/mounts";
 import { applyThemeToDocument } from "./theme/dom";
 import { buildMultiBuffer, type MultiBufferMatchFile } from "./multibuffer/builder";
 import { MultiBufferPane, MultiBufferSurface } from "./multibuffer/pane";
+/** A multibuffer is an editor surface for command/keymap availability. */
+registerSurfaceFallback(MultiBufferSurface, EditorSurface);
 
 export type KeyOutcome = "handled" | "pending" | "passthrough";
 
@@ -964,22 +968,26 @@ export class AppRuntime {
   }
 
   async formatActiveDocument(): Promise<void> {
-    const pane = this.focusedPane();
+    const pane = this.focusedPaneHost();
     if (pane === undefined || this.lsp === undefined) return;
-    await this.lsp.format(String(pane.document.id));
+    const location = pane.resolveSource(pane.snapshot().selection.primary.head);
+    if (location === null) return;
+    await this.lsp.format(location.docId);
   }
 
   /** Phase 1 of rename: capture the caret target, ask the host for a name. */
   startRename(): void {
-    const pane = this.focusedPane();
+    const pane = this.focusedPaneHost();
     if (pane === undefined || this.lsp === undefined) return;
     const snapshot = pane.snapshot();
     const head = snapshot.selection.primary.head;
-    this.pendingRename = { docId: String(pane.document.id), offset: head };
+    const location = pane.resolveSource(head);
+    if (location === null) return;
+    this.pendingRename = { docId: location.docId, offset: location.offset };
     // Word under the caret as the prompt's initial value.
-    const lineRange = snapshot.text.lineRangeAt(head);
-    const lineText = snapshot.text.sliceString(lineRange.from, lineRange.to);
-    const column = head - lineRange.from;
+    const lineRange = location.text.lineRangeAt(location.offset);
+    const lineText = location.text.sliceString(lineRange.from, lineRange.to);
+    const column = location.offset - lineRange.from;
     let start = column;
     let end = column;
     while (start > 0 && /\w/.test(lineText[start - 1]!)) start--;
@@ -1338,14 +1346,17 @@ export class AppRuntime {
   }
 
   async saveActiveFile(): Promise<void> {
-    const pane = this.focusedPane();
+    const pane = this.focusedPaneHost();
     if (pane === undefined) return;
+    const location = pane.resolveSource(pane.snapshot().selection.primary.head);
+    if (location === null) return;
     const files = Context.getOption(this.workspace.context, Files);
     if (Option.isNone(files)) return;
+    const docId = DocumentId.make(location.docId);
     await Effect.runPromise(
-      files.value.save(pane.document.id).pipe(Effect.catchAll(() => Effect.void)),
+      files.value.save(docId).pipe(Effect.catchAll(() => Effect.void)),
     );
-    this.lsp?.documentSaved(String(pane.document.id));
+    this.lsp?.documentSaved(String(docId));
     this.vcs?.documentSaved();
     this.onFileStateChanged?.();
   }

@@ -6,6 +6,9 @@ int factorial(int x){
 }
 
 int main() {
+  // this is a test comment actuallyy
+
+  // hi how ya doin?
   int r = factorial(10);
   printf("hello world");
   return 0;

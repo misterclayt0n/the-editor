@@ -7,6 +7,7 @@ import {
   makeStack,
   makeWorkbench,
   placeInStack,
+  registerSurfaceFallback,
   SurfaceKind,
   SurfaceScope,
   type Panel,
@@ -162,6 +163,37 @@ describe("scoped commands", () => {
       yield* openFocused(wb, Editor);
       const atEditor = yield* commands.listAvailable();
       expect(atEditor.map((c) => c.contributionId).sort()).toEqual(["anywhere", "editor.thing"]);
+    }),
+  );
+
+  it.scoped("listAvailable includes commands from a registered parent surface", () =>
+    Effect.gen(function* () {
+      const { runtime, wb, commands, layer } = yield* setup;
+      const Editor = SurfaceKind("test/editor");
+      const MultiBuffer = SurfaceKind("test/multibuffer");
+      registerSurfaceFallback(MultiBuffer, Editor);
+
+      const pkg = definePackage("pkg", () =>
+        Effect.flatMap(Commands, (c) =>
+          Effect.all([
+            c.register("editor.thing", {
+              scope: SurfaceScope.surface(Editor),
+              palette: true,
+              run: () => Effect.void,
+            }),
+            c.register("mb.thing", {
+              scope: SurfaceScope.surface(MultiBuffer),
+              palette: true,
+              run: () => Effect.void,
+            }),
+          ]),
+        ),
+      );
+      yield* runtime.activateGraph([toPackageDescriptor(pkg, layer)]);
+
+      yield* openFocused(wb, MultiBuffer);
+      const available = yield* commands.listAvailable();
+      expect(available.map((c) => c.contributionId).sort()).toEqual(["editor.thing", "mb.thing"]);
     }),
   );
 

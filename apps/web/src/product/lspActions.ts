@@ -10,7 +10,6 @@ import { Commands } from "@the-editor/commands";
 import { Keymaps } from "@the-editor/keymaps";
 import { SurfaceScope } from "@the-editor/workbench";
 import { EditorSurface } from "./editorDefaults";
-import { MultiBufferSurface } from "../multibuffer/pane";
 
 export class HostLspActions extends Context.Tag("the-editor/web/HostLspActions")<
   HostLspActions,
@@ -68,7 +67,6 @@ export const lspActions = definePackage("the-editor/lsp-actions", () =>
 
     yield* keymaps.registerAll([
       { keys: "f12", command: "lsp.definition", scope: editorScope },
-      { keys: "f12", command: "lsp.definition", scope: SurfaceScope.surface(MultiBufferSurface) },
       { keys: "f2", command: "lsp.rename", scope: editorScope },
       { keys: "alt+shift+f", command: "lsp.format", scope: editorScope },
     ]);

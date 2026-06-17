@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { ContributionId } from "@the-editor/kernel";
-import { PanelId, SurfaceKind, SurfaceScope } from "@the-editor/workbench";
+import { PanelId, registerSurfaceFallback, SurfaceKind, SurfaceScope } from "@the-editor/workbench";
 import { parseChord, parseKeys, resolveKey, type KeyBindingContribution } from "../src/index";
 
 const Editor = SurfaceKind("editor");
@@ -132,5 +132,38 @@ describe("resolver", () => {
     ];
     const result = resolveKey({ bindings, focus: undefined, pending: [], chord: parseChord("x") });
     expect(result).toMatchObject({ _tag: "match", binding: { command: "global.x" } });
+  });
+});
+
+describe("surface fallback", () => {
+  test("a child surface inherits bindings scoped to its parent", () => {
+    const Parent = SurfaceKind("keymap/fallback/parent");
+    const Child = SurfaceKind("keymap/fallback/child");
+    registerSurfaceFallback(Child, Parent);
+    const focus = { id: PanelId("p1"), kind: Child };
+    const result = resolveKey({
+      bindings: [binding("a", "parent.cmd", SurfaceScope.surface(Parent))],
+      focus,
+      pending: [],
+      chord: parseChord("a"),
+    });
+    expect(result).toMatchObject({ _tag: "match", binding: { command: "parent.cmd" } });
+  });
+
+  test("a child-specific binding can shadow the inherited one", () => {
+    const Parent = SurfaceKind("keymap/fallback/parent2");
+    const Child = SurfaceKind("keymap/fallback/child2");
+    registerSurfaceFallback(Child, Parent);
+    const focus = { id: PanelId("p1"), kind: Child };
+    const result = resolveKey({
+      bindings: [
+        binding("a", "parent.cmd", SurfaceScope.surface(Parent)),
+        binding("a", "child.cmd", SurfaceScope.surface(Child)),
+      ],
+      focus,
+      pending: [],
+      chord: parseChord("a"),
+    });
+    expect(result).toMatchObject({ _tag: "match", binding: { command: "child.cmd" } });
   });
 });

@@ -8,12 +8,16 @@ import {
   makeStack,
   makeWorkbench,
   moveTab,
+  PanelId,
   placeInStack,
+  registerSurfaceFallback,
   removeSlot,
+  scopeApplies,
   SlotNotFoundError,
   slotOfPanel,
   splitBeside,
   SurfaceKind,
+  SurfaceScope,
   UnknownPanelInArrangementError,
   type Panel,
   type SlotId,
@@ -235,5 +239,38 @@ describe("workbench", () => {
     );
     await Effect.runPromise(Scope.close(scope, undefined as never));
     expect(finalized).toBe(true);
+  });
+});
+describe("scopeApplies", () => {
+  const Editor = SurfaceKind("test/scope/editor");
+  const MultiBuffer = SurfaceKind("test/scope/multibuffer");
+  const Tree = SurfaceKind("test/scope/tree");
+
+  test("surface scope matches its own kind", () => {
+    const scope = SurfaceScope.surface(Editor);
+    expect(scopeApplies(scope, { id: "p1" as PanelId, kind: Editor })).toBe(true);
+    expect(scopeApplies(scope, { id: "p2" as PanelId, kind: Tree })).toBe(false);
+  });
+
+  test("surface scope matches a registered fallback kind", () => {
+    registerSurfaceFallback(MultiBuffer, Editor);
+    const scope = SurfaceScope.surface(Editor);
+    expect(scopeApplies(scope, { id: "p1" as PanelId, kind: MultiBuffer })).toBe(true);
+  });
+
+  test("fallback chains are followed", () => {
+    const A = SurfaceKind("test/scope/a");
+    const B = SurfaceKind("test/scope/b");
+    const C = SurfaceKind("test/scope/c");
+    registerSurfaceFallback(B, A);
+    registerSurfaceFallback(C, B);
+    expect(scopeApplies(SurfaceScope.surface(A), { id: "p" as PanelId, kind: C })).toBe(true);
+  });
+
+  test("global and panel scopes are unaffected by fallback", () => {
+    registerSurfaceFallback(MultiBuffer, Editor);
+    expect(scopeApplies(SurfaceScope.global, { id: "p" as PanelId, kind: Tree })).toBe(true);
+    expect(scopeApplies(SurfaceScope.panel("p1" as PanelId), { id: "p1" as PanelId, kind: MultiBuffer })).toBe(true);
+    expect(scopeApplies(SurfaceScope.panel("p1" as PanelId), { id: "p2" as PanelId, kind: MultiBuffer })).toBe(false);
   });
 });

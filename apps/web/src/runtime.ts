@@ -1189,6 +1189,14 @@ export class AppRuntime {
     return Effect.runSync(Context.get(scope.value.context, TextDocument).version);
   }
 
+  /** A source document's current text buffer (MultiBufferHost). */
+  documentBuffer(docId: string): TextBuffer | undefined {
+    const registry = Context.get(this.workspace.context, DocumentRegistry);
+    const scope = Effect.runSync(registry.get(DocumentId.make(docId)));
+    if (Option.isNone(scope)) return undefined;
+    return Effect.runSync(Context.get(scope.value.context, TextDocument).get);
+  }
+
   /** A source document's EditorVisuals snapshot — LSP diagnostics + inlay hints. */
   documentVisuals(docId: string): VisualsSnapshot | undefined {
     const registry = Context.get(this.workspace.context, DocumentRegistry);

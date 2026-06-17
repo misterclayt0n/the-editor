@@ -17,9 +17,11 @@ const key = (key: string): KeyboardEventLike =>
   ({ key, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false }) as KeyboardEventLike;
 
 /** A host whose commits apply edits to in-memory buffers (mirrors the runtime). */
-function makeHost(buffers: Map<string, TextBuffer>): MultiBufferHost {
+function makeHost(buffers: Map<string, TextBuffer>) {
   const versions = new Map<string, number>();
-  return {
+  const subscribers = new Map<string, Set<() => void>>();
+  const notify = (docId: string) => subscribers.get(docId)?.forEach((listener) => listener());
+  const host: MultiBufferHost = {
     subscribeTheme: () => () => {},
     jumpToLocation: async () => {},
     commitDocumentEdits(docId: string, edits: readonly TextEdit[]) {
@@ -33,6 +35,7 @@ function makeHost(buffers: Map<string, TextBuffer>): MultiBufferHost {
       versions.set(docId, (versions.get(docId) ?? 0) + 1);
       return { change: transaction.changes.desc() as ChangeDesc, buffer: after };
     },
+    documentBuffer: (docId) => buffers.get(docId),
     documentHighlights: () => ({
       ensureSynced: () => {},
       runsBetween: (from, to) => (to > from ? [{ from, to, kind: "keyword" }] : []),
@@ -50,12 +53,16 @@ function makeHost(buffers: Map<string, TextBuffer>): MultiBufferHost {
       totalWidgetRows: 0,
       gutterBands: [],
     }),
-    subscribeDocument: () => () => {},
+    subscribeDocument: (docId, listener) => {
+      if (!subscribers.has(docId)) subscribers.set(docId, new Set());
+      subscribers.get(docId)!.add(listener);
+      return () => subscribers.get(docId)?.delete(listener);
+    },
     attachDocumentIntel: () => {},
     detachDocumentIntel: () => {},
   };
+  return { host, notify };
 }
-
 const makePane = () => {
   const a = TextBuffer.fromString("alpha\nbeta\ngamma\ndelta\nepsilon\n");
   const b = TextBuffer.fromString("one\ntwo\nthree\nfour\n");
@@ -70,8 +77,9 @@ const makePane = () => {
     ],
     { contextLines: 1 },
   );
-  const pane = new MultiBufferPane("panel:test" as unknown as PanelId, "test", build, makeHost(buffers));
-  return { pane, buffers, build };
+  const { host, notify } = makeHost(buffers);
+  const pane = new MultiBufferPane("panel:test" as unknown as PanelId, "test", build, host);
+  return { pane, buffers, build, host, notify };
 };
 
 /** Intel attaches per visible excerpt and the attach is debounced; cover the
@@ -91,6 +99,18 @@ describe("MultiBufferPane", () => {
     // ...and so does the underlying source document (excerpt starts at "beta").
     const source = buffers.get("doc:a")!;
     expect(source.sliceString(0, 7)).toBe("alpha\nX");
+  });
+
+  test("external source document edits rebuild the unified snapshot", async () => {
+    const { pane, buffers, notify } = makePane();
+    await attachViewport(pane);
+    const before = pane.snapshot().text.sliceString(0, 20);
+    // Simulate an external edit to doc:a (e.g. from another editor view).
+    buffers.set("doc:a", TextBuffer.fromString("alpha\nBETA\ngamma\ndelta\nepsilon\n"));
+    notify("doc:a");
+    const after = pane.snapshot().text.sliceString(0, 20);
+    expect(after).not.toBe(before);
+    expect(pane.snapshot().text.sliceString(0, 4)).toBe("BETA");
   });
 
   test("a typed char emits its unified change range (so completion can auto-trigger)", () => {

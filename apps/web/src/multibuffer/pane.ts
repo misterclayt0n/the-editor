@@ -77,6 +77,8 @@ export interface MultiBufferHost {
     docId: string,
     edits: readonly TextEdit[],
   ): { readonly change: ChangeDesc; readonly buffer: TextBuffer } | undefined;
+  /** The source document's current text buffer. */
+  documentBuffer(docId: string): TextBuffer | undefined;
   /** The source document's syntax highlighter, if one is attached. */
   documentHighlights(docId: string): PaneHighlights | undefined;
   /** The source document's current version (for syntax sync). */
@@ -544,7 +546,15 @@ export class MultiBufferPane implements PaneHost {
 
   private onSourceChanged(docId: string): void {
     this.sourceVisualsCache.delete(docId);
-    this.invalidateVisuals();
+    const next = this.host.documentBuffer(docId);
+    if (next !== undefined && this.documents.get(docId) !== next) {
+      this.documents.set(docId, next);
+      this.rebuild();
+      this.selection = this.clampSelection(this.selection);
+      this.notifyDocument();
+    } else {
+      this.invalidateVisuals();
+    }
   }
 
   /** A source document's diagnostics/syntax changed (or attach set changed): repaint. */

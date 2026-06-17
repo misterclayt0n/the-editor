@@ -23,6 +23,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { SearchIcon } from "lucide-react";
 import type { EditorSnapshot } from "@the-editor/editor";
 import type { PanelId, SlotId, Stack, Tile } from "@the-editor/workbench";
 import type { AppRuntime, EditorPane } from "../runtime";
@@ -527,6 +528,7 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
                   className={`wb-tab${i === stack.active ? " wb-tab--active" : ""}`}
                   onPointerDown={(event) => tree.beginTabDrag(event, panelId, stack.id, title)}
                 >
+                  {multiBuffer !== undefined ? <SearchIcon className="wb-tab-search-icon" aria-hidden="true" /> : null}
                   <span className="wb-tab-name">{title}</span>
                   <button
                     type="button"

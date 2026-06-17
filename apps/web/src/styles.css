@@ -436,6 +436,15 @@ body {
   height: 15px;
 }
 
+.wb-tab-search-icon {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  color: currentColor;
+  opacity: 0.72;
+  stroke-width: 2;
+}
+
 .wb-tab--dragging {
   opacity: 0.45;
 }

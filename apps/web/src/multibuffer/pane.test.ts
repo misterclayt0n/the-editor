@@ -101,16 +101,25 @@ describe("MultiBufferPane", () => {
     expect(source.sliceString(0, 7)).toBe("alpha\nX");
   });
 
-  test("external source document edits rebuild the unified snapshot", async () => {
+  test("external source document edits rebuild the unified snapshot and remap match ranges", async () => {
     const { pane, buffers, notify } = makePane();
     await attachViewport(pane);
     const before = pane.snapshot().text.sliceString(0, 20);
-    // Simulate an external edit to doc:a (e.g. from another editor view).
-    buffers.set("doc:a", TextBuffer.fromString("alpha\nBETA\ngamma\ndelta\nepsilon\n"));
+    const matchBefore = pane.metas[0]!.matches[0]!;
+
+    // Simulate an external edit that inserts text inside the excerpt but before
+    // the matched region, so the match span must slide to stay on the same text.
+    buffers.set("doc:a", TextBuffer.fromString("alpha\nXXbeta\ngamma\ndelta\nepsilon\n"));
     notify("doc:a");
+
     const after = pane.snapshot().text.sliceString(0, 20);
     expect(after).not.toBe(before);
-    expect(pane.snapshot().text.sliceString(0, 4)).toBe("BETA");
+    expect(pane.snapshot().text.sliceString(0, 7)).toBe("XXbeta\n");
+
+    // The match span should have slid forward by the inserted length.
+    const matchAfter = pane.metas[0]!.matches[0]!;
+    expect(matchAfter.start).toBe(matchBefore.start + 2);
+    expect(matchAfter.end).toBe(matchBefore.end + 2);
   });
 
   test("a typed char emits its unified change range (so completion can auto-trigger)", () => {

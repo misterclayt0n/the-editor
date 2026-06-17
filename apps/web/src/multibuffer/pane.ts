@@ -1,3 +1,4 @@
+import { Effect } from "effect";
 /**
  * A multibuffer view as a PaneHost, painted by the existing EditorRenderer.
  *
@@ -17,10 +18,12 @@
  */
 
 import {
+  diffText,
   expandExcerptRange,
   MultiBufferSnapshot,
   Selection,
   SelectionRange,
+  Transaction,
   type ChangeDesc,
   type Excerpt,
   type Span,
@@ -546,15 +549,21 @@ export class MultiBufferPane implements PaneHost {
 
   private onSourceChanged(docId: string): void {
     this.sourceVisualsCache.delete(docId);
+    const before = this.documents.get(docId);
     const next = this.host.documentBuffer(docId);
-    if (next !== undefined && this.documents.get(docId) !== next) {
-      this.documents.set(docId, next);
-      this.rebuild();
-      this.selection = this.clampSelection(this.selection);
-      this.notifyDocument();
-    } else {
+    if (before === undefined || next === undefined || before === next) {
       this.invalidateVisuals();
+      return;
     }
+    const transaction = Effect.runSync(diffText(before, next).pipe(Effect.orDie));
+    const change = transaction.changes.desc() as ChangeDesc;
+    const changes = new Map<string, ChangeDesc>([[docId, change]]);
+    this.documents.set(docId, next);
+    this.snapshotData = this.snapshotData.mapDocumentChanges(changes, this.documents);
+    this.remapCanonical(changes);
+    this.recomputeDerived();
+    this.selection = this.clampSelection(this.selection);
+    this.notifyDocument();
   }
 
   /** A source document's diagnostics/syntax changed (or attach set changed): repaint. */

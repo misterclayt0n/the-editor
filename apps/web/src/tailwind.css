@@ -76,7 +76,8 @@
   backdrop-filter: none;
 }
 
-.command-palette-dialog.command-dialog-content[data-slot="dialog-content"] {
+.command-palette-dialog.command-dialog-content[data-slot="dialog-content"],
+.prompt-dialog[data-slot="dialog-content"] {
   position: fixed;
   z-index: 50;
   top: 88px;
@@ -101,12 +102,14 @@
   box-shadow: 0 10px 32px color-mix(in srgb, var(--bg-editor) 54%, transparent);
 }
 
-.command-palette-dialog.command-dialog-content[data-slot="dialog-content"][data-state="open"] {
+.command-palette-dialog.command-dialog-content[data-slot="dialog-content"][data-state="open"],
+.prompt-dialog[data-slot="dialog-content"][data-state="open"] {
   animation: command-palette-enter 82ms cubic-bezier(0.16, 1, 0.3, 1) both;
   will-change: opacity, transform, filter;
 }
 
-.command-palette-dialog.command-dialog-content[data-slot="dialog-content"][data-state="closed"] {
+.command-palette-dialog.command-dialog-content[data-slot="dialog-content"][data-state="closed"],
+.prompt-dialog[data-slot="dialog-content"][data-state="closed"] {
   animation: command-palette-exit 58ms cubic-bezier(0.16, 1, 0.3, 1) both;
   will-change: opacity, transform, filter;
 }
@@ -145,7 +148,9 @@
 
 @media (prefers-reduced-motion: reduce) {
   .command-palette-dialog.command-dialog-content[data-slot="dialog-content"][data-state="open"],
-  .command-palette-dialog.command-dialog-content[data-slot="dialog-content"][data-state="closed"] {
+  .prompt-dialog[data-slot="dialog-content"][data-state="open"],
+  .command-palette-dialog.command-dialog-content[data-slot="dialog-content"][data-state="closed"],
+  .prompt-dialog[data-slot="dialog-content"][data-state="closed"] {
     animation-duration: 1ms;
     filter: none;
   }
@@ -190,6 +195,25 @@
 }
 
 .command-palette .command-palette__input.command-input[data-slot="command-input"]::placeholder {
+  color: var(--fg-dim);
+}
+
+.prompt-dialog__input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 42px;
+  padding: 0 12px;
+  border: 0;
+  outline: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+}
+
+.prompt-dialog__input::placeholder {
   color: var(--fg-dim);
 }
 

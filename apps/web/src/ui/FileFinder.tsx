@@ -126,11 +126,11 @@ export function FileFinder({ open, runtime, onOpenChange }: FileFinderProps) {
             ...(result.location !== undefined ? { location: result.location } : {}),
           });
           setError(null);
-          setSelectedValue((current) =>
-            result.items.some((item) => item.relativePath === current)
-              ? current
-              : (result.items[0]?.relativePath ?? ""),
-          );
+          // A fresh search owns the initial selection. Preserving the previous
+          // selected value makes the highlight stick to an older result that is
+          // still present lower in the new list (e.g. query "main.c" ranking
+          // main.c first while the highlight remains on main.ts).
+          setSelectedValue(result.items[0]?.relativePath ?? "");
         });
       })
       .catch((caught) => {

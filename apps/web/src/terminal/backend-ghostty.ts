@@ -31,6 +31,7 @@ export function attachGlobalKeyHandler(
     if (event.type !== "keydown") return false;
     const result = claim(event);
     if (result === "skip") {
+      event.preventDefault();
       event.stopPropagation();
       return true;
     }

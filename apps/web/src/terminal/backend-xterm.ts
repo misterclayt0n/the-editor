@@ -40,6 +40,7 @@ export function attachGlobalKeyHandler(
     if (event.type !== "keydown") return true;
     const result = claim(event);
     if (result === "skip") {
+      event.preventDefault();
       event.stopPropagation();
       return false;
     }

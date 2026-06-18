@@ -48,9 +48,13 @@ export const viewPackage = definePackage("the-editor/view", () =>
       palette: { group: "View", aliases: ["sp", "hsplit"] },
       run: () => Effect.sync(() => host.splitDown()),
     });
+    // Global: closes whichever workbench panel tab is focused — editors,
+    // multibuffers, file trees, terminals. This must not be editor-scoped:
+    // terminal and custom panels often swallow their own keydowns and only ask
+    // the host for global shortcuts.
     yield* commands.register("view.closeTab", {
       title: "Close Tab",
-      scope: editorScope,
+      scope: SurfaceScope.global,
       palette: { group: "View", aliases: ["q"] },
       run: () => Effect.sync(() => host.closeTab()),
     });
@@ -78,7 +82,7 @@ export const viewPackage = definePackage("the-editor/view", () =>
     yield* keymaps.registerAll([
       { keys: "meta+\\", command: "view.splitRight", scope: editorScope },
       { keys: "ctrl+\\", command: "view.splitRight", scope: editorScope },
-      { keys: "meta+w", command: "view.closeTab", scope: editorScope },
+      { keys: "meta+w", command: "view.closeTab", scope: SurfaceScope.global },
       { keys: "ctrl+w", command: "view.closeTab", scope: editorScope },
       { keys: "meta+alt+arrowright", command: "view.nextTab", scope: editorScope },
       { keys: "meta+alt+arrowleft", command: "view.previousTab", scope: editorScope },

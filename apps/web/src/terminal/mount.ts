@@ -25,6 +25,7 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
       let term: Terminal | null = null;
       let termId: number | null = null;
       let disposeFit: (() => void) | null = null;
+      let disposeGlobalKeyCapture: (() => void) | null = null;
       const port = runtime.terminalPort();
 
       element.classList.add("terminal-host");
@@ -53,6 +54,17 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
         term.open(body);
         fit.fit();
         disposeFit = attachAutoFit(fit, body);
+
+        // Some browser/Electron accelerators (notably ⌘W) must be cancelled at
+        // DOM capture time; xterm's custom key handler can be too late even
+        // though ordinary globals like ⌘⇧P still route through it.
+        const captureGlobalKey = (event: KeyboardEvent) => {
+          if (!runtime.handleGlobalKey(event)) return;
+          event.preventDefault();
+          event.stopPropagation();
+        };
+        body.addEventListener("keydown", captureGlobalKey, { capture: true });
+        disposeGlobalKeyCapture = () => body.removeEventListener("keydown", captureGlobalKey, { capture: true });
 
         // The terminal swallows every keydown before it reaches the PTY, so the
         // browser gate runs first: (1) reserve app-global shortcuts so the
@@ -98,6 +110,7 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
       return {
         dispose: () => {
           disposed = true;
+          disposeGlobalKeyCapture?.();
           disposeFit?.();
           if (termId !== null) port.kill(termId);
           term?.dispose();

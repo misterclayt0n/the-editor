@@ -119,6 +119,8 @@ import { wordCompletions } from "./product/wordCompletions";
 import { makePanelRenderers, PanelRenderers } from "./workbench/panelRenderers";
 import { fileTreePackage, FileTreeSurface, HostFileTree } from "./product/fileTree";
 import { createFileTreeRenderer } from "./filetree/mount";
+import { diffViewPackage, DiffViewSurface, HostDiffView } from "./product/diffView";
+import { createDiffViewRenderer } from "./diffview/mount";
 import { terminalPackage, TerminalSurface, HostTerminal } from "./product/terminal";
 import { createTerminalRenderer } from "./terminal/mount";
 import { HostVcsDefaults, makeVcsProviders, vcsDefaults, VcsProviders } from "./product/vcs";
@@ -436,6 +438,13 @@ export class AppRuntime {
             },
             toggle: () => instance.togglePanel(TerminalSurface, { dock: "bottom", ratio: 0.32 }),
           }),
+          Layer.succeed(HostDiffView, {
+            renderer: {
+              title: (panel) => createDiffViewRenderer(instance).title(panel),
+              mount: (element, panel) => createDiffViewRenderer(instance).mount(element, panel),
+            },
+            toggle: () => instance.togglePanel(DiffViewSurface, { dock: "right" }),
+          }),
           Layer.succeed(CompletionProviders, completionProviders),
           Layer.succeed(HoverProviders, hoverProviders),
           Layer.succeed(SignatureProviders, signatureProviders),
@@ -500,6 +509,7 @@ export class AppRuntime {
             toPackageDescriptor(palettePackage, services),
             toPackageDescriptor(themeCommands, services),
             toPackageDescriptor(viewPackage, services),
+            toPackageDescriptor(diffViewPackage, services),
             toPackageDescriptor(lspDefaults, services),
             toPackageDescriptor(lspActions, services),
             toPackageDescriptor(lspIntel, services),

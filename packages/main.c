@@ -5,11 +5,8 @@ int factorial(int x){
   return x * factorial(x - 1);
 }
 
-int main() {
-  // this is a test comment actuallyy
+// hello world 
+// hi
 
-  // hi how ya doin?
-  int r = factorial(10);
-  printf("hello world");
-  return 0;
+int main() {
 }

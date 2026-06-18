@@ -218,6 +218,13 @@ export function App() {
             runtime.commands.execute("files.toggleTree").pipe(Effect.catchAll(() => Effect.void)),
           );
         },
+        toggleDiffView: () => {
+          const runtime = host();
+          if (runtime === null) return;
+          void Effect.runPromise(
+            runtime.commands.execute("diffs.toggleDiffView").pipe(Effect.catchAll(() => Effect.void)),
+          );
+        },
         findFile: () => setFileFinderOpen(true),
         searchProject: (query: string) => host()?.searchProject(query),
         multiBuffer: (
@@ -345,6 +352,11 @@ export function App() {
         onToggleTree={() =>
           void Effect.runPromise(
             activeRuntime.commands.execute("files.toggleTree").pipe(Effect.catchAll(() => Effect.void)),
+          )
+        }
+        onToggleDiffView={() =>
+          void Effect.runPromise(
+            activeRuntime.commands.execute("diffs.toggleDiffView").pipe(Effect.catchAll(() => Effect.void)),
           )
         }
       />

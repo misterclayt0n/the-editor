@@ -201,6 +201,12 @@ body {
   margin-right: 5px;
 }
 
+/* Diff-view toggle sits beside the file-tree toggle. */
+.titlebar-diff-toggle {
+  flex: none;
+  margin-right: 10px;
+}
+
 .editor {
   position: absolute;
   inset: 0;
@@ -1161,6 +1167,41 @@ body {
   transform: scale(0.97);
 }
 
+/* Diff view panel host: @pierre/diffs CodeView fills the panel body. */
+.diff-view-host {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-editor);
+}
+
+.diff-view-host > div {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.diff-view-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.diff-view-empty {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-dim);
+  font-size: 13px;
+}
+
+.diff-view-empty-note {
+  opacity: 0.85;
+}
 .status-branch {
   color: var(--fg-dim);
 }

@@ -99,6 +99,21 @@ export function createGitProvider(port: ProcessPort): VcsProvider {
       return result.stdout.split("\0").filter((path) => path.length > 0);
     },
 
+    async patch(root) {
+      const tracked = await run(port, root, ["diff", "HEAD"]);
+      if (tracked === null || tracked.code !== 0) return null;
+      const untracked = await run(port, root, ["ls-files", "--others", "--exclude-standard", "-z"]);
+      if (untracked === null || untracked.code !== 0) return tracked.stdout;
+      const chunks = [tracked.stdout];
+      for (const path of untracked.stdout.split("\0")) {
+        if (path.length === 0) continue;
+        const added = await run(port, root, ["diff", "--no-index", "--", "/dev/null", path]);
+        // `git diff --no-index` exits 1 when it successfully found differences.
+        if (added !== null && (added.code === 0 || added.code === 1)) chunks.push(added.stdout);
+      }
+      return chunks.join("");
+    },
+
     async info(root) {
       const result = await run(port, root, ["rev-parse", "--abbrev-ref", "HEAD"]);
       if (result === null || result.code !== 0) return null;

@@ -35,6 +35,8 @@ export interface VcsProvider {
   headContent(root: string, relPath: string): Promise<string | null>;
   /** Tracked + untracked-but-not-ignored files; null = not supported. */
   listFiles(root: string): Promise<ReadonlyArray<string> | null>;
+  /** Unified diff of the working tree against its baseline; null = not supported. */
+  patch(root: string): Promise<string | null>;
   info(root: string): Promise<VcsInfo | null>;
 }
 

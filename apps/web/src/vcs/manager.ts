@@ -111,6 +111,16 @@ export class VcsManager {
     return provider === null ? null : provider.listFiles(root);
   }
 
+  /** Unified diff of the working tree against its baseline (null = no provider / unsupported). */
+  async patch(): Promise<string | null> {
+    const root = this.root;
+    const provider = this.provider;
+    if (root === null || provider === null || this.disposed) return null;
+    const generation = this.generation;
+    const patch = await provider.patch(root).catch(() => null);
+    return generation === this.generation && !this.disposed ? patch : null;
+  }
+
   /** Re-anchor to a workspace root (or none). */
   async setRoot(root: string | null): Promise<void> {
     const generation = ++this.generation;

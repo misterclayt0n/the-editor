@@ -69,7 +69,10 @@ export function FileFinder({ open, runtime, onOpenChange }: FileFinderProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const searchSeq = useRef(0);
 
-  useEffect(() => runtime.subscribeWorkspaceRoot(setRoot), [runtime]);
+  useEffect(() => {
+    setRoot(runtime.workspaceRoot);
+    return runtime.subscribeWorkspaceRoot(setRoot);
+  }, [runtime]);
 
   useEffect(() => {
     if (!open) return;
@@ -89,6 +92,14 @@ export function FileFinder({ open, runtime, onOpenChange }: FileFinderProps) {
 
   useEffect(() => {
     if (!open) return;
+    if (root !== runtime.workspaceRoot) {
+      setItems([]);
+      setSelectedValue("");
+      setSearchMeta({ totalMatched: 0, totalFiles: 0 });
+      setError(null);
+      setLoading(false);
+      return;
+    }
     const seq = ++searchSeq.current;
     if (root === null) {
       setItems([]);

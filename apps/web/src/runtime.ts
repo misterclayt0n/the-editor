@@ -119,7 +119,13 @@ import { wordCompletions } from "./product/wordCompletions";
 import { makePanelRenderers, PanelRenderers } from "./workbench/panelRenderers";
 import { fileTreePackage, FileTreeSurface, HostFileTree } from "./product/fileTree";
 import { createFileTreeRenderer } from "./filetree/mount";
-import { diffViewPackage, DiffViewSurface, HostDiffView } from "./product/diffView";
+import {
+  diffViewPackage,
+  DiffViewPreferences,
+  DiffViewSurface,
+  HostDiffView,
+  makeDiffViewPreferences,
+} from "./product/diffView";
 import { createDiffViewRenderer } from "./diffview/mount";
 import { terminalPackage, TerminalSurface, HostTerminal } from "./product/terminal";
 import { createTerminalRenderer } from "./terminal/mount";
@@ -327,6 +333,8 @@ export class AppRuntime {
   }) => Promise<string | null>;
   /** Panel renderers for non-editor surface kinds (file tree, custom UIs). */
   panelRenderers!: PanelRenderers.Service;
+  /** Diff view preferences shared by extension packages and the mounted panel. */
+  diffViewPreferences!: DiffViewPreferences.Service;
   /** Version control (undefined without a process host). */
   vcs: VcsManager | undefined;
   /** Intel provider registries (App hands them to the IntelController). */
@@ -410,6 +418,7 @@ export class AppRuntime {
         const workspaceContext = workspace.context;
         const languageServers = yield* makeLanguageServers;
         const panelRenderers = makePanelRenderers();
+        const diffViewPreferences = makeDiffViewPreferences();
         const vcsProviders = yield* makeVcsProviders;
         const vcsProcessPort = createProcessPort();
         const completionProviders = yield* makeCompletionProviders;
@@ -419,6 +428,7 @@ export class AppRuntime {
         const services = Layer.mergeAll(
           Layer.succeed(Themes, themes),
           Layer.succeed(PanelRenderers, panelRenderers),
+          Layer.succeed(DiffViewPreferences, diffViewPreferences),
           Layer.succeed(VcsProviders, vcsProviders),
           Layer.succeed(HostVcsDefaults, {
             providers: vcsProcessPort !== undefined ? [createGitProvider(vcsProcessPort)] : [],
@@ -523,6 +533,7 @@ export class AppRuntime {
 
         const appRuntime = new AppRuntime(scope, workspace, workbench, commands, keymaps, themes);
         appRuntime.panelRenderers = panelRenderers;
+        appRuntime.diffViewPreferences = diffViewPreferences;
         appRuntime.intel = {
           completions: completionProviders,
           hovers: hoverProviders,

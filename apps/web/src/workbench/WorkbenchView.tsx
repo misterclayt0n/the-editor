@@ -525,6 +525,12 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
                 : panel !== undefined && renderer !== undefined
                   ? renderer.title(panel)
                   : "panel";
+            const icon =
+              multiBuffer !== undefined ? (
+                <SearchIcon className="wb-tab-search-icon" aria-hidden="true" />
+              ) : panel !== undefined && renderer !== undefined ? (
+                renderer.icon?.(panel)
+              ) : null;
             return (
               <Fragment key={panelId}>
                 {dropTabIndex === i && <div className="wb-tab-insert" />}
@@ -532,7 +538,7 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
                   className={`wb-tab${i === stack.active ? " wb-tab--active" : ""}`}
                   onPointerDown={(event) => tree.beginTabDrag(event, panelId, stack.id, title)}
                 >
-                  {multiBuffer !== undefined ? <SearchIcon className="wb-tab-search-icon" aria-hidden="true" /> : null}
+                  {icon}
                   <span className="wb-tab-name">{title}</span>
                   <button
                     type="button"

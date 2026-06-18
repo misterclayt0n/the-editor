@@ -559,7 +559,8 @@ body {
   height: 15px;
 }
 
-.wb-tab-search-icon {
+.wb-tab-search-icon,
+.wb-tab-renderer-icon {
   flex: none;
   width: 15px;
   height: 15px;
@@ -1176,11 +1177,202 @@ body {
   background: var(--bg-editor);
 }
 
-.diff-view-host > div {
+.diff-view-host > div,
+.diff-view-panel {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
+}
+
+.diff-view-toolbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 6px 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 9%, transparent);
+  background: color-mix(in srgb, var(--fg) 3%, var(--bg-editor));
+  color: var(--fg);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.diff-view-toolbar::-webkit-scrollbar {
+  display: none;
+}
+
+.diff-view-toolbar-group {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.diff-view-toolbar-group--toggles {
+  margin-left: 2px;
+  padding-left: 8px;
+  border-left: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+}
+
+.diff-view-toolbar-label {
+  flex: none;
+  color: var(--fg-dim);
+  font-size: 11px;
+  line-height: 20px;
+}
+
+.diff-view-segmented {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+
+.diff-view-segment,
+.diff-view-toggle {
+  flex: none;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 20px;
+  cursor: pointer;
+  transition: background-color 120ms var(--ease-out), border-color 120ms var(--ease-out),
+    color 120ms var(--ease-out), transform 120ms var(--ease-out);
+}
+
+.diff-view-segment:hover,
+.diff-view-toggle:hover {
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  color: var(--fg);
+}
+
+.diff-view-segment:active,
+.diff-view-toggle:active {
+  transform: scale(0.97);
+}
+
+.diff-view-segment[data-active],
+.diff-view-toggle[data-active] {
+  border-color: color-mix(in srgb, var(--accent) 25%, transparent);
+  background: color-mix(in srgb, var(--accent) 15%, var(--bg-editor));
+  color: var(--fg);
+}
+
+.diff-view-code {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg-editor);
+  color: var(--fg);
+  outline: none;
+}
+
+[data-diffs-header] {
+  container-type: scroll-state;
+  container-name: diff-file-header;
+}
+
+@container diff-file-header scroll-state(stuck: top) {
+  [data-diffs-header]::after {
+    position: absolute;
+    right: 0;
+    bottom: -1px;
+    left: 0;
+    height: 1px;
+    content: "";
+    background: color-mix(in srgb, var(--fg) 18%, transparent);
+  }
+}
+
+
+.diff-view-file-header.mb-header {
+  min-height: 34px;
+  margin: 0;
+  border-block: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  border-inline: 0;
+  border-radius: 0;
+  background: color-mix(in srgb, var(--fg) 4%, var(--bg-editor));
+  box-shadow: none;
+  z-index: 1;
+}
+
+.diff-view-file-header .mb-header-content {
+  overflow: hidden;
+}
+
+.diff-view-file-header .mb-header-metadata {
+  margin-left: auto;
+}
+
+.diff-view-file-header .mb-header-name {
+  flex: 0 1 auto;
+}
+
+.diff-view-file-header .mb-header-dir {
+  flex: 1 1 auto;
+}
+
+.diff-view-file-header .mb-header-path {
+  cursor: default;
+}
+
+.diff-view-header-prev {
+  display: inline-flex;
+  flex: 0 2 auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 28px;
+  overflow: hidden;
+  color: var(--fg-dim);
+}
+
+.diff-view-header-prev bdi {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.diff-view-header-prev-arrow {
+  flex: none;
+  opacity: 0.75;
+}
+
+.diff-view-header-chip {
+  flex: none;
+  padding: 1px 7px;
+  border: 1px solid color-mix(in srgb, var(--fg) 11%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  color: var(--fg-dim);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.diff-view-header-stat {
+  flex: none;
+  font-family: "SF Mono", Menlo, Monaco, "Cascadia Code", monospace;
+  font-size: 11.5px;
+  line-height: 18px;
+}
+
+.diff-view-header-stat--additions {
+  color: color-mix(in srgb, #2ec27e 78%, var(--accent));
+}
+
+.diff-view-header-stat--deletions {
+  color: color-mix(in srgb, #ff6b6b 82%, var(--accent));
 }
 
 .diff-view-body {

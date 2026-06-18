@@ -7,6 +7,7 @@
  * through the same scoped-contribution pattern as every other registry.
  */
 
+import type { ReactNode } from "react";
 import { Context, Effect, type Scope } from "effect";
 import type { Panel, SurfaceKind } from "@the-editor/workbench";
 
@@ -24,6 +25,8 @@ export type PanelMount = {
 export type PanelRenderer = {
   /** Tab title for panels of this kind. */
   readonly title: (panel: Panel) => string;
+  /** Optional icon rendered before the tab title for panels of this kind. */
+  readonly icon?: (panel: Panel) => ReactNode;
   /**
    * Mount into the slot body element; returns a handle. The element belongs
    * to the renderer until dispose — portal React, mount a canvas, whatever.

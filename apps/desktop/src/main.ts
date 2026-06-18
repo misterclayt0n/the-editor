@@ -6,6 +6,10 @@ import { createRequire } from "node:module";
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme } from "electron";
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL?.trim();
+const APP_NAME = "The Editor";
+app.setName(APP_NAME);
+app.setAboutPanelOptions({ applicationName: APP_NAME });
+
 /** Native modules (node-pty) are externalized; require them at runtime. */
 const nodeRequire = createRequire(import.meta.url);
 
@@ -573,7 +577,7 @@ function createWindow(): void {
     width: 1200,
     height: 800,
     backgroundColor: "#141415",
-    title: "The Editor",
+    title: APP_NAME,
     // Reclaim the title bar: the renderer paints its own themed bar (see
     // TitleBar.tsx) and the traffic lights float over it, centered in the
     // 44px-tall band the renderer reserves on the left.

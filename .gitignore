@@ -20,3 +20,4 @@ __screenshots__/
 squashfs-root/
 dist-electron/
 .electron-runtime/
+apps/*/.electron-runtime/

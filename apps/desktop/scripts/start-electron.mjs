@@ -4,6 +4,7 @@ import { chmodSync, existsSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveElectronPath } from "./electron-launcher.mjs";
 
 const desktopDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const webDist = resolve(desktopDir, "..", "web", "dist", "index.html");
@@ -31,14 +32,12 @@ if (!existsSync(webDist)) {
   process.exit(1);
 }
 
-const require = createRequire(import.meta.url);
-const electronPath = require("electron");
 
 const childEnv = { ...process.env };
 delete childEnv.ELECTRON_RUN_AS_NODE;
 delete childEnv.VITE_DEV_SERVER_URL;
 
-const electron = spawn(electronPath, ["dist-electron/main.cjs"], {
+const electron = spawn(resolveElectronPath(), ["dist-electron/main.cjs"], {
   cwd: desktopDir,
   env: childEnv,
   stdio: "inherit",

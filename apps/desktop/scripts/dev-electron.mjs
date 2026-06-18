@@ -8,6 +8,7 @@ import { chmodSync, existsSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveElectronPath } from "./electron-launcher.mjs";
 
 const desktopDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const webDir = resolve(desktopDir, "..", "web");
@@ -41,8 +42,6 @@ ensurePtyHelperExecutable();
 const port = Number(process.env.PORT ?? 5183);
 const devServerUrl = `http://localhost:${port}`;
 
-const require = createRequire(import.meta.url);
-const electronPath = require("electron");
 
 const children = [];
 let shuttingDown = false;
@@ -100,7 +99,7 @@ await waitForPort("localhost", port);
 const childEnv = { ...process.env, VITE_DEV_SERVER_URL: devServerUrl };
 delete childEnv.ELECTRON_RUN_AS_NODE;
 
-const electron = spawn(electronPath, ["dist-electron/main.cjs"], {
+const electron = spawn(resolveElectronPath(), ["dist-electron/main.cjs"], {
   cwd: desktopDir,
   env: childEnv,
   stdio: "inherit",

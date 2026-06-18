@@ -15,11 +15,23 @@
   /* Rounding system, matched to @pierre/trees (6px rows) and JetBrains'
    * floating-card chrome. Surfaces (panes, popovers) carry the large radius;
    * rows/chips inside them carry the medium one; tiny controls the small. */
-  --radius-lg: 9px;
+  --radius-lg: 10px;
   --radius-md: 6px;
   --radius-sm: 4px;
-  /* Gap the chrome shows between floating cards (panes, splits, edges). */
-  --pane-gap: 6px;
+  /* Tight workbench gutter: enough hit area for split handles without making
+   * adjacent panes feel like separate floating windows. */
+  --pane-gap: 4px;
+
+  /* The recess behind the floating cards: the window chrome reads a touch
+   * darker than a pane so panes feel lifted off it — depth that does not rely
+   * on per-theme bg contrast (often near-zero between window and editor). */
+  --chrome: color-mix(in srgb, var(--bg), #000 26%);
+  /* Soft card elevation. Low-alpha black reads on both light and dark themes. */
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.22), 0 6px 18px rgb(0 0 0 / 0.14);
+
+  /* Strong custom easings (the built-in CSS curves are too weak). */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
 }
 
 html,
@@ -35,7 +47,7 @@ body,
 }
 
 body {
-  background: var(--bg);
+  background: var(--chrome);
   color: var(--fg);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
 }
@@ -55,7 +67,7 @@ body {
   flex: 0 0 auto;
   height: 36px;
   padding: 0 8px;
-  background: var(--bg);
+  background: transparent;
   user-select: none;
   -webkit-app-region: drag;
 }
@@ -78,7 +90,7 @@ body {
   background: transparent;
   color: var(--fg-dim);
   cursor: pointer;
-  transition: background 100ms ease, color 100ms ease;
+  transition: background 120ms var(--ease-out), color 120ms var(--ease-out), transform 120ms var(--ease-out);
   -webkit-app-region: no-drag;
 }
 
@@ -89,15 +101,16 @@ body {
 
 .titlebar-button:active {
   background: color-mix(in srgb, var(--fg) 16%, transparent);
+  transform: scale(0.94);
 }
 
 /* Workspace tabs: one chip per open session, next to the traffic lights.
- * Same pill language as the editor tab bar — inactive ones are quiet, the
- * active one is a filled accent chip. */
+ * Match the workbench panel tabs: a quiet inactive pill and a filled active
+ * chip, with the same height, radius, spacing, and easing. */
 .workspace-tabs {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
   -webkit-app-region: no-drag;
 }
@@ -105,43 +118,47 @@ body {
 .workspace-tab {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 7px;
   max-width: 200px;
-  padding-right: 2px;
+  height: 26px;
+  padding: 0 7px 0 10px;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   color: var(--fg-dim);
-  transition: color 80ms ease, background-color 80ms ease, border-color 80ms ease;
+  font-size: 12.5px;
+  transition: color 120ms var(--ease-out), background-color 120ms var(--ease-out),
+    border-color 120ms var(--ease-out);
 }
 
 .workspace-tab:hover {
-  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
   color: var(--fg);
 }
 
 .workspace-tab[data-active] {
-  background: color-mix(in srgb, var(--accent) 16%, var(--bg-editor));
-  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-editor));
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
   color: var(--fg);
 }
 
 .workspace-tab-label {
+  min-width: 0;
   max-width: 168px;
-  padding: 4px 6px 4px 10px;
+  padding: 0;
   border: 0;
   background: transparent;
   color: inherit;
-  font-size: 12.5px;
-  line-height: 1;
+  font: inherit;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  cursor: pointer;
+  cursor: default;
   -webkit-app-region: no-drag;
 }
 
 .workspace-tab-close {
   display: inline-flex;
+  flex: none;
   align-items: center;
   justify-content: center;
   width: 17px;
@@ -152,8 +169,9 @@ body {
   background: transparent;
   color: var(--fg-dim);
   opacity: 0;
-  cursor: pointer;
-  transition: opacity 80ms ease, background-color 80ms ease, color 80ms ease;
+  cursor: default;
+  transition: opacity 120ms var(--ease-out), background-color 120ms var(--ease-out),
+    color 120ms var(--ease-out), transform 120ms var(--ease-out);
   -webkit-app-region: no-drag;
 }
 
@@ -167,15 +185,20 @@ body {
   color: var(--fg);
 }
 
+.workspace-tab-close:active {
+  transform: scale(0.85);
+}
+
 .workspace-add {
   flex: none;
   width: 24px;
   height: 24px;
 }
 
-/* Push the file-tree toggle to the far right of the bar. */
+/* File-tree toggle sits before the workspace tabs, after the macOS traffic-light gutter. */
 .titlebar-tree-toggle {
-  margin-left: auto;
+  flex: none;
+  margin-right: 5px;
 }
 
 .editor {
@@ -394,12 +417,10 @@ body {
   display: flex;
   flex: 1;
   min-height: 0;
-  /* The outer padding (plus the transparent dividers between cells) is what
-   * the chrome shows around each floating pane card. Top/bottom are trimmed
-   * so the panes hug the title bar and status bar; the sides keep the full
-   * pane gap. */
-  padding: 3px var(--pane-gap);
-  background: var(--bg);
+  /* The outer inset matches split gutters so the chrome reads compactly, closer
+   * to JetBrains' dense editor layout than separate floating cards. */
+  padding: var(--pane-gap);
+  background: transparent;
 }
 
 .wb-split {
@@ -433,7 +454,7 @@ body {
   flex: none;
   z-index: 3;
   background: transparent;
-  transition: background-color 100ms ease;
+  transition: background-color 120ms var(--ease-out);
 }
 
 .wb-divider-row {
@@ -467,6 +488,8 @@ body {
   /* Floating card: rounded, clipped, with a hairline ring. */
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  transition: border-color 120ms var(--ease-out);
 }
 
 /* The focused card carries a faint accent ring so focus reads at a glance. */
@@ -479,10 +502,12 @@ body {
   flex: none;
   align-items: center;
   gap: 3px;
-  height: 38px;
-  padding: 0 6px;
+  height: 40px;
+  padding: 0 8px;
   overflow: hidden;
   background: var(--bg-editor);
+  /* Faint separator so the tab strip reads as the card's header band. */
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--border) 70%, transparent);
   user-select: none;
 }
 
@@ -501,7 +526,7 @@ body {
   color: var(--fg-dim);
   font-size: 12.5px;
   cursor: default;
-  transition: color 80ms ease, background-color 80ms ease;
+  transition: color 120ms var(--ease-out), background-color 120ms var(--ease-out);
 }
 
 .wb-tab:hover {
@@ -577,6 +602,8 @@ body {
   text-align: center;
   opacity: 0;
   cursor: default;
+  transition: opacity 120ms var(--ease-out), background-color 120ms var(--ease-out),
+    transform 120ms var(--ease-out);
 }
 
 .wb-tab-close:hover {
@@ -592,6 +619,10 @@ body {
 .wb-tab-close:hover {
   background: var(--border);
   color: var(--fg);
+}
+
+.wb-tab-close:active {
+  transform: scale(0.85);
 }
 
 .wb-tab-insert {
@@ -1002,7 +1033,7 @@ body {
   justify-content: space-between;
   height: 22px;
   padding: 0 12px;
-  background: var(--status-bg);
+  background: transparent;
   color: var(--fg-dim);
   font-size: 11.5px;
   letter-spacing: 0.1px;
@@ -1352,4 +1383,13 @@ body {
 .mb-match {
   border-radius: 2px;
   background: color-mix(in srgb, var(--theme-text-accent) 28%, transparent);
+}
+
+/* Reduced motion: keep color/opacity feedback, drop transform-based motion. */
+@media (prefers-reduced-motion: reduce) {
+  .wb-tab-close:active,
+  .workspace-tab-close:active,
+  .titlebar-button:active {
+    transform: none;
+  }
 }

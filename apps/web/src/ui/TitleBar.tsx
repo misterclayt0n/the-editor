@@ -29,6 +29,26 @@ type TitleBarProps = {
 export function TitleBar({ tabs, activeId, onSelect, onAdd, onClose, onToggleTree }: TitleBarProps) {
   return (
     <div className="titlebar" data-traffic-lights={reserveTrafficLights ? "" : undefined}>
+      <button
+        type="button"
+        className="titlebar-button titlebar-tree-toggle"
+        onClick={onToggleTree}
+        title="Toggle File Tree (⌘B)"
+        aria-label="Toggle File Tree"
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <rect
+            x="1.85"
+            y="2.85"
+            width="12.3"
+            height="10.3"
+            rx="2.4"
+            stroke="currentColor"
+            strokeWidth="1.3"
+          />
+          <line x1="6.15" y1="3.1" x2="6.15" y2="12.9" stroke="currentColor" strokeWidth="1.3" />
+        </svg>
+      </button>
       <div className="workspace-tabs">
         {tabs.map((tab) => (
           <div key={tab.id} className="workspace-tab" data-active={tab.id === activeId ? "" : undefined}>
@@ -76,26 +96,6 @@ export function TitleBar({ tabs, activeId, onSelect, onAdd, onClose, onToggleTre
           </svg>
         </button>
       </div>
-      <button
-        type="button"
-        className="titlebar-button titlebar-tree-toggle"
-        onClick={onToggleTree}
-        title="Toggle File Tree (⌘B)"
-        aria-label="Toggle File Tree"
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <rect
-            x="1.85"
-            y="2.85"
-            width="12.3"
-            height="10.3"
-            rx="2.4"
-            stroke="currentColor"
-            strokeWidth="1.3"
-          />
-          <line x1="6.15" y1="3.1" x2="6.15" y2="12.9" stroke="currentColor" strokeWidth="1.3" />
-        </svg>
-      </button>
     </div>
   );
 }

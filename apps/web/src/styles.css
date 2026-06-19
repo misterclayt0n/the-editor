@@ -201,11 +201,6 @@ body {
   margin-right: 5px;
 }
 
-/* Diff-view toggle sits beside the file-tree toggle. */
-.titlebar-diff-toggle {
-  flex: none;
-  margin-right: 10px;
-}
 
 .editor {
   position: absolute;

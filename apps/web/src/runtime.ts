@@ -361,6 +361,7 @@ export class AppRuntime {
   private lsp: LspManager | undefined;
   private terminal: TerminalPort | undefined;
   private fileFinder: FileFinderPort | undefined | null = undefined;
+  private diffViewPanelId: PanelId | null = null;
   private pendingRename: { docId: string; offset: number } | null = null;
   private readonly highlightsByDoc = new Map<string, DocumentHighlights>();
   private workbenchSnapshot: WorkbenchSnapshot;
@@ -453,7 +454,7 @@ export class AppRuntime {
               title: (panel) => createDiffViewRenderer(instance).title(panel),
               mount: (element, panel) => createDiffViewRenderer(instance).mount(element, panel),
             },
-            toggle: () => instance.togglePanel(DiffViewSurface, { dock: "right" }),
+            open: () => instance.openDiffView(),
           }),
           Layer.succeed(CompletionProviders, completionProviders),
           Layer.succeed(HoverProviders, hoverProviders),
@@ -715,6 +716,7 @@ export class AppRuntime {
       }
       // Custom panel (terminal, file tree): closing its scope disposes the
       // renderer (the pool unmounts it once it leaves the live panel set).
+      if (panelId === this.diffViewPanelId) this.diffViewPanelId = null;
       Effect.runSync(this.workbench.closePanel(panelId));
       this.republishWorkbench();
       return;
@@ -787,6 +789,20 @@ export class AppRuntime {
   /** Live panel by id (editor panes AND custom panels). */
   panelById(panelId: PanelId): Panel | undefined {
     return Option.getOrUndefined(Effect.runSync(this.workbench.panel(panelId)));
+  }
+
+  private isCenterContentPanel(panelId: PanelId): boolean {
+    return this.panes.has(panelId) || this.multiBufferPanes.has(panelId) || panelId === this.diffViewPanelId;
+  }
+
+  /** Open the working-tree diff as a center tab, like a multibuffer/file. */
+  openDiffView(): void {
+    const existing =
+      this.diffViewPanelId === null ? undefined : this.panelById(this.diffViewPanelId);
+    const panel =
+      existing ?? Effect.runSync(this.workbench.createPanel({ kind: DiffViewSurface }));
+    this.diffViewPanelId = panel.id;
+    this.placeAsCenterTab(panel.id);
   }
 
   /**
@@ -1084,7 +1100,7 @@ export class AppRuntime {
     this.vcs?.attach(document, path);
 
     const { arrangement, focusedSlot } = this.workbenchSnapshot;
-    const hostsEditors = (s: Stack) => s.panels.some((id) => this.panes.has(id) || this.multiBufferPanes.has(id));
+    const hostsEditors = (s: Stack) => s.panels.some((id) => this.isCenterContentPanel(id));
     const editorStacks = collectSlots(arrangement).flatMap((s) =>
       s.kind === "stack" && hostsEditors(s.stack) ? [s.stack] : [],
     );
@@ -1298,25 +1314,29 @@ export class AppRuntime {
 
   /** Place a panel as a tab in the active editor group (or dock one). */
   private placeAsCenterTab(panelId: PanelId): void {
-    const { arrangement, focusedSlot } = this.workbenchSnapshot;
-    const hosts = (s: Stack) =>
-      s.panels.some((id) => this.panes.has(id) || this.multiBufferPanes.has(id));
-    const editorStacks = collectSlots(arrangement).flatMap((s) =>
-      s.kind === "stack" && hosts(s.stack) ? [s.stack] : [],
-    );
-    const focusedSlotStack = focusedSlot === null ? undefined : findSlot(arrangement, focusedSlot);
-    const focusedEditor =
-      focusedSlotStack?.kind === "stack" && hosts(focusedSlotStack.stack)
-        ? focusedSlotStack.stack
-        : undefined;
-    const stack =
-      editorStacks.find((s) => s.id === this.lastEditorSlot) ?? focusedEditor ?? editorStacks[0];
+    const focusedSlot = this.workbenchSnapshot.focusedSlot;
+    const hosts = (stack: Stack) => stack.panels.some((id) => this.isCenterContentPanel(id));
+    const chooseStack = (arrangement: Arrangement): Stack | undefined => {
+      const editorStacks = collectSlots(arrangement).flatMap((slot) =>
+        slot.kind === "stack" && hosts(slot.stack) ? [slot.stack] : [],
+      );
+      const focusedSlotStack = focusedSlot === null ? undefined : findSlot(arrangement, focusedSlot);
+      const focusedEditor =
+        focusedSlotStack?.kind === "stack" && hosts(focusedSlotStack.stack)
+          ? focusedSlotStack.stack
+          : undefined;
+      return editorStacks.find((stack) => stack.id === this.lastEditorSlot) ?? focusedEditor ?? editorStacks[0];
+    };
+
     Effect.runSync(
       this.workbench
-        .updateArrangement((a) => {
-          if (a.tiles === null) return { ...a, tiles: makeStack([panelId]) };
-          if (stack !== undefined) return placeInStack(a, stack.id, panelId);
-          return dockEdge(a, panelId, "right", { ratio: 0.78 });
+        .updateArrangement((arrangement) => {
+          const withoutPanel =
+            slotOfPanel(arrangement, panelId) === undefined ? arrangement : removePanel(arrangement, panelId);
+          if (withoutPanel.tiles === null) return { ...withoutPanel, tiles: makeStack([panelId]) };
+          const stack = chooseStack(withoutPanel);
+          if (stack !== undefined) return placeInStack(withoutPanel, stack.id, panelId);
+          return dockEdge(withoutPanel, panelId, "right", { ratio: 0.78 });
         })
         .pipe(Effect.orDie),
     );

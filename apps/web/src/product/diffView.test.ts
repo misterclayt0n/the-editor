@@ -31,7 +31,7 @@ const activateDiffViewPackage = Effect.gen(function* () {
         title: () => "Diff",
         mount: () => ({ dispose: () => undefined }),
       },
-      toggle: () => undefined,
+      open: () => undefined,
     }),
   );
 
@@ -72,7 +72,7 @@ describe("diffViewPackage commands", () => {
           "diffs.toggleControls",
         ];
 
-        expect((yield* commands.get("diffs.toggleDiffView"))?.contribution.scope).toEqual(
+        expect((yield* commands.get("diffs.openDiffView"))?.contribution.scope).toEqual(
           SurfaceScope.global,
         );
         for (const id of settingsCommandIds) {

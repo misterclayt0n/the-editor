@@ -18,16 +18,15 @@ type TitleBarProps = {
   readonly onAdd: () => void;
   readonly onClose: (id: string) => void;
   readonly onToggleTree: () => void;
-  readonly onToggleDiffView: () => void;
 };
 
 /**
  * The window's top band. It owns the traffic-light gutter and carries the
  * workspace tabs next to it — one tab per open session — plus a `+` to open a
- * folder as a new workspace. The file-tree toggle (⌘B) sits at the right,
- * acting on whichever workspace is active.
+ * folder as a new workspace. The file-tree toggle (⌘B) sits next to the
+ * traffic-light gutter, acting on whichever workspace is active.
  */
-export function TitleBar({ tabs, activeId, onSelect, onAdd, onClose, onToggleTree, onToggleDiffView }: TitleBarProps) {
+export function TitleBar({ tabs, activeId, onSelect, onAdd, onClose, onToggleTree }: TitleBarProps) {
   return (
     <div className="titlebar" data-traffic-lights={reserveTrafficLights ? "" : undefined}>
       <button
@@ -48,20 +47,6 @@ export function TitleBar({ tabs, activeId, onSelect, onAdd, onClose, onToggleTre
             strokeWidth="1.3"
           />
           <line x1="6.15" y1="3.1" x2="6.15" y2="12.9" stroke="currentColor" strokeWidth="1.3" />
-        </svg>
-      </button>
-      <button
-        type="button"
-        className="titlebar-button titlebar-diff-toggle"
-        onClick={onToggleDiffView}
-        title="Toggle Diff View (⌘⇧G)"
-        aria-label="Toggle Diff View"
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <rect x="2.85" y="2.85" width="4.3" height="10.3" rx="1.4" stroke="currentColor" strokeWidth="1.3" />
-          <rect x="8.85" y="2.85" width="4.3" height="10.3" rx="1.4" stroke="currentColor" strokeWidth="1.3" />
-          <line x1="5.5" y1="5.5" x2="5.5" y2="10.5" stroke="currentColor" strokeWidth="1.3" />
-          <line x1="11.5" y1="5.5" x2="11.5" y2="10.5" stroke="currentColor" strokeWidth="1.3" />
         </svg>
       </button>
       <div className="workspace-tabs">

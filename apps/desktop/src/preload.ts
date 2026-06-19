@@ -218,6 +218,7 @@ contextBridge.exposeInMainWorld("theEditorTerminal", {
 
 contextBridge.exposeInMainWorld("theEditorFs", {
   readFile: (path: string): Promise<string> => ipcRenderer.invoke("fs:read", path),
+  readBinaryFile: (path: string): Promise<Uint8Array> => ipcRenderer.invoke("fs:readBinary", path),
   writeFile: (path: string, text: string): Promise<{ mtimeMs: number; size: number }> =>
     ipcRenderer.invoke("fs:write", path, text),
   stat: (path: string): Promise<{ mtimeMs: number; size: number } | null> =>

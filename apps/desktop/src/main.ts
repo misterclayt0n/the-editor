@@ -115,6 +115,10 @@ function registerFileSystemHandlers(): void {
   ipcMain.handle("fs:read", async (_event, filePath: string) => {
     return fsp.readFile(filePath, "utf8");
   });
+  ipcMain.handle("fs:readBinary", async (_event, filePath: string) => {
+    const buffer = await fsp.readFile(filePath);
+    return new Uint8Array(buffer);
+  });
   ipcMain.handle("fs:write", async (_event, filePath: string, text: string) => {
     await fsp.mkdir(path.dirname(filePath), { recursive: true });
     await fsp.writeFile(filePath, text, "utf8");

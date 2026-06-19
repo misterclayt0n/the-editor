@@ -209,6 +209,7 @@ export class EditorRenderer {
   private readonly unsubscribeHighlights: () => void;
   private readonly unsubscribeFloats: () => void;
   private readonly unsubscribeTheme: () => void;
+  private readonly unsubscribeFont: () => void;
   private readonly renderPass = () => this.render();
   /** Active mouse selection: the fixed "anchor unit" and the click mode. The
    * anchor is a single offset for char mode, or the clicked word/line range
@@ -646,6 +647,16 @@ export class EditorRenderer {
       this.pendingVisualChanges = null;
       queueRender(this.renderPass);
     });
+    this.unsubscribeFont = runtime.subscribeFont(() => {
+      document.fonts?.ready.then(() => {
+        if (this.disposed) return;
+        this.measureCharWidth();
+        this.visualsDirty = true;
+        this.pendingVisualChanges = null;
+        this.overlaysDirty = true;
+        queueRender(this.renderPass);
+      });
+    });
 
     queueRender(this.renderPass);
   }
@@ -660,6 +671,7 @@ export class EditorRenderer {
     this.unsubscribe();
     this.unsubscribeHighlights();
     this.unsubscribeTheme();
+    this.unsubscribeFont();
     this.unsubscribeFloats();
     if (this.hoverRaf !== 0) cancelAnimationFrame(this.hoverRaf);
     this.handleDragEnd(); // drop any in-flight selection drag + window listeners

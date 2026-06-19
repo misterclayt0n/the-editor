@@ -64,7 +64,7 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
         const shouldRefocus = body.contains(document.activeElement);
         disposeTermUi?.();
         body.replaceChildren();
-        const next = new Terminal(createTerminalOptions(runtime.themeSnapshot()));
+        const next = new Terminal(createTerminalOptions(runtime.themeSnapshot(), runtime.fontSnapshot()));
         const fit = new FitAddon();
         next.loadAddon(fit);
         next.open(body);
@@ -113,6 +113,9 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
       const unsubscribeTheme = runtime.subscribeTheme(() => {
         if (term !== null) openTerminal(termId !== null);
       });
+      const unsubscribeFont = runtime.subscribeFont(() => {
+        if (term !== null) openTerminal(termId !== null);
+      });
       void (async () => {
         await ensureEngine();
         if (disposed) return;
@@ -153,6 +156,7 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
           disposeTermUi?.();
           if (termId !== null) port.kill(termId);
           unsubscribeTheme();
+          unsubscribeFont();
           element.replaceChildren();
         },
         focus: () => {

@@ -6,6 +6,7 @@
     "paths": {
       "@/*": ["./src/*"],
       "@the-editor/editor": ["../../packages/editor/src/index.ts"],
+      "@the-editor/fonts": ["../../packages/fonts/src/index.ts"],
       "@the-editor/theme": ["../../packages/theme/src/index.ts"],
       "@the-editor/editor-engine-monaco": ["../../packages/editor-engine-monaco/src/index.ts"]
     }

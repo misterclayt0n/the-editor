@@ -12,6 +12,22 @@
   --status-bg: var(--theme-status-bar-background);
   --border: var(--theme-border);
 
+  /* The font service owns these vars at runtime. Defaults keep first paint stable. */
+  --font-ui-family: "Zed Sans", "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-ui-size: 13px;
+  --font-ui-weight: 400;
+  --font-ui-line-height: 18px;
+  --font-ui-feature-settings: normal;
+  --font-buffer-family: Iosevka, "SF Mono", Menlo, Monaco, "Cascadia Code", monospace;
+  --font-buffer-size: 13px;
+  --font-buffer-weight: 400;
+  --font-buffer-line-height: 20px;
+  --font-buffer-feature-settings: "liga" 0, "calt" 1;
+  --font-terminal-family: var(--font-buffer-family);
+  --font-terminal-size: 12.5px;
+  --font-agent-prose-family: var(--font-ui-family);
+  --font-agent-code-family: var(--font-buffer-family);
+
   /* Rounding system, matched to @pierre/trees (6px rows) and JetBrains'
    * floating-card chrome. Surfaces (panes, popovers) carry the large radius;
    * rows/chips inside them carry the medium one; tiny controls the small. */
@@ -49,7 +65,11 @@ body,
 body {
   background: var(--chrome);
   color: var(--fg);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-family: var(--font-ui-family);
+  font-size: var(--font-ui-size);
+  font-weight: var(--font-ui-weight);
+  line-height: var(--font-ui-line-height);
+  font-feature-settings: var(--font-ui-feature-settings);
 }
 
 .app {
@@ -210,8 +230,11 @@ body {
   overflow: hidden;
   outline: none;
   background: var(--bg-editor);
-  font-family: "SF Mono", Menlo, Monaco, "Cascadia Code", monospace;
-  font-size: 13px;
+  font-family: var(--font-buffer-family);
+  font-size: var(--font-buffer-size);
+  font-weight: var(--font-buffer-weight);
+  line-height: var(--font-buffer-line-height);
+  font-feature-settings: var(--font-buffer-feature-settings);
   cursor: text;
 }
 
@@ -728,8 +751,8 @@ body {
   background: var(--bg-editor);
   box-shadow: 0 12px 32px color-mix(in srgb, #000 30%, transparent);
   color: var(--fg);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  font-size: 13px;
+  font-family: var(--font-ui-family);
+  font-size: var(--font-ui-size);
   line-height: 1.5;
   user-select: text;
   animation: intel-pop-in 100ms ease-out;
@@ -741,8 +764,8 @@ body {
   padding-bottom: 6px;
   border-bottom: 1px solid var(--border);
   color: var(--fg);
-  font-family: "SF Mono", Menlo, Monaco, "Cascadia Code", monospace;
-  font-size: 12.5px;
+  font-family: var(--font-buffer-family);
+  font-size: var(--font-agent-code-size, 12.5px);
   line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-word;
@@ -758,7 +781,7 @@ body {
   border-radius: var(--radius-lg);
   background: var(--bg-editor);
   box-shadow: 0 12px 32px color-mix(in srgb, #000 30%, transparent);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-family: var(--font-ui-family);
   animation: intel-pop-in 100ms ease-out;
 }
 
@@ -864,8 +887,8 @@ body {
   background: var(--bg-editor);
   box-shadow: 0 12px 32px color-mix(in srgb, #000 30%, transparent);
   color: var(--fg);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  font-size: 13px;
+  font-family: var(--font-ui-family);
+  font-size: var(--font-ui-size);
   line-height: 1.5;
   animation: intel-pop-in 100ms ease-out;
 }
@@ -892,8 +915,8 @@ body {
 
 /* The signature line: syntax-highlighted, monospace. */
 .intel-hover__sig {
-  font-family: "SF Mono", Menlo, Monaco, "Cascadia Code", monospace;
-  font-size: 12.5px;
+  font-family: var(--font-buffer-family);
+  font-size: var(--font-agent-code-size, 12.5px);
   font-weight: 600;
   line-height: 1.45;
   white-space: pre-wrap;
@@ -953,8 +976,8 @@ body {
   overflow-x: auto;
   border-radius: var(--radius-md);
   background: var(--bg);
-  font-family: "SF Mono", Menlo, Monaco, "Cascadia Code", monospace;
-  font-size: 12px;
+  font-family: var(--font-buffer-family);
+  font-size: var(--font-agent-code-size, 12px);
   white-space: pre;
 }
 
@@ -962,8 +985,8 @@ body {
   padding: 0 4px;
   border-radius: 3px;
   background: var(--bg);
-  font-family: "SF Mono", Menlo, Monaco, "Cascadia Code", monospace;
-  font-size: 12px;
+  font-family: var(--font-buffer-family);
+  font-size: var(--font-agent-code-size, 12px);
 }
 
 .intel-hover__md pre code {
@@ -990,7 +1013,7 @@ body {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  font-family: "SF Mono", Menlo, Monaco, "Cascadia Code", monospace;
+  font-family: var(--font-buffer-family);
   white-space: pre-wrap;
 }
 
@@ -1359,7 +1382,7 @@ body {
 
 .diff-view-header-stat {
   flex: none;
-  font-family: "SF Mono", Menlo, Monaco, "Cascadia Code", monospace;
+  font-family: var(--font-buffer-family);
   font-size: 11.5px;
   line-height: 18px;
 }
@@ -1461,8 +1484,8 @@ body {
   background: color-mix(in srgb, var(--fg) 4%, var(--bg-editor));
   color: var(--fg);
   box-shadow: none;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  font-size: 13px;
+  font-family: var(--font-ui-family);
+  font-size: var(--font-ui-size);
   line-height: 20px;
   user-select: none;
   overflow: hidden;
@@ -1555,7 +1578,7 @@ body {
 .mb-header-count {
   flex: none;
   color: var(--fg-dim);
-  font-family: "SF Mono", Menlo, Monaco, "Cascadia Code", monospace;
+  font-family: var(--font-buffer-family);
   font-size: 11.5px;
 }
 

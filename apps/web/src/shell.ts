@@ -2,37 +2,45 @@
  * The shell: process-global state shared by every workspace session.
  *
  * A workspace is one AppRuntime — its own documents, layout, panes, LSP, VCS,
- * and terminals, independently disposable. The theme is the exception: it is
- * NOT per-workspace. It paints the one window's chrome and writes
- * process-global state — the `:root` CSS variables and the `activeTheme`
- * singleton every editor renderer reads (see theme/dom.ts). If each mounted
- * session drove that, hidden-but-alive sessions would stomp the same DOM and
- * singleton, and the second session activating the bundled theme family would
- * hit ThemeDuplicateError.
+ * and terminals, independently disposable. Theme and fonts are the exceptions:
+ * they are NOT per-workspace. They paint the one window's chrome, `:root`
+ * CSS variables, DOM FontFace set, and the `activeTheme` singleton every
+ * editor renderer reads (see theme/dom.ts). If each mounted session drove
+ * that, hidden-but-alive sessions would stomp the same DOM; the second
+ * session activating bundled defaults would also hit duplicate contribution
+ * errors.
  *
- * So the shell owns ONE Themes service, activates the theme family exactly
- * once, and is the sole author of the DOM theme + OS-appearance tracking.
- * Sessions receive this service as a consumer: their package graphs read it
- * (theme.select etc.) and their renderers repaint off their own subscription
- * to `themes.changes`, but they never touch the DOM or register a family.
+ * So the shell owns ONE Themes service and ONE Fonts service, activates their
+ * defaults exactly once, and is the sole author of DOM theme/font state.
+ * Sessions receive these services as consumers: package graphs read them and
+ * renderers repaint off their own subscriptions, but sessions never touch
+ * global DOM appearance state.
  */
 
 import { Effect, Fiber, Layer, Stream } from "effect";
 import { makePackageRuntime, type PackageRuntime } from "@the-editor/kernel";
 import { toPackageDescriptor } from "@the-editor/extensions";
 import { makeThemes, Themes, themeDefaults, type ResolvedTheme } from "@the-editor/theme";
+import { Fonts, fontDefaults, makeFonts, type ResolvedFontSystem } from "@the-editor/fonts";
 import { applyThemeToDocument } from "./theme/dom";
+import { createFontDomDriver } from "./fonts/dom";
+import { createFontFileLoader } from "./platform/fonts";
 
 export class Shell {
   private themeFiber: Fiber.RuntimeFiber<unknown, unknown> | undefined;
+  private fontFiber: Fiber.RuntimeFiber<unknown, unknown> | undefined;
+  private readonly fontDriver = createFontDomDriver(createFontFileLoader());
   private systemAppearanceMedia: MediaQueryList | undefined;
   private systemAppearanceListener: (() => void) | undefined;
   private readonly themeListeners = new Set<() => void>();
+  private readonly fontListeners = new Set<() => void>();
 
   private constructor(
     private readonly packages: PackageRuntime,
     /** The shared theme service injected into every session's package graph. */
     readonly themes: Themes.Service,
+    /** The shared font service injected into every session's package graph. */
+    readonly fonts: Fonts.Service,
   ) {}
 
   static boot(): Shell {
@@ -40,14 +48,19 @@ export class Shell {
       Effect.gen(function* () {
         const packages = yield* makePackageRuntime;
         const themes = yield* makeThemes();
-        // Register the bundled theme family ONCE, here — not per session.
+        const fonts = yield* makeFonts;
+        // Register bundled process-global appearance defaults ONCE, here — not per session.
         yield* packages
-          .activateGraph([toPackageDescriptor(themeDefaults, Layer.succeed(Themes, themes))])
+          .activateGraph([
+            toPackageDescriptor(themeDefaults, Layer.succeed(Themes, themes)),
+            toPackageDescriptor(fontDefaults, Layer.succeed(Fonts, fonts)),
+          ])
           .pipe(Effect.orDie);
-        return new Shell(packages, themes);
+        return new Shell(packages, themes, fonts);
       }),
     );
     instance.startThemeDriver();
+    instance.startFontDriver();
     return instance;
   }
 
@@ -75,6 +88,26 @@ export class Shell {
     this.systemAppearanceListener();
   }
 
+  /**
+   * Sole author of window font faces and CSS font variables. Sessions repaint
+   * from `fonts.changes`; they do not register DOM FontFace objects themselves.
+   */
+  private startFontDriver(): void {
+    const publish = (fonts: ResolvedFontSystem) => {
+      this.fontDriver.apply(fonts);
+      for (const listener of this.fontListeners) listener();
+    };
+    publish(Effect.runSync(this.fonts.resolved));
+    this.fontFiber = Effect.runFork(
+      Stream.runForEach(this.fonts.changes, (fonts) => Effect.sync(() => publish(fonts))),
+    );
+  }
+
+  subscribeFont(listener: () => void): () => void {
+    this.fontListeners.add(listener);
+    return () => void this.fontListeners.delete(listener);
+  }
+
   /** Re-render hook for chrome that reflects the theme (the App status bar). */
   subscribeTheme(listener: () => void): () => void {
     this.themeListeners.add(listener);
@@ -83,10 +116,14 @@ export class Shell {
 
   dispose(): void {
     if (this.themeFiber !== undefined) Effect.runFork(Fiber.interrupt(this.themeFiber));
+    if (this.fontFiber !== undefined) Effect.runFork(Fiber.interrupt(this.fontFiber));
     if (this.systemAppearanceMedia !== undefined && this.systemAppearanceListener !== undefined) {
       this.systemAppearanceMedia.removeEventListener("change", this.systemAppearanceListener);
     }
     this.themeListeners.clear();
+    this.fontListeners.clear();
+    this.fontDriver.dispose();
     Effect.runFork(this.packages.disposePackage(themeDefaults.id).pipe(Effect.ignore));
+    Effect.runFork(this.packages.disposePackage(fontDefaults.id).pipe(Effect.ignore));
   }
 }

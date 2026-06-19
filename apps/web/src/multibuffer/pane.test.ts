@@ -30,6 +30,7 @@ function makeHost(buffers: Map<string, TextBuffer>, gutterBands: readonly Resolv
   const notify = (docId: string) => subscribers.get(docId)?.forEach((listener) => listener());
   const host: MultiBufferHost = {
     subscribeTheme: () => () => {},
+    subscribeFont: () => () => {},
     jumpToLocation: async () => {},
     commitDocumentEdits(docId: string, edits: readonly TextEdit[]) {
       const before = buffers.get(docId);

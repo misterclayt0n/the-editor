@@ -74,6 +74,7 @@ const rangeMapOptions = { startAssoc: "before", endAssoc: "after" } as const;
 /** The slice of the app runtime a multibuffer pane needs. */
 export interface MultiBufferHost {
   subscribeTheme(listener: () => void): () => void;
+  subscribeFont(listener: () => void): () => void;
   jumpToLocation(path: string, position: lsp.Position): Promise<void>;
   /** Commit edits to a source document; returns its change + new buffer. */
   commitDocumentEdits(
@@ -191,6 +192,10 @@ export class MultiBufferPane implements PaneHost {
 
   subscribeTheme(listener: () => void): () => void {
     return this.host.subscribeTheme(listener);
+  }
+
+  subscribeFont(listener: () => void): () => void {
+    return this.host.subscribeFont(listener);
   }
 
   /** Resolve a unified offset to the underlying source document + offset. The

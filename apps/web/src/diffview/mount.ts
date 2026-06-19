@@ -53,8 +53,8 @@ const DIFF_VIEW_UNSAFE_CSS = `
   --diffs-bg-addition-emphasis-override: color-mix(in srgb, var(--diffs-addition-base) 34%, transparent);
   --diffs-bg-deletion-emphasis-override: color-mix(in srgb, var(--diffs-deletion-base) 34%, transparent);
   --diffs-bg-selection-override: var(--selection);
-  --diffs-font-family: "SF Mono", Menlo, Monaco, "Cascadia Code", monospace;
-  --diffs-header-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --diffs-font-family: var(--font-buffer-family);
+  --diffs-header-font-family: var(--font-ui-family);
   background: var(--bg-editor);
   color: var(--fg);
 }
@@ -103,8 +103,8 @@ const DIFF_VIEW_UNSAFE_CSS = `
   background: color-mix(in srgb, var(--fg) 4%, var(--bg-editor));
   color: var(--fg);
   box-shadow: none;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  font-size: 13px;
+  font-family: var(--font-ui-family);
+  font-size: var(--font-ui-size);
   line-height: 20px;
   user-select: none;
   overflow: hidden;
@@ -196,7 +196,7 @@ const DIFF_VIEW_UNSAFE_CSS = `
 
 .diff-view-header-stat {
   flex: none;
-  font-family: "SF Mono", Menlo, Monaco, "Cascadia Code", monospace;
+  font-family: var(--font-buffer-family);
   font-size: 11.5px;
   line-height: 18px;
 }

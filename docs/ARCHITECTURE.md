@@ -35,6 +35,7 @@ packages/kernel      package runtime, ownership, registries, stores
 packages/extensions  package authoring helpers
 packages/commands    first package-backed product capability
 packages/engine      editor state primitives, starting with text storage/transactions
+packages/fonts       process-global font faces, slots, defaults, and package-owned overrides
 docs/                architecture and extension docs
 ```
 
@@ -120,6 +121,11 @@ Commands
 Keymaps
   global/contextual input routing and modal composition
 
+Fonts
+  font face contributions, slot resolution, defaults, and CSS/terminal font state
+  default slots prefer Zed Sans for UI/prose and Iosevka for buffer/terminal/code,
+  with system fallbacks when those families are not installed or contributed
+
 Engine
   text storage, transactions, document state, future selections/history/layout primitives
 
@@ -145,8 +151,9 @@ VCS/diff workers
 Each open workspace is an independent session: its own kernel package graph,
 workbench, working copy, LSP, VCS, and terminals. The shell keeps inactive
 sessions mounted but hidden so their state (terminals, scroll, editor buffers)
-survives a switch, and owns the one concern that is genuinely process-global —
-the theme — so sessions never fight over the window's appearance.
+survives a switch, and owns the concerns that are genuinely process-global —
+theme and fonts — so sessions never fight over the window's appearance or DOM
+FontFace set.
 
 React, when present, renders and dispatches. It should not own editor truth.
 

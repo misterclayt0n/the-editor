@@ -20,6 +20,7 @@
     "@the-editor/engine": "workspace:*",
     "@the-editor/extensions": "workspace:*",
     "@the-editor/kernel": "workspace:*",
+    "@the-editor/fonts": "workspace:*",
     "@the-editor/keymaps": "workspace:*",
     "@the-editor/lsp": "workspace:*",
     "@the-editor/theme": "workspace:*",

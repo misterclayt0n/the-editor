@@ -24,6 +24,7 @@ import { toPackageDescriptor } from "@the-editor/extensions";
 import { Shell } from "./shell";
 import { Commands, makeCommands } from "@the-editor/commands";
 import { Themes, type ResolvedTheme } from "@the-editor/theme";
+import { Fonts, type ResolvedFontSystem } from "@the-editor/fonts";
 import {
   chordFromKeyboardEvent,
   isTextInputChord,
@@ -198,6 +199,7 @@ export interface PaneHost {
   visualsSnapshot(): VisualsSnapshot;
   setSelection(selection: Selection): void;
   subscribeTheme(listener: () => void): () => void;
+  subscribeFont(listener: () => void): () => void;
   subscribe(
     listener: (notification: EditorNotification, source: "document" | "view") => void,
   ): () => void;
@@ -248,6 +250,10 @@ export class EditorPane implements PaneHost {
 
   subscribeTheme(listener: () => void): () => void {
     return this.runtime.subscribeTheme(listener);
+  }
+
+  subscribeFont(listener: () => void): () => void {
+    return this.runtime.subscribeFont(listener);
   }
 
   setSelection(selection: Selection): void {
@@ -368,7 +374,9 @@ export class AppRuntime {
   private readonly workbenchListeners = new Set<() => void>();
   private mirrorFibers: ReadonlyArray<Fiber.RuntimeFiber<unknown, unknown>> = [];
   private themeFiber: Fiber.RuntimeFiber<unknown, unknown> | undefined;
+  private fontFiber: Fiber.RuntimeFiber<unknown, unknown> | undefined;
   private readonly themeListeners = new Set<() => void>();
+  private readonly fontListeners = new Set<() => void>();
   /** The panel each toggle (terminal, file tree) currently owns as its dock.
    *  Cleared when the user moves or closes it, so a manually-placed panel is
    *  released from the toggle (Zed: a terminal dragged out of the dock is no
@@ -390,6 +398,7 @@ export class AppRuntime {
     readonly commands: Commands.Service,
     readonly keymaps: Keymaps.Service,
     readonly themes: Themes.Service,
+    readonly fonts: Fonts.Service,
   ) {
     this.workbenchSnapshot = {
       arrangement: Effect.runSync(workbench.arrangement),
@@ -426,8 +435,10 @@ export class AppRuntime {
         const hoverProviders = yield* makeHoverProviders;
         const signatureProviders = yield* makeSignatureProviders;
         const themes = shell.themes;
+        const fonts = shell.fonts;
         const services = Layer.mergeAll(
           Layer.succeed(Themes, themes),
+          Layer.succeed(Fonts, fonts),
           Layer.succeed(PanelRenderers, panelRenderers),
           Layer.succeed(DiffViewPreferences, diffViewPreferences),
           Layer.succeed(VcsProviders, vcsProviders),
@@ -532,7 +543,7 @@ export class AppRuntime {
           ])
           .pipe(Effect.orDie);
 
-        const appRuntime = new AppRuntime(scope, workspace, workbench, commands, keymaps, themes);
+        const appRuntime = new AppRuntime(scope, workspace, workbench, commands, keymaps, themes, fonts);
         appRuntime.panelRenderers = panelRenderers;
         appRuntime.diffViewPreferences = diffViewPreferences;
         appRuntime.intel = {
@@ -564,6 +575,7 @@ export class AppRuntime {
     instance.focusSlotOfPanel(pane.panelId);
     instance.startWorkbenchMirror();
     instance.startThemeListener();
+    instance.startFontListener();
     return instance;
   }
 
@@ -583,6 +595,15 @@ export class AppRuntime {
     return Effect.runSync(this.themes.active);
   }
 
+  fontSnapshot(): ResolvedFontSystem {
+    return Effect.runSync(this.fonts.resolved);
+  }
+
+  subscribeFont(listener: () => void): () => void {
+    this.fontListeners.add(listener);
+    return () => void this.fontListeners.delete(listener);
+  }
+
   subscribeTheme(listener: () => void): () => void {
     this.themeListeners.add(listener);
     return () => void this.themeListeners.delete(listener);
@@ -600,6 +621,16 @@ export class AppRuntime {
     notify();
     this.themeFiber = Effect.runFork(
       Stream.runForEach(this.themes.changes, () => Effect.sync(notify)),
+    );
+  }
+
+  private startFontListener(): void {
+    const notify = () => {
+      for (const listener of this.fontListeners) listener();
+    };
+    notify();
+    this.fontFiber = Effect.runFork(
+      Stream.runForEach(this.fonts.changes, () => Effect.sync(notify)),
     );
   }
 
@@ -1537,6 +1568,7 @@ export class AppRuntime {
     this.highlightsByDoc.clear();
     for (const fiber of this.mirrorFibers) Effect.runFork(Fiber.interrupt(fiber));
     if (this.themeFiber !== undefined) Effect.runFork(Fiber.interrupt(this.themeFiber));
+    if (this.fontFiber !== undefined) Effect.runFork(Fiber.interrupt(this.fontFiber));
     const views = [...this.panes.values()].map((pane) => pane.view);
     this.panes.clear();
     for (const pane of this.multiBufferPanes.values()) pane.dispose();

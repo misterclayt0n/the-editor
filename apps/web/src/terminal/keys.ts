@@ -1,4 +1,5 @@
 import type { ResolvedTheme } from "@the-editor/theme";
+import { resolveFontSystem, FONT_SLOT_TERMINAL, type ResolvedFontSystem } from "@the-editor/fonts";
 import type { ITerminalOptions } from "@xterm/xterm";
 import { terminalTheme } from "../theme/dom";
 
@@ -12,15 +13,17 @@ export interface TerminalKeyboardEventLike {
   readonly shiftKey: boolean;
 }
 
+const defaultFontSystem = resolveFontSystem([], []);
 
-export const TERMINAL_FONT_FAMILY = '"SF Mono", Menlo, Monaco, "Cascadia Code", monospace';
-
-export function createTerminalOptions(theme: ResolvedTheme): ITerminalOptions {
+export function createTerminalOptions(
+  theme: ResolvedTheme,
+  fonts: ResolvedFontSystem = defaultFontSystem,
+): ITerminalOptions {
+  const terminalFont = fonts.slots[FONT_SLOT_TERMINAL] ?? defaultFontSystem.slots[FONT_SLOT_TERMINAL]!;
   return {
     allowProposedApi: true,
-    fontSize: 12.5,
-    fontFamily: TERMINAL_FONT_FAMILY,
-    cursorBlink: false,
+    fontSize: terminalFont.size,
+    fontFamily: terminalFont.cssFamily,
     macOptionIsMeta: true,
     theme: terminalTheme(theme),
     vtExtensions: {

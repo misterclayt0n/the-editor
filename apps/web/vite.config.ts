@@ -41,6 +41,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "src"),
+      "@the-editor/fonts": path.resolve(import.meta.dirname, "../../packages/fonts/src/index.ts"),
     },
   },
   server: {

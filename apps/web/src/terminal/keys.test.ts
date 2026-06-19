@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { oneThemeFamily, resolveTheme, type ThemeContent } from "@the-editor/theme";
+import { resolveFontSystem } from "@the-editor/fonts";
 import { createTerminalOptions, macEditingSequence, terminalKeyHandlerResult, type TerminalKeyboardEventLike } from "./keys";
 import { ghosttyUnsupportedQueryResponses } from "./queryResponses";
 
@@ -59,6 +60,25 @@ describe("createTerminalOptions", () => {
     expect(options.macOptionIsMeta).toBe(true);
     expect(options.vtExtensions?.kittyKeyboard).toBe(true);
     expect(options.theme?.background).toBe("#282c34");
+  });
+
+  test("uses resolved terminal font slot", () => {
+    const fonts = resolveFontSystem([], [
+      {
+        id: "test/terminal-font",
+        slots: {
+          buffer: { family: "Iosevka", fallbacks: ["monospace"], size: 14 },
+          terminal: { extends: "buffer", size: 13 },
+        },
+      },
+    ]);
+    const options = createTerminalOptions(resolvedTheme, fonts) as {
+      fontFamily?: string;
+      fontSize?: number;
+    };
+
+    expect(options.fontFamily).toBe("Iosevka, monospace");
+    expect(options.fontSize).toBe(13);
   });
 });
 

@@ -72,13 +72,13 @@ export function MultiBufferView({ runtime, pane }: { runtime: AppRuntime; pane: 
       <div ref={rootRef} className="editor multibuffer" tabIndex={0} />
       {sticky ? (
         <div className="mb-sticky">
-          <HeaderCard meta={sticky} {...actionsFor(sticky)} />
+          <HeaderCard meta={sticky} workspaceRoot={runtime.workspaceRoot} {...actionsFor(sticky)} />
         </div>
       ) : null}
       {[...mounts].flatMap(([id, el]) => {
         const meta = metaByHeader.get(id);
         if (meta === undefined) return [];
-        return [createPortal(<HeaderCard meta={meta} {...actionsFor(meta)} />, el, id)];
+        return [createPortal(<HeaderCard meta={meta} workspaceRoot={runtime.workspaceRoot} {...actionsFor(meta)} />, el, id)];
       })}
     </div>
   );

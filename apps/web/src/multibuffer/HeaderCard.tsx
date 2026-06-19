@@ -4,9 +4,10 @@
  * subsequent excerpts of the same file get a thin divider.
  */
 
+import type { ReactNode } from "react";
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 
-import { FileIcon } from "../workbench/fileIcons";
+import { FileHeader, workspaceRelativePath } from "../ui/FileHeader";
 import type { ExcerptMeta } from "./builder";
 
 export type HeaderActions = {
@@ -15,43 +16,38 @@ export type HeaderActions = {
 };
 
 
-export function HeaderCard({ meta, onOpen, onFold }: { meta: ExcerptMeta } & HeaderActions) {
+export function HeaderCard({
+  meta,
+  workspaceRoot,
+  onOpen,
+  onFold,
+}: { meta: ExcerptMeta; workspaceRoot: string | null } & HeaderActions) {
   if (!meta.isFirstOfFile) return <div className="mb-divider" />;
+  const prefix = (
+    <button
+      type="button"
+      className="mb-fold"
+      title={meta.folded ? "Unfold file" : "Fold file"}
+      aria-label={meta.folded ? "Unfold file" : "Fold file"}
+      aria-pressed={meta.folded}
+      onClick={onFold}
+    >
+      {meta.folded ? <ChevronRightIcon aria-hidden="true" /> : <ChevronDownIcon aria-hidden="true" />}
+    </button>
+  );
+  const metadata: ReactNode = meta.folded ? (
+    <span className="mb-header-count">
+      {meta.fileMatchCount} {meta.fileMatchCount === 1 ? "match" : "matches"}
+    </span>
+  ) : null;
+  const displayPath = workspaceRelativePath(meta.path, workspaceRoot);
   return (
-    <div className="mb-header" data-diffs-header="default">
-      <div className="mb-header-content" data-header-content="">
-        <button
-          type="button"
-          className="mb-fold"
-          title={meta.folded ? "Unfold file" : "Fold file"}
-          aria-label={meta.folded ? "Unfold file" : "Fold file"}
-          aria-pressed={meta.folded}
-          onClick={onFold}
-        >
-          {meta.folded ? <ChevronRightIcon aria-hidden="true" /> : <ChevronDownIcon aria-hidden="true" />}
-        </button>
-        <FileIcon fileName={meta.fileName} />
-        <button type="button" className="mb-header-path" title={`Open ${meta.path}`} onClick={onOpen}>
-          <span className="mb-header-name" data-title="">
-            <bdi>{meta.fileName}</bdi>
-          </span>
-          {meta.dir ? (
-            <span className="mb-header-dir" data-prev-name="">
-              <bdi>{meta.dir}</bdi>
-            </span>
-          ) : null}
-        </button>
-      </div>
-      <div className="mb-header-metadata" data-metadata="">
-        {meta.folded ? (
-          <span className="mb-header-count">
-            {meta.fileMatchCount} {meta.fileMatchCount === 1 ? "match" : "matches"}
-          </span>
-        ) : null}
-        <button type="button" className="mb-header-open" onClick={onOpen}>
-          Open File
-        </button>
-      </div>
-    </div>
+    <FileHeader
+      displayPath={displayPath}
+      prefix={prefix}
+      metadata={metadata}
+      onOpen={onOpen}
+      dataDiffsHeader
+    />
   );
 }

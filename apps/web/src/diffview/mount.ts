@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { jsx, jsxs } from "react/jsx-runtime";
+import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { createRoot, type Root } from "react-dom/client";
 import { Effect, Fiber, Stream } from "effect";
 import { DiffIcon } from "lucide-react";
@@ -25,7 +25,7 @@ import type {
   DiffViewSettingsPatch,
 } from "../product/diffView";
 import type { PanelRenderer } from "../workbench/panelRenderers";
-import { FileIcon } from "../workbench/fileIcons";
+import { FileHeader } from "../ui/FileHeader";
 
 export const DIFF_VIEW_TITLE = "Changes";
 
@@ -83,15 +83,31 @@ const DIFF_VIEW_UNSAFE_CSS = `
   height: 15px;
 }
 
-.diff-view-file-header.mb-header {
+.file-header,
+.mb-header {
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  box-sizing: border-box;
+  height: 100%;
   min-height: 34px;
+  min-width: 0;
   margin: 0;
+  padding-inline: 16px;
   border-block: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
   border-inline: 0;
   border-radius: 0;
   background: color-mix(in srgb, var(--fg) 4%, var(--bg-editor));
   color: var(--fg);
   box-shadow: none;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 20px;
+  user-select: none;
+  overflow: hidden;
   z-index: 1;
 }
 
@@ -311,15 +327,6 @@ function diffCodeViewOptions(
   };
 }
 
-function pathBaseName(path: string): string {
-  const slash = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return slash === -1 ? path : path.slice(slash + 1);
-}
-
-function pathDirName(path: string): string {
-  const slash = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return slash === -1 ? "" : path.slice(0, slash);
-}
 
 function changeTypeLabel(type: CodeViewDiffItem<undefined>["fileDiff"]["type"]): string {
   switch (type) {
@@ -339,8 +346,6 @@ function changeTypeLabel(type: CodeViewDiffItem<undefined>["fileDiff"]["type"]):
 function renderDiffHeader(item: CodeViewItem<undefined>): ReactNode {
   if (item.type !== "diff") return null;
   const { fileDiff } = item;
-  const fileName = pathBaseName(fileDiff.name);
-  const dir = pathDirName(fileDiff.name);
   let additions = 0;
   let deletions = 0;
   for (const hunk of fileDiff.hunks) {
@@ -348,64 +353,28 @@ function renderDiffHeader(item: CodeViewItem<undefined>): ReactNode {
     deletions += hunk.deletionLines;
   }
 
-  return jsxs("div", {
-    className: "mb-header diff-view-file-header",
-    "data-diffs-header": "default",
-    children: [
-      jsxs("div", {
-        className: "mb-header-content",
-        "data-header-content": "",
-        children: [
-          jsx(FileIcon, { fileName }),
-          jsxs("div", {
-            className: "mb-header-path",
-            title: fileDiff.prevName === undefined ? fileDiff.name : `${fileDiff.prevName} → ${fileDiff.name}`,
-            "aria-label": fileDiff.prevName === undefined ? fileDiff.name : `${fileDiff.prevName} renamed to ${fileDiff.name}`,
-            children: [
-              fileDiff.prevName === undefined
-                ? null
-                : jsxs("span", {
-                    className: "diff-view-header-prev",
-                    children: [
-                      jsx("bdi", { children: fileDiff.prevName }),
-                      jsx("span", { className: "diff-view-header-prev-arrow", "aria-hidden": "true", children: "→" }),
-                    ],
-                  }),
-              jsx("span", {
-                className: "mb-header-name",
-                "data-title": "",
-                children: jsx("bdi", { children: fileName }),
-              }),
-              dir.length > 0
-                ? jsx("span", {
-                    className: "mb-header-dir",
-                    "data-prev-name": "",
-                    children: jsx("bdi", { children: dir }),
-                  })
-                : null,
-            ],
-          })
-        ],
-      }),
-      jsxs("div", {
-        className: "mb-header-metadata",
-        "data-metadata": "",
-        children: [
-          jsx("span", {
-            className: "diff-view-header-chip",
-            children: changeTypeLabel(fileDiff.type),
-          }),
-          jsx("span", {
-            className: "diff-view-header-stat diff-view-header-stat--additions",
-            children: `+${additions}`,
-          }),
-          jsx("span", {
-            className: "diff-view-header-stat diff-view-header-stat--deletions",
-            children: `−${deletions}`,
-          }),
-        ],
-      }),
-    ],
+  return jsx(FileHeader, {
+    displayPath: fileDiff.name,
+    ...(fileDiff.prevName !== undefined ? { previousDisplayPath: fileDiff.prevName } : {}),
+    className: "diff-view-file-header",
+    metadata: jsxs(Fragment, {
+      children: [
+        jsx("span", {
+          className: "diff-view-header-chip",
+          children: changeTypeLabel(fileDiff.type),
+        }),
+        jsx("span", {
+          className: "diff-view-header-stat diff-view-header-stat--additions",
+          children: `+${additions}`,
+        }),
+        jsx("span", {
+          className: "diff-view-header-stat diff-view-header-stat--deletions",
+          children: `−${deletions}`,
+        }),
+      ],
+    }),
+    showOpenButton: false,
+    dataDiffsHeader: true,
   });
 }
 

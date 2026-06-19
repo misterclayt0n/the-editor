@@ -19,28 +19,49 @@ export const applyThemeToDocument = (theme: ResolvedTheme): void => {
 export const resolveSyntaxStyle = (captureName: string): HighlightStyle | undefined =>
   activeTheme?.syntax.resolve(captureName);
 
+const opaqueTerminalColor = (color: string): string => {
+  if (color[0] !== "#") return color;
+  if (color.length === 9) return color.slice(0, 7);
+  if (color.length === 5) {
+    return `#${color[1]}${color[1]}${color[2]}${color[2]}${color[3]}${color[3]}`;
+  }
+  return color;
+};
+
+const setTerminalColor = (
+  out: Record<string, string>,
+  key: string,
+  value: string | undefined,
+): void => {
+  if (value !== undefined) out[key] = opaqueTerminalColor(value);
+};
+
 export const terminalTheme = (theme: ResolvedTheme): Record<string, string> => {
-  const foreground = theme.colors["terminal.foreground"] ?? theme.colors["editor.foreground"] ?? "currentColor";
+  const foreground = opaqueTerminalColor(
+    theme.colors["terminal.foreground"] ?? theme.colors["editor.foreground"] ?? "#d4d4d4",
+  );
   const out: Record<string, string> = {
-    background: theme.colors["terminal.background"] ?? theme.colors["editor.background"] ?? "transparent",
+    background: opaqueTerminalColor(
+      theme.colors["terminal.background"] ?? theme.colors["editor.background"] ?? "#000000",
+    ),
     foreground,
-    cursor: theme.players[0]?.cursor ?? theme.colors["text.accent"] ?? foreground,
+    cursor: opaqueTerminalColor(theme.players[0]?.cursor ?? theme.colors["text.accent"] ?? foreground),
   };
-  if (theme.colors["terminal.ansi.black"] !== undefined) out.black = theme.colors["terminal.ansi.black"];
-  if (theme.colors["terminal.ansi.bright_black"] !== undefined) out.brightBlack = theme.colors["terminal.ansi.bright_black"];
-  if (theme.colors["terminal.ansi.red"] !== undefined) out.red = theme.colors["terminal.ansi.red"];
-  out.brightRed = theme.colors["terminal.ansi.bright_red"] ?? out.red ?? foreground;
-  if (theme.colors["terminal.ansi.green"] !== undefined) out.green = theme.colors["terminal.ansi.green"];
-  out.brightGreen = theme.colors["terminal.ansi.bright_green"] ?? out.green ?? foreground;
-  if (theme.colors["terminal.ansi.yellow"] !== undefined) out.yellow = theme.colors["terminal.ansi.yellow"];
-  out.brightYellow = theme.colors["terminal.ansi.bright_yellow"] ?? out.yellow ?? foreground;
-  if (theme.colors["terminal.ansi.blue"] !== undefined) out.blue = theme.colors["terminal.ansi.blue"];
-  out.brightBlue = theme.colors["terminal.ansi.bright_blue"] ?? out.blue ?? foreground;
-  if (theme.colors["terminal.ansi.magenta"] !== undefined) out.magenta = theme.colors["terminal.ansi.magenta"];
-  out.brightMagenta = theme.colors["terminal.ansi.bright_magenta"] ?? out.magenta ?? foreground;
-  if (theme.colors["terminal.ansi.cyan"] !== undefined) out.cyan = theme.colors["terminal.ansi.cyan"];
-  out.brightCyan = theme.colors["terminal.ansi.bright_cyan"] ?? out.cyan ?? foreground;
-  if (theme.colors["terminal.ansi.white"] !== undefined) out.white = theme.colors["terminal.ansi.white"];
-  out.brightWhite = theme.colors["terminal.ansi.bright_white"] ?? out.white ?? foreground;
+  setTerminalColor(out, "black", theme.colors["terminal.ansi.black"]);
+  setTerminalColor(out, "brightBlack", theme.colors["terminal.ansi.bright_black"]);
+  setTerminalColor(out, "red", theme.colors["terminal.ansi.red"]);
+  out.brightRed = opaqueTerminalColor(theme.colors["terminal.ansi.bright_red"] ?? out.red ?? foreground);
+  setTerminalColor(out, "green", theme.colors["terminal.ansi.green"]);
+  out.brightGreen = opaqueTerminalColor(theme.colors["terminal.ansi.bright_green"] ?? out.green ?? foreground);
+  setTerminalColor(out, "yellow", theme.colors["terminal.ansi.yellow"]);
+  out.brightYellow = opaqueTerminalColor(theme.colors["terminal.ansi.bright_yellow"] ?? out.yellow ?? foreground);
+  setTerminalColor(out, "blue", theme.colors["terminal.ansi.blue"]);
+  out.brightBlue = opaqueTerminalColor(theme.colors["terminal.ansi.bright_blue"] ?? out.blue ?? foreground);
+  setTerminalColor(out, "magenta", theme.colors["terminal.ansi.magenta"]);
+  out.brightMagenta = opaqueTerminalColor(theme.colors["terminal.ansi.bright_magenta"] ?? out.magenta ?? foreground);
+  setTerminalColor(out, "cyan", theme.colors["terminal.ansi.cyan"]);
+  out.brightCyan = opaqueTerminalColor(theme.colors["terminal.ansi.bright_cyan"] ?? out.cyan ?? foreground);
+  setTerminalColor(out, "white", theme.colors["terminal.ansi.white"]);
+  out.brightWhite = opaqueTerminalColor(theme.colors["terminal.ansi.bright_white"] ?? out.white ?? foreground);
   return out;
 };

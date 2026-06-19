@@ -550,17 +550,17 @@ function registerTerminalHandlers(): void {
       }
     },
   );
-  ipcMain.handle("term:write", (_event, id: number, data: string) => {
+  ipcMain.on("term:write", (_event, id: number, data: string) => {
     terms.get(id)?.write(data);
   });
-  ipcMain.handle("term:resize", (_event, id: number, cols: number, rows: number) => {
+  ipcMain.on("term:resize", (_event, id: number, cols: number, rows: number) => {
     try {
       terms.get(id)?.resize(Math.max(1, cols), Math.max(1, rows));
     } catch {
       // A resize on a dying PTY is harmless to drop.
     }
   });
-  ipcMain.handle("term:kill", (_event, id: number) => {
+  ipcMain.on("term:kill", (_event, id: number) => {
     terms.get(id)?.kill();
     terms.delete(id);
   });

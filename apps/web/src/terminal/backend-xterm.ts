@@ -14,6 +14,13 @@ export { Terminal, FitAddon };
 /** xterm needs no async setup. */
 export const ensureReady = async (): Promise<void> => {};
 
+export const unsupportedQueryResponses = (
+  _data: string,
+  _theme: Readonly<Record<string, string>>,
+): string => "";
+
+export function hideNativeInputCaret(_term: Terminal): void {}
+
 /** Keep the terminal fitted to its container; returns a disposer. */
 export function attachAutoFit(fit: FitAddon, container: HTMLElement): () => void {
   const observer = new ResizeObserver(() => {

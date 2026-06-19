@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { oneThemeFamily, resolveTheme, type ThemeContent } from "@the-editor/theme";
 import { createTerminalOptions, macEditingSequence, terminalKeyHandlerResult, type TerminalKeyboardEventLike } from "./keys";
+import { ghosttyUnsupportedQueryResponses } from "./queryResponses";
 
 const key = (overrides: Partial<TerminalKeyboardEventLike>): TerminalKeyboardEventLike => ({
   key: "",
@@ -57,6 +58,23 @@ describe("createTerminalOptions", () => {
     expect(options.allowProposedApi).toBe(true);
     expect(options.macOptionIsMeta).toBe(true);
     expect(options.vtExtensions?.kittyKeyboard).toBe(true);
-    expect(options.theme?.background).toBe("#282c34ff");
+    expect(options.theme?.background).toBe("#282c34");
+  });
+});
+
+describe("ghosttyUnsupportedQueryResponses", () => {
+  const esc = "\x1b";
+  const st = `${esc}\\`;
+
+  test("answers terminal identity and color probes that ghostty-web does not answer", () => {
+    const responses = ghosttyUnsupportedQueryResponses(
+      `${esc}[c${esc}[>c${esc}]10;?${st}${esc}]11;?${st}`,
+      { foreground: "#abb2bf", background: "#282c34" },
+    );
+
+    expect(responses).toContain(`${esc}[?1;2c`);
+    expect(responses).toContain(`${esc}[>0;100;0c`);
+    expect(responses).toContain(`${esc}]10;rgb:abab/b2b2/bfbf${st}`);
+    expect(responses).toContain(`${esc}]11;rgb:2828/2c2c/3434${st}`);
   });
 });

@@ -20,7 +20,7 @@ export function createTerminalOptions(theme: ResolvedTheme): ITerminalOptions {
     allowProposedApi: true,
     fontSize: 12.5,
     fontFamily: TERMINAL_FONT_FAMILY,
-    cursorBlink: true,
+    cursorBlink: false,
     macOptionIsMeta: true,
     theme: terminalTheme(theme),
     vtExtensions: {

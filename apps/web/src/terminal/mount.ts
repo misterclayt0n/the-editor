@@ -5,7 +5,15 @@
  * the port (Electron node-pty, or a dev echo for tests).
  */
 
-import { ensureReady, Terminal, FitAddon, attachAutoFit, attachGlobalKeyHandler } from "./backend";
+import {
+  ensureReady,
+  Terminal,
+  FitAddon,
+  attachAutoFit,
+  attachGlobalKeyHandler,
+  unsupportedQueryResponses,
+  hideNativeInputCaret,
+} from "./backend";
 import type { AppRuntime } from "../runtime";
 import type { PanelRenderer } from "../workbench/panelRenderers";
 import { terminalTheme } from "../theme/dom";
@@ -14,6 +22,10 @@ import { createTerminalOptions, macEditingSequence, terminalKeyHandlerResult } f
 /** Some engines (ghostty) load WASM once; gate construction on it, lazily. */
 let readyPromise: Promise<void> | null = null;
 const ensureEngine = (): Promise<void> => (readyPromise ??= ensureReady());
+const MAX_REPLAY_CHARS = 2_000_000;
+
+type TerminalDisposable = { dispose(): void };
+
 export const TERMINAL_TITLE = "Terminal";
 
 
@@ -24,8 +36,8 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
       let disposed = false;
       let term: Terminal | null = null;
       let termId: number | null = null;
-      let disposeFit: (() => void) | null = null;
-      let disposeGlobalKeyCapture: (() => void) | null = null;
+      let disposeTermUi: (() => void) | null = null;
+      let outputReplay = "";
       const port = runtime.terminalPort();
 
       element.classList.add("terminal-host");
@@ -41,39 +53,33 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
         return { dispose: () => void (disposed = true) };
       }
 
+      const appendReplay = (data: string): void => {
+        outputReplay += data;
+        if (outputReplay.length > MAX_REPLAY_CHARS) {
+          outputReplay = outputReplay.slice(outputReplay.length - MAX_REPLAY_CHARS);
+        }
+      };
 
-      const unsubscribeTheme = runtime.subscribeTheme(() => {
-        if (term !== null) term.options.theme = terminalTheme(runtime.themeSnapshot());
-      });
-      void (async () => {
-        await ensureEngine();
-        if (disposed) return;
-        term = new Terminal(createTerminalOptions(runtime.themeSnapshot()));
+      const openTerminal = (replay: boolean): Terminal => {
+        const shouldRefocus = body.contains(document.activeElement);
+        disposeTermUi?.();
+        body.replaceChildren();
+        const next = new Terminal(createTerminalOptions(runtime.themeSnapshot()));
         const fit = new FitAddon();
-        term.loadAddon(fit);
-        term.open(body);
+        next.loadAddon(fit);
+        next.open(body);
+        hideNativeInputCaret(next);
         fit.fit();
-        disposeFit = attachAutoFit(fit, body);
+        const disposeFit = attachAutoFit(fit, body);
 
-        // Some browser/Electron accelerators (notably ⌘W) must be cancelled at
-        // DOM capture time; xterm's custom key handler can be too late even
-        // though ordinary globals like ⌘⇧P still route through it.
         const captureGlobalKey = (event: KeyboardEvent) => {
           if (!runtime.handleGlobalKey(event)) return;
           event.preventDefault();
           event.stopPropagation();
         };
         body.addEventListener("keydown", captureGlobalKey, { capture: true });
-        disposeGlobalKeyCapture = () => body.removeEventListener("keydown", captureGlobalKey, { capture: true });
 
-        // The terminal swallows every keydown before it reaches the PTY, so the
-        // browser gate runs first: (1) reserve app-global shortcuts so the
-        // terminal is never a keyboard trap; (2) emit a tiny set of native macOS
-        // readline chords ourselves; (3) let xterm encode everything else,
-        // including kitty keyboard protocol sequences for apps that opt into
-        // richer modified-key reporting; (4) keep Shift+Tab inside the terminal
-        // instead of letting browser focus move.
-        attachGlobalKeyHandler(term, (event) => {
+        attachGlobalKeyHandler(next, (event) => {
           if (runtime.handleGlobalKey(event)) return "skip";
           const sequence = macEditingSequence(event);
           if (sequence !== null && termId !== null) {
@@ -83,9 +89,38 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
           return terminalKeyHandlerResult(event);
         });
 
+        if (replay && outputReplay.length > 0) next.write(outputReplay);
+
+        const dataDisposable = termId === null
+          ? null
+          : (next.onData((data) => port.write(termId!, data)) as TerminalDisposable);
+        const resizeDisposable = termId === null
+          ? null
+          : (next.onResize(({ cols, rows }) => port.resize(termId!, cols, rows)) as TerminalDisposable);
+
+        term = next;
+        if (shouldRefocus) next.focus();
+        disposeTermUi = () => {
+          dataDisposable?.dispose();
+          resizeDisposable?.dispose();
+          body.removeEventListener("keydown", captureGlobalKey, { capture: true });
+          disposeFit();
+          next.dispose();
+        };
+        return next;
+      };
+
+      const unsubscribeTheme = runtime.subscribeTheme(() => {
+        if (term !== null) openTerminal(termId !== null);
+      });
+      void (async () => {
+        await ensureEngine();
+        if (disposed) return;
+        const spawnedTerm = openTerminal(false);
+
         const id = await port.spawn({
-          cols: term.cols,
-          rows: term.rows,
+          cols: spawnedTerm.cols,
+          rows: spawnedTerm.rows,
           ...(runtime.workspaceRoot !== null ? { cwd: runtime.workspaceRoot } : {}),
         });
         if (disposed) {
@@ -93,27 +128,30 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
           return;
         }
         if (id === null) {
-          term.write("\r\n  \x1b[31mcould not start a shell\x1b[0m\r\n");
+          spawnedTerm.write("\r\n  \x1b[31mcould not start a shell\x1b[0m\r\n");
           return;
         }
         termId = id;
         // PTY → screen, screen → PTY, and keep the PTY's window size in sync.
-        port.onData(id, (data) => { if (!disposed) term?.write(data); });
+        port.onData(id, (data) => {
+          if (disposed) return;
+          appendReplay(data);
+          const responses = unsupportedQueryResponses(data, terminalTheme(runtime.themeSnapshot()));
+          term?.write(data);
+          if (responses.length > 0) port.write(id, responses);
+        });
         port.onExit(id, (code) => {
           if (!disposed) term?.write(`\r\n\x1b[90m[process exited${code === null ? "" : ` (${code})`}]\x1b[0m\r\n`);
         });
-        term.onData((data) => port.write(id, data));
-        term.onResize(({ cols, rows }) => port.resize(id, cols, rows));
-        term.focus();
+        const activeTerm = openTerminal(true);
+        activeTerm.focus();
       })();
 
       return {
         dispose: () => {
           disposed = true;
-          disposeGlobalKeyCapture?.();
-          disposeFit?.();
+          disposeTermUi?.();
           if (termId !== null) port.kill(termId);
-          term?.dispose();
           unsubscribeTheme();
           element.replaceChildren();
         },

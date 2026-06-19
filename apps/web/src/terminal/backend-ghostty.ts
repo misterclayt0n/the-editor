@@ -6,6 +6,7 @@
 
 import { init, Terminal, FitAddon } from "ghostty-web";
 import type { TerminalKeyHandlerResult } from "./keys";
+import { ghosttyUnsupportedQueryResponses } from "./queryResponses";
 
 export { Terminal, FitAddon };
 
@@ -15,7 +16,21 @@ export const ensureReady = (): Promise<void> => init();
 /** Keep the terminal fitted to its container; returns a disposer. */
 export function attachAutoFit(fit: FitAddon, _container: HTMLElement): () => void {
   fit.observeResize();
-  return () => {};
+  const onWindowResize = () => fit.fit();
+  window.addEventListener("resize", onWindowResize);
+  return () => window.removeEventListener("resize", onWindowResize);
+}
+
+export const unsupportedQueryResponses = ghosttyUnsupportedQueryResponses;
+
+export function hideNativeInputCaret(term: Terminal): void {
+  const textarea = term.textarea;
+  if (textarea === undefined) return;
+  textarea.style.caretColor = "transparent";
+  textarea.style.color = "transparent";
+  textarea.style.background = "transparent";
+  textarea.style.left = "-10000px";
+  textarea.style.top = "-10000px";
 }
 
 /**

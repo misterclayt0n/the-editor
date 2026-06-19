@@ -201,13 +201,12 @@ ipcRenderer.on("term:exit", (_event, payload: { id: number; code: number | null 
 contextBridge.exposeInMainWorld("theEditorTerminal", {
   spawn: (options: { cols: number; rows: number; cwd?: string; shell?: string }): Promise<number | null> =>
     ipcRenderer.invoke("term:spawn", options),
-  write: (id: number, data: string): Promise<void> => ipcRenderer.invoke("term:write", id, data),
-  resize: (id: number, cols: number, rows: number): Promise<void> =>
-    ipcRenderer.invoke("term:resize", id, cols, rows),
-  kill: (id: number): Promise<void> => {
+  write: (id: number, data: string): void => ipcRenderer.send("term:write", id, data),
+  resize: (id: number, cols: number, rows: number): void => ipcRenderer.send("term:resize", id, cols, rows),
+  kill: (id: number): void => {
     termDataListeners.delete(id);
     termExitListeners.delete(id);
-    return ipcRenderer.invoke("term:kill", id);
+    ipcRenderer.send("term:kill", id);
   },
   onData: (id: number, listener: (data: string) => void): void => {
     termDataListeners.set(id, listener);

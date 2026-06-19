@@ -4,5 +4,5 @@
  * ensureReady, attachAutoFit) — both speak the xterm.js API.
  */
 
-// export * from "./backend-ghostty";
-export * from "./backend-xterm";
+export * from "./backend-ghostty";
+// export * from "./backend-xterm";

@@ -34,6 +34,7 @@ function ghosttyWasm(): Plugin {
   };
 }
 
+
 export default defineConfig({
   plugins: [react(), tailwindcss(), ghosttyWasm()],
   // Relative base so the production build works when Electron loads it from file://.

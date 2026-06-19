@@ -1,0 +1,40 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="tile" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(430 208) rotate(70) scale(800 720)">
+      <stop offset="0" stop-color="#26262b"/>
+      <stop offset="0.38" stop-color="#1d1d21"/>
+      <stop offset="0.72" stop-color="#161618"/>
+      <stop offset="1" stop-color="#101012"/>
+    </radialGradient>
+    <radialGradient id="accentWash" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(330 492) rotate(20) scale(360 300)">
+      <stop offset="0" stop-color="#7c9dff" stop-opacity="0.22"/>
+      <stop offset="0.42" stop-color="#7c9dff" stop-opacity="0.08"/>
+      <stop offset="1" stop-color="#7c9dff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="surfaceWash" x1="512" y1="96" x2="512" y2="928" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.12"/>
+      <stop offset="0.34" stop-color="#ffffff" stop-opacity="0.025"/>
+      <stop offset="0.66" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.24"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="512" y1="96" x2="512" y2="928" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.2"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.035"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.26"/>
+    </linearGradient>
+    <filter id="tileShadow" x="26" y="42" width="972" height="998" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="28" stdDeviation="30" flood-color="#000000" flood-opacity="0.38"/>
+      <feDropShadow dx="0" dy="2" stdDeviation="0" flood-color="#ffffff" flood-opacity="0.16"/>
+    </filter>
+    <clipPath id="tileClip"><rect x="96" y="96" width="832" height="832" rx="184"/></clipPath>
+  </defs>
+  <rect x="96" y="96" width="832" height="832" rx="184" fill="url(#tile)" filter="url(#tileShadow)"/>
+  <g clip-path="url(#tileClip)">
+    <rect x="96" y="96" width="832" height="832" rx="184" fill="url(#tile)"/>
+    <rect x="96" y="96" width="832" height="832" rx="184" fill="url(#accentWash)"/>
+    <rect x="96" y="96" width="832" height="832" rx="184" fill="url(#surfaceWash)"/>
+    <path d="M190 220C268 154 378 124 512 124C646 124 756 154 834 220" stroke="#ffffff" stroke-opacity="0.13" stroke-width="2"/>
+    <rect x="98" y="98" width="828" height="828" rx="182" stroke="#080809" stroke-opacity="0.52" stroke-width="2"/>
+    <rect x="99" y="99" width="826" height="826" rx="181" stroke="url(#rim)" stroke-width="2"/>
+  </g>
+</svg>

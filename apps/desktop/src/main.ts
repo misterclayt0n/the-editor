@@ -3,10 +3,16 @@ import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme } from "electron";
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL?.trim();
 const APP_NAME = "The Editor";
+const DESKTOP_RESOURCE_DIR = path.resolve(__dirname, "..", "resources");
+const APP_ICON_PNG_PATH = path.join(DESKTOP_RESOURCE_DIR, "icon.png");
+const APP_WINDOW_ICON_PATH = path.join(
+  DESKTOP_RESOURCE_DIR,
+  process.platform === "win32" ? "icon.ico" : process.platform === "darwin" ? "icon.icns" : "icon.png",
+);
 app.setName(APP_NAME);
 app.setAboutPanelOptions({ applicationName: APP_NAME });
 
@@ -577,11 +583,14 @@ function registerTerminalHandlers(): void {
 function createWindow(): void {
   // Dark chrome end to end — the native title bar follows the theme.
   nativeTheme.themeSource = "dark";
+  const appIcon = nativeImage.createFromPath(APP_ICON_PNG_PATH);
+  if (!appIcon.isEmpty()) app.dock?.setIcon(appIcon);
   const window = new BrowserWindow({
     width: 1200,
     height: 800,
     backgroundColor: "#141415",
     title: APP_NAME,
+    icon: APP_WINDOW_ICON_PATH,
     // Reclaim the title bar: the renderer paints its own themed bar (see
     // TitleBar.tsx) and the traffic lights float over it, centered in the
     // 44px-tall band the renderer reserves on the left.

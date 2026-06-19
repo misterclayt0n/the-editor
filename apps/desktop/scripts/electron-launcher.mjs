@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +10,7 @@ const LAUNCHER_VERSION = 1;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const desktopDir = resolve(__dirname, "..");
+const defaultIconPath = join(desktopDir, "resources", "icon.icns");
 
 function setPlistString(plistPath, key, value) {
   const replace = spawnSync("plutil", ["-replace", key, "-string", value, plistPath], { encoding: "utf8" });
@@ -30,11 +31,16 @@ function readJson(path) {
   }
 }
 
-function patchMainBundleInfoPlist(appBundlePath) {
+function patchMainBundleInfoPlist(appBundlePath, iconPath) {
   const infoPlistPath = join(appBundlePath, "Contents", "Info.plist");
   setPlistString(infoPlistPath, "CFBundleDisplayName", APP_DISPLAY_NAME);
   setPlistString(infoPlistPath, "CFBundleName", APP_DISPLAY_NAME);
   setPlistString(infoPlistPath, "CFBundleIdentifier", APP_BUNDLE_ID);
+  setPlistString(infoPlistPath, "CFBundleIconFile", "icon.icns");
+
+  const resourcesDir = join(appBundlePath, "Contents", "Resources");
+  copyFileSync(iconPath, join(resourcesDir, "icon.icns"));
+  copyFileSync(iconPath, join(resourcesDir, "electron.icns"));
 }
 
 function buildMacLauncher(electronBinaryPath) {
@@ -43,6 +49,7 @@ function buildMacLauncher(electronBinaryPath) {
   const targetAppBundlePath = join(runtimeDir, `${APP_DISPLAY_NAME}.app`);
   const targetBinaryPath = join(targetAppBundlePath, "Contents", "MacOS", "Electron");
   const metadataPath = join(runtimeDir, "metadata.json");
+  const iconPath = defaultIconPath;
 
   mkdirSync(runtimeDir, { recursive: true });
 
@@ -50,6 +57,7 @@ function buildMacLauncher(electronBinaryPath) {
     launcherVersion: LAUNCHER_VERSION,
     sourceAppBundlePath,
     sourceAppMtimeMs: statSync(sourceAppBundlePath).mtimeMs,
+    iconMtimeMs: statSync(iconPath).mtimeMs,
   };
 
   const currentMetadata = readJson(metadataPath);
@@ -63,7 +71,7 @@ function buildMacLauncher(electronBinaryPath) {
 
   rmSync(targetAppBundlePath, { recursive: true, force: true });
   cpSync(sourceAppBundlePath, targetAppBundlePath, { recursive: true });
-  patchMainBundleInfoPlist(targetAppBundlePath);
+  patchMainBundleInfoPlist(targetAppBundlePath, iconPath);
   writeFileSync(metadataPath, `${JSON.stringify(expectedMetadata, null, 2)}\n`);
 
   return targetBinaryPath;

@@ -1,0 +1,33 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="spoke" x1="400" y1="304" x2="650" y2="742" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#a3a8b5"/>
+      <stop offset="1" stop-color="#747987"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="292" y1="380" x2="318" y2="646" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#9cb4ff"/>
+      <stop offset="0.55" stop-color="#7c9dff"/>
+      <stop offset="1" stop-color="#637fd5"/>
+    </linearGradient>
+    <filter id="wheelShadow" x="200" y="200" width="624" height="624" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="6" stdDeviation="7" flood-color="#000000" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+  <g transform="translate(512 512) scale(5.55) translate(-60 -60)">
+    <circle cx="60" cy="60" r="46" stroke="#444956" stroke-width="4.4" stroke-dasharray="30 6.13"/>
+    <g stroke="url(#spoke)" stroke-width="3.25" stroke-linecap="round">
+      <line x1="60" y1="45" x2="60" y2="23" transform="rotate(0 60 60)"/>
+      <line x1="60" y1="45" x2="60" y2="23" transform="rotate(45 60 60)"/>
+      <line x1="60" y1="45" x2="60" y2="23" transform="rotate(90 60 60)"/>
+      <line x1="60" y1="45" x2="60" y2="23" transform="rotate(135 60 60)"/>
+      <line x1="60" y1="45" x2="60" y2="23" transform="rotate(180 60 60)"/>
+      <line x1="60" y1="45" x2="60" y2="23" transform="rotate(225 60 60)"/>
+      <line x1="60" y1="45" x2="60" y2="23" transform="rotate(270 60 60)"/>
+      <line x1="60" y1="45" x2="60" y2="23" transform="rotate(315 60 60)"/>
+    </g>
+    <circle cx="60" cy="60" r="46" stroke="url(#accent)" stroke-width="6.2" stroke-linecap="round" stroke-dasharray="35 254" transform="rotate(154 60 60)"/>
+    <circle cx="60" cy="60" r="15" fill="#121214" stroke="#f1f2f5" stroke-width="3.1"/>
+    <circle cx="60" cy="60" r="5.4" fill="#7c9dff"/>
+    <circle cx="60" cy="60" r="5.4" fill="#ffffff" fill-opacity="0.16" transform="translate(-1 -1)"/>
+  </g>
+</svg>

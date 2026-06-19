@@ -355,11 +355,18 @@ function PanelBody({
 }) {
   const pane = runtime.pane(panelId);
   if (pane !== undefined) {
-    return <EditorView runtime={runtime} pane={pane} {...(focused && onSnapshot ? { onSnapshot } : {})} />;
+    return (
+      <EditorView
+        runtime={runtime}
+        pane={pane}
+        focused={focused}
+        {...(focused && onSnapshot ? { onSnapshot } : {})}
+      />
+    );
   }
   const multiBuffer = runtime.multiBufferPane(panelId);
   if (multiBuffer !== undefined) {
-    return <MultiBufferView runtime={runtime} pane={multiBuffer} />;
+    return <MultiBufferView runtime={runtime} pane={multiBuffer} focused={focused} />;
   }
   return <CustomPanelView runtime={runtime} panelId={panelId} />;
 }

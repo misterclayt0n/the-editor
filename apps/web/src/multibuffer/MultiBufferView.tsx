@@ -18,15 +18,25 @@ import { HeaderCard, type HeaderActions } from "./HeaderCard";
 import type { MultiBufferPane } from "./pane";
 import { headerId } from "./visuals";
 
-export function MultiBufferView({ runtime, pane }: { runtime: AppRuntime; pane: MultiBufferPane }) {
+export function MultiBufferView({
+  runtime,
+  pane,
+  focused,
+}: {
+  runtime: AppRuntime;
+  pane: MultiBufferPane;
+  focused: boolean;
+}) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [mounts, setMounts] = useState<ReadonlyMap<string, HTMLElement>>(new Map());
   const [revision, setRevision] = useState(0);
   const [sticky, setSticky] = useState<ExcerptMeta | null>(null);
+  const rendererRef = useRef<EditorRenderer | null>(null);
 
   useLayoutEffect(() => {
     const root = rootRef.current!;
-    const renderer = new EditorRenderer(root, pane, {});
+    const renderer = new EditorRenderer(root, pane, { focused });
+    rendererRef.current = renderer;
     const unregister = runtime.registerPanelFocuser(pane.panelId, () =>
       root.focus({ preventScroll: true }),
     );
@@ -51,9 +61,14 @@ export function MultiBufferView({ runtime, pane }: { runtime: AppRuntime; pane: 
       unsubscribeDoc();
       unsubscribeViewport();
       unregister();
+      rendererRef.current = null;
       renderer.dispose();
     };
   }, [runtime, pane]);
+
+  useLayoutEffect(() => {
+    rendererRef.current?.setFocused(focused);
+  }, [focused]);
 
   const actionsFor = (meta: ExcerptMeta): HeaderActions => ({
     onOpen: () => pane.openExcerpt(meta),

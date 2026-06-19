@@ -76,6 +76,7 @@ const BAND_CELL_PAD = 8;
 
 export type EditorRendererOptions = {
   readonly onSnapshot?: (snapshot: EditorSnapshot) => void;
+  readonly focused?: boolean;
 };
 
 type OffsetRange = { readonly from: number; readonly to: number };
@@ -446,8 +447,6 @@ export class EditorRenderer {
     if (this.viewport.scrollLeft !== 0) this.viewport.scrollLeft = 0;
     if (this.viewport.scrollTop !== 0) this.viewport.scrollTop = 0;
   };
-  private readonly handleFocus = () => this.caretEl.classList.remove("editor-caret-idle");
-  private readonly handleBlur = () => this.caretEl.classList.add("editor-caret-idle");
   private readonly handleWheel = (event: WheelEvent) => {
     if (event.ctrlKey || event.metaKey) return; // zoom gestures stay native
     event.preventDefault();
@@ -566,7 +565,9 @@ export class EditorRenderer {
     this.decoFgLayer = document.createElement("div");
     this.decoFgLayer.className = "editor-layer editor-layer-fg";
     this.caretEl = document.createElement("div");
-    this.caretEl.className = "editor-caret editor-caret-idle";
+    this.caretEl.className = this.options.focused === true
+      ? "editor-caret"
+      : "editor-caret editor-caret-idle";
     this.caretEl.style.display = "none";
     this.bandHost = document.createElement("div");
     this.bandHost.className = "editor-bands";
@@ -614,8 +615,6 @@ export class EditorRenderer {
     this.hScrollbar.addEventListener("pointerdown", this.handleHTrackDown);
     this.hScrollbar.addEventListener("pointermove", this.handleHThumbMove);
     this.hScrollbar.addEventListener("pointerup", this.handleHThumbUp);
-    root.addEventListener("focus", this.handleFocus);
-    root.addEventListener("blur", this.handleBlur);
 
     this.resizeObserver = new ResizeObserver(() => queueRender(this.renderPass));
     this.resizeObserver.observe(this.viewport);
@@ -651,6 +650,10 @@ export class EditorRenderer {
     queueRender(this.renderPass);
   }
 
+  setFocused(focused: boolean): void {
+    this.caretEl.classList.toggle("editor-caret-idle", !focused);
+  }
+
   dispose(): void {
     this.disposed = true;
     cancelRender(this.renderPass);
@@ -666,8 +669,6 @@ export class EditorRenderer {
     this.resizeObserver.disconnect();
     this.viewport.removeEventListener("wheel", this.handleWheel);
     this.viewport.removeEventListener("mousedown", this.handleMouseDown);
-    this.root.removeEventListener("focus", this.handleFocus);
-    this.root.removeEventListener("blur", this.handleBlur);
     for (const id of this.mountEls.keys()) this.runtime.mounts.unmounted(id);
     this.mountEls.clear();
     this.measureEl.remove();

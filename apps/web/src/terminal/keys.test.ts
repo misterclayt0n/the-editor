@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { oneThemeFamily, resolveTheme, type ThemeContent } from "@the-editor/theme";
+import { pierreThemeFamily, resolveTheme, type ThemeContent } from "@the-editor/theme";
 import { resolveFontSystem } from "@the-editor/fonts";
 import { createTerminalOptions, macEditingSequence, terminalKeyHandlerResult, type TerminalKeyboardEventLike } from "./keys";
 import { ghosttyUnsupportedQueryResponses } from "./queryResponses";
@@ -13,11 +13,11 @@ const key = (overrides: Partial<TerminalKeyboardEventLike>): TerminalKeyboardEve
   ...overrides,
 });
 
-const dark = oneThemeFamily.themes.find((theme): theme is ThemeContent => theme.appearance === "dark");
+const dark = pierreThemeFamily.themes.find((theme): theme is ThemeContent => theme.appearance === "dark");
 if (dark === undefined) throw new Error("Missing bundled dark theme");
 
 const resolvedTheme = resolveTheme(
-  { name: oneThemeFamily.name, author: oneThemeFamily.author },
+  { name: pierreThemeFamily.name, author: pierreThemeFamily.author },
   dark,
   dark,
 );
@@ -59,7 +59,7 @@ describe("createTerminalOptions", () => {
     expect(options.allowProposedApi).toBe(true);
     expect(options.macOptionIsMeta).toBe(true);
     expect(options.vtExtensions?.kittyKeyboard).toBe(true);
-    expect(options.theme?.background).toBe("#282c34");
+    expect(options.theme?.background).toBe("#171717");
   });
 
   test("uses resolved terminal font slot", () => {

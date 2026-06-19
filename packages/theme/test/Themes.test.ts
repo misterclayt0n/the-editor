@@ -3,7 +3,7 @@ import { Effect, Scope } from "effect";
 import { PackageActivationContext, type ExtensionContext } from "@the-editor/extensions";
 import { ActivationId, PackageId } from "@the-editor/kernel";
 import { makeThemes, parseThemeFamily } from "../src/Themes.js";
-import { oneThemeFamily } from "../src/defaults.js";
+import { pierreThemeFamily } from "../src/defaults.js";
 
 const activation = {
   packageId: PackageId("test/theme"),
@@ -27,24 +27,29 @@ describe("Themes", () => {
     const result = Effect.runSync(
       Effect.scoped(Effect.gen(function* () {
         const themes = yield* makeThemes();
-        yield* provideActivation(themes.registerFamily(oneThemeFamily));
+        yield* provideActivation(themes.registerFamily(pierreThemeFamily));
         const active = yield* themes.active;
         const list = yield* themes.list;
         return { active, list };
       })),
     );
 
-    expect(result.active.name).toBe("One Dark");
-    expect(result.active.cssVars["--bg-editor"]).toBe("#282c33ff");
-    expect(result.list.map((theme) => theme.name)).toEqual(["One Dark", "One Light"]);
+    expect(result.active.name).toBe("Pierre Dark");
+    expect(result.active.cssVars["--bg-editor"]).toBe("#0a0a0a");
+    expect(result.list.map((theme) => theme.name)).toEqual([
+      "Pierre Dark",
+      "Pierre Dark Soft",
+      "Pierre Light",
+      "Pierre Light Soft",
+    ]);
   });
 
   it("previews and rolls back without changing theme slots", () => {
     const result = Effect.runSync(
       Effect.scoped(Effect.gen(function* () {
         const themes = yield* makeThemes();
-        yield* provideActivation(themes.registerFamily(oneThemeFamily));
-        yield* themes.preview("One Light");
+        yield* provideActivation(themes.registerFamily(pierreThemeFamily));
+        yield* themes.preview("Pierre Light");
         const previewed = yield* themes.active;
         yield* themes.cancelPreview;
         const restored = yield* themes.active;
@@ -52,26 +57,26 @@ describe("Themes", () => {
       })),
     );
 
-    expect(result).toEqual({ previewed: "One Light", restored: "One Dark" });
+    expect(result).toEqual({ previewed: "Pierre Light", restored: "Pierre Dark" });
   });
 
   it("uses dotted capture resolution", () => {
     const color = Effect.runSync(
       Effect.scoped(Effect.gen(function* () {
         const themes = yield* makeThemes();
-        yield* provideActivation(themes.registerFamily(oneThemeFamily));
+        yield* provideActivation(themes.registerFamily(pierreThemeFamily));
         return yield* themes.syntaxStyle("function.method.async");
       })),
     );
 
-    expect(color?.color).toBe("#73ade9ff");
+    expect(color?.color).toBe("#9d6afb");
   });
 
   it("maps Helix capture names onto Zed syntax slots", () => {
     const styles = Effect.runSync(
       Effect.scoped(Effect.gen(function* () {
         const themes = yield* makeThemes();
-        yield* provideActivation(themes.registerFamily(oneThemeFamily));
+        yield* provideActivation(themes.registerFamily(pierreThemeFamily));
         return {
           property: yield* themes.syntaxStyle("variable.other.member"),
           number: yield* themes.syntaxStyle("constant.numeric.integer"),
@@ -80,9 +85,9 @@ describe("Themes", () => {
       })),
     );
 
-    expect(styles.property?.color).toBe("#d07277ff");
-    expect(styles.number?.color).toBe("#bf956aff");
-    expect(styles.regex?.color).toBe("#bf956aff");
+    expect(styles.property?.color).toBe("#ffa359");
+    expect(styles.number?.color).toBe("#68cdf2");
+    expect(styles.regex?.color).toBe("#64d1db");
   });
 
   it("validates the JSON boundary", () => {

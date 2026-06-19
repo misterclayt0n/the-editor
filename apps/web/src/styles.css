@@ -40,7 +40,9 @@
 
   /* The recess behind the floating cards: the window chrome reads a touch
    * darker than a pane so panes feel lifted off it — depth that does not rely
-   * on per-theme bg contrast (often near-zero between window and editor). */
+   * on per-theme bg contrast (often near-zero between window and editor). The
+   * 26% darken suits dark themes; light themes get a far gentler recess
+   * (overridden below) so the outer band stays light, not a heavy gray. */
   --chrome: color-mix(in srgb, var(--bg), #000 26%);
   /* Soft card elevation. Low-alpha black reads on both light and dark themes. */
   --shadow-card: 0 1px 2px rgb(0 0 0 / 0.22), 0 6px 18px rgb(0 0 0 / 0.14);
@@ -48,6 +50,12 @@
   /* Strong custom easings (the built-in CSS curves are too weak). */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+}
+
+/* Light themes: the deep darken above reads as a muddy gray band around the
+ * panes. A subtle recess keeps the lift without dimming the whole window. */
+:root[data-appearance="light"] {
+  --chrome: color-mix(in srgb, var(--bg), #000 6%);
 }
 
 html,

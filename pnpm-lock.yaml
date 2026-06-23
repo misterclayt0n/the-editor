@@ -170,11 +170,11 @@ importers:
         specifier: workspace:*
         version: link:../../packages/workbench
       '@xterm/addon-fit':
-        specifier: ^0.12.0-beta.191
-        version: 0.12.0-beta.287(@xterm/xterm@6.1.0-beta.287)
+        specifier: 0.12.0-beta.285
+        version: 0.12.0-beta.285(@xterm/xterm@6.1.0-beta.285)
       '@xterm/xterm':
-        specifier: ^6.1.0-beta.191
-        version: 6.1.0-beta.287
+        specifier: 6.1.0-beta.285
+        version: 6.1.0-beta.285
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -190,9 +190,6 @@ importers:
       effect:
         specifier: 'catalog:'
         version: 3.21.2
-      ghostty-web:
-        specifier: ^0.4.0
-        version: 0.4.0
       lucide-react:
         specifier: ^1.17.0
         version: 1.17.0(react@19.2.7)
@@ -2897,13 +2894,13 @@ packages:
   '@vitest/utils@3.2.4':
     resolution: {integrity: sha512-fB2V0JFrQSMsCo9HiSq3Ezpdv4iYaXRG1Sx8edX3MwxfyNn83mKiGzOcH+Fkxt4MHxr3y42fQi1oeAInqgX2QA==}
 
-  '@xterm/addon-fit@0.12.0-beta.287':
-    resolution: {integrity: sha512-2MDj+J4x67bjOS/SuBPxSYEWH38NbX6ENV18RbKVOhfRYCX3yERnuHBOrgH9hYdY8rCtsLQmuVgF6cmvCJiV2w==}
+  '@xterm/addon-fit@0.12.0-beta.285':
+    resolution: {integrity: sha512-rSVi0nMbK+9sgL1QXmJlv3nWvktj0AZeRd52yVzyNhl5mxxEkvxiwFJZlcEBRg27ipeWVAs1PeuCz0A9QnNnAQ==}
     peerDependencies:
-      '@xterm/xterm': ^6.1.0-beta.287
+      '@xterm/xterm': ^6.1.0-beta.285
 
-  '@xterm/xterm@6.1.0-beta.287':
-    resolution: {integrity: sha512-3aOHVlxlRVb3tOHI4b/z2O/OsRnqpW5u0qq8OqpqbwLVTbUhThmQ7mBKaehGdbsmcCCBTP1cBwhG0qcvuOjowA==}
+  '@xterm/xterm@6.1.0-beta.285':
+    resolution: {integrity: sha512-S3K58tepMkbpWRBzOGKd0In6AVvt9QPAnNs8DJ8rPUPODYtsCYWAtINHKYtC2OpXcE5EBKM35dl+Dgv03OoE/w==}
 
   '@yuuang/ffi-rs-android-arm64@1.3.2':
     resolution: {integrity: sha512-eDYLT0kVBkp7e2BwdRDmt6N1rkeDPUHDefk3ZX0/nok+GLsqfy1WBoSL3Yg7HVXN1EyW8OBVc2uK8Zq8HbmaSA==}
@@ -3295,9 +3292,6 @@ packages:
 
   get-tsconfig@4.14.0:
     resolution: {integrity: sha512-yTb+8DXzDREzgvYmh6s9vHsSVCHeC0G3PI5bEXNBHtmshPnO+S5O7qgLEOn0I5QvMy6kpZN8K1NKGyilLb93wA==}
-
-  ghostty-web@0.4.0:
-    resolution: {integrity: sha512-0puDBik2qapbD/QQBW9o5ZHfXnZBqZWx/ctBiVtKZ6ZLds4NYb+wZuw1cRLXZk9zYovIQ908z3rvFhexAvc5Hg==}
 
   glob@10.5.0:
     resolution: {integrity: sha512-DfXN8DfhJ7NH3Oe7cFmu3NCu1wKbkReJ8TorzSAFbSKrlNaQSKfIzqYqVY8zlbs2NLBbWpRiU52GX2PbaBVNkg==}
@@ -6229,11 +6223,11 @@ snapshots:
       loupe: 3.2.1
       tinyrainbow: 2.0.0
 
-  '@xterm/addon-fit@0.12.0-beta.287(@xterm/xterm@6.1.0-beta.287)':
+  '@xterm/addon-fit@0.12.0-beta.285(@xterm/xterm@6.1.0-beta.285)':
     dependencies:
-      '@xterm/xterm': 6.1.0-beta.287
+      '@xterm/xterm': 6.1.0-beta.285
 
-  '@xterm/xterm@6.1.0-beta.287': {}
+  '@xterm/xterm@6.1.0-beta.285': {}
 
   '@yuuang/ffi-rs-android-arm64@1.3.2':
     optional: true
@@ -6627,8 +6621,6 @@ snapshots:
   get-tsconfig@4.14.0:
     dependencies:
       resolve-pkg-maps: 1.0.0
-
-  ghostty-web@0.4.0: {}
 
   glob@10.5.0:
     dependencies:

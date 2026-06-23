@@ -1522,9 +1522,9 @@ export class AppRuntime {
 
   /**
    * Run a key against ONLY the global keymap, returning whether it matched.
-   * For surfaces that swallow their own keydowns before they can bubble to the
-   * document dispatcher (the terminal: ghostty consumes everything) — they ask
-   * this so app-global shortcuts (the palette, toggle terminal) still work
+   * For surfaces that handle their own keydowns before they can bubble to the
+   * document dispatcher (the terminal) — they ask this so app-global shortcuts
+   * (the palette, toggle terminal) still work
    * without the surface becoming a keyboard trap. Non-global keys are left for
    * the surface.
    */

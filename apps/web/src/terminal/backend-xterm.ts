@@ -1,9 +1,9 @@
-import type { TerminalKeyHandlerResult } from "./keys";
 /**
- * Terminal engine: xterm.js. Interchangeable with the ghostty backend behind
- * `./backend`. No WASM (ensureReady is a no-op) and the fit addon lives in a
- * separate package, so we drive auto-fit with a ResizeObserver.
+ * Terminal engine: xterm.js. The fit addon lives in a separate package, so we
+ * drive auto-fit with a ResizeObserver.
  */
+
+import type { TerminalKeyHandlerResult } from "./keys";
 
 import "@xterm/xterm/css/xterm.css";
 import { Terminal } from "@xterm/xterm";
@@ -36,8 +36,8 @@ export function attachAutoFit(fit: FitAddon, container: HTMLElement): () => void
 
 /**
  * Run `claim` (the app's global keymap) before xterm processes a keydown; if it
- * claims the key, skip xterm. xterm's custom handler has INVERTED polarity vs
- * ghostty: return FALSE to skip (don't process), TRUE to process normally.
+ * claims the key, skip xterm. xterm's custom handler returns false to skip
+ * processing and true to process normally.
  */
 export function attachGlobalKeyHandler(
   term: Terminal,

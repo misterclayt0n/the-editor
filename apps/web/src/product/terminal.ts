@@ -1,7 +1,7 @@
 /**
  * The terminal as a product package: a workbench panel registered through
  * PanelRenderers, like the file tree. The package owns command identity and
- * the renderer registration; the host seam supplies the renderer (ghostty +
+ * the renderer registration; the host seam supplies the renderer (xterm.js +
  * PTY) and the toggle (arrangement surgery — docked at the bottom).
  */
 

@@ -5800,23 +5800,6 @@ export const generatedLanguages: SyntaxConfiguration = {
       }
     },
     {
-      "name": "ghostty",
-      "scope": "source.ghostty",
-      "fileTypes": [
-        "ghostty",
-        {
-          "glob": "ghostty/config"
-        }
-      ],
-      "commentTokens": [
-        "#"
-      ],
-      "indent": {
-        "tabWidth": 2,
-        "unit": "  "
-      }
-    },
-    {
       "name": "tera",
       "scope": "source.tera",
       "fileTypes": [

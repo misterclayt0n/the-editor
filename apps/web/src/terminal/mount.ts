@@ -1,8 +1,7 @@
 /**
- * Terminal panel content: an xterm.js-API terminal wired to a PTY over the
- * TerminalPort. The engine (ghostty-web or xterm.js) is chosen in `./backend`
- * — swap that one line; this renderer is engine-agnostic. The host supplies
- * the port (Electron node-pty, or a dev echo for tests).
+ * Terminal panel content: an xterm.js terminal wired to a PTY over the
+ * TerminalPort. The host supplies the port (Electron node-pty, or a dev echo
+ * for tests).
  */
 
 import {
@@ -19,7 +18,7 @@ import type { PanelRenderer } from "../workbench/panelRenderers";
 import { terminalTheme } from "../theme/dom";
 import { createTerminalOptions, macEditingSequence, terminalKeyHandlerResult } from "./keys";
 
-/** Some engines (ghostty) load WASM once; gate construction on it, lazily. */
+/** xterm setup is synchronous today; keep the gate so async addons can hook in later. */
 let readyPromise: Promise<void> | null = null;
 const ensureEngine = (): Promise<void> => (readyPromise ??= ensureReady());
 const MAX_REPLAY_CHARS = 2_000_000;

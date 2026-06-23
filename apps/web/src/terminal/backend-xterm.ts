@@ -8,8 +8,13 @@ import type { TerminalKeyHandlerResult } from "./keys";
 import "@xterm/xterm/css/xterm.css";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { LigaturesAddon } from "@xterm/addon-ligatures";
+import { SearchAddon } from "@xterm/addon-search";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
+import { WebLinksAddon } from "@xterm/addon-web-links";
+import { WebglAddon } from "@xterm/addon-webgl";
 
-export { Terminal, FitAddon };
+export { Terminal, FitAddon, LigaturesAddon, SearchAddon, Unicode11Addon, WebLinksAddon, WebglAddon };
 
 /** xterm needs no async setup. */
 export const ensureReady = async (): Promise<void> => {};
@@ -20,6 +25,52 @@ export const unsupportedQueryResponses = (
 ): string => "";
 
 export function hideNativeInputCaret(_term: Terminal): void {}
+export type TerminalAddonSet = {
+  readonly fit: FitAddon;
+  readonly ligatures: LigaturesAddon;
+  readonly search: SearchAddon;
+  readonly unicode11: Unicode11Addon;
+  readonly webLinks: WebLinksAddon;
+  readonly webgl: WebglAddon | null;
+};
+
+const openWebLink = (_event: MouseEvent, uri: string): void => {
+  window.open(uri, "_blank", "noopener,noreferrer");
+};
+
+export function loadTerminalAddons(term: Terminal, fit: FitAddon): TerminalAddonSet {
+  const ligatures = new LigaturesAddon();
+  const search = new SearchAddon();
+  const unicode11 = new Unicode11Addon();
+  const webLinks = new WebLinksAddon(openWebLink);
+
+  term.loadAddon(fit);
+  term.loadAddon(unicode11);
+  term.unicode.activeVersion = "11";
+  term.loadAddon(search);
+  term.loadAddon(webLinks);
+  term.loadAddon(ligatures);
+
+  let webgl: WebglAddon | null = null;
+  try {
+    const nextWebgl = new WebglAddon();
+    nextWebgl.onContextLoss(() => {
+      try {
+        nextWebgl.dispose();
+        term.refresh(0, term.rows - 1);
+      } catch {
+        // Context loss can race terminal disposal; xterm's DOM renderer remains active.
+      }
+    });
+    term.loadAddon(nextWebgl);
+    webgl = nextWebgl;
+  } catch {
+    // WebGL is opportunistic; xterm's DOM renderer remains the correct fallback.
+  }
+
+  return { fit, ligatures, search, unicode11, webLinks, webgl };
+}
+
 
 /** Keep the terminal fitted to its container; returns a disposer. */
 export function attachAutoFit(fit: FitAddon, container: HTMLElement): () => void {

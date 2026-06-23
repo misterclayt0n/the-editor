@@ -5,6 +5,9 @@ packages:
 onlyBuiltDependencies:
   - electron
 
+patchedDependencies:
+  "@xterm/addon-ligatures@0.11.0-beta.285": "config/patches/@xterm__addon-ligatures@0.11.0-beta.285.patch"
+
 catalog:
   effect: ^3.21.2
   electron: 41.5.0

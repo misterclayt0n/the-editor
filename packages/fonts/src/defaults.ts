@@ -28,9 +28,21 @@ export const DEFAULT_BUFFER_FEATURES: FontFeatureSettings = {
   calt: true,
 };
 
+const DEFAULT_MONOSPACE_FALLBACKS = [
+  "SF Mono",
+  "Menlo",
+  "Monaco",
+  "Cascadia Code",
+  "Symbols Nerd Font Mono",
+  "MesloLGS Nerd Font",
+  "JetBrainsMono Nerd Font",
+  "Hack Nerd Font",
+  "monospace",
+] as const;
+
 export const DEFAULT_BUFFER_FONT: FontSlotDefinition = {
   family: "Iosevka",
-  fallbacks: ["SF Mono", "Menlo", "Monaco", "Cascadia Code", "monospace"],
+  fallbacks: DEFAULT_MONOSPACE_FALLBACKS,
   size: 13,
   weight: 400,
   style: "normal",

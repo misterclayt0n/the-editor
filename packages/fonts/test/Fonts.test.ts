@@ -24,6 +24,19 @@ const customConfig = {
   },
 } as const satisfies FontConfigDefinition;
 
+const defaultMonospaceCssFamily = [
+  "Iosevka",
+  "\"SF Mono\"",
+  "Menlo",
+  "Monaco",
+  "\"Cascadia Code\"",
+  "\"Symbols Nerd Font Mono\"",
+  "\"MesloLGS Nerd Font\"",
+  "\"JetBrainsMono Nerd Font\"",
+  "\"Hack Nerd Font\"",
+  "monospace",
+].join(", ");
+
 describe("resolveFontSystem", () => {
   test("defaults to Zed Sans UI and Iosevka code fonts", () => {
     const system = resolveFontSystem([], []);
@@ -31,12 +44,8 @@ describe("resolveFontSystem", () => {
     expect(system.slots[FONT_SLOT_UI]?.cssFamily).toBe(
       "\"Zed Sans\", \"IBM Plex Sans\", -apple-system, BlinkMacSystemFont, \"Segoe UI\", system-ui, sans-serif",
     );
-    expect(system.slots[FONT_SLOT_BUFFER]?.cssFamily).toBe(
-      "Iosevka, \"SF Mono\", Menlo, Monaco, \"Cascadia Code\", monospace",
-    );
-    expect(system.slots[FONT_SLOT_TERMINAL]?.cssFamily).toBe(
-      "Iosevka, \"SF Mono\", Menlo, Monaco, \"Cascadia Code\", monospace",
-    );
+    expect(system.slots[FONT_SLOT_BUFFER]?.cssFamily).toBe(defaultMonospaceCssFamily);
+    expect(system.slots[FONT_SLOT_TERMINAL]?.cssFamily).toBe(defaultMonospaceCssFamily);
   });
 
   test("inherits terminal font fields from buffer", () => {

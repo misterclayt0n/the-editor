@@ -11,7 +11,7 @@
 
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { AppRuntime } from "../runtime";
+import type { WorkbenchHost } from "../workbench/host";
 import { EditorRenderer } from "../editor/renderer";
 import type { ExcerptMeta } from "./builder";
 import { HeaderCard, type HeaderActions } from "./HeaderCard";
@@ -23,7 +23,7 @@ export function MultiBufferView({
   pane,
   focused,
 }: {
-  runtime: AppRuntime;
+  runtime: WorkbenchHost;
   pane: MultiBufferPane;
   focused: boolean;
 }) {

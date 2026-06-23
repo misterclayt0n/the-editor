@@ -1,10 +1,11 @@
 import { useLayoutEffect, useRef } from "react";
 import type { EditorSnapshot } from "@the-editor/editor";
-import type { AppRuntime, EditorPane } from "../runtime";
+import type { EditorPane } from "../runtime";
+import type { WorkbenchHost } from "../workbench/host";
 import { EditorRenderer } from "./renderer";
 
 type EditorViewProps = {
-  readonly runtime: AppRuntime;
+  readonly runtime: WorkbenchHost;
   readonly pane: EditorPane;
   readonly focused: boolean;
   readonly onSnapshot?: (snapshot: EditorSnapshot) => void;

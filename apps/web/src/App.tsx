@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import { Effect } from "effect";
 import type { EditorSnapshot } from "@the-editor/editor";
 import { formatChords, type Chord } from "@the-editor/keymaps";
@@ -6,7 +7,9 @@ import type { Tile } from "@the-editor/workbench";
 import { AppRuntime, type EditorPane } from "./runtime";
 import { Shell } from "./shell";
 import { WorkbenchView } from "./workbench/WorkbenchView";
-import { TitleBar } from "./ui/TitleBar";
+import type { ChromeSlot } from "./workbench/shellHost";
+import { SessionSidebar } from "./ui/SessionSidebar";
+import { isMacDesktop } from "./platform/desktop";
 import { CommandPalette, type CommandPaletteMode } from "./ui/CommandPalette";
 import { FileFinder } from "./ui/FileFinder";
 import { SearchDialog } from "./ui/SearchDialog";
@@ -71,6 +74,15 @@ const workspaceLabel = (root: string | null): string => {
   return trimmed.split("/").pop() || trimmed || "untitled";
 };
 
+/** Track the live DOM element a chrome panel's renderer publishes (null until
+ *  the shell workbench mounts it), so App can portal content into it. */
+function useChromeSlotElement(slot: ChromeSlot | undefined): HTMLElement | null {
+  return useSyncExternalStore(
+    useCallback((cb: () => void) => slot?.subscribe(cb) ?? (() => {}), [slot]),
+    useCallback(() => slot?.getElement() ?? null, [slot]),
+  );
+}
+
 export function App() {
   // The shell (shared theme + appearance) and the workspace sessions are
   // external resources, so the owning effect creates AND disposes them: under
@@ -104,6 +116,17 @@ export function App() {
   activeRuntimeRef.current = active?.runtime ?? null;
   const activeIntelRef = useRef<IntelController | null>(null);
   activeIntelRef.current = active?.intel ?? null;
+
+  // The DOM elements the shell's chrome panels expose; App portals the session
+  // sidebar and the per-session workbenches into them.
+  const sidebarEl = useChromeSlotElement(shell?.sidebarSlot);
+  const viewportEl = useChromeSlotElement(shell?.viewportSlot);
+  // Whether the session sidebar is currently placed (drives the toggle button
+  // state and the editor's left inset while hidden).
+  const sidebarVisible = useSyncExternalStore(
+    useCallback((cb: () => void) => shell?.chromeHost.subscribeWorkbench(cb) ?? (() => {}), [shell]),
+    useCallback(() => shell?.isSidebarVisible() ?? false, [shell]),
+  );
 
   // Build a session: boot a runtime, wire its host hooks to the shared chrome,
   // and attach its intel controller. Callbacks that fire from BACKGROUND work
@@ -179,6 +202,9 @@ export function App() {
 
   useEffect(() => {
     const bootedShell = Shell.boot();
+    // The chrome host's focusActivePanel delegates here, so a sidebar click
+    // keeps the keyboard in whichever session is active.
+    bootedShell.onFocusActiveSession = () => activeRuntimeRef.current?.focusActivePanel();
     const unsubscribeTheme = bootedShell.subscribeTheme(() => setStatusEpoch((epoch) => epoch + 1));
     const first = makeSession(bootedShell, null);
     setShell(bootedShell);
@@ -342,27 +368,49 @@ export function App() {
   const diagnostics = diagnosticDocId !== null ? activeRuntime.diagnosticsFor(diagnosticDocId) : null;
 
   return (
-    <div className="app">
-      <TitleBar
-        tabs={sessions.map((session) => ({ id: session.id, label: workspaceLabel(session.root) }))}
-        activeId={activeId}
-        onSelect={switchWorkspace}
-        onAdd={addWorkspace}
-        onClose={closeWorkspace}
-        onToggleTree={() =>
-          void Effect.runPromise(
-            activeRuntime.commands.execute("files.toggleTree").pipe(Effect.catchAll(() => Effect.void)),
-          )
-        }
-      />
-      {sessions.map((session) => (
-        <WorkbenchView
-          key={session.id}
-          runtime={session.runtime}
-          active={session.id === activeId}
-          {...(session.id === activeId ? { onActiveSnapshot: handleActiveSnapshot } : {})}
-        />
-      ))}
+    <div
+      className="app"
+      data-traffic-lights={isMacDesktop ? "" : undefined}
+      data-sidebar-hidden={sidebarVisible ? undefined : ""}
+    >
+      <WorkbenchView runtime={shell.chromeHost} active />
+      <button
+        type="button"
+        className="sidebar-toggle"
+        data-active={sidebarVisible ? "" : undefined}
+        onClick={() => shell.toggleSidebar()}
+        title="Toggle Sidebar"
+        aria-label="Toggle Sidebar"
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <rect x="1.85" y="2.85" width="12.3" height="10.3" rx="2.4" stroke="currentColor" strokeWidth="1.3" />
+          <line x1="6.15" y1="3.1" x2="6.15" y2="12.9" stroke="currentColor" strokeWidth="1.3" />
+        </svg>
+      </button>
+      {sidebarEl !== null &&
+        createPortal(
+          <SessionSidebar
+            tabs={sessions.map((session) => ({ id: session.id, label: workspaceLabel(session.root) }))}
+            activeId={activeId}
+            onSelect={switchWorkspace}
+            onAdd={addWorkspace}
+            onClose={closeWorkspace}
+          />,
+          sidebarEl,
+        )}
+      {viewportEl !== null &&
+        createPortal(
+          sessions.map((session) => (
+            <WorkbenchView
+              key={session.id}
+              runtime={session.runtime}
+              active={session.id === activeId}
+              firstTabInset={sidebarVisible ? 0 : isMacDesktop ? 120 : 40}
+              {...(session.id === activeId ? { onActiveSnapshot: handleActiveSnapshot } : {})}
+            />
+          )),
+          viewportEl,
+        )}
       <CommandPalette
         open={paletteOpen}
         mode={paletteMode}

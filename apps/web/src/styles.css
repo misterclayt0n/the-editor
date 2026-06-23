@@ -86,32 +86,38 @@ body {
   height: 100%;
 }
 
-/* The window's top band: themed chrome that owns the traffic-light gutter
- * and hosts window-level controls. The whole bar drags the window; the
- * controls inside opt out. */
-.titlebar {
+/* The session rail: the shell chrome workbench's sidebar panel. One row per
+ * open workspace, vertical. App portals <SessionSidebar> into the panel body. */
+.session-sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  user-select: none;
+  background: var(--chrome);
+}
+
+/* Top gutter: drags the window and (on macOS) reserves the traffic lights. */
+.session-sidebar-gutter {
   display: flex;
   align-items: center;
-  flex: 0 0 auto;
-  height: 36px;
-  padding: 0 8px;
-  background: transparent;
-  user-select: none;
+  justify-content: flex-end;
+  flex: none;
+  height: 42px;
+  padding: 0 6px;
   -webkit-app-region: drag;
 }
 
-/* Make room for the macOS traffic lights floating over the left of the bar,
- * plus a gap so the toggle button doesn't crowd the green light. */
-.titlebar[data-traffic-lights] {
-  padding-left: 84px;
+.session-sidebar[data-traffic-lights] .session-sidebar-gutter {
+  padding-left: 78px;
 }
 
-.titlebar-button {
+.session-add {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   border: none;
   border-radius: var(--radius-sm);
@@ -122,34 +128,32 @@ body {
   -webkit-app-region: no-drag;
 }
 
-.titlebar-button:hover {
+.session-add:hover {
   background: color-mix(in srgb, var(--fg) 10%, transparent);
   color: var(--fg);
 }
 
-.titlebar-button:active {
-  background: color-mix(in srgb, var(--fg) 16%, transparent);
+.session-add:active {
   transform: scale(0.94);
 }
 
-/* Workspace tabs: one chip per open session, next to the traffic lights.
- * Match the workbench panel tabs: a quiet inactive pill and a filled active
- * chip, with the same height, radius, spacing, and easing. */
-.workspace-tabs {
+/* The scrolling list of workspaces. */
+.session-list {
   display: flex;
-  align-items: center;
-  gap: 3px;
-  min-width: 0;
-  -webkit-app-region: no-drag;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-height: 0;
+  padding: 4px 6px;
+  overflow-y: auto;
 }
 
-.workspace-tab {
+.session-item {
   display: flex;
   align-items: center;
   gap: 7px;
-  max-width: 200px;
-  height: 26px;
-  padding: 0 7px 0 10px;
+  height: 30px;
+  padding: 0 6px 0 10px;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   color: var(--fg-dim);
@@ -158,33 +162,33 @@ body {
     border-color 120ms var(--ease-out);
 }
 
-.workspace-tab:hover {
+.session-item:hover {
   background: color-mix(in srgb, var(--fg) 6%, transparent);
   color: var(--fg);
 }
 
-.workspace-tab[data-active] {
+.session-item[data-active] {
   background: color-mix(in srgb, var(--accent) 14%, var(--bg-editor));
   border-color: color-mix(in srgb, var(--accent) 22%, transparent);
   color: var(--fg);
 }
 
-.workspace-tab-label {
+.session-item-label {
+  flex: 1;
   min-width: 0;
-  max-width: 168px;
   padding: 0;
   border: 0;
   background: transparent;
   color: inherit;
   font: inherit;
+  text-align: left;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   cursor: default;
-  -webkit-app-region: no-drag;
 }
 
-.workspace-tab-close {
+.session-item-close {
   display: inline-flex;
   flex: none;
   align-items: center;
@@ -200,34 +204,62 @@ body {
   cursor: default;
   transition: opacity 120ms var(--ease-out), background-color 120ms var(--ease-out),
     color 120ms var(--ease-out), transform 120ms var(--ease-out);
-  -webkit-app-region: no-drag;
 }
 
-.workspace-tab:hover .workspace-tab-close,
-.workspace-tab[data-active] .workspace-tab-close {
+.session-item:hover .session-item-close,
+.session-item[data-active] .session-item-close {
   opacity: 1;
 }
 
-.workspace-tab-close:hover {
+.session-item-close:hover {
   background: var(--border);
   color: var(--fg);
 }
 
-.workspace-tab-close:active {
+.session-item-close:active {
   transform: scale(0.85);
 }
 
-.workspace-add {
-  flex: none;
-  width: 24px;
-  height: 24px;
+/* Sidebar toggle: a fixed top-left control, always visible so a hidden sidebar
+ * can be restored. When shown it sits in the sidebar's top gutter; when hidden
+ * it floats over the viewport (which insets to clear it — see below). */
+.sidebar-toggle {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 50;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  transition: background 120ms var(--ease-out), color 120ms var(--ease-out), transform 120ms var(--ease-out);
+  -webkit-app-region: no-drag;
 }
 
-/* File-tree toggle sits before the workspace tabs, after the macOS traffic-light gutter. */
-.titlebar-tree-toggle {
-  flex: none;
-  margin-right: 5px;
+.app[data-traffic-lights] .sidebar-toggle {
+  left: 86px;
 }
+
+.sidebar-toggle:hover {
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  color: var(--fg);
+}
+
+.sidebar-toggle:active {
+  transform: scale(0.94);
+}
+
+.sidebar-toggle[data-active] {
+  color: var(--fg);
+}
+
 
 
 .editor {
@@ -449,9 +481,10 @@ body {
   display: flex;
   flex: 1;
   min-height: 0;
-  /* The outer inset matches split gutters so the chrome reads compactly, closer
-   * to JetBrains' dense editor layout than separate floating cards. */
-  padding: var(--pane-gap);
+  /* No insets: panes sit flush against the window edges and each other. The
+   * shell color (--chrome) shows only at the sidebar and status bar; splits are
+   * separated by 1px dividers, not gaps. */
+  padding: 0;
   background: transparent;
 }
 
@@ -484,24 +517,34 @@ body {
  */
 .wb-divider {
   flex: none;
-  z-index: 3;
-  background: transparent;
+  position: relative;
+  z-index: 5;
+  background: var(--border);
   transition: background-color 120ms var(--ease-out);
 }
 
 .wb-divider-row {
-  width: var(--pane-gap);
-  /* Hover pill is drawn by the inset background so it floats inside the gap. */
-  background-clip: content-box;
-  padding: 30% 1px;
+  width: 1px;
   cursor: col-resize;
 }
 
 .wb-divider-column {
-  height: var(--pane-gap);
-  background-clip: content-box;
-  padding: 1px 30%;
+  height: 1px;
   cursor: row-resize;
+}
+
+/* The 1px line keeps panes flush; a wider transparent overlay is the grab zone
+ * (pointer events on a pseudo-element route to the divider's handler). */
+.wb-divider-row::before {
+  content: "";
+  position: absolute;
+  inset: 0 -3px;
+}
+
+.wb-divider-column::before {
+  content: "";
+  position: absolute;
+  inset: -3px 0;
 }
 
 .wb-divider:hover,
@@ -517,16 +560,24 @@ body {
   min-height: 0;
   overflow: hidden;
   background: var(--bg-editor);
-  /* Floating card: rounded, clipped, with a hairline ring. */
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
-  transition: border-color 120ms var(--ease-out);
+  /* Flat, flush panes: no rounding/shadow/border. Separation comes from the
+   * dividers and the sidebar/status-bar color, not floating-card chrome. */
 }
 
-/* The focused card carries a faint accent ring so focus reads at a glance. */
-.wb-pane--focused {
-  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
+
+/* Chrome panes (the shell's session sidebar + viewport) shed the editor-card
+   look: no border/radius/shadow — they frame other panels, not files. */
+.wb-pane--viewport,
+.wb-pane--sidebar {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+/* The viewport hosts the active session's whole workbench; let it fill. */
+.wb-pane--viewport .wb-custom-panel {
+  display: flex;
 }
 
 .wb-tabbar {
@@ -566,17 +617,22 @@ body {
   color: var(--fg);
 }
 
+/* The active tab marks a pane's selected buffer. In an UNFOCUSED pane it reads
+ * as a quiet neutral selection — focus is shown by color, not a pane border. */
 .wb-tab--active {
-  background: color-mix(in srgb, var(--accent) 14%, var(--bg-editor));
-  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
+  background: color-mix(in srgb, var(--fg) 9%, transparent);
+  border-color: transparent;
   color: var(--fg);
 }
 
-/* The focused pane's active chip gets a stronger accent fill (no underline —
- * the chip itself is the indicator). */
-.wb-pane--focused .wb-tab--active {
-  background: color-mix(in srgb, var(--accent) 22%, var(--bg-editor));
-  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+/* Focus indicator: the FOCUSED pane's active tab turns accent (blue). That
+ * color — not a card border — is how focus reads. Child combinators keep it to
+ * the pane's OWN strip: an ancestor chrome pane (the focused viewport) must not
+ * tint the session tabs nested inside it. */
+.wb-pane--focused > .wb-tabbar > .wb-tab--active {
+  background: color-mix(in srgb, var(--accent) 26%, var(--bg-editor));
+  border-color: color-mix(in srgb, var(--accent) 52%, transparent);
+  color: var(--fg);
 }
 
 .wb-file-icon {

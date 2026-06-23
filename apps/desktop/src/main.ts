@@ -591,14 +591,13 @@ function createWindow(): void {
     backgroundColor: "#141415",
     title: APP_NAME,
     icon: APP_WINDOW_ICON_PATH,
-    // Reclaim the title bar: the renderer paints its own themed bar (see
-    // TitleBar.tsx) and the traffic lights float over it, centered in the
-    // 44px-tall band the renderer reserves on the left.
+    // hiddenInset hides the title bar; the renderer draws editor tab strips
+    // flush to the window's top edge (no top inset), so tabs share the title
+    // band with the traffic lights. The tab pills center at y≈21 (1px tabbar
+    // top + 40px row / 2), so the 12px lights sit at y15 to share that center;
+    // the sidebar toggle (CSS top:8, 26px) centers there too.
     titleBarStyle: "hiddenInset",
-    // x/y chosen to match the standard macOS inset and to vertically center
-    // the 12px lights in the 36px title bar (center ≈ y17), so they line up
-    // with the toggle button (also centered in the bar).
-    trafficLightPosition: { x: 13, y: 11 },
+    trafficLightPosition: { x: 13, y: 15 },
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,

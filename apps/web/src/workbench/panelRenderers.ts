@@ -28,6 +28,12 @@ export type PanelRenderer = {
   /** Optional icon rendered before the tab title for panels of this kind. */
   readonly icon?: (panel: Panel) => ReactNode;
   /**
+   * Pane-container chrome for panels of this kind: a class applied to the
+   * enclosing `.wb-pane`. Lets a chrome surface (the session sidebar/viewport)
+   * shed the editor-pane look without teaching the workbench core about it.
+   */
+  readonly chrome?: { readonly className?: string };
+  /**
    * Mount into the slot body element; returns a handle. The element belongs
    * to the renderer until dispose — portal React, mount a canvas, whatever.
    */

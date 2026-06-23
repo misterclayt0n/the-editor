@@ -26,7 +26,8 @@ import { createPortal } from "react-dom";
 import { SearchIcon } from "lucide-react";
 import type { EditorSnapshot } from "@the-editor/editor";
 import type { PanelId, SlotId, Stack, Tile } from "@the-editor/workbench";
-import type { AppRuntime, EditorPane } from "../runtime";
+import type { EditorPane } from "../runtime";
+import type { WorkbenchHost } from "./host";
 import { EditorView } from "../editor/EditorView";
 import { MultiBufferView } from "../multibuffer/MultiBufferView";
 import { FileIcon } from "./fileIcons";
@@ -34,13 +35,17 @@ import type { PanelMount } from "./panelRenderers";
 import { createPortalNode, OutPortal, type PortalNode } from "./panelPortal";
 
 type WorkbenchViewProps = {
-  readonly runtime: AppRuntime;
+  readonly runtime: WorkbenchHost;
   /** Only the active workspace shows and drives focus. Inactive sessions stay
    *  mounted — their terminals, editor scroll, and portal DOM survive — but are
    *  hidden and never grab the keyboard. */
   readonly active: boolean;
   /** Snapshot stream of the FOCUSED pane (status bar fodder). */
   readonly onActiveSnapshot?: (snapshot: EditorSnapshot) => void;
+  /** Left inset (px) applied to ONLY the top-left stack's tab strip, so its
+   *  first tab clears the window controls (traffic lights + sidebar toggle)
+   *  when this workbench sits flush against the window's top-left. */
+  readonly firstTabInset?: number;
 };
 
 type DropZone = "center" | "left" | "right" | "top" | "bottom";
@@ -108,12 +113,21 @@ function collectStacks(tile: Tile, out: Stack[]): void {
   for (const child of tile.children) collectStacks(child.tile, out);
 }
 
-export function WorkbenchView({ runtime, active, onActiveSnapshot }: WorkbenchViewProps) {
+/** The top-left stack: follow the first child down the split tree. Its tab
+ *  strip is the one that sits under the window controls. */
+function firstStackId(tile: Tile | null): SlotId | undefined {
+  let node = tile;
+  while (node !== null && node.kind === "split") node = node.children[0]?.tile ?? null;
+  return node !== null && node.kind === "stack" ? node.id : undefined;
+}
+
+export function WorkbenchView({ runtime, active, onActiveSnapshot, firstTabInset }: WorkbenchViewProps) {
   const wb = useSyncExternalStore(
     useCallback((cb) => runtime.subscribeWorkbench(cb), [runtime]),
     () => runtime.getWorkbenchSnapshot(),
   );
   const [drag, setDrag] = useState<DragState | null>(null);
+  const leftStackId = firstTabInset ? firstStackId(wb.arrangement.tiles) : undefined;
 
   // One persistent container per panel, created lazily. Panel content renders
   // into these (see PanelInPortals); an OutPortal re-homes the live element on
@@ -255,6 +269,7 @@ export function WorkbenchView({ runtime, active, onActiveSnapshot }: WorkbenchVi
         drag={drag}
         beginTabDrag={beginTabDrag}
         nodeFor={nodeFor}
+        {...(leftStackId !== undefined && firstTabInset ? { leftStackId, firstTabInset } : {})}
       />
       <PanelInPortals
         runtime={runtime}
@@ -286,7 +301,7 @@ function PanelInPortals({
   focusedActivePanelId,
   onActiveSnapshot,
 }: {
-  readonly runtime: AppRuntime;
+  readonly runtime: WorkbenchHost;
   readonly nodeFor: (panelId: PanelId) => PortalNode;
   readonly livePanels: ReadonlyArray<PanelId>;
   readonly focusedActivePanelId: PanelId | undefined;
@@ -317,7 +332,7 @@ function PortalPanel({
   focused,
   onSnapshot,
 }: {
-  readonly runtime: AppRuntime;
+  readonly runtime: WorkbenchHost;
   readonly panelId: PanelId;
   readonly node: PortalNode;
   readonly focused: boolean;
@@ -348,7 +363,7 @@ function PanelBody({
   focused,
   onSnapshot,
 }: {
-  readonly runtime: AppRuntime;
+  readonly runtime: WorkbenchHost;
   readonly panelId: PanelId;
   readonly focused: boolean;
   readonly onSnapshot?: (snapshot: EditorSnapshot) => void;
@@ -372,7 +387,7 @@ function PanelBody({
 }
 
 type TreeProps = {
-  readonly runtime: AppRuntime;
+  readonly runtime: WorkbenchHost;
   readonly focusedSlot: SlotId | null;
   readonly drag: DragState | null;
   readonly beginTabDrag: (
@@ -382,6 +397,10 @@ type TreeProps = {
     title: string,
   ) => void;
   readonly nodeFor: (panelId: PanelId) => PortalNode;
+  /** The top-left stack id and the inset to apply to its tab strip (see
+   *  WorkbenchViewProps.firstTabInset). Absent when no inset is requested. */
+  readonly leftStackId?: SlotId;
+  readonly firstTabInset?: number;
 };
 
 function TileView({ tile, path, ...tree }: TreeProps & { tile: Tile; path: ReadonlyArray<number> }) {
@@ -437,7 +456,7 @@ function SplitDivider({
   index,
   container,
 }: {
-  readonly runtime: AppRuntime;
+  readonly runtime: WorkbenchHost;
   readonly direction: "row" | "column";
   readonly path: ReadonlyArray<number>;
   readonly index: number;
@@ -505,6 +524,11 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
   // panel pool at the workbench root; this stack only homes its active panel's
   // live container via an OutPortal.
   const focused = focusedSlot === stack.id;
+  // A panel kind can declare chrome styling (the session sidebar/viewport);
+  // apply it to the pane container so chrome surfaces shed the editor-card look.
+  const activePanel = activePanelId !== undefined ? runtime.panelById(activePanelId) : undefined;
+  const chromeClass =
+    activePanel !== undefined ? runtime.panelRenderers.get(activePanel.kind)?.chrome?.className : undefined;
 
   const dropZone =
     drag !== null && drag.target?.kind === "zone" && drag.target.slotId === stack.id
@@ -516,9 +540,16 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
       : null;
 
   return (
-    <section className={`wb-pane${focused ? " wb-pane--focused" : ""}`}>
+    <section className={`wb-pane${focused ? " wb-pane--focused" : ""}${chromeClass ? ` ${chromeClass}` : ""}`}>
       {stack.tabsHidden !== true && (
-      <div className="wb-tabbar" data-wb-tabbar data-slot-id={stack.id}>
+      <div
+        className="wb-tabbar"
+        data-wb-tabbar
+        data-slot-id={stack.id}
+        {...(tree.firstTabInset && tree.leftStackId === stack.id
+          ? { style: { paddingLeft: tree.firstTabInset } }
+          : {})}
+      >
         {stack.panels.map((panelId, i) => {
           const tabPane = runtime.pane(panelId);
           if (tabPane === undefined) {
@@ -596,7 +627,7 @@ function CustomPanelView({
   runtime,
   panelId,
 }: {
-  readonly runtime: AppRuntime;
+  readonly runtime: WorkbenchHost;
   readonly panelId: PanelId;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);

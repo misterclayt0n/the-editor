@@ -37,6 +37,7 @@ import {
   activateTab,
   collectSlots,
   dockEdge,
+  dockIntoRegion,
   findSlot,
   makeStack,
   makeWorkbench,
@@ -449,9 +450,16 @@ export class AppRuntime {
             // `instance` is assigned at the end of boot; defer every deref.
             renderer: {
               title: (panel) => createFileTreeRenderer(instance).title(panel),
+              icon: (panel) => createFileTreeRenderer(instance).icon?.(panel),
               mount: (element, panel) => createFileTreeRenderer(instance).mount(element, panel),
             },
-            toggle: () => instance.togglePanel(FileTreeSurface, { dock: "left" }),
+            toggle: () =>
+              instance.togglePanel(FileTreeSurface, {
+                dock: "right",
+                region: "right-sidebar",
+                className: "wb-pane--rightbar",
+                ratio: 0.2,
+              }),
           }),
           Layer.succeed(HostTerminal, {
             renderer: {
@@ -845,10 +853,29 @@ export class AppRuntime {
    */
   togglePanel(
     kind: SurfaceKind,
-    options?: { readonly dock?: "left" | "right" | "top" | "bottom"; readonly ratio?: number },
+    options?: {
+      readonly dock?: "left" | "right" | "top" | "bottom";
+      readonly ratio?: number;
+      /** Dock into a named region (a shared tabbed stack) instead of a fresh
+       *  edge stack — this is what makes the sidebars real dock zones. */
+      readonly region?: string;
+      /** Chrome class for the region's pane container (set on first dock). */
+      readonly className?: string;
+    },
   ): void {
     const dock = options?.dock ?? "left";
     const ratio = options?.ratio ?? 0.22;
+    const region = options?.region;
+    const className = options?.className;
+    const place = (a: Arrangement, panelId: PanelId): Arrangement =>
+      region !== undefined
+        ? dockIntoRegion(a, panelId, {
+            region,
+            edge: dock,
+            ratio,
+            ...(className !== undefined ? { className } : {}),
+          })
+        : dockEdge(a, panelId, dock, { ratio });
     const trackedId = this.dockedPanels.get(kind);
     const tracked = trackedId !== undefined ? this.panelById(trackedId) : undefined;
     if (tracked !== undefined) {
@@ -859,22 +886,27 @@ export class AppRuntime {
           this.workbench.updateArrangement((a) => removePanel(a, tracked.id)).pipe(Effect.orDie),
         );
       } else {
-        // Hidden → re-dock and focus.
+        // Hidden → re-dock (into its region, if any) and focus.
         Effect.runSync(
-          this.workbench.updateArrangement((a) => dockEdge(a, tracked.id, dock, { ratio })).pipe(Effect.orDie),
+          this.workbench.updateArrangement((a) => place(a, tracked.id)).pipe(Effect.orDie),
         );
         this.focusSlotOfPanel(tracked.id);
       }
       return;
     }
-    // No dock panel (never created, or the previous one was moved/closed):
-    // create a fresh one and remember it as this kind's dock.
+    // No dock panel yet: create one, remember it as this kind's dock, place it.
     const panel = Effect.runSync(this.workbench.createPanel({ kind }));
     this.dockedPanels.set(kind, panel.id);
     Effect.runSync(
-      this.workbench.updateArrangement((a) => dockEdge(a, panel.id, dock, { ratio })).pipe(Effect.orDie),
+      this.workbench.updateArrangement((a) => place(a, panel.id)).pipe(Effect.orDie),
     );
     this.focusSlotOfPanel(panel.id);
+  }
+
+  /** Whether a docked singleton panel of `kind` is currently placed (visible). */
+  isPanelDocked(kind: SurfaceKind): boolean {
+    const id = this.dockedPanels.get(kind);
+    return id !== undefined && slotOfPanel(Effect.runSync(this.workbench.arrangement), id) !== undefined;
   }
 
   /** Drop the dock association for a panel that was moved or closed, so the

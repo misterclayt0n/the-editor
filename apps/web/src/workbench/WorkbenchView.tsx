@@ -524,11 +524,14 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
   // panel pool at the workbench root; this stack only homes its active panel's
   // live container via an OutPortal.
   const focused = focusedSlot === stack.id;
-  // A panel kind can declare chrome styling (the session sidebar/viewport);
-  // apply it to the pane container so chrome surfaces shed the editor-card look.
+  // Chrome styling for the pane container: a dock REGION owns its look via
+  // stack.className (the right/left sidebars); otherwise a panel kind may
+  // declare it via renderer.chrome. Region wins so every panel in a region
+  // shares one look regardless of which tab is active.
   const activePanel = activePanelId !== undefined ? runtime.panelById(activePanelId) : undefined;
   const chromeClass =
-    activePanel !== undefined ? runtime.panelRenderers.get(activePanel.kind)?.chrome?.className : undefined;
+    stack.className ??
+    (activePanel !== undefined ? runtime.panelRenderers.get(activePanel.kind)?.chrome?.className : undefined);
 
   const dropZone =
     drag !== null && drag.target?.kind === "zone" && drag.target.slotId === stack.id

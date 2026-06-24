@@ -8,8 +8,8 @@ import { AppRuntime, type EditorPane } from "./runtime";
 import { Shell } from "./shell";
 import { WorkbenchView } from "./workbench/WorkbenchView";
 import type { ChromeSlot } from "./workbench/shellHost";
-import { SessionSidebar } from "./ui/SessionSidebar";
 import { isMacDesktop } from "./platform/desktop";
+import { FileTreeSurface } from "./product/fileTree";
 import { CommandPalette, type CommandPaletteMode } from "./ui/CommandPalette";
 import { FileFinder } from "./ui/FileFinder";
 import { SearchDialog } from "./ui/SearchDialog";
@@ -117,9 +117,8 @@ export function App() {
   const activeIntelRef = useRef<IntelController | null>(null);
   activeIntelRef.current = active?.intel ?? null;
 
-  // The DOM elements the shell's chrome panels expose; App portals the session
-  // sidebar and the per-session workbenches into them.
-  const sidebarEl = useChromeSlotElement(shell?.sidebarSlot);
+  // The viewport panel's DOM element; App portals the per-session workbenches
+  // into it. (The session sidebar self-mounts off the shell session store.)
   const viewportEl = useChromeSlotElement(shell?.viewportSlot);
   // Whether the session sidebar is currently placed (drives the toggle button
   // state and the editor's left inset while hidden).
@@ -337,6 +336,21 @@ export function App() {
     if (target !== undefined) window.requestAnimationFrame(() => target.dispose());
   }, []);
 
+  // Feed the shell session store that the self-mounting sidebar reads: the row
+  // actions and the live tab list. Session lifecycle stays here in App.
+  useEffect(() => {
+    if (shell === null) return;
+    shell.sessionStore.onSelect = switchWorkspace;
+    shell.sessionStore.onAdd = addWorkspace;
+    shell.sessionStore.onClose = closeWorkspace;
+  }, [shell, switchWorkspace, addWorkspace, closeWorkspace]);
+  useEffect(() => {
+    shell?.sessionStore.set(
+      sessions.map((session) => ({ id: session.id, label: workspaceLabel(session.root) })),
+      activeId,
+    );
+  }, [shell, sessions, activeId]);
+
   const handleActiveSnapshot = useCallback((next: EditorSnapshot) => setSnapshot(next), []);
   // Resolve the pending prompt exactly once (Enter fires onSubmit then onClose).
   const finishPrompt = useCallback((value: string | null) => {
@@ -366,6 +380,7 @@ export function App() {
   const diagnosticDocId =
     head !== undefined ? (activeRuntime.focusedPaneHost()?.resolveSource(head)?.docId ?? null) : null;
   const diagnostics = diagnosticDocId !== null ? activeRuntime.diagnosticsFor(diagnosticDocId) : null;
+  const fileTreeVisible = activeRuntime.isPanelDocked(FileTreeSurface);
 
   return (
     <div
@@ -387,17 +402,23 @@ export function App() {
           <line x1="6.15" y1="3.1" x2="6.15" y2="12.9" stroke="currentColor" strokeWidth="1.3" />
         </svg>
       </button>
-      {sidebarEl !== null &&
-        createPortal(
-          <SessionSidebar
-            tabs={sessions.map((session) => ({ id: session.id, label: workspaceLabel(session.root) }))}
-            activeId={activeId}
-            onSelect={switchWorkspace}
-            onAdd={addWorkspace}
-            onClose={closeWorkspace}
-          />,
-          sidebarEl,
-        )}
+      <button
+        type="button"
+        className="sidebar-toggle sidebar-toggle--right"
+        data-active={fileTreeVisible ? "" : undefined}
+        onClick={() =>
+          void Effect.runPromise(
+            activeRuntime.commands.execute("files.toggleTree").pipe(Effect.catchAll(() => Effect.void)),
+          )
+        }
+        title="Toggle File Tree"
+        aria-label="Toggle File Tree"
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <rect x="1.85" y="2.85" width="12.3" height="10.3" rx="2.4" stroke="currentColor" strokeWidth="1.3" />
+          <line x1="9.85" y1="3.1" x2="9.85" y2="12.9" stroke="currentColor" strokeWidth="1.3" />
+        </svg>
+      </button>
       {viewportEl !== null &&
         createPortal(
           sessions.map((session) => (

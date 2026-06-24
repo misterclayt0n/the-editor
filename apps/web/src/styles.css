@@ -260,6 +260,17 @@ body {
   color: var(--fg);
 }
 
+/* The right counterpart of the toggle: hides/shows the right sidebar (file
+ * tree). No traffic lights on the right, so it sits flush at the top-right. */
+.sidebar-toggle--right {
+  left: auto;
+  right: 8px;
+}
+
+.app[data-traffic-lights] .sidebar-toggle--right {
+  left: auto;
+}
+
 
 
 .editor {
@@ -578,6 +589,81 @@ body {
 /* The viewport hosts the active session's whole workbench; let it fill. */
 .wb-pane--viewport .wb-custom-panel {
   display: flex;
+}
+
+/* Right sidebar region: a chrome tool-panel (matches the left sidebar's shell
+ * color) whose tab strip reads as an ACTIVITY BAR — icon-only buttons with an
+ * active underline, not editor tabs. Docked panels (file tree, …) tab here. */
+.wb-pane--rightbar {
+  background: var(--chrome);
+}
+
+.wb-pane--rightbar .wb-custom-panel {
+  background: transparent;
+}
+
+/* Theme the tree to the rail color (not the lighter editor bg) so the right
+ * sidebar reads as one surface, like the left session sidebar. */
+.wb-pane--rightbar .file-tree-host {
+  --trees-bg-override: var(--chrome);
+  --trees-bg-muted-override: color-mix(in srgb, var(--fg) 7%, var(--chrome));
+  --trees-selected-bg-override: color-mix(in srgb, var(--accent) 18%, var(--chrome));
+}
+
+/* The activity bar: a thin strip of icon buttons. */
+.wb-pane--rightbar .wb-tabbar {
+  height: 38px;
+  gap: 2px;
+  padding: 0 6px;
+  background: var(--chrome);
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+/* Each tab is a square icon button; its label and close are hidden (toggle
+ * the panel with its command instead). */
+.wb-pane--rightbar .wb-tab {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-dim);
+}
+
+.wb-pane--rightbar .wb-tab:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--fg);
+}
+
+.wb-pane--rightbar .wb-tab-name,
+.wb-pane--rightbar .wb-tab-close {
+  display: none;
+}
+
+.wb-pane--rightbar .wb-tab-renderer-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* Active view: brightened icon + an accent underline, never the editor pill.
+ * The doubled .wb-pane class outranks the focused-tab pill rule below. */
+.wb-pane.wb-pane--rightbar > .wb-tabbar > .wb-tab--active {
+  background: transparent;
+  color: var(--fg);
+}
+
+.wb-pane.wb-pane--rightbar > .wb-tabbar > .wb-tab--active::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
 }
 
 .wb-tabbar {

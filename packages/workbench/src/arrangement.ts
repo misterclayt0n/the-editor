@@ -27,6 +27,12 @@ export type Stack = {
   /** Chrome only: hide this stack's tab strip (e.g. a single-panel file tree).
    * Layout-truth, so it persists and rides through surgery; absent = shown. */
   readonly tabsHidden?: boolean;
+  /** Dock-region id: a stable marker so a panel docked "into the right sidebar"
+   * joins THIS stack instead of spawning a new one. Survives surgery. */
+  readonly region?: string;
+  /** Chrome class applied to this stack's pane container (the region's look).
+   * Layout-truth like tabsHidden; lets a region shed the editor-card style. */
+  readonly className?: string;
 };
 
 export type Split = {

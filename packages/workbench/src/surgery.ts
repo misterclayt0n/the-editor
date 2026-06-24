@@ -87,6 +87,61 @@ export function dockEdge(
   return { ...arrangement, tiles: { kind: "split", direction, children } };
 }
 
+/** Find the stack tagged with a region id (depth-first), if any. */
+function findRegionStack(tile: Tile | null, region: string): Stack | undefined {
+  if (tile === null) return undefined;
+  if (tile.kind === "stack") return tile.region === region ? tile : undefined;
+  for (const child of tile.children) {
+    const found = findRegionStack(child.tile, region);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+/**
+ * Dock a panel into a named region: if the region's stack already exists, the
+ * panel joins it as a tab; otherwise a fresh region stack is created at `edge`,
+ * carrying the region id, chrome class, and tab-strip preference. This is what
+ * makes a sidebar a real dock zone — many contributed panels tab together.
+ */
+export function dockIntoRegion(
+  arrangement: Arrangement,
+  panelId: PanelId,
+  options: {
+    readonly region: string;
+    readonly edge: "left" | "right" | "top" | "bottom";
+    readonly className?: string;
+    readonly tabsHidden?: boolean;
+    readonly ratio?: number;
+  },
+): Arrangement {
+  const existing = findRegionStack(arrangement.tiles, options.region);
+  if (existing !== undefined) return placeInStack(arrangement, existing.id, panelId);
+  const stack: Stack = {
+    kind: "stack",
+    id: freshSlotId(),
+    panels: [panelId],
+    active: 0,
+    region: options.region,
+    ...(options.className !== undefined ? { className: options.className } : {}),
+    ...(options.tabsHidden !== undefined ? { tabsHidden: options.tabsHidden } : {}),
+  };
+  if (arrangement.tiles === null) return { ...arrangement, tiles: stack };
+  const ratio = options.ratio ?? 0.2;
+  const direction: SplitDirection = options.edge === "left" || options.edge === "right" ? "row" : "column";
+  const first = options.edge === "left" || options.edge === "top";
+  const children = first
+    ? [
+        { tile: stack as Tile, weight: ratio },
+        { tile: arrangement.tiles, weight: 1 - ratio },
+      ]
+    : [
+        { tile: arrangement.tiles, weight: 1 - ratio },
+        { tile: stack as Tile, weight: ratio },
+      ];
+  return { ...arrangement, tiles: { kind: "split", direction, children } };
+}
+
 /** Split a stack in two: the target keeps its place, the new panel gets a sibling stack. */
 export function splitBeside(
   arrangement: Arrangement,

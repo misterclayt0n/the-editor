@@ -24,6 +24,7 @@ import { makeThemes, Themes, themeDefaults, type ResolvedTheme } from "@the-edit
 import { Fonts, fontDefaults, makeFonts, type ResolvedFontSystem } from "@the-editor/fonts";
 import {
   dockEdge,
+  dockIntoRegion,
   makeWorkbench,
   removePanel,
   slotOfPanel,
@@ -37,6 +38,8 @@ import { createFontDomDriver } from "./fonts/dom";
 import { createFontFileLoader } from "./platform/fonts";
 import { makePanelRenderers, type PanelRenderer } from "./workbench/panelRenderers";
 import { ChromeSlot, ShellWorkbenchHost } from "./workbench/shellHost";
+import { SessionStore } from "./sessionStore";
+import { createSessionSidebarRenderer } from "./ui/SessionSidebar";
 
 /** The shell chrome's two panel kinds: the session sidebar and the viewport
  *  that hosts the active session's workbench. */
@@ -78,9 +81,11 @@ export class Shell {
     readonly fonts: Fonts.Service,
     /** The outer chrome workbench host: sidebar + viewport panels. */
     readonly chromeHost: ShellWorkbenchHost,
-    /** Mount points the chrome renderers publish; App portals content into them. */
-    readonly sidebarSlot: ChromeSlot,
+    /** The viewport mount point the chrome renderer publishes; App portals the
+     *  per-session workbenches into it. (The sidebar self-mounts, no slot.) */
     readonly viewportSlot: ChromeSlot,
+    /** Session mirror the self-mounting session-sidebar panel reads; App fills it. */
+    readonly sessionStore: SessionStore,
     private readonly chromeScope: Scope.CloseableScope,
     /** The chrome workbench service, for sidebar show/hide surgery. */
     private readonly chromeWorkbench: Workbench.Service,
@@ -113,10 +118,13 @@ export class Shell {
             }
             return removePanel(a, this.sidebarPanelId);
           }
-          let next = dockEdge(a, this.sidebarPanelId, "left", { ratio: this.sidebarRatio });
-          const reSlot = slotOfPanel(next, this.sidebarPanelId);
-          if (reSlot !== undefined) next = toggleStackTabs(next, reSlot);
-          return next;
+          return dockIntoRegion(a, this.sidebarPanelId, {
+            region: "left-sidebar",
+            edge: "left",
+            className: "wb-pane--sidebar",
+            tabsHidden: true,
+            ratio: this.sidebarRatio,
+          });
         })
         .pipe(Effect.orDie),
     );
@@ -143,12 +151,12 @@ export class Shell {
         const chromeScope = yield* Scope.make();
         const chromeWorkbench = yield* Scope.extend(makeWorkbench(), chromeScope);
         const chromeRenderers = makePanelRenderers();
-        const sidebarSlot = new ChromeSlot();
+        const sessionStore = new SessionStore();
         const viewportSlot = new ChromeSlot();
         yield* Scope.extend(
           chromeRenderers.register(
             SessionSidebarSurface,
-            chromeRenderer("Sessions", sidebarSlot, "wb-pane--sidebar"),
+            createSessionSidebarRenderer(sessionStore),
           ),
           chromeScope,
         );
@@ -163,12 +171,19 @@ export class Shell {
         const viewport = yield* chromeWorkbench.createPanel({ kind: SessionViewportSurface });
         yield* chromeWorkbench
           .updateArrangement((a) => {
+            // Viewport is the root; the session sidebar docks into the
+            // "left-sidebar" region — a real dock zone (future global panels
+            // could tab in beside it), styled via the region's chrome class.
             let next = dockEdge(a, viewport.id, "left");
-            next = dockEdge(next, sidebar.id, "left", { ratio: 0.18 });
-            const sidebarSlotId = slotOfPanel(next, sidebar.id);
             const viewportSlotId = slotOfPanel(next, viewport.id);
-            if (sidebarSlotId !== undefined) next = toggleStackTabs(next, sidebarSlotId);
             if (viewportSlotId !== undefined) next = toggleStackTabs(next, viewportSlotId);
+            next = dockIntoRegion(next, sidebar.id, {
+              region: "left-sidebar",
+              edge: "left",
+              className: "wb-pane--sidebar",
+              tabsHidden: true,
+              ratio: 0.18,
+            });
             return next;
           })
           .pipe(Effect.orDie);
@@ -183,8 +198,8 @@ export class Shell {
           themes,
           fonts,
           chromeHost,
-          sidebarSlot,
           viewportSlot,
+          sessionStore,
           chromeScope,
           chromeWorkbench,
           sidebar.id,

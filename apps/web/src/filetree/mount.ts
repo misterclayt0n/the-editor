@@ -8,6 +8,8 @@
  */
 
 import { FileTree, type GitStatusEntry } from "@pierre/trees";
+import { createElement } from "react";
+import { Files } from "lucide-react";
 import type { AppRuntime } from "../runtime";
 import type { PanelRenderer } from "../workbench/panelRenderers";
 
@@ -56,6 +58,7 @@ export const FILE_TREE_TITLE = "Files";
 export function createFileTreeRenderer(runtime: AppRuntime): PanelRenderer {
   return {
     title: () => FILE_TREE_TITLE,
+    icon: () => createElement(Files, { className: "wb-tab-renderer-icon", "aria-hidden": true }),
     mount: (element, _panel) => {
       let disposed = false;
       let tree: FileTree | null = null;

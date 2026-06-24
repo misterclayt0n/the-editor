@@ -1,32 +1,25 @@
+import { useSyncExternalStore } from "react";
+import { createRoot } from "react-dom/client";
 import { isMacDesktop } from "../platform/desktop";
-
-export type SessionTab = {
-  readonly id: string;
-  readonly label: string;
-};
-
-type SessionSidebarProps = {
-  readonly tabs: ReadonlyArray<SessionTab>;
-  readonly activeId: string | null;
-  readonly onSelect: (id: string) => void;
-  readonly onAdd: () => void;
-  readonly onClose: (id: string) => void;
-};
+import type { PanelRenderer } from "../workbench/panelRenderers";
+import type { SessionStore } from "../sessionStore";
 
 /**
- * The session rail: one row per open workspace, vertical. It IS a workbench
- * panel (the shell chrome workbench's sidebar panel) — App portals this into
- * the panel's body. The top gutter reserves the macOS traffic lights and drags
- * the window; the `+` opens a folder as a new workspace.
+ * The session rail: one row per open workspace, vertical. It's an ordinary
+ * workbench panel — its renderer self-mounts this component and reads the shell
+ * session store (no App-portal bridge). The top gutter reserves the macOS
+ * traffic lights and drags the window; the `+` opens a folder as a new
+ * workspace.
  */
-export function SessionSidebar({ tabs, activeId, onSelect, onAdd, onClose }: SessionSidebarProps) {
+export function SessionSidebar({ store }: { readonly store: SessionStore }) {
+  const { tabs, activeId } = useSyncExternalStore(store.subscribe, store.getSnapshot);
   return (
     <div className="session-sidebar" data-traffic-lights={isMacDesktop ? "" : undefined}>
       <div className="session-sidebar-gutter">
         <button
           type="button"
           className="session-add"
-          onClick={onAdd}
+          onClick={() => store.onAdd()}
           title="New Workspace"
           aria-label="New Workspace"
         >
@@ -46,7 +39,7 @@ export function SessionSidebar({ tabs, activeId, onSelect, onAdd, onClose }: Ses
             <button
               type="button"
               className="session-item-label"
-              onClick={() => onSelect(tab.id)}
+              onClick={() => store.onSelect(tab.id)}
               title={tab.label}
             >
               {tab.label}
@@ -57,7 +50,7 @@ export function SessionSidebar({ tabs, activeId, onSelect, onAdd, onClose }: Ses
                 className="session-item-close"
                 onClick={(event) => {
                   event.stopPropagation();
-                  onClose(tab.id);
+                  store.onClose(tab.id);
                 }}
                 aria-label={`Close workspace ${tab.label}`}
                 title="Close Workspace"
@@ -77,4 +70,20 @@ export function SessionSidebar({ tabs, activeId, onSelect, onAdd, onClose }: Ses
       </div>
     </div>
   );
+}
+
+/**
+ * The session-sidebar panel renderer: mounts <SessionSidebar> into its own
+ * React root, fed by the shell session store. A normal panel like the file
+ * tree — registered, dockable, chrome-styled by its region.
+ */
+export function createSessionSidebarRenderer(store: SessionStore): PanelRenderer {
+  return {
+    title: () => "Sessions",
+    mount: (element) => {
+      const root = createRoot(element);
+      root.render(<SessionSidebar store={store} />);
+      return { dispose: () => root.unmount() };
+    },
+  };
 }

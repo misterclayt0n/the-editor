@@ -46,6 +46,9 @@ type WorkbenchViewProps = {
    *  first tab clears the window controls (traffic lights + sidebar toggle)
    *  when this workbench sits flush against the window's top-left. */
   readonly firstTabInset?: number;
+  /** A real action (the file-tree toggle) rendered in the top-RIGHT stack's tab
+   *  strip as a trailing element — it reserves layout space, never overlays. */
+  readonly trailingAction?: ReactNode;
 };
 
 type DropZone = "center" | "left" | "right" | "top" | "bottom";
@@ -121,13 +124,22 @@ function firstStackId(tile: Tile | null): SlotId | undefined {
   return node !== null && node.kind === "stack" ? node.id : undefined;
 }
 
-export function WorkbenchView({ runtime, active, onActiveSnapshot, firstTabInset }: WorkbenchViewProps) {
+/** The top-right stack: follow the last child down the split tree. Its tab
+ *  strip is the one under the file-tree toggle at the window's top-right. */
+function lastStackId(tile: Tile | null): SlotId | undefined {
+  let node = tile;
+  while (node !== null && node.kind === "split") node = node.children[node.children.length - 1]?.tile ?? null;
+  return node !== null && node.kind === "stack" ? node.id : undefined;
+}
+
+export function WorkbenchView({ runtime, active, onActiveSnapshot, firstTabInset, trailingAction }: WorkbenchViewProps) {
   const wb = useSyncExternalStore(
     useCallback((cb) => runtime.subscribeWorkbench(cb), [runtime]),
     () => runtime.getWorkbenchSnapshot(),
   );
   const [drag, setDrag] = useState<DragState | null>(null);
   const leftStackId = firstTabInset ? firstStackId(wb.arrangement.tiles) : undefined;
+  const rightStackId = trailingAction !== undefined ? lastStackId(wb.arrangement.tiles) : undefined;
 
   // One persistent container per panel, created lazily. Panel content renders
   // into these (see PanelInPortals); an OutPortal re-homes the live element on
@@ -270,6 +282,7 @@ export function WorkbenchView({ runtime, active, onActiveSnapshot, firstTabInset
         beginTabDrag={beginTabDrag}
         nodeFor={nodeFor}
         {...(leftStackId !== undefined && firstTabInset ? { leftStackId, firstTabInset } : {})}
+        {...(rightStackId !== undefined && trailingAction !== undefined ? { rightStackId, trailingAction } : {})}
       />
       <PanelInPortals
         runtime={runtime}
@@ -401,6 +414,10 @@ type TreeProps = {
    *  WorkbenchViewProps.firstTabInset). Absent when no inset is requested. */
   readonly leftStackId?: SlotId;
   readonly firstTabInset?: number;
+  /** The top-right stack id and the trailing action to render in its tab strip
+   *  (see WorkbenchViewProps.trailingAction). Absent when none is requested. */
+  readonly rightStackId?: SlotId;
+  readonly trailingAction?: ReactNode;
 };
 
 function TileView({ tile, path, ...tree }: TreeProps & { tile: Tile; path: ReadonlyArray<number> }) {
@@ -541,18 +558,31 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
     drag !== null && drag.target?.kind === "tabbar" && drag.target.slotId === stack.id
       ? drag.target.index
       : null;
+  const tabbarRef = useRef<HTMLDivElement | null>(null);
+  // Follow the active tab: when it changes, scroll the strip so the tab clears
+  // the (sticky) traffic-light reserve on the left and the right edge.
+  useLayoutEffect(() => {
+    const bar = tabbarRef.current;
+    if (bar === null) return;
+    const active = bar.querySelector<HTMLElement>(".wb-tab--active");
+    if (active === null) return;
+    const leftReserve = bar.querySelector<HTMLElement>(".wb-tabbar-inset")?.offsetWidth ?? 0;
+    const rightReserve = bar.querySelector<HTMLElement>(".wb-tabbar-end")?.offsetWidth ?? 0;
+    const barRect = bar.getBoundingClientRect();
+    const tabRect = active.getBoundingClientRect();
+    const visibleLeft = barRect.left + leftReserve;
+    const visibleRight = barRect.right - rightReserve;
+    if (tabRect.left < visibleLeft) bar.scrollLeft -= visibleLeft - tabRect.left;
+    else if (tabRect.right > visibleRight) bar.scrollLeft += tabRect.right - visibleRight;
+  }, [stack.active, activePanelId]);
 
   return (
     <section className={`wb-pane${focused ? " wb-pane--focused" : ""}${chromeClass ? ` ${chromeClass}` : ""}`}>
       {(stack.panels.length > 1 || stack.tabsHidden !== true) && (
-      <div
-        className="wb-tabbar"
-        data-wb-tabbar
-        data-slot-id={stack.id}
-        {...(tree.firstTabInset && tree.leftStackId === stack.id
-          ? { style: { paddingLeft: tree.firstTabInset } }
-          : {})}
-      >
+      <div className="wb-tabbar" data-wb-tabbar data-slot-id={stack.id} ref={tabbarRef}>
+        {tree.firstTabInset && tree.leftStackId === stack.id && (
+          <div className="wb-tabbar-inset" style={{ width: tree.firstTabInset }} aria-hidden="true" />
+        )}
         {stack.panels.map((panelId, i) => {
           const tabPane = runtime.pane(panelId);
           if (tabPane === undefined) {
@@ -611,6 +641,9 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
           );
         })}
         {dropTabIndex === stack.panels.length && <div className="wb-tab-insert" />}
+        {tree.trailingAction !== undefined && tree.rightStackId === stack.id && (
+          <div className="wb-tabbar-end">{tree.trailingAction}</div>
+        )}
       </div>
       )}
       <div

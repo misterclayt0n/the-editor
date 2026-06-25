@@ -260,19 +260,6 @@ body {
   color: var(--fg);
 }
 
-/* The right counterpart of the toggle: hides/shows the right sidebar (file
- * tree). No traffic lights on the right, so it sits flush at the top-right. */
-.sidebar-toggle--right {
-  left: auto;
-  right: 8px;
-}
-
-.app[data-traffic-lights] .sidebar-toggle--right {
-  left: auto;
-}
-
-
-
 .editor {
   position: absolute;
   inset: 0;
@@ -491,6 +478,7 @@ body {
 .workbench {
   display: flex;
   flex: 1;
+  min-width: 0;
   min-height: 0;
   /* No insets: panes sit flush against the window edges and each other. The
    * shell color (--chrome) shows only at the sidebar and status bar; splits are
@@ -577,7 +565,7 @@ body {
 
 
 /* Chrome panes (the shell's session sidebar + viewport) shed the editor-card
-   look: no border/radius/shadow — they frame other panels, not files. */
+ * look: no border/radius/shadow — they frame other panels, not files. */
 .wb-pane--viewport,
 .wb-pane--sidebar {
   border: none;
@@ -673,17 +661,82 @@ body {
   gap: 3px;
   height: 40px;
   padding: 0 8px;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
   background: var(--bg-editor);
   /* Faint separator so the tab strip reads as the card's header band. */
   box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--border) 70%, transparent);
   user-select: none;
 }
 
+.wb-tabbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Traffic-light reserve at the start of the top-left strip. Sticky so it pins
+ * left while tabs scroll — tabs slide UNDER it (opaque), never over the window
+ * controls. Draggable to move the window (Electron). */
+.wb-tabbar-inset {
+  position: sticky;
+  left: 0;
+  flex: none;
+  align-self: stretch;
+  background: inherit;
+  z-index: 1;
+  -webkit-app-region: drag;
+}
+
+/* Trailing action slot at the right end of the top-right tab strip: a REAL,
+ * space-reserving element (not an overlay). Sticky so it stays at the right
+ * edge while tabs scroll under it; opaque so nothing shows through. */
+.wb-tabbar-end {
+  position: sticky;
+  right: 0;
+  flex: none;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  padding-left: 4px;
+  padding-right: 6px;
+  background: inherit;
+  z-index: 1;
+}
+
+/* The file-tree toggle living in that slot. */
+.wb-tabbar-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  transition: background 120ms var(--ease-out), color 120ms var(--ease-out), transform 120ms var(--ease-out);
+}
+
+.wb-tabbar-toggle:hover {
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  color: var(--fg);
+}
+
+.wb-tabbar-toggle:active {
+  transform: scale(0.94);
+}
+
+.wb-tabbar-toggle[data-active] {
+  color: var(--fg);
+}
+
 /* Tabs are floating pill chips: inactive ones are quiet, the active one is a
  * filled, fully-rounded chip that reads as the selection. */
 .wb-tab {
   position: relative;
+  flex: none;
   display: flex;
   align-items: center;
   gap: 7px;

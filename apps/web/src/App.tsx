@@ -82,6 +82,34 @@ function useChromeSlotElement(slot: ChromeSlot | undefined): HTMLElement | null 
   );
 }
 
+/** The file-tree toggle, rendered as a real trailing action in the rightmost
+ *  tab bar (not a window overlay), reflecting + flipping the session's tree. */
+function FileTreeToggle({ runtime }: { readonly runtime: AppRuntime }) {
+  const visible = useSyncExternalStore(
+    useCallback((cb: () => void) => runtime.subscribeWorkbench(cb), [runtime]),
+    useCallback(() => runtime.isFileTreeVisible(), [runtime]),
+  );
+  return (
+    <button
+      type="button"
+      className="wb-tabbar-toggle"
+      data-active={visible ? "" : undefined}
+      onClick={() =>
+        void Effect.runPromise(
+          runtime.commands.execute("files.toggleTree").pipe(Effect.catchAll(() => Effect.void)),
+        )
+      }
+      title="Toggle File Tree"
+      aria-label="Toggle File Tree"
+    >
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <rect x="1.85" y="2.85" width="12.3" height="10.3" rx="2.4" stroke="currentColor" strokeWidth="1.3" />
+        <line x1="9.85" y1="3.1" x2="9.85" y2="12.9" stroke="currentColor" strokeWidth="1.3" />
+      </svg>
+    </button>
+  );
+}
+
 export function App() {
   // The shell (shared theme + appearance) and the workspace sessions are
   // external resources, so the owning effect creates AND disposes them: under
@@ -379,7 +407,6 @@ export function App() {
   const diagnosticDocId =
     head !== undefined ? (activeRuntime.focusedPaneHost()?.resolveSource(head)?.docId ?? null) : null;
   const diagnostics = diagnosticDocId !== null ? activeRuntime.diagnosticsFor(diagnosticDocId) : null;
-  const fileTreeVisible = activeRuntime.isFileTreeVisible();
 
   return (
     <div
@@ -401,23 +428,6 @@ export function App() {
           <line x1="6.15" y1="3.1" x2="6.15" y2="12.9" stroke="currentColor" strokeWidth="1.3" />
         </svg>
       </button>
-      <button
-        type="button"
-        className="sidebar-toggle sidebar-toggle--right"
-        data-active={fileTreeVisible ? "" : undefined}
-        onClick={() =>
-          void Effect.runPromise(
-            activeRuntime.commands.execute("files.toggleTree").pipe(Effect.catchAll(() => Effect.void)),
-          )
-        }
-        title="Toggle File Tree"
-        aria-label="Toggle File Tree"
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <rect x="1.85" y="2.85" width="12.3" height="10.3" rx="2.4" stroke="currentColor" strokeWidth="1.3" />
-          <line x1="9.85" y1="3.1" x2="9.85" y2="12.9" stroke="currentColor" strokeWidth="1.3" />
-        </svg>
-      </button>
       {viewportEl !== null &&
         createPortal(
           sessions.map((session) => (
@@ -426,6 +436,7 @@ export function App() {
               runtime={session.runtime}
               active={session.id === activeId}
               firstTabInset={sidebarVisible ? 0 : isMacDesktop ? 120 : 40}
+              trailingAction={<FileTreeToggle runtime={session.runtime} />}
               {...(session.id === activeId ? { onActiveSnapshot: handleActiveSnapshot } : {})}
             />
           )),

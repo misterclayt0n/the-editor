@@ -1235,8 +1235,11 @@ export class AppRuntime {
         .updateArrangement((a) => {
           if (a.tiles === null) return { ...a, tiles: makeStack([pane.panelId]) };
           if (stack !== undefined) return placeInStack(a, stack.id, pane.panelId);
-          // No editor stack anywhere (only custom panels): dock one.
-          return dockEdge(a, pane.panelId, "right", { ratio: 0.78 });
+          // No editor stack: dock one as the main area on the side opposite the
+          // file-tree sidebar, so the sidebar keeps its place instead of being
+          // squished to a sliver on the wrong side.
+          const editorEdge = this.fileTreeRegion === "left-sidebar" ? "right" : "left";
+          return dockEdge(a, pane.panelId, editorEdge, { ratio: 0.8 });
         })
         .pipe(Effect.orDie),
     );
@@ -1437,7 +1440,9 @@ export class AppRuntime {
           if (withoutPanel.tiles === null) return { ...withoutPanel, tiles: makeStack([panelId]) };
           const stack = chooseStack(withoutPanel);
           if (stack !== undefined) return placeInStack(withoutPanel, stack.id, panelId);
-          return dockEdge(withoutPanel, panelId, "right", { ratio: 0.78 });
+          return dockEdge(withoutPanel, panelId, this.fileTreeRegion === "left-sidebar" ? "right" : "left", {
+            ratio: 0.8,
+          });
         })
         .pipe(Effect.orDie),
     );

@@ -5,6 +5,11 @@ int factorial(int x) {
     return factorial(x - 1);
 }
 
+int add(int x, int y) {
+    printf("hello world");
+    return x + y;
+}
+
 int main() {
     int r = factorial(10);
     printf("hello world");

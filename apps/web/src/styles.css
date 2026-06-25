@@ -598,13 +598,18 @@ body {
   --trees-selected-bg-override: color-mix(in srgb, var(--accent) 18%, var(--chrome));
 }
 
-/* The activity bar: a thin strip of icon buttons. */
+/* The activity bar: a strip of icon buttons. Its height matches the editor tab
+ * strip (40px) so the file-tree toggle sits identically whether it lives in this
+ * rail or an editor pane — no shift on toggle/untoggle. */
 .wb-pane--rail .wb-tabbar {
-  height: 38px;
-  gap: 2px;
-  padding: 0 6px;
+  height: 40px;
   background: var(--chrome);
   box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.wb-pane--rail .wb-tabbar-scroll {
+  gap: 2px;
+  padding: 0 6px;
 }
 
 /* Each tab is a square icon button; its label and close are hidden (toggle
@@ -638,12 +643,12 @@ body {
 
 /* Active view: brightened icon + an accent underline, never the editor pill.
  * The doubled .wb-pane class outranks the focused-tab pill rule below. */
-.wb-pane.wb-pane--rail > .wb-tabbar > .wb-tab--active {
+.wb-pane.wb-pane--rail > .wb-tabbar > .wb-tabbar-scroll > .wb-tab--active {
   background: transparent;
   color: var(--fg);
 }
 
-.wb-pane.wb-pane--rail > .wb-tabbar > .wb-tab--active::after {
+.wb-pane.wb-pane--rail > .wb-tabbar > .wb-tabbar-scroll > .wb-tab--active::after {
   content: "";
   position: absolute;
   left: 6px;
@@ -654,23 +659,35 @@ body {
   background: var(--accent);
 }
 
+/* The tab strip: a fixed-height bar holding the (optional) traffic-light reserve,
+ * the scrolling tab list, and the (optional) trailing action. */
 .wb-tabbar {
   display: flex;
   flex: none;
-  align-items: center;
-  gap: 3px;
+  align-items: stretch;
   height: 40px;
-  padding: 0 8px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
   background: var(--bg-editor);
   /* Faint separator so the tab strip reads as the card's header band. */
   box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--border) 70%, transparent);
   user-select: none;
 }
 
-.wb-tabbar::-webkit-scrollbar {
+/* The scrolling tab list — fills the bar between the leading reserve and the
+ * trailing action, so tabs clip at ITS edges and never slide under either. */
+.wb-tabbar-scroll {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  align-items: center;
+  gap: 3px;
+  padding: 0 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  background: inherit;
+}
+
+.wb-tabbar-scroll::-webkit-scrollbar {
   display: none;
 }
 
@@ -687,21 +704,15 @@ body {
   -webkit-app-region: drag;
 }
 
-/* Trailing action slot at the right end of the top-right tab strip: a REAL,
- * space-reserving element (not an overlay). Sticky so it stays at the right
- * edge while tabs scroll under it; opaque so nothing shows through. */
+/* Trailing action slot (the file-tree toggle): a REAL, space-reserving sibling of
+ * the scroll list — NOT inside it — so the scrolling tabs can never slide under or
+ * over it. */
 .wb-tabbar-end {
-  position: sticky;
-  right: 0;
   flex: none;
-  margin-left: auto;
   display: flex;
   align-items: center;
-  align-self: stretch;
   padding-left: 4px;
   padding-right: 6px;
-  background: inherit;
-  z-index: 1;
 }
 
 /* The file-tree toggle living in that slot. */
@@ -768,7 +779,7 @@ body {
  * color — not a card border — is how focus reads. Child combinators keep it to
  * the pane's OWN strip: an ancestor chrome pane (the focused viewport) must not
  * tint the session tabs nested inside it. */
-.wb-pane--focused > .wb-tabbar > .wb-tab--active {
+.wb-pane--focused > .wb-tabbar > .wb-tabbar-scroll > .wb-tab--active {
   background: color-mix(in srgb, var(--accent) 26%, var(--bg-editor));
   border-color: color-mix(in srgb, var(--accent) 52%, transparent);
   color: var(--fg);

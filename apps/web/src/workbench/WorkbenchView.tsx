@@ -124,11 +124,15 @@ function firstStackId(tile: Tile | null): SlotId | undefined {
   return node !== null && node.kind === "stack" ? node.id : undefined;
 }
 
-/** The top-right stack: follow the last child down the split tree. Its tab
- *  strip is the one under the file-tree toggle at the window's top-right. */
+/** The top-right stack: descend the rightmost-then-topmost branch — last child of
+ *  a row split, first child of a column split — so it lands in the corner under the
+ *  file-tree toggle, not a bottom pane of a vertical split. */
 function lastStackId(tile: Tile | null): SlotId | undefined {
   let node = tile;
-  while (node !== null && node.kind === "split") node = node.children[node.children.length - 1]?.tile ?? null;
+  while (node !== null && node.kind === "split") {
+    const child = node.direction === "row" ? node.children[node.children.length - 1] : node.children[0];
+    node = child?.tile ?? null;
+  }
   return node !== null && node.kind === "stack" ? node.id : undefined;
 }
 
@@ -559,88 +563,87 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
       ? drag.target.index
       : null;
   const tabbarRef = useRef<HTMLDivElement | null>(null);
-  // Follow the active tab: when it changes, scroll the strip so the tab clears
-  // the (sticky) traffic-light reserve on the left and the right edge.
+  // Follow the active tab: when it changes, scroll the tab list so the tab clears
+  // the (sticky) traffic-light reserve on the left and the visible right edge. The
+  // trailing toggle lives OUTSIDE this scroller, so its own right edge is the bound.
   useLayoutEffect(() => {
     const bar = tabbarRef.current;
     if (bar === null) return;
     const active = bar.querySelector<HTMLElement>(".wb-tab--active");
     if (active === null) return;
     const leftReserve = bar.querySelector<HTMLElement>(".wb-tabbar-inset")?.offsetWidth ?? 0;
-    const rightReserve = bar.querySelector<HTMLElement>(".wb-tabbar-end")?.offsetWidth ?? 0;
     const barRect = bar.getBoundingClientRect();
     const tabRect = active.getBoundingClientRect();
     const visibleLeft = barRect.left + leftReserve;
-    const visibleRight = barRect.right - rightReserve;
     if (tabRect.left < visibleLeft) bar.scrollLeft -= visibleLeft - tabRect.left;
-    else if (tabRect.right > visibleRight) bar.scrollLeft += tabRect.right - visibleRight;
+    else if (tabRect.right > barRect.right) bar.scrollLeft += tabRect.right - barRect.right;
   }, [stack.active, activePanelId]);
 
   return (
     <section className={`wb-pane${focused ? " wb-pane--focused" : ""}${chromeClass ? ` ${chromeClass}` : ""}`}>
       {(stack.panels.length > 1 || stack.tabsHidden !== true) && (
-      <div className="wb-tabbar" data-wb-tabbar data-slot-id={stack.id} ref={tabbarRef}>
-        {tree.firstTabInset && tree.leftStackId === stack.id && (
-          <div className="wb-tabbar-inset" style={{ width: tree.firstTabInset }} aria-hidden="true" />
-        )}
-        {stack.panels.map((panelId, i) => {
-          const tabPane = runtime.pane(panelId);
-          if (tabPane === undefined) {
-            // Non-editor panel: title comes from the renderer registry.
-            const panel = runtime.panelById(panelId);
-            const multiBuffer = runtime.multiBufferPane(panelId);
-            const renderer = panel !== undefined ? runtime.panelRenderers.get(panel.kind) : undefined;
-            const title =
-              multiBuffer !== undefined
-                ? multiBuffer.title
-                : panel !== undefined && renderer !== undefined
-                  ? renderer.title(panel)
-                  : "panel";
-            const icon =
-              multiBuffer !== undefined ? (
-                <SearchIcon className="wb-tab-search-icon" aria-hidden="true" />
-              ) : panel !== undefined && renderer !== undefined ? (
-                renderer.icon?.(panel)
-              ) : null;
+      <div className="wb-tabbar" data-wb-tabbar data-slot-id={stack.id}>
+        <div className="wb-tabbar-scroll" ref={tabbarRef}>
+          {tree.firstTabInset && tree.leftStackId === stack.id && (
+            <div className="wb-tabbar-inset" style={{ width: tree.firstTabInset }} aria-hidden="true" />
+          )}
+          {stack.panels.map((panelId, i) => {
+            const tabPane = runtime.pane(panelId);
+            if (tabPane === undefined) {
+              // Non-editor panel: title comes from the renderer registry.
+              const panel = runtime.panelById(panelId);
+              const multiBuffer = runtime.multiBufferPane(panelId);
+              const renderer = panel !== undefined ? runtime.panelRenderers.get(panel.kind) : undefined;
+              const title =
+                multiBuffer !== undefined
+                  ? multiBuffer.title
+                  : panel !== undefined && renderer !== undefined
+                    ? renderer.title(panel)
+                    : "panel";
+              const icon =
+                multiBuffer !== undefined ? (
+                  <SearchIcon className="wb-tab-search-icon" aria-hidden="true" />
+                ) : panel !== undefined && renderer !== undefined ? (
+                  renderer.icon?.(panel)
+                ) : null;
+              return (
+                <Fragment key={panelId}>
+                  {dropTabIndex === i && <div className="wb-tab-insert" />}
+                  <div
+                    className={`wb-tab${i === stack.active ? " wb-tab--active" : ""}`}
+                    onPointerDown={(event) => tree.beginTabDrag(event, panelId, stack.id, title)}
+                  >
+                    {icon}
+                    <span className="wb-tab-name">{title}</span>
+                    <button
+                      type="button"
+                      className="wb-tab-close"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        runtime.closeTab(panelId);
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                </Fragment>
+              );
+            }
             return (
               <Fragment key={panelId}>
                 {dropTabIndex === i && <div className="wb-tab-insert" />}
-                <div
-                  className={`wb-tab${i === stack.active ? " wb-tab--active" : ""}`}
-                  onPointerDown={(event) => tree.beginTabDrag(event, panelId, stack.id, title)}
-                >
-                  {icon}
-                  <span className="wb-tab-name">{title}</span>
-                  <button
-                    type="button"
-                    className="wb-tab-close"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      runtime.closeTab(panelId);
-                    }}
-                  >
-                    ×
-                  </button>
-                </div>
+                <Tab
+                  pane={tabPane}
+                  active={i === stack.active}
+                  dragging={drag?.panelId === panelId}
+                  onPointerDown={(event, title) => tree.beginTabDrag(event, panelId, stack.id, title)}
+                  onClose={() => runtime.closeTab(panelId)}
+                />
               </Fragment>
             );
-          }
-          return (
-            <Fragment key={panelId}>
-              {dropTabIndex === i && <div className="wb-tab-insert" />}
-              <Tab
-                pane={tabPane}
-                active={i === stack.active}
-                dragging={drag?.panelId === panelId}
-                onPointerDown={(event, title) =>
-                  tree.beginTabDrag(event, panelId, stack.id, title)
-                }
-                onClose={() => runtime.closeTab(panelId)}
-              />
-            </Fragment>
-          );
-        })}
-        {dropTabIndex === stack.panels.length && <div className="wb-tab-insert" />}
+          })}
+          {dropTabIndex === stack.panels.length && <div className="wb-tab-insert" />}
+        </div>
         {tree.trailingAction !== undefined && tree.rightStackId === stack.id && (
           <div className="wb-tabbar-end">{tree.trailingAction}</div>
         )}

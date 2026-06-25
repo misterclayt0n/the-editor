@@ -563,19 +563,17 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
       ? drag.target.index
       : null;
   const tabbarRef = useRef<HTMLDivElement | null>(null);
-  // Follow the active tab: when it changes, scroll the tab list so the tab clears
-  // the (sticky) traffic-light reserve on the left and the visible right edge. The
-  // trailing toggle lives OUTSIDE this scroller, so its own right edge is the bound.
+  // Follow the active tab: when it changes, scroll the tab list so the active tab
+  // is fully visible. Both the traffic-light reserve and the trailing toggle live
+  // OUTSIDE this scroller, so the scroller's own edges are the visible bounds.
   useLayoutEffect(() => {
     const bar = tabbarRef.current;
     if (bar === null) return;
     const active = bar.querySelector<HTMLElement>(".wb-tab--active");
     if (active === null) return;
-    const leftReserve = bar.querySelector<HTMLElement>(".wb-tabbar-inset")?.offsetWidth ?? 0;
     const barRect = bar.getBoundingClientRect();
     const tabRect = active.getBoundingClientRect();
-    const visibleLeft = barRect.left + leftReserve;
-    if (tabRect.left < visibleLeft) bar.scrollLeft -= visibleLeft - tabRect.left;
+    if (tabRect.left < barRect.left) bar.scrollLeft -= barRect.left - tabRect.left;
     else if (tabRect.right > barRect.right) bar.scrollLeft += tabRect.right - barRect.right;
   }, [stack.active, activePanelId]);
 
@@ -583,10 +581,10 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
     <section className={`wb-pane${focused ? " wb-pane--focused" : ""}${chromeClass ? ` ${chromeClass}` : ""}`}>
       {(stack.panels.length > 1 || stack.tabsHidden !== true) && (
       <div className="wb-tabbar" data-wb-tabbar data-slot-id={stack.id}>
+        {tree.firstTabInset && tree.leftStackId === stack.id && (
+          <div className="wb-tabbar-inset" style={{ width: tree.firstTabInset }} aria-hidden="true" />
+        )}
         <div className="wb-tabbar-scroll" ref={tabbarRef}>
-          {tree.firstTabInset && tree.leftStackId === stack.id && (
-            <div className="wb-tabbar-inset" style={{ width: tree.firstTabInset }} aria-hidden="true" />
-          )}
           {stack.panels.map((panelId, i) => {
             const tabPane = runtime.pane(panelId);
             if (tabPane === undefined) {

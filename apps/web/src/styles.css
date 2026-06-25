@@ -691,16 +691,12 @@ body {
   display: none;
 }
 
-/* Traffic-light reserve at the start of the top-left strip. Sticky so it pins
- * left while tabs scroll — tabs slide UNDER it (opaque), never over the window
- * controls. Draggable to move the window (Electron). */
+/* Leading reserve for the window controls (traffic lights + sidebar toggle) on
+ * the top-left strip: a REAL, space-reserving sibling of the scroll list — NOT
+ * inside it — so tabs clip before it and never slide under the window controls.
+ * Draggable to move the window (Electron). */
 .wb-tabbar-inset {
-  position: sticky;
-  left: 0;
   flex: none;
-  align-self: stretch;
-  background: inherit;
-  z-index: 1;
   -webkit-app-region: drag;
 }
 

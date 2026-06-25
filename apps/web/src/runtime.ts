@@ -45,12 +45,14 @@ import {
   placeInStack,
   registerSurfaceFallback,
   removePanel,
+  regionStack,
   slotOfPanel,
   splitBeside,
   toggleStackTabs,
   Workbench,
   type Arrangement,
   type Panel,
+  type RegionSnapshot,
   type SurfaceKind,
   type PanelId,
   type SlotId,
@@ -121,6 +123,7 @@ import { wordCompletions } from "./product/wordCompletions";
 import { makePanelRenderers, PanelRenderers } from "./workbench/panelRenderers";
 import { fileTreePackage, FileTreeSurface, HostFileTree } from "./product/fileTree";
 import { createFileTreeRenderer } from "./filetree/mount";
+import * as Regions from "./workbench/regions";
 import {
   diffViewPackage,
   DiffViewPreferences,
@@ -383,6 +386,12 @@ export class AppRuntime {
    *  released from the toggle (Zed: a terminal dragged out of the dock is no
    *  longer "the dock terminal"; the next toggle creates a fresh one). */
   private readonly dockedPanels = new Map<SurfaceKind, PanelId>();
+  /** Stashed layouts of collapsed dock regions, keyed by region id, so toggling
+   *  a sidebar restores its exact tabs/active/width (see workbench/regions). */
+  private readonly collapsedRegions = new Map<string, RegionSnapshot>();
+  /** Which sidebar the file tree currently docks into (left/right). Explicit so
+   *  toggle/move never have to rediscover it from the live or stashed layout. */
+  private fileTreeRegion: "left-sidebar" | "right-sidebar" = "right-sidebar";
   /**
    * How to focus each live panel's surface, registered by its renderer (the
    * editor focuses its `.editor`; the terminal calls `term.focus()`; the file
@@ -453,13 +462,8 @@ export class AppRuntime {
               icon: (panel) => createFileTreeRenderer(instance).icon?.(panel),
               mount: (element, panel) => createFileTreeRenderer(instance).mount(element, panel),
             },
-            toggle: () =>
-              instance.togglePanel(FileTreeSurface, {
-                dock: "right",
-                region: "right-sidebar",
-                className: "wb-pane--rightbar",
-                ratio: 0.2,
-              }),
+            toggle: () => instance.toggleFileTree(),
+            moveSide: () => instance.moveFileTreeSide(),
           }),
           Layer.succeed(HostTerminal, {
             renderer: {
@@ -903,10 +907,44 @@ export class AppRuntime {
     this.focusSlotOfPanel(panel.id);
   }
 
-  /** Whether a docked singleton panel of `kind` is currently placed (visible). */
-  isPanelDocked(kind: SurfaceKind): boolean {
-    const id = this.dockedPanels.get(kind);
-    return id !== undefined && slotOfPanel(Effect.runSync(this.workbench.arrangement), id) !== undefined;
+  /** Whether the file tree's sidebar region is showing (drives the toggle
+   *  button's active state). */
+  isFileTreeVisible(): boolean {
+    return Regions.isRegionVisible(this.workbench, this.fileTreeRegion);
+  }
+
+  /** Show/hide the file tree's whole sidebar region (every tab, its width). The
+   *  first use seeds the file tree; thereafter the layout round-trips through
+   *  collapse/restore. */
+  toggleFileTree(): void {
+    if (Regions.toggleRegion(this.workbench, this.collapsedRegions, this.fileTreeRegion) === "empty") {
+      this.dockFileTreeInto(this.fileTreeRegion);
+      return;
+    }
+    const stack = regionStack(Effect.runSync(this.workbench.arrangement), this.fileTreeRegion);
+    const active = stack?.panels[stack.active];
+    if (active !== undefined) this.focusSlotOfPanel(active);
+  }
+
+  /** Move the file tree to the opposite sidebar (left <-> right). */
+  moveFileTreeSide(): void {
+    this.dockFileTreeInto(this.fileTreeRegion === "left-sidebar" ? "right-sidebar" : "left-sidebar");
+  }
+
+  /** Dock the file tree (creating it once) into a sidebar region and remember
+   *  that side. `moveToRegion` keeps it atomic — no region is left both live and
+   *  stashed, and each side's other tabs survive the move. */
+  private dockFileTreeInto(region: "left-sidebar" | "right-sidebar"): void {
+    const existing = this.dockedPanels.get(FileTreeSurface);
+    const id = existing ?? Effect.runSync(this.workbench.createPanel({ kind: FileTreeSurface })).id;
+    this.dockedPanels.set(FileTreeSurface, id);
+    Regions.moveToRegion(this.workbench, this.collapsedRegions, id, this.fileTreeRegion, region, {
+      edge: region === "left-sidebar" ? "left" : "right",
+      className: "wb-pane--rail",
+      ratio: 0.2,
+    });
+    this.fileTreeRegion = region;
+    this.focusSlotOfPanel(id);
   }
 
   /** Drop the dock association for a panel that was moved or closed, so the

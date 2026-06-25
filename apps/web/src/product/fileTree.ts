@@ -20,6 +20,7 @@ export class HostFileTree extends Context.Tag("the-editor/web/HostFileTree")<
   {
     readonly renderer: PanelRenderer;
     readonly toggle: () => void;
+    readonly moveSide: () => void;
   }
 >() {}
 
@@ -37,6 +38,12 @@ export const fileTreePackage = definePackage("the-editor/file-tree", () =>
       scope: SurfaceScope.global,
       palette: { group: "File", aliases: ["tree", "explorer"] },
       run: () => Effect.sync(() => host.toggle()),
+    });
+    yield* commands.register("files.moveTreeSide", {
+      title: "Move File Tree to Other Side",
+      scope: SurfaceScope.global,
+      palette: { group: "View", aliases: ["sidebar", "left", "right", "dock"] },
+      run: () => Effect.sync(() => host.moveSide()),
     });
     yield* keymaps.registerAll([
       { keys: "meta+b", command: "files.toggleTree", scope: SurfaceScope.global },

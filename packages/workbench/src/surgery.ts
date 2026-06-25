@@ -8,7 +8,7 @@
  * boundary does.
  */
 
-import type { Arrangement, Overlay, Stack, SplitDirection, Tile } from "./arrangement.js";
+import type { Arrangement, DockEdge, Overlay, Stack, SplitDirection, Tile } from "./arrangement.js";
 import { SlotNotFoundError } from "./errors.js";
 import { SlotId, type PanelId, type SlotId as SlotIdType } from "./ids.js";
 
@@ -63,16 +63,15 @@ export function placeInStack(
   };
 }
 
-/** Dock a new singleton stack at an edge of the whole tiled area. */
-export function dockEdge(
+/** Split the root in two, placing `stack` as a new pane at `edge`; `ratio` is
+ *  its share of the new split, the existing tiles take the rest. */
+function attachStackAtEdge(
   arrangement: Arrangement,
-  panelId: PanelId,
-  edge: "left" | "right" | "top" | "bottom",
-  options?: { readonly ratio?: number },
+  stack: Stack,
+  edge: DockEdge,
+  ratio: number,
 ): Arrangement {
-  const stack = makeStack([panelId]);
   if (arrangement.tiles === null) return { ...arrangement, tiles: stack };
-  const ratio = options?.ratio ?? 0.5;
   const direction: SplitDirection = edge === "left" || edge === "right" ? "row" : "column";
   const first = edge === "left" || edge === "top";
   const children = first
@@ -87,13 +86,38 @@ export function dockEdge(
   return { ...arrangement, tiles: { kind: "split", direction, children } };
 }
 
-/** Find the stack tagged with a region id (depth-first), if any. */
-function findRegionStack(tile: Tile | null, region: string): Stack | undefined {
-  if (tile === null) return undefined;
-  if (tile.kind === "stack") return tile.region === region ? tile : undefined;
-  for (const child of tile.children) {
-    const found = findRegionStack(child.tile, region);
-    if (found !== undefined) return found;
+/** Dock a new singleton stack at an edge of the whole tiled area. */
+export function dockEdge(
+  arrangement: Arrangement,
+  panelId: PanelId,
+  edge: DockEdge,
+  options?: { readonly ratio?: number },
+): Arrangement {
+  return attachStackAtEdge(arrangement, makeStack([panelId]), edge, options?.ratio ?? 0.5);
+}
+
+/** Find a region's stack plus its parent-split share and the edge it sits on,
+ *  so a collapse can be restored to the same place/width. Depth-first. */
+function findRegion(
+  tile: Tile | null,
+  region: string,
+): { readonly stack: Stack; readonly ratio: number; readonly edge: DockEdge } | undefined {
+  if (tile === null || tile.kind === "stack") {
+    return tile?.kind === "stack" && tile.region === region
+      ? { stack: tile, ratio: 1, edge: "left" }
+      : undefined;
+  }
+  const total = tile.children.reduce((sum, child) => sum + child.weight, 0);
+  for (let i = 0; i < tile.children.length; i++) {
+    const child = tile.children[i]!;
+    if (child.tile.kind === "stack" && child.tile.region === region) {
+      const last = i === tile.children.length - 1;
+      const edge: DockEdge =
+        tile.direction === "row" ? (last ? "right" : "left") : last ? "bottom" : "top";
+      return { stack: child.tile, ratio: total > 0 ? child.weight / total : 0.2, edge };
+    }
+    const nested = findRegion(child.tile, region);
+    if (nested !== undefined) return nested;
   }
   return undefined;
 }
@@ -109,14 +133,14 @@ export function dockIntoRegion(
   panelId: PanelId,
   options: {
     readonly region: string;
-    readonly edge: "left" | "right" | "top" | "bottom";
+    readonly edge: DockEdge;
     readonly className?: string;
     readonly tabsHidden?: boolean;
     readonly ratio?: number;
   },
 ): Arrangement {
-  const existing = findRegionStack(arrangement.tiles, options.region);
-  if (existing !== undefined) return placeInStack(arrangement, existing.id, panelId);
+  const existing = findRegion(arrangement.tiles, options.region);
+  if (existing !== undefined) return placeInStack(arrangement, existing.stack.id, panelId);
   const stack: Stack = {
     kind: "stack",
     id: freshSlotId(),
@@ -126,20 +150,7 @@ export function dockIntoRegion(
     ...(options.className !== undefined ? { className: options.className } : {}),
     ...(options.tabsHidden !== undefined ? { tabsHidden: options.tabsHidden } : {}),
   };
-  if (arrangement.tiles === null) return { ...arrangement, tiles: stack };
-  const ratio = options.ratio ?? 0.2;
-  const direction: SplitDirection = options.edge === "left" || options.edge === "right" ? "row" : "column";
-  const first = options.edge === "left" || options.edge === "top";
-  const children = first
-    ? [
-        { tile: stack as Tile, weight: ratio },
-        { tile: arrangement.tiles, weight: 1 - ratio },
-      ]
-    : [
-        { tile: arrangement.tiles, weight: 1 - ratio },
-        { tile: stack as Tile, weight: ratio },
-      ];
-  return { ...arrangement, tiles: { kind: "split", direction, children } };
+  return attachStackAtEdge(arrangement, stack, options.edge, options.ratio ?? 0.2);
 }
 
 /** Split a stack in two: the target keeps its place, the new panel gets a sibling stack. */
@@ -257,4 +268,44 @@ export function removeSlot(arrangement: Arrangement, slotId: SlotIdType): Arrang
           ),
     overlays: arrangement.overlays.filter((overlay) => overlay.id !== slotId),
   };
+}
+
+/** The visible stack of a region, if it is currently laid out. */
+export function regionStack(arrangement: Arrangement, region: string): Stack | undefined {
+  return findRegion(arrangement.tiles, region)?.stack;
+}
+
+/** A collapsed region's full layout — enough to restore it byte-for-byte. */
+export type RegionSnapshot = {
+  readonly stack: Stack;
+  readonly ratio: number;
+  readonly edge: DockEdge;
+};
+
+/** Collapse a whole dock region: remove its stack and return it (with its split
+ *  share and edge) so {@link restoreRegion} can bring the exact layout back. The
+ *  panels stay alive in the pool — only the placement is dropped. */
+export function collapseRegion(
+  arrangement: Arrangement,
+  region: string,
+): { readonly arrangement: Arrangement; readonly snapshot: RegionSnapshot } | undefined {
+  const found = findRegion(arrangement.tiles, region);
+  if (found === undefined) return undefined;
+  return {
+    arrangement: removeSlot(arrangement, found.stack.id),
+    snapshot: { stack: found.stack, ratio: found.ratio, edge: found.edge },
+  };
+}
+
+/** Re-dock a previously collapsed region, dropping any panels that died while it
+ *  was hidden. A no-op (returns the input) when nothing remains to show. */
+export function restoreRegion(
+  arrangement: Arrangement,
+  snapshot: RegionSnapshot,
+  livePanels: ReadonlySet<PanelId>,
+): Arrangement {
+  const panels = snapshot.stack.panels.filter((id) => livePanels.has(id));
+  if (panels.length === 0) return arrangement;
+  const active = Math.min(snapshot.stack.active, panels.length - 1);
+  return attachStackAtEdge(arrangement, { ...snapshot.stack, panels, active }, snapshot.edge, snapshot.ratio);
 }

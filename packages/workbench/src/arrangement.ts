@@ -19,13 +19,17 @@ import {
 
 export type SplitDirection = "row" | "column";
 
+/** The four edges a stack can dock against. */
+export type DockEdge = "left" | "right" | "top" | "bottom";
+
 export type Stack = {
   readonly kind: "stack";
   readonly id: SlotId;
   readonly panels: ReadonlyArray<PanelId>;
   readonly active: number;
-  /** Chrome only: hide this stack's tab strip (e.g. a single-panel file tree).
-   * Layout-truth, so it persists and rides through surgery; absent = shown. */
+  /** Chrome only: keep this stack's tab strip hidden while it holds a single
+   * panel (e.g. a lone file tree or the session list). The strip reappears the
+   * moment a second panel tabs in. Layout-truth: persists through surgery. */
   readonly tabsHidden?: boolean;
   /** Dock-region id: a stable marker so a panel docked "into the right sidebar"
    * joins THIS stack instead of spawning a new one. Survives surgery. */

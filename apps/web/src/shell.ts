@@ -26,11 +26,11 @@ import {
   dockEdge,
   dockIntoRegion,
   makeWorkbench,
-  removePanel,
   slotOfPanel,
   SurfaceKind,
   toggleStackTabs,
   type PanelId,
+  type RegionSnapshot,
   type Workbench,
 } from "@the-editor/workbench";
 import { applyThemeToDocument } from "./theme/dom";
@@ -40,6 +40,7 @@ import { makePanelRenderers, type PanelRenderer } from "./workbench/panelRendere
 import { ChromeSlot, ShellWorkbenchHost } from "./workbench/shellHost";
 import { SessionStore } from "./sessionStore";
 import { createSessionSidebarRenderer } from "./ui/SessionSidebar";
+import * as Regions from "./workbench/regions";
 
 /** The shell chrome's two panel kinds: the session sidebar and the viewport
  *  that hosts the active session's workbench. */
@@ -70,8 +71,9 @@ export class Shell {
    *  focusActivePanel delegates here and a sidebar click keeps the editor hot. */
   onFocusActiveSession?: () => void;
 
-  /** Remembered sidebar width fraction, so re-showing restores the user's size. */
-  private sidebarRatio = 0.18;
+  /** Stashed layout of the collapsed session sidebar (region "left-sidebar"), so
+   *  re-showing restores its width and any panels tabbed beside the session list. */
+  private readonly collapsedRegions = new Map<string, RegionSnapshot>();
 
   private constructor(
     private readonly packages: PackageRuntime,
@@ -95,39 +97,27 @@ export class Shell {
 
   /** Whether the session sidebar is currently placed in the chrome layout. */
   isSidebarVisible(): boolean {
-    return (
-      slotOfPanel(Effect.runSync(this.chromeWorkbench.arrangement), this.sidebarPanelId) !== undefined
-    );
+    return Regions.isRegionVisible(this.chromeWorkbench, "left-sidebar");
   }
 
-  /** Show/hide the session sidebar (Zed dock model): hiding remembers its width,
-   *  showing restores it. The panel stays alive either way. */
+  /** Show/hide the session sidebar (Zed dock model): hiding stashes its full
+   *  layout, showing restores it. The panels stay alive either way. */
   toggleSidebar(): void {
-    Effect.runSync(
-      this.chromeWorkbench
-        .updateArrangement((a) => {
-          const slot = slotOfPanel(a, this.sidebarPanelId);
-          if (slot !== undefined) {
-            const tiles = a.tiles;
-            if (tiles !== null && tiles.kind === "split") {
-              const total = tiles.children.reduce((sum, child) => sum + child.weight, 0);
-              const child = tiles.children.find(
-                (c) => c.tile.kind === "stack" && c.tile.id === slot,
-              );
-              if (child !== undefined && total > 0) this.sidebarRatio = child.weight / total;
-            }
-            return removePanel(a, this.sidebarPanelId);
-          }
-          return dockIntoRegion(a, this.sidebarPanelId, {
-            region: "left-sidebar",
-            edge: "left",
-            className: "wb-pane--sidebar",
-            tabsHidden: true,
-            ratio: this.sidebarRatio,
-          });
-        })
-        .pipe(Effect.orDie),
-    );
+    if (Regions.toggleRegion(this.chromeWorkbench, this.collapsedRegions, "left-sidebar") === "empty") {
+      Effect.runSync(
+        this.chromeWorkbench
+          .updateArrangement((a) =>
+            dockIntoRegion(a, this.sidebarPanelId, {
+              region: "left-sidebar",
+              edge: "left",
+              className: "wb-pane--sidebar",
+              tabsHidden: true,
+              ratio: 0.18,
+            }),
+          )
+          .pipe(Effect.orDie),
+      );
+    }
   }
 
   static boot(): Shell {

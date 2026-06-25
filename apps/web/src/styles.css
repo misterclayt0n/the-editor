@@ -591,27 +591,27 @@ body {
   display: flex;
 }
 
-/* Right sidebar region: a chrome tool-panel (matches the left sidebar's shell
- * color) whose tab strip reads as an ACTIVITY BAR — icon-only buttons with an
- * active underline, not editor tabs. Docked panels (file tree, …) tab here. */
-.wb-pane--rightbar {
+/* Sidebar rail region (left or right): a chrome tool-panel (shell color) whose
+ * tab strip reads as an ACTIVITY BAR — icon-only buttons with an active
+ * underline, not editor tabs. Docked panels (file tree, …) tab here. */
+.wb-pane--rail {
   background: var(--chrome);
 }
 
-.wb-pane--rightbar .wb-custom-panel {
+.wb-pane--rail .wb-custom-panel {
   background: transparent;
 }
 
-/* Theme the tree to the rail color (not the lighter editor bg) so the right
- * sidebar reads as one surface, like the left session sidebar. */
-.wb-pane--rightbar .file-tree-host {
+/* Theme the tree to the rail color (not the lighter editor bg) so the rail
+ * reads as one surface, like the session sidebar. */
+.wb-pane--rail .file-tree-host {
   --trees-bg-override: var(--chrome);
   --trees-bg-muted-override: color-mix(in srgb, var(--fg) 7%, var(--chrome));
   --trees-selected-bg-override: color-mix(in srgb, var(--accent) 18%, var(--chrome));
 }
 
 /* The activity bar: a thin strip of icon buttons. */
-.wb-pane--rightbar .wb-tabbar {
+.wb-pane--rail .wb-tabbar {
   height: 38px;
   gap: 2px;
   padding: 0 6px;
@@ -621,7 +621,7 @@ body {
 
 /* Each tab is a square icon button; its label and close are hidden (toggle
  * the panel with its command instead). */
-.wb-pane--rightbar .wb-tab {
+.wb-pane--rail .wb-tab {
   position: relative;
   width: 30px;
   height: 30px;
@@ -633,29 +633,29 @@ body {
   color: var(--fg-dim);
 }
 
-.wb-pane--rightbar .wb-tab:hover {
+.wb-pane--rail .wb-tab:hover {
   background: color-mix(in srgb, var(--fg) 8%, transparent);
   color: var(--fg);
 }
 
-.wb-pane--rightbar .wb-tab-name,
-.wb-pane--rightbar .wb-tab-close {
+.wb-pane--rail .wb-tab-name,
+.wb-pane--rail .wb-tab-close {
   display: none;
 }
 
-.wb-pane--rightbar .wb-tab-renderer-icon {
+.wb-pane--rail .wb-tab-renderer-icon {
   width: 16px;
   height: 16px;
 }
 
 /* Active view: brightened icon + an accent underline, never the editor pill.
  * The doubled .wb-pane class outranks the focused-tab pill rule below. */
-.wb-pane.wb-pane--rightbar > .wb-tabbar > .wb-tab--active {
+.wb-pane.wb-pane--rail > .wb-tabbar > .wb-tab--active {
   background: transparent;
   color: var(--fg);
 }
 
-.wb-pane.wb-pane--rightbar > .wb-tabbar > .wb-tab--active::after {
+.wb-pane.wb-pane--rail > .wb-tabbar > .wb-tab--active::after {
   content: "";
   position: absolute;
   left: 6px;

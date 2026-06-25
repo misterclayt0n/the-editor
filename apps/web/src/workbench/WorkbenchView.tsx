@@ -544,7 +544,7 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
 
   return (
     <section className={`wb-pane${focused ? " wb-pane--focused" : ""}${chromeClass ? ` ${chromeClass}` : ""}`}>
-      {stack.tabsHidden !== true && (
+      {(stack.panels.length > 1 || stack.tabsHidden !== true) && (
       <div
         className="wb-tabbar"
         data-wb-tabbar

@@ -9,7 +9,6 @@ import { Shell } from "./shell";
 import { WorkbenchView } from "./workbench/WorkbenchView";
 import type { ChromeSlot } from "./workbench/shellHost";
 import { isMacDesktop } from "./platform/desktop";
-import { FileTreeSurface } from "./product/fileTree";
 import { CommandPalette, type CommandPaletteMode } from "./ui/CommandPalette";
 import { FileFinder } from "./ui/FileFinder";
 import { SearchDialog } from "./ui/SearchDialog";
@@ -380,7 +379,7 @@ export function App() {
   const diagnosticDocId =
     head !== undefined ? (activeRuntime.focusedPaneHost()?.resolveSource(head)?.docId ?? null) : null;
   const diagnostics = diagnosticDocId !== null ? activeRuntime.diagnosticsFor(diagnosticDocId) : null;
-  const fileTreeVisible = activeRuntime.isPanelDocked(FileTreeSurface);
+  const fileTreeVisible = activeRuntime.isFileTreeVisible();
 
   return (
     <div

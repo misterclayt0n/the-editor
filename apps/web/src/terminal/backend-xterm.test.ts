@@ -61,11 +61,13 @@ describe("clearTerminalSearch", () => {
           return [staleDecoration];
         },
       } as unknown as HTMLElement,
+      select: (col: number, row: number, length: number) => calls.push(`select:${col}-${row}-${length}`),
       clearSelection: () => calls.push("clearSelection"),
       refresh: (start: number, end: number) => calls.push(`refresh:${start}-${end}`),
     };
     const addons = {
       search: {
+        clearActiveDecoration: () => calls.push("clearActiveDecoration"),
         clearDecorations: () => calls.push("clearDecorations"),
       },
     };
@@ -73,7 +75,9 @@ describe("clearTerminalSearch", () => {
     clearTerminalSearch(term, addons);
 
     expect(calls).toEqual([
+      "clearActiveDecoration",
       "clearDecorations",
+      "select:0-0-0",
       "clearSelection",
       "query:.xterm-find-result-decoration, .xterm-find-active-result-decoration",
       "removeDecoration",
@@ -84,11 +88,13 @@ describe("clearTerminalSearch", () => {
   test("resets the search addon when closing a search session", () => {
     const calls: string[] = [];
     const nextSearch = {
+      clearActiveDecoration: () => calls.push("next.clearActiveDecoration"),
       clearDecorations: () => calls.push("next.clearDecorations"),
       dispose: () => calls.push("next.dispose"),
     } as unknown as SearchAddon;
     const addons = {
       search: {
+        clearActiveDecoration: () => calls.push("current.clearActiveDecoration"),
         clearDecorations: () => calls.push("current.clearDecorations"),
         dispose: () => calls.push("current.dispose"),
       } as unknown as SearchAddon,
@@ -96,6 +102,7 @@ describe("clearTerminalSearch", () => {
     const term = {
       rows: 4,
       element: undefined,
+      select: (col: number, row: number, length: number) => calls.push(`select:${col}-${row}-${length}`),
       clearSelection: () => calls.push("clearSelection"),
       refresh: (start: number, end: number) => calls.push(`refresh:${start}-${end}`),
       loadAddon: (addon: SearchAddon) => calls.push(addon === nextSearch ? "loadNextSearch" : "loadUnknown"),
@@ -105,9 +112,16 @@ describe("clearTerminalSearch", () => {
 
     expect(addons.search).toBe(nextSearch);
     expect(calls).toEqual([
+      "current.clearActiveDecoration",
+      "current.clearDecorations",
+      "select:0-0-0",
+      "clearSelection",
+      "refresh:0-3",
       "current.dispose",
       "loadNextSearch",
+      "next.clearActiveDecoration",
       "next.clearDecorations",
+      "select:0-0-0",
       "clearSelection",
       "refresh:0-3",
     ]);

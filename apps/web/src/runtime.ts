@@ -111,6 +111,7 @@ import {
 } from "./platform/fileFinder";
 import { createProcessPort } from "./platform/process";
 import { createTerminalPort, type TerminalPort } from "./platform/terminal";
+import { createClipboardPort, type ClipboardPort } from "./platform/clipboard";
 import { createSyntaxPort, type HighlightRun, type SyntaxPort } from "./platform/syntax";
 import { DocumentHighlights } from "./editor/highlights";
 import { FloatHub } from "./editor/floats";
@@ -370,6 +371,7 @@ export class AppRuntime {
   private syntaxPort: SyntaxPort | undefined;
   private lsp: LspManager | undefined;
   private terminal: TerminalPort | undefined;
+  private clipboard: ClipboardPort | undefined | null = undefined;
   private fileFinder: FileFinderPort | undefined | null = undefined;
   private diffViewPanelId: PanelId | null = null;
   private pendingRename: { docId: string; offset: number } | null = null;
@@ -1466,6 +1468,12 @@ export class AppRuntime {
   /** The platform PTY transport for the terminal panel (Electron / dev echo). */
   terminalPort(): TerminalPort | undefined {
     return (this.terminal ??= createTerminalPort());
+  }
+
+  /** The native clipboard bridge, falling back to browser clipboard APIs. */
+  clipboardPort(): ClipboardPort | undefined {
+    if (this.clipboard === undefined) this.clipboard = createClipboardPort() ?? null;
+    return this.clipboard ?? undefined;
   }
 
   /** The native fff-backed finder, when the desktop bridge is present. */

@@ -44,7 +44,9 @@
 @layer base {
   [data-slot="dialog-overlay"],
   [data-slot="dialog-content"],
-  [data-slot="dialog-content"] * {
+  [data-slot="dialog-content"] *,
+  [data-slot="context-menu-content"],
+  [data-slot="context-menu-content"] * {
     box-sizing: border-box;
     border: 0 solid var(--color-border);
     margin: 0;
@@ -52,13 +54,15 @@
     font: inherit;
   }
 
-  [data-slot="dialog-content"] {
+  [data-slot="dialog-content"],
+  [data-slot="context-menu-content"] {
     font-family: var(--font-ui-family);
     font-size: 14px;
     line-height: 1.45;
   }
 
-  [data-slot="dialog-content"] button {
+  [data-slot="dialog-content"] button,
+  [data-slot="context-menu-content"] button {
     background: transparent;
     color: inherit;
     cursor: default;
@@ -346,4 +350,3 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-

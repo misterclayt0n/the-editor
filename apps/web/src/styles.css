@@ -1379,6 +1379,55 @@ body {
   color: var(--fg);
 }
 
+.context-menu-content {
+  z-index: 60;
+  min-width: 168px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
+  color: var(--fg);
+  box-shadow: 0 12px 34px rgb(0 0 0 / 28%);
+  backdrop-filter: blur(12px);
+}
+
+.context-menu-item {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 12px;
+  border-radius: 6px;
+  padding: 0 8px;
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 28px;
+  outline: none;
+  user-select: none;
+  cursor: default;
+}
+
+.context-menu-item[data-highlighted] {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--fg);
+}
+
+.context-menu-item[data-disabled] {
+  opacity: 0.46;
+  pointer-events: none;
+}
+
+.context-menu-shortcut {
+  margin-left: auto;
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+
+.context-menu-separator {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border);
+}
+
 .terminal-empty {
   display: flex;
   flex: 1;

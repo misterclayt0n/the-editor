@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, nativeTheme } from "electron";
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL?.trim();
 const APP_NAME = "The Editor";
@@ -527,6 +527,41 @@ function loadPty(): PtyModule | null {
 let nextTermId = 1;
 const terms = new Map<number, Pty>();
 
+type ClipboardTextReadOptions = {
+  readonly maxBytes?: number;
+};
+
+const assertClipboardTextWithinLimit = (text: string, options?: ClipboardTextReadOptions): string => {
+  if (options?.maxBytes === undefined) return text;
+  if (Buffer.byteLength(text, "utf8") > options.maxBytes) {
+    throw new Error("Clipboard text exceeds the terminal paste limit.");
+  }
+  return text;
+};
+
+function registerClipboardHandlers(): void {
+  ipcMain.handle("clipboard:readText", (_event, options?: ClipboardTextReadOptions) =>
+    assertClipboardTextWithinLimit(clipboard.readText(), options),
+  );
+  ipcMain.handle("clipboard:readSelectionText", (_event, options?: ClipboardTextReadOptions) =>
+    assertClipboardTextWithinLimit(clipboard.readText("selection"), options),
+  );
+  ipcMain.handle("clipboard:writeText", (_event, text: string) => {
+    clipboard.writeText(text);
+  });
+  ipcMain.handle("clipboard:writeSelectionText", (_event, text: string) => {
+    clipboard.writeText(text, "selection");
+  });
+  ipcMain.handle("clipboard:saveImageAsTempFile", async () => {
+    const image = clipboard.readImage();
+    if (image.isEmpty()) return null;
+    const directory = await fsp.mkdtemp(path.join(app.getPath("temp"), "the-editor-clipboard-"));
+    const filePath = path.join(directory, "clipboard.png");
+    await fsp.writeFile(filePath, image.toPNG());
+    return filePath;
+  });
+}
+
 function registerTerminalHandlers(): void {
   ipcMain.handle(
     "term:spawn",
@@ -620,6 +655,7 @@ void app.whenReady().then(() => {
   registerFileSystemHandlers();
   registerProcessHandlers();
   registerFileFinderHandlers();
+  registerClipboardHandlers();
   registerTerminalHandlers();
   createWindow();
   app.on("activate", () => {

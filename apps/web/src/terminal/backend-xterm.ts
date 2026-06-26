@@ -175,11 +175,13 @@ export function recoverTerminalRenderer(term: Terminal, addons: TerminalAddonSet
   }
 }
 
-type SearchClearableTerminal = Pick<Terminal, "clearSelection" | "element" | "refresh" | "rows">;
-type SearchClearableAddons = { readonly search: Pick<SearchAddon, "clearDecorations"> };
+type SearchClearableTerminal = Pick<Terminal, "clearSelection" | "element" | "refresh" | "rows" | "select">;
+type SearchClearableAddons = { readonly search: Pick<SearchAddon, "clearActiveDecoration" | "clearDecorations"> };
 
 export function clearTerminalSearch(term: SearchClearableTerminal, addons: SearchClearableAddons): void {
+  addons.search.clearActiveDecoration();
   addons.search.clearDecorations();
+  term.select(0, 0, 0);
   term.clearSelection();
   term.element
     ?.querySelectorAll(".xterm-find-result-decoration, .xterm-find-active-result-decoration")
@@ -195,6 +197,7 @@ export function resetTerminalSearchSession(
   addons: SearchResettableAddons,
   createSearchAddon: () => SearchAddon = () => new SearchAddon(),
 ): void {
+  clearTerminalSearch(term, addons);
   try {
     addons.search.dispose();
   } catch {

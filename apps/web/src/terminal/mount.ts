@@ -18,10 +18,16 @@ import {
   resetTerminalSearchSession,
   type TerminalAddonSet,
 } from "./backend";
+import * as React from "react";
+import { createRoot, type Root } from "react-dom/client";
 import type { AppRuntime } from "../runtime";
 import type { PanelRenderer } from "../workbench/panelRenderers";
 import { terminalSearchDecorations, terminalTheme, type TerminalSearchDecorations } from "../theme/dom";
 import { createTerminalOptions, macEditingSequence, terminalKeyHandlerResult } from "./keys";
+import { TerminalContextMenu, type TerminalContextMenuActions } from "./TerminalContextMenu";
+import { handleOsc52ClipboardRequest } from "./osc52";
+import { pasteTerminalClipboard, writeTerminalPasteText, type TerminalPasteTextOptions } from "./paste";
+import { detectTerminalShortcutPlatform, terminalShortcutAction } from "./shortcuts";
 
 /** xterm setup is synchronous today; keep the gate so async addons can hook in later. */
 let readyPromise: Promise<void> | null = null;
@@ -56,6 +62,8 @@ const createTerminalSearchWidget = (
   root.className = "terminal-search";
   root.hidden = true;
   let clearFrame: number | null = null;
+  let clearTimeout: number | null = null;
+  let clearGeneration = 0;
 
   const input = document.createElement("input");
   input.className = "terminal-search-input";
@@ -93,17 +101,36 @@ const createTerminalSearchWidget = (
     clearTerminalSearch(term, addons);
   };
 
+  const clearSearchForQuery = (query: string): void => {
+    if (query.length > 0) {
+      try {
+        addons.search.findNext(query, { incremental: true });
+      } catch {
+        // If the addon is mid-reset, the reset below becomes the source of truth.
+      }
+    }
+    clearSearch();
+  };
+
   const cancelPendingClear = (): void => {
     if (clearFrame !== null) cancelAnimationFrame(clearFrame);
     clearFrame = null;
+    if (clearTimeout !== null) window.clearTimeout(clearTimeout);
+    clearTimeout = null;
   };
 
-  const resetSearchAfterPaint = (): void => {
+  const resetSearchAfterPaint = (generation: number): void => {
     cancelPendingClear();
     resetTerminalSearchSession(term, addons);
+    clearSearch();
     clearFrame = requestAnimationFrame(() => {
       clearFrame = null;
-      if (root.hidden) clearSearch();
+      if (!root.hidden || generation !== clearGeneration) return;
+      clearSearch();
+      clearTimeout = window.setTimeout(() => {
+        clearTimeout = null;
+        if (root.hidden && generation === clearGeneration) clearSearch();
+      }, 0);
     });
   };
 
@@ -131,6 +158,7 @@ const createTerminalSearchWidget = (
   };
 
   const open = (): void => {
+    clearGeneration++;
     cancelPendingClear();
     root.hidden = false;
     const selection = term.getSelection();
@@ -141,8 +169,12 @@ const createTerminalSearchWidget = (
   };
 
   const closeSearch = (): void => {
+    const query = input.value;
     root.hidden = true;
-    resetSearchAfterPaint();
+    clearSearchForQuery(query);
+    input.value = "";
+    clearGeneration++;
+    resetSearchAfterPaint(clearGeneration);
     term.focus();
   };
 
@@ -195,6 +227,7 @@ const createTerminalSearchWidget = (
 
 export const TERMINAL_TITLE = "Terminal";
 
+const shellQuote = (path: string): string => `'${path.replaceAll("'", "'\\''")}'`;
 
 export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
   return {
@@ -208,12 +241,14 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
       let searchWidget: TerminalSearchWidget | null = null;
       let disposeTermUi: (() => void) | null = null;
       let refreshFrame: number | null = null;
+      let body: HTMLElement | null = null;
+      let started = false;
+      let reactRoot: Root | null = null;
       const port = runtime.terminalPort();
+      const clipboard = runtime.clipboardPort();
+      const platform = detectTerminalShortcutPlatform();
 
       element.classList.add("terminal-host");
-      const body = document.createElement("div");
-      body.className = "terminal-body";
-      element.replaceChildren(body);
 
       if (port === undefined) {
         const note = document.createElement("div");
@@ -224,9 +259,66 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
       }
 
       const bodyHasVisibleSize = (): boolean => {
-        if (!body.isConnected) return false;
-        const rect = body.getBoundingClientRect();
+        const currentBody = body;
+        if (currentBody === null || !currentBody.isConnected) return false;
+        const rect = currentBody.getBoundingClientRect();
         return rect.width > 0 && rect.height > 0;
+      };
+
+      const eventTargetsSearchWidget = (target: EventTarget | null): boolean =>
+        target instanceof Element && target.closest(".terminal-search") !== null;
+
+      const writePtyInput = (data: string): void => {
+        if (termId !== null) port.write(termId, data);
+      };
+
+      const canCopySelection = (): boolean => term?.hasSelection() === true;
+
+      const copySelection = async (): Promise<boolean> => {
+        const selection = term?.getSelection() ?? "";
+        if (selection.length === 0 || clipboard === undefined) return false;
+        await clipboard.writeText(selection);
+        return true;
+      };
+
+      const pasteTextToTerminal = async (
+        text: string,
+        options: TerminalPasteTextOptions = {},
+      ): Promise<boolean> => {
+        const current = term;
+        if (current === null || termId === null || text.length === 0) return false;
+        const pasted = await writeTerminalPasteText(writePtyInput, text, {
+          ...options,
+          bracketedPasteMode: current.modes.bracketedPasteMode,
+        });
+        if (pasted) current.focus();
+        return pasted;
+      };
+
+      const pasteFromClipboard = async (): Promise<void> => {
+        const current = term;
+        if (current === null || termId === null) return;
+        const result = await pasteTerminalClipboard({
+          clipboard,
+          write: writePtyInput,
+          bracketedPasteMode: current.modes.bracketedPasteMode,
+        });
+        if (result.status === "pasted") current.focus();
+      };
+
+      const clearTerminal = (): void => {
+        const current = term;
+        if (current === null) return;
+        current.select(0, 0, 0);
+        current.clearSelection();
+        current.clear();
+        refreshVisibleRows(current);
+        current.focus();
+      };
+
+      const selectAllTerminal = (): void => {
+        term?.selectAll();
+        term?.focus();
       };
 
       const syncPtySize = (current: Terminal): void => {
@@ -282,16 +374,18 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
       };
 
       const openTerminal = (): Terminal => {
+        const terminalBody = body;
+        if (terminalBody === null) throw new Error("Terminal body is not mounted.");
         disposeTermUi?.();
-        body.replaceChildren();
+        terminalBody.replaceChildren();
         const next = new Terminal(createTerminalOptions(runtime.themeSnapshot(), runtime.fontSnapshot()));
         const fit = new FitAddon();
-        next.open(body);
+        next.open(terminalBody);
         const nextAddons = loadTerminalAddons(next, fit);
         const nextSearchWidget = createTerminalSearchWidget(next, nextAddons, () =>
           terminalSearchDecorations(runtime.themeSnapshot()),
         );
-        body.appendChild(nextSearchWidget.element);
+        terminalBody.appendChild(nextSearchWidget.element);
         hideNativeInputCaret(next);
         if (bodyHasVisibleSize()) {
           try {
@@ -300,7 +394,37 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
             // The first visible attach will fit again.
           }
         }
-        const disposeFit = attachAutoFit(fit, body);
+        const disposeFit = attachAutoFit(fit, terminalBody);
+
+        let suppressNextPasteEvent = false;
+        let pasteSuppressionTimer: number | null = null;
+        let selectionClipboardTimer: number | null = null;
+
+        const clearPasteSuppression = (): void => {
+          suppressNextPasteEvent = false;
+          if (pasteSuppressionTimer !== null) window.clearTimeout(pasteSuppressionTimer);
+          pasteSuppressionTimer = null;
+        };
+
+        const suppressNativePasteOnce = (): void => {
+          clearPasteSuppression();
+          suppressNextPasteEvent = true;
+          pasteSuppressionTimer = window.setTimeout(() => {
+            pasteSuppressionTimer = null;
+            suppressNextPasteEvent = false;
+          }, 0);
+        };
+
+        const writeSelectionClipboardSoon = (): void => {
+          if (clipboard?.writeSelectionText === undefined) return;
+          const selection = next.getSelection();
+          if (selection.length === 0) return;
+          if (selectionClipboardTimer !== null) window.clearTimeout(selectionClipboardTimer);
+          selectionClipboardTimer = window.setTimeout(() => {
+            selectionClipboardTimer = null;
+            void clipboard.writeSelectionText?.(selection);
+          }, 80);
+        };
 
         const captureGlobalKey = (event: KeyboardEvent) => {
           if (isFindShortcut(event)) {
@@ -320,13 +444,98 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
             }
             return;
           }
+          if (!eventTargetsSearchWidget(event.target)) {
+            const action = terminalShortcutAction(event, platform);
+            if (action !== null) {
+              event.preventDefault();
+              event.stopPropagation();
+              if (action === "copy") {
+                void copySelection();
+              } else if (action === "paste") {
+                suppressNativePasteOnce();
+                void pasteFromClipboard();
+              } else if (action === "clear") {
+                clearTerminal();
+              } else if (action === "select-all") {
+                selectAllTerminal();
+              }
+              return;
+            }
+          }
           if (!runtime.handleGlobalKey(event)) return;
           event.preventDefault();
           event.stopPropagation();
         };
-        body.addEventListener("keydown", captureGlobalKey, { capture: true });
+        terminalBody.addEventListener("keydown", captureGlobalKey, { capture: true });
+
+        const onCopy = (event: ClipboardEvent): void => {
+          if (eventTargetsSearchWidget(event.target)) return;
+          const selection = next.getSelection();
+          if (selection.length === 0) return;
+          event.preventDefault();
+          event.stopPropagation();
+          event.clipboardData?.setData("text/plain", selection);
+          void clipboard?.writeText(selection);
+        };
+        terminalBody.addEventListener("copy", onCopy, { capture: true });
+
+        const onPaste = (event: ClipboardEvent): void => {
+          if (eventTargetsSearchWidget(event.target)) return;
+          if (suppressNextPasteEvent) {
+            clearPasteSuppression();
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          const text = event.clipboardData?.getData("text/plain") ?? "";
+          if (text.length > 0) void pasteTextToTerminal(text);
+          else void pasteFromClipboard();
+        };
+        terminalBody.addEventListener("paste", onPaste, { capture: true });
+
+        const onMiddleMouseDown = (event: MouseEvent): void => {
+          if (event.button !== 1 || eventTargetsSearchWidget(event.target)) return;
+          if (clipboard?.readSelectionText === undefined) return;
+          event.preventDefault();
+          event.stopPropagation();
+          void clipboard.readSelectionText({ maxBytes: 16 * 1024 * 1024 }).then((text) => {
+            if (text.length > 0) void pasteTextToTerminal(text);
+          });
+        };
+        terminalBody.addEventListener("mousedown", onMiddleMouseDown, { capture: true });
+
+        const onDragOver = (event: DragEvent): void => {
+          if ((event.dataTransfer?.files.length ?? 0) === 0) return;
+          event.preventDefault();
+          event.dataTransfer!.dropEffect = "copy";
+        };
+        const onDrop = (event: DragEvent): void => {
+          const files = [...(event.dataTransfer?.files ?? [])];
+          const paths = files.flatMap((file) => {
+            const path = (file as File & { readonly path?: string }).path;
+            return path === undefined || path.length === 0 ? [] : [shellQuote(path)];
+          });
+          if (paths.length === 0) return;
+          event.preventDefault();
+          event.stopPropagation();
+          void pasteTextToTerminal(paths.join(" "));
+        };
+        terminalBody.addEventListener("dragover", onDragOver);
+        terminalBody.addEventListener("drop", onDrop);
+
+        const selectionDisposable = next.onSelectionChange(writeSelectionClipboardSoon) as TerminalDisposable;
+        const osc52Disposable = next.parser.registerOscHandler(52, (data) =>
+          handleOsc52ClipboardRequest(data, {
+            allowClipboardWrite: true,
+            writeClipboardText: (text) => clipboard?.writeText(text) ?? Promise.resolve(),
+            writeSelectionText: (text) => clipboard?.writeSelectionText?.(text) ?? Promise.resolve(),
+          }),
+        ) as TerminalDisposable;
 
         attachGlobalKeyHandler(next, (event) => {
+          if (!eventTargetsSearchWidget(event.target) && terminalShortcutAction(event, platform) !== null) return "skip";
           if (runtime.handleGlobalKey(event)) return "skip";
           const sequence = macEditingSequence(event);
           if (sequence !== null && termId !== null) {
@@ -348,9 +557,18 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
         fitAddon = fit;
         searchWidget = nextSearchWidget;
         disposeTermUi = () => {
+          if (pasteSuppressionTimer !== null) window.clearTimeout(pasteSuppressionTimer);
+          if (selectionClipboardTimer !== null) window.clearTimeout(selectionClipboardTimer);
+          osc52Disposable.dispose();
+          selectionDisposable.dispose();
           dataDisposable.dispose();
           resizeDisposable.dispose();
-          body.removeEventListener("keydown", captureGlobalKey, { capture: true });
+          terminalBody.removeEventListener("keydown", captureGlobalKey, { capture: true });
+          terminalBody.removeEventListener("copy", onCopy, { capture: true });
+          terminalBody.removeEventListener("paste", onPaste, { capture: true });
+          terminalBody.removeEventListener("mousedown", onMiddleMouseDown, { capture: true });
+          terminalBody.removeEventListener("dragover", onDragOver);
+          terminalBody.removeEventListener("drop", onDrop);
           nextSearchWidget.dispose();
           disposeFit();
           next.dispose();
@@ -368,38 +586,68 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
       const unsubscribeFont = runtime.subscribeFont(() => {
         applyTerminalOptions(true);
       });
-      void (async () => {
-        await ensureEngine();
-        if (disposed) return;
-        const spawnedTerm = openTerminal();
 
-        const id = await port.spawn({
-          cols: spawnedTerm.cols,
-          rows: spawnedTerm.rows,
-          ...(runtime.workspaceRoot !== null ? { cwd: runtime.workspaceRoot } : {}),
-        });
-        if (disposed) {
-          if (id !== null) port.kill(id);
-          return;
-        }
-        if (id === null) {
-          spawnedTerm.write("\r\n  \x1b[31mcould not start a shell\x1b[0m\r\n");
-          return;
-        }
-        termId = id;
-        syncPtySize(spawnedTerm);
-        // PTY → screen, screen → PTY, and keep the PTY's window size in sync.
-        port.onData(id, (data) => {
+      const startTerminal = (): void => {
+        if (started) return;
+        started = true;
+        void (async () => {
+          await ensureEngine();
           if (disposed) return;
-          const responses = unsupportedQueryResponses(data, terminalTheme(runtime.themeSnapshot()));
-          term?.write(data);
-          if (responses.length > 0) port.write(id, responses);
-        });
-        port.onExit(id, (code) => {
-          if (!disposed) term?.write(`\r\n\x1b[90m[process exited${code === null ? "" : ` (${code})`}]\x1b[0m\r\n`);
-        });
-        refreshTerminalSurface({ focus: true });
-      })();
+          const spawnedTerm = openTerminal();
+
+          const id = await port.spawn({
+            cols: spawnedTerm.cols,
+            rows: spawnedTerm.rows,
+            ...(runtime.workspaceRoot !== null ? { cwd: runtime.workspaceRoot } : {}),
+          });
+          if (disposed) {
+            if (id !== null) port.kill(id);
+            return;
+          }
+          if (id === null) {
+            spawnedTerm.write("\r\n  \x1b[31mcould not start a shell\x1b[0m\r\n");
+            return;
+          }
+          termId = id;
+          syncPtySize(spawnedTerm);
+          // PTY → screen, screen → PTY, and keep the PTY's window size in sync.
+          port.onData(id, (data) => {
+            if (disposed) return;
+            const responses = unsupportedQueryResponses(data, terminalTheme(runtime.themeSnapshot()));
+            term?.write(data);
+            if (responses.length > 0) port.write(id, responses);
+          });
+          port.onExit(id, (code) => {
+            if (!disposed) term?.write(`\r\n\x1b[90m[process exited${code === null ? "" : ` (${code})`}]\x1b[0m\r\n`);
+          });
+          refreshTerminalSurface({ focus: true });
+        })();
+      };
+
+      const contextMenuActions: TerminalContextMenuActions = {
+        copy: async () => {
+          await copySelection();
+        },
+        paste: pasteFromClipboard,
+        clear: clearTerminal,
+        find: () => {
+          searchWidget?.open();
+        },
+        selectAll: selectAllTerminal,
+        focus: () => refreshTerminalSurface({ focus: true }),
+      };
+      reactRoot = createRoot(element);
+      reactRoot.render(
+        React.createElement(TerminalContextMenu, {
+          actions: contextMenuActions,
+          canCopy: canCopySelection,
+          onBodyReady: (node: HTMLDivElement | null) => {
+            body = node;
+            if (node !== null) startTerminal();
+          },
+          platform,
+        }),
+      );
 
       return {
         dispose: () => {
@@ -409,6 +657,7 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
           if (termId !== null) port.kill(termId);
           unsubscribeTheme();
           unsubscribeFont();
+          reactRoot?.unmount();
           element.replaceChildren();
         },
         onAttached: () => {

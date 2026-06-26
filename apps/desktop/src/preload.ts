@@ -216,6 +216,17 @@ contextBridge.exposeInMainWorld("theEditorTerminal", {
   },
 });
 
+contextBridge.exposeInMainWorld("theEditorClipboard", {
+  readText: (options?: { maxBytes?: number }): Promise<string> =>
+    ipcRenderer.invoke("clipboard:readText", options),
+  writeText: (text: string): Promise<void> => ipcRenderer.invoke("clipboard:writeText", text),
+  readSelectionText: (options?: { maxBytes?: number }): Promise<string> =>
+    ipcRenderer.invoke("clipboard:readSelectionText", options),
+  writeSelectionText: (text: string): Promise<void> =>
+    ipcRenderer.invoke("clipboard:writeSelectionText", text),
+  saveImageAsTempFile: (): Promise<string | null> => ipcRenderer.invoke("clipboard:saveImageAsTempFile"),
+});
+
 contextBridge.exposeInMainWorld("theEditorFs", {
   readFile: (path: string): Promise<string> => ipcRenderer.invoke("fs:read", path),
   readBinaryFile: (path: string): Promise<Uint8Array> => ipcRenderer.invoke("fs:readBinary", path),

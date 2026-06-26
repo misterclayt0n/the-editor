@@ -14,6 +14,8 @@ import {
   attachGlobalKeyHandler,
   unsupportedQueryResponses,
   hideNativeInputCaret,
+  clearTerminalSearch,
+  resetTerminalSearchSession,
   type TerminalAddonSet,
 } from "./backend";
 import type { AppRuntime } from "../runtime";
@@ -53,10 +55,11 @@ const createTerminalSearchWidget = (
   const root = document.createElement("div");
   root.className = "terminal-search";
   root.hidden = true;
+  let clearFrame: number | null = null;
 
   const input = document.createElement("input");
   input.className = "terminal-search-input";
-  input.type = "search";
+  input.type = "text";
   input.spellcheck = false;
   input.autocomplete = "off";
   input.placeholder = "Find";
@@ -86,10 +89,28 @@ const createTerminalSearchWidget = (
     decorations: decorations(),
   });
 
+  const clearSearch = (): void => {
+    clearTerminalSearch(term, addons);
+  };
+
+  const cancelPendingClear = (): void => {
+    if (clearFrame !== null) cancelAnimationFrame(clearFrame);
+    clearFrame = null;
+  };
+
+  const resetSearchAfterPaint = (): void => {
+    cancelPendingClear();
+    resetTerminalSearchSession(term, addons);
+    clearFrame = requestAnimationFrame(() => {
+      clearFrame = null;
+      if (root.hidden) clearSearch();
+    });
+  };
+
   const findNext = (incremental = false): void => {
     const query = input.value;
     if (query.length === 0) {
-      addons.search.clearDecorations();
+      clearSearch();
       return;
     }
     addons.search.findNext(query, options(incremental));
@@ -98,7 +119,7 @@ const createTerminalSearchWidget = (
   const findPrevious = (): void => {
     const query = input.value;
     if (query.length === 0) {
-      addons.search.clearDecorations();
+      clearSearch();
       return;
     }
     addons.search.findPrevious(query, options());
@@ -110,6 +131,7 @@ const createTerminalSearchWidget = (
   };
 
   const open = (): void => {
+    cancelPendingClear();
     root.hidden = false;
     const selection = term.getSelection();
     if (selection.length > 0) input.value = selection.split(/\r?\n/, 1)[0] ?? selection;
@@ -120,11 +142,14 @@ const createTerminalSearchWidget = (
 
   const closeSearch = (): void => {
     root.hidden = true;
-    addons.search.clearDecorations();
+    resetSearchAfterPaint();
     term.focus();
   };
 
   const onInput = (): void => findNext(true);
+  const stopPointerEvent = (event: Event): void => {
+    event.stopPropagation();
+  };
   const onKeyDown = (event: KeyboardEvent): void => {
     if (event.key === "Escape") {
       event.preventDefault();
@@ -142,6 +167,8 @@ const createTerminalSearchWidget = (
 
   input.addEventListener("input", onInput);
   input.addEventListener("keydown", onKeyDown);
+  root.addEventListener("mousedown", stopPointerEvent);
+  root.addEventListener("click", stopPointerEvent);
   previous.addEventListener("click", findPrevious);
   next.addEventListener("click", () => findNext());
   close.addEventListener("click", closeSearch);
@@ -156,9 +183,12 @@ const createTerminalSearchWidget = (
     refreshDecorations,
     isOpen: () => !root.hidden,
     dispose: () => {
+      cancelPendingClear();
       input.removeEventListener("input", onInput);
       input.removeEventListener("keydown", onKeyDown);
-      addons.search.clearDecorations();
+      root.removeEventListener("mousedown", stopPointerEvent);
+      root.removeEventListener("click", stopPointerEvent);
+      clearSearch();
     },
   };
 };

@@ -105,7 +105,7 @@ export function hideNativeInputCaret(_term: Terminal): void {}
 export type TerminalAddonSet = {
   readonly fit: FitAddon;
   readonly ligatures: LigaturesAddon;
-  readonly search: SearchAddon;
+  search: SearchAddon;
   readonly unicode11: Unicode11Addon;
   readonly webLinks: WebLinksAddon;
   webgl: WebglAddon | null;
@@ -175,6 +175,35 @@ export function recoverTerminalRenderer(term: Terminal, addons: TerminalAddonSet
   }
 }
 
+type SearchClearableTerminal = Pick<Terminal, "clearSelection" | "element" | "refresh" | "rows">;
+type SearchClearableAddons = { readonly search: Pick<SearchAddon, "clearDecorations"> };
+
+export function clearTerminalSearch(term: SearchClearableTerminal, addons: SearchClearableAddons): void {
+  addons.search.clearDecorations();
+  term.clearSelection();
+  term.element
+    ?.querySelectorAll(".xterm-find-result-decoration, .xterm-find-active-result-decoration")
+    .forEach((element) => element.remove());
+  if (term.rows > 0) term.refresh(0, term.rows - 1);
+}
+
+type SearchResettableTerminal = SearchClearableTerminal & Pick<Terminal, "loadAddon">;
+type SearchResettableAddons = { search: SearchAddon };
+
+export function resetTerminalSearchSession(
+  term: SearchResettableTerminal,
+  addons: SearchResettableAddons,
+  createSearchAddon: () => SearchAddon = () => new SearchAddon(),
+): void {
+  try {
+    addons.search.dispose();
+  } catch {
+    // The terminal may be mid-disposal; the new search session below becomes the source of truth.
+  }
+  addons.search = createSearchAddon();
+  term.loadAddon(addons.search);
+  clearTerminalSearch(term, addons);
+}
 
 const hasVisibleSize = (container: HTMLElement): boolean => {
   if (!container.isConnected) return false;

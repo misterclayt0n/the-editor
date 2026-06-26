@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { unsupportedQueryResponses } from "./backend-xterm";
+import { clearTerminalSearch, resetTerminalSearchSession, unsupportedQueryResponses, type SearchAddon } from "./backend-xterm";
 
 const theme = {
   background: "#101010",
@@ -44,5 +44,72 @@ describe("unsupportedQueryResponses", () => {
         "\x1b]4;2;rgb:0d0d/bebe/4e4e\x1b\\" +
         "\x1b]4;259;rgb:1010/1010/1010\x1b\\",
     );
+  });
+});
+
+describe("clearTerminalSearch", () => {
+  test("clears search decorations, active selection, and repaints visible rows", () => {
+    const calls: string[] = [];
+    const staleDecoration = {
+      remove: () => calls.push("removeDecoration"),
+    } as unknown as Element;
+    const term = {
+      rows: 3,
+      element: {
+        querySelectorAll: (selector: string) => {
+          calls.push(`query:${selector}`);
+          return [staleDecoration];
+        },
+      } as unknown as HTMLElement,
+      clearSelection: () => calls.push("clearSelection"),
+      refresh: (start: number, end: number) => calls.push(`refresh:${start}-${end}`),
+    };
+    const addons = {
+      search: {
+        clearDecorations: () => calls.push("clearDecorations"),
+      },
+    };
+
+    clearTerminalSearch(term, addons);
+
+    expect(calls).toEqual([
+      "clearDecorations",
+      "clearSelection",
+      "query:.xterm-find-result-decoration, .xterm-find-active-result-decoration",
+      "removeDecoration",
+      "refresh:0-2",
+    ]);
+  });
+
+  test("resets the search addon when closing a search session", () => {
+    const calls: string[] = [];
+    const nextSearch = {
+      clearDecorations: () => calls.push("next.clearDecorations"),
+      dispose: () => calls.push("next.dispose"),
+    } as unknown as SearchAddon;
+    const addons = {
+      search: {
+        clearDecorations: () => calls.push("current.clearDecorations"),
+        dispose: () => calls.push("current.dispose"),
+      } as unknown as SearchAddon,
+    };
+    const term = {
+      rows: 4,
+      element: undefined,
+      clearSelection: () => calls.push("clearSelection"),
+      refresh: (start: number, end: number) => calls.push(`refresh:${start}-${end}`),
+      loadAddon: (addon: SearchAddon) => calls.push(addon === nextSearch ? "loadNextSearch" : "loadUnknown"),
+    };
+
+    resetTerminalSearchSession(term, addons, () => nextSearch);
+
+    expect(addons.search).toBe(nextSearch);
+    expect(calls).toEqual([
+      "current.dispose",
+      "loadNextSearch",
+      "next.clearDecorations",
+      "clearSelection",
+      "refresh:0-3",
+    ]);
   });
 });

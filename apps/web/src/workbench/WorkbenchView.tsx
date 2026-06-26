@@ -66,6 +66,8 @@ type DragState = {
   readonly target: DropTarget | null;
 };
 
+type RegisterPanelMount = (panelId: PanelId, mount: PanelMount) => () => void;
+
 const DRAG_THRESHOLD = 5;
 /** Edge bands of the pane body that mean "split here" instead of "move here". */
 const EDGE_RATIO = 0.27;
@@ -160,6 +162,14 @@ export function WorkbenchView({ runtime, active, onActiveSnapshot, firstTabInset
     }
     return node;
   }, []);
+  const panelMountsRef = useRef<Map<PanelId, PanelMount> | null>(null);
+  const registerPanelMount = useCallback<RegisterPanelMount>((panelId, mount) => {
+    const panelMounts = (panelMountsRef.current ??= new Map<PanelId, PanelMount>());
+    panelMounts.set(panelId, mount);
+    return () => {
+      if (panelMounts.get(panelId) === mount) panelMounts.delete(panelId);
+    };
+  }, []);
 
   // Keep every visited panel mounted (lazy: a never-shown panel isn't built).
   // Liveness follows the panel LIFECYCLE, not placement: a panel hidden from
@@ -189,6 +199,14 @@ export function WorkbenchView({ runtime, active, onActiveSnapshot, firstTabInset
   useLayoutEffect(() => {
     if (active) runtime.focusActivePanel();
   }, [runtime, active, wb.focusedSlot, focusedActivePanelId]);
+
+  const handlePanelAttached = useCallback(
+    (panelId: PanelId, shouldFocus: boolean): void => {
+      panelMountsRef.current?.get(panelId)?.onAttached?.();
+      if (active && shouldFocus) runtime.focusActivePanel();
+    },
+    [runtime, active],
+  );
 
   const beginTabDrag = useCallback(
     (
@@ -267,6 +285,7 @@ export function WorkbenchView({ runtime, active, onActiveSnapshot, firstTabInset
         <PanelInPortals
           runtime={runtime}
           nodeFor={nodeFor}
+          registerPanelMount={registerPanelMount}
           livePanels={livePanels}
           focusedActivePanelId={focusedActivePanelId}
           {...(onActiveSnapshot ? { onActiveSnapshot } : {})}
@@ -285,12 +304,14 @@ export function WorkbenchView({ runtime, active, onActiveSnapshot, firstTabInset
         drag={drag}
         beginTabDrag={beginTabDrag}
         nodeFor={nodeFor}
+        onPanelAttached={handlePanelAttached}
         {...(leftStackId !== undefined && firstTabInset ? { leftStackId, firstTabInset } : {})}
         {...(rightStackId !== undefined && trailingAction !== undefined ? { rightStackId, trailingAction } : {})}
       />
       <PanelInPortals
         runtime={runtime}
         nodeFor={nodeFor}
+        registerPanelMount={registerPanelMount}
         livePanels={livePanels}
         focusedActivePanelId={focusedActivePanelId}
         {...(onActiveSnapshot ? { onActiveSnapshot } : {})}
@@ -314,12 +335,14 @@ export function WorkbenchView({ runtime, active, onActiveSnapshot, firstTabInset
 function PanelInPortals({
   runtime,
   nodeFor,
+  registerPanelMount,
   livePanels,
   focusedActivePanelId,
   onActiveSnapshot,
 }: {
   readonly runtime: WorkbenchHost;
   readonly nodeFor: (panelId: PanelId) => PortalNode;
+  readonly registerPanelMount: RegisterPanelMount;
   readonly livePanels: ReadonlyArray<PanelId>;
   readonly focusedActivePanelId: PanelId | undefined;
   readonly onActiveSnapshot?: (snapshot: EditorSnapshot) => void;
@@ -330,6 +353,7 @@ function PanelInPortals({
       runtime={runtime}
       panelId={panelId}
       node={nodeFor(panelId)}
+      registerPanelMount={registerPanelMount}
       focused={panelId === focusedActivePanelId}
       {...(onActiveSnapshot ? { onSnapshot: onActiveSnapshot } : {})}
     />
@@ -346,12 +370,14 @@ function PortalPanel({
   runtime,
   panelId,
   node,
+  registerPanelMount,
   focused,
   onSnapshot,
 }: {
   readonly runtime: WorkbenchHost;
   readonly panelId: PanelId;
   readonly node: PortalNode;
+  readonly registerPanelMount: RegisterPanelMount;
   readonly focused: boolean;
   readonly onSnapshot?: (snapshot: EditorSnapshot) => void;
 }) {
@@ -366,6 +392,7 @@ function PortalPanel({
     <PanelBody
       runtime={runtime}
       panelId={panelId}
+      registerPanelMount={registerPanelMount}
       focused={focused}
       {...(onSnapshot ? { onSnapshot } : {})}
     />,
@@ -377,11 +404,13 @@ function PortalPanel({
 function PanelBody({
   runtime,
   panelId,
+  registerPanelMount,
   focused,
   onSnapshot,
 }: {
   readonly runtime: WorkbenchHost;
   readonly panelId: PanelId;
+  readonly registerPanelMount: RegisterPanelMount;
   readonly focused: boolean;
   readonly onSnapshot?: (snapshot: EditorSnapshot) => void;
 }) {
@@ -400,7 +429,7 @@ function PanelBody({
   if (multiBuffer !== undefined) {
     return <MultiBufferView runtime={runtime} pane={multiBuffer} focused={focused} />;
   }
-  return <CustomPanelView runtime={runtime} panelId={panelId} />;
+  return <CustomPanelView runtime={runtime} panelId={panelId} registerPanelMount={registerPanelMount} />;
 }
 
 type TreeProps = {
@@ -422,6 +451,7 @@ type TreeProps = {
    *  (see WorkbenchViewProps.trailingAction). Absent when none is requested. */
   readonly rightStackId?: SlotId;
   readonly trailingAction?: ReactNode;
+  readonly onPanelAttached: (panelId: PanelId, focused: boolean) => void;
 };
 
 function TileView({ tile, path, ...tree }: TreeProps & { tile: Tile; path: ReadonlyArray<number> }) {
@@ -652,7 +682,12 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
         data-wb-body
         data-slot-id={stack.id}
       >
-        {activePanelId !== undefined && <OutPortal node={tree.nodeFor(activePanelId)} />}
+        {activePanelId !== undefined && (
+          <OutPortal
+            node={tree.nodeFor(activePanelId)}
+            onAttached={() => tree.onPanelAttached(activePanelId, focused)}
+          />
+        )}
         {dropZone !== null && <div className={`wb-drop wb-drop-${dropZone}`} />}
       </div>
     </section>
@@ -663,9 +698,11 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
 function CustomPanelView({
   runtime,
   panelId,
+  registerPanelMount,
 }: {
   readonly runtime: WorkbenchHost;
   readonly panelId: PanelId;
+  readonly registerPanelMount: RegisterPanelMount;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const mountRef = useRef<PanelMount | null>(null);
@@ -681,11 +718,13 @@ function CustomPanelView({
     if (renderer === undefined) return;
     const handle = renderer.mount(element, panel);
     mountRef.current = handle;
+    const unregisterMount = registerPanelMount(panelId, handle);
     return () => {
       mountRef.current = null;
+      unregisterMount();
       handle.dispose();
     };
-  }, [runtime, panelId, epoch]);
+  }, [runtime, panelId, epoch, registerPanelMount]);
 
   // Register how this panel focuses itself; the runtime's focus authority
   // invokes it whenever this panel becomes the focused pane's active surface,

@@ -19,6 +19,10 @@ import type { Panel, SurfaceKind } from "@the-editor/workbench";
  * keyboard-drivable. */
 export type PanelMount = {
   readonly dispose: () => void;
+  /** Called after this panel's live host is reattached to a visible outlet.
+   *  Use this for measuring/refitting/repainting only; keyboard focus still
+   *  flows through the workbench's registered focuser. */
+  readonly onAttached?: () => void;
   readonly focus?: () => void;
 };
 

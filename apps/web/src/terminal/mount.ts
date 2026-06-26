@@ -9,6 +9,7 @@ import {
   Terminal,
   FitAddon,
   loadTerminalAddons,
+  recoverTerminalRenderer,
   attachAutoFit,
   attachGlobalKeyHandler,
   unsupportedQueryResponses,
@@ -17,13 +18,12 @@ import {
 } from "./backend";
 import type { AppRuntime } from "../runtime";
 import type { PanelRenderer } from "../workbench/panelRenderers";
-import { terminalTheme } from "../theme/dom";
+import { terminalSearchDecorations, terminalTheme, type TerminalSearchDecorations } from "../theme/dom";
 import { createTerminalOptions, macEditingSequence, terminalKeyHandlerResult } from "./keys";
 
 /** xterm setup is synchronous today; keep the gate so async addons can hook in later. */
 let readyPromise: Promise<void> | null = null;
 const ensureEngine = (): Promise<void> => (readyPromise ??= ensureReady());
-const MAX_REPLAY_CHARS = 2_000_000;
 
 type TerminalDisposable = { dispose(): void };
 
@@ -32,6 +32,9 @@ type TerminalSearchWidget = {
   readonly open: () => void;
   readonly close: () => void;
   readonly toggle: () => void;
+  readonly findNext: () => void;
+  readonly findPrevious: () => void;
+  readonly refreshDecorations: () => void;
   readonly isOpen: () => boolean;
   readonly dispose: () => void;
 };
@@ -45,6 +48,7 @@ const isFindNextShortcut = (event: KeyboardEvent): boolean =>
 const createTerminalSearchWidget = (
   term: Terminal,
   addons: TerminalAddonSet,
+  decorations: () => TerminalSearchDecorations,
 ): TerminalSearchWidget => {
   const root = document.createElement("div");
   root.className = "terminal-search";
@@ -79,12 +83,7 @@ const createTerminalSearchWidget = (
 
   const options = (incremental = false) => ({
     incremental,
-    decorations: {
-      matchBackground: "#7c5f00",
-      activeMatchBackground: "#b45309",
-      matchOverviewRuler: "#facc15",
-      activeMatchColorOverviewRuler: "#fb923c",
-    },
+    decorations: decorations(),
   });
 
   const findNext = (incremental = false): void => {
@@ -103,6 +102,11 @@ const createTerminalSearchWidget = (
       return;
     }
     addons.search.findPrevious(query, options());
+  };
+
+  const refreshDecorations = (): void => {
+    if (root.hidden || input.value.length === 0) return;
+    findNext(true);
   };
 
   const open = (): void => {
@@ -147,6 +151,9 @@ const createTerminalSearchWidget = (
     open,
     close: closeSearch,
     toggle: () => root.hidden ? open() : closeSearch(),
+    findNext: () => findNext(),
+    findPrevious,
+    refreshDecorations,
     isOpen: () => !root.hidden,
     dispose: () => {
       input.removeEventListener("input", onInput);
@@ -166,8 +173,11 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
       let disposed = false;
       let term: Terminal | null = null;
       let termId: number | null = null;
+      let addons: TerminalAddonSet | null = null;
+      let fitAddon: FitAddon | null = null;
+      let searchWidget: TerminalSearchWidget | null = null;
       let disposeTermUi: (() => void) | null = null;
-      let outputReplay = "";
+      let refreshFrame: number | null = null;
       const port = runtime.terminalPort();
 
       element.classList.add("terminal-host");
@@ -183,41 +193,99 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
         return { dispose: () => void (disposed = true) };
       }
 
-      const appendReplay = (data: string): void => {
-        outputReplay += data;
-        if (outputReplay.length > MAX_REPLAY_CHARS) {
-          outputReplay = outputReplay.slice(outputReplay.length - MAX_REPLAY_CHARS);
-        }
+      const bodyHasVisibleSize = (): boolean => {
+        if (!body.isConnected) return false;
+        const rect = body.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
       };
 
-      const openTerminal = (replay: boolean): Terminal => {
-        const shouldRefocus = body.contains(document.activeElement);
+      const syncPtySize = (current: Terminal): void => {
+        if (termId === null || current.cols <= 0 || current.rows <= 0) return;
+        port.resize(termId, current.cols, current.rows);
+      };
+
+      const refreshVisibleRows = (current: Terminal): void => {
+        if (current.rows <= 0) return;
+        current.refresh(0, current.rows - 1);
+      };
+
+      const refreshTerminalSurface = (
+        options: { readonly focus?: boolean; readonly recoverRenderer?: boolean } = {},
+      ): void => {
+        const current = term;
+        if (current === null) return;
+        const shouldFocus = options.focus === true;
+        const run = (recoverRenderer: boolean): void => {
+          if (disposed || term !== current || !bodyHasVisibleSize()) return;
+          if (recoverRenderer && addons !== null) recoverTerminalRenderer(current, addons);
+          try {
+            fitAddon?.fit();
+          } catch {
+            // Detached or zero-sized terminals are refit on the next visible frame.
+          }
+          syncPtySize(current);
+          try {
+            refreshVisibleRows(current);
+          } catch {
+            // Refresh can race terminal disposal.
+          }
+          if (shouldFocus) current.focus();
+        };
+
+        run(false);
+        if (refreshFrame !== null) cancelAnimationFrame(refreshFrame);
+        refreshFrame = requestAnimationFrame(() => {
+          refreshFrame = null;
+          run(options.recoverRenderer === true);
+        });
+      };
+
+      const applyTerminalOptions = (recoverRenderer: boolean): void => {
+        const current = term;
+        if (current === null) return;
+        const options = createTerminalOptions(runtime.themeSnapshot(), runtime.fontSnapshot());
+        if (options.theme !== undefined) current.options.theme = options.theme;
+        if (options.fontFamily !== undefined) current.options.fontFamily = options.fontFamily;
+        if (options.fontSize !== undefined) current.options.fontSize = options.fontSize;
+        searchWidget?.refreshDecorations();
+        refreshTerminalSurface({ recoverRenderer });
+      };
+
+      const openTerminal = (): Terminal => {
         disposeTermUi?.();
         body.replaceChildren();
         const next = new Terminal(createTerminalOptions(runtime.themeSnapshot(), runtime.fontSnapshot()));
         const fit = new FitAddon();
         next.open(body);
-        const addons = loadTerminalAddons(next, fit);
-        const searchWidget = createTerminalSearchWidget(next, addons);
-        body.appendChild(searchWidget.element);
+        const nextAddons = loadTerminalAddons(next, fit);
+        const nextSearchWidget = createTerminalSearchWidget(next, nextAddons, () =>
+          terminalSearchDecorations(runtime.themeSnapshot()),
+        );
+        body.appendChild(nextSearchWidget.element);
         hideNativeInputCaret(next);
-        fit.fit();
+        if (bodyHasVisibleSize()) {
+          try {
+            fit.fit();
+          } catch {
+            // The first visible attach will fit again.
+          }
+        }
         const disposeFit = attachAutoFit(fit, body);
 
         const captureGlobalKey = (event: KeyboardEvent) => {
           if (isFindShortcut(event)) {
             event.preventDefault();
             event.stopPropagation();
-            searchWidget.toggle();
+            nextSearchWidget.toggle();
             return;
           }
-          if (isFindNextShortcut(event) && searchWidget.isOpen()) {
+          if (isFindNextShortcut(event) && nextSearchWidget.isOpen()) {
             event.preventDefault();
             event.stopPropagation();
-            const input = searchWidget.element.querySelector("input");
+            const input = nextSearchWidget.element.querySelector("input");
             if (input instanceof HTMLInputElement && input.value.length > 0) {
-              if (event.shiftKey) addons.search.findPrevious(input.value);
-              else addons.search.findNext(input.value);
+              if (event.shiftKey) nextSearchWidget.findPrevious();
+              else nextSearchWidget.findNext();
               term?.focus();
             }
             return;
@@ -238,38 +306,42 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
           return terminalKeyHandlerResult(event);
         });
 
-        if (replay && outputReplay.length > 0) next.write(outputReplay);
-
-        const dataDisposable = termId === null
-          ? null
-          : (next.onData((data) => port.write(termId!, data)) as TerminalDisposable);
-        const resizeDisposable = termId === null
-          ? null
-          : (next.onResize(({ cols, rows }) => port.resize(termId!, cols, rows)) as TerminalDisposable);
+        const dataDisposable = next.onData((data) => {
+          if (termId !== null) port.write(termId, data);
+        }) as TerminalDisposable;
+        const resizeDisposable = next.onResize(({ cols, rows }) => {
+          if (termId !== null) port.resize(termId, cols, rows);
+        }) as TerminalDisposable;
 
         term = next;
-        if (shouldRefocus) next.focus();
+        addons = nextAddons;
+        fitAddon = fit;
+        searchWidget = nextSearchWidget;
         disposeTermUi = () => {
-          dataDisposable?.dispose();
-          resizeDisposable?.dispose();
+          dataDisposable.dispose();
+          resizeDisposable.dispose();
           body.removeEventListener("keydown", captureGlobalKey, { capture: true });
-          searchWidget.dispose();
+          nextSearchWidget.dispose();
           disposeFit();
           next.dispose();
+          if (term === next) term = null;
+          if (addons === nextAddons) addons = null;
+          if (fitAddon === fit) fitAddon = null;
+          if (searchWidget === nextSearchWidget) searchWidget = null;
         };
         return next;
       };
 
       const unsubscribeTheme = runtime.subscribeTheme(() => {
-        if (term !== null) openTerminal(termId !== null);
+        applyTerminalOptions(false);
       });
       const unsubscribeFont = runtime.subscribeFont(() => {
-        if (term !== null) openTerminal(termId !== null);
+        applyTerminalOptions(true);
       });
       void (async () => {
         await ensureEngine();
         if (disposed) return;
-        const spawnedTerm = openTerminal(false);
+        const spawnedTerm = openTerminal();
 
         const id = await port.spawn({
           cols: spawnedTerm.cols,
@@ -285,10 +357,10 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
           return;
         }
         termId = id;
+        syncPtySize(spawnedTerm);
         // PTY → screen, screen → PTY, and keep the PTY's window size in sync.
         port.onData(id, (data) => {
           if (disposed) return;
-          appendReplay(data);
           const responses = unsupportedQueryResponses(data, terminalTheme(runtime.themeSnapshot()));
           term?.write(data);
           if (responses.length > 0) port.write(id, responses);
@@ -296,25 +368,27 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
         port.onExit(id, (code) => {
           if (!disposed) term?.write(`\r\n\x1b[90m[process exited${code === null ? "" : ` (${code})`}]\x1b[0m\r\n`);
         });
-        const activeTerm = openTerminal(true);
-        activeTerm.focus();
+        refreshTerminalSurface({ focus: true });
       })();
 
       return {
         dispose: () => {
           disposed = true;
+          if (refreshFrame !== null) cancelAnimationFrame(refreshFrame);
           disposeTermUi?.();
           if (termId !== null) port.kill(termId);
           unsubscribeTheme();
           unsubscribeFont();
           element.replaceChildren();
         },
+        onAttached: () => {
+          refreshTerminalSurface({ recoverRenderer: true });
+        },
         focus: () => {
           // xterm.js's hidden textarea can miss a programmatic focus() call if
           // the reverse portal just re-attached its host (terminal toggle on/off).
           // Retry once after the browser has settled the DOM.
-          term?.focus();
-          requestAnimationFrame(() => term?.focus());
+          refreshTerminalSurface({ focus: true });
         },
       };
     },

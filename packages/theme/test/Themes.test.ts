@@ -36,6 +36,8 @@ describe("Themes", () => {
 
     expect(result.active.name).toBe("Pierre Dark");
     expect(result.active.cssVars["--bg-editor"]).toBe("#0a0a0a");
+    expect(result.active.cssVars["--bg-terminal"]).toBe("#0a0a0a");
+    expect(result.active.cssVars["--bg-terminal-ansi"]).toBe("#0a0a0a");
     expect(result.list.map((theme) => theme.name)).toEqual([
       "Pierre Dark",
       "Pierre Dark Soft",

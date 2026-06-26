@@ -35,14 +35,26 @@ export function createPortalNode(className: string): PortalNode {
  * changes, the element is detached (parked) — never destroyed; its content
  * stays alive (rendered elsewhere) until the panel itself closes.
  */
-export function OutPortal({ node }: { node: PortalNode }) {
+export function OutPortal({
+  node,
+  onAttached,
+}: {
+  readonly node: PortalNode;
+  readonly onAttached?: () => void;
+}) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const onAttachedRef = useRef(onAttached);
+  onAttachedRef.current = onAttached;
+
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (host === null) return;
     host.appendChild(node.element);
+    onAttachedRef.current?.();
     return () => {
-      if (node.element.parentNode === host) host.removeChild(node.element);
+      if (node.element.parentNode === host) {
+        host.removeChild(node.element);
+      }
     };
   }, [node]);
   return <div ref={hostRef} className="wb-panel-outlet" />;

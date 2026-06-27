@@ -24,31 +24,24 @@ import { makeThemes, Themes, themeDefaults, type ResolvedTheme } from "@the-edit
 import { Fonts, fontDefaults, makeFonts, type ResolvedFontSystem } from "@the-editor/fonts";
 import {
   dockEdge,
-  dockIntoRegion,
   makeWorkbench,
   slotOfPanel,
   SurfaceKind,
   toggleStackTabs,
-  type PanelId,
-  type RegionSnapshot,
-  type Workbench,
 } from "@the-editor/workbench";
 import { applyThemeToDocument } from "./theme/dom";
 import { createFontDomDriver } from "./fonts/dom";
 import { createFontFileLoader } from "./platform/fonts";
 import { makePanelRenderers, type PanelRenderer } from "./workbench/panelRenderers";
 import { ChromeSlot, ShellWorkbenchHost } from "./workbench/shellHost";
-import { SessionStore } from "./sessionStore";
-import { createSessionSidebarRenderer } from "./ui/SessionSidebar";
-import * as Regions from "./workbench/regions";
 
-/** The shell chrome's two panel kinds: the session sidebar and the viewport
- *  that hosts the active session's workbench. */
-const SessionSidebarSurface = SurfaceKind("the-editor/session-sidebar");
+/** The shell chrome's one panel kind: the viewport that hosts the active
+ *  session's workbench. The workspace switcher is a command-palette mode now,
+ *  not a chrome rail, so the shell owns no sidebar. */
 const SessionViewportSurface = SurfaceKind("the-editor/session-viewport");
 
 /** A chrome panel renderer that simply hands its mount element to a ChromeSlot;
- *  App portals the real React (sidebar / session views) into that element. */
+ *  App portals the real React (the session views) into that element. */
 const chromeRenderer = (title: string, slot: ChromeSlot, className: string): PanelRenderer => ({
   title: () => title,
   chrome: { className },
@@ -68,12 +61,8 @@ export class Shell {
   private readonly fontListeners = new Set<() => void>();
 
   /** Set by App: focuses the active session's surface, so the chrome host's
-   *  focusActivePanel delegates here and a sidebar click keeps the editor hot. */
+   *  focusActivePanel delegates here and a chrome click keeps the editor hot. */
   onFocusActiveSession?: () => void;
-
-  /** Stashed layout of the collapsed session sidebar (region "left-sidebar"), so
-   *  re-showing restores its width and any panels tabbed beside the session list. */
-  private readonly collapsedRegions = new Map<string, RegionSnapshot>();
 
   private constructor(
     private readonly packages: PackageRuntime,
@@ -81,44 +70,13 @@ export class Shell {
     readonly themes: Themes.Service,
     /** The shared font service injected into every session's package graph. */
     readonly fonts: Fonts.Service,
-    /** The outer chrome workbench host: sidebar + viewport panels. */
+    /** The outer chrome workbench host: just the viewport panel. */
     readonly chromeHost: ShellWorkbenchHost,
     /** The viewport mount point the chrome renderer publishes; App portals the
-     *  per-session workbenches into it. (The sidebar self-mounts, no slot.) */
+     *  per-session workbenches into it. */
     readonly viewportSlot: ChromeSlot,
-    /** Session mirror the self-mounting session-sidebar panel reads; App fills it. */
-    readonly sessionStore: SessionStore,
     private readonly chromeScope: Scope.CloseableScope,
-    /** The chrome workbench service, for sidebar show/hide surgery. */
-    private readonly chromeWorkbench: Workbench.Service,
-    /** The sidebar panel id, toggled in/out of the chrome arrangement. */
-    private readonly sidebarPanelId: PanelId,
   ) {}
-
-  /** Whether the session sidebar is currently placed in the chrome layout. */
-  isSidebarVisible(): boolean {
-    return Regions.isRegionVisible(this.chromeWorkbench, "left-sidebar");
-  }
-
-  /** Show/hide the session sidebar (Zed dock model): hiding stashes its full
-   *  layout, showing restores it. The panels stay alive either way. */
-  toggleSidebar(): void {
-    if (Regions.toggleRegion(this.chromeWorkbench, this.collapsedRegions, "left-sidebar") === "empty") {
-      Effect.runSync(
-        this.chromeWorkbench
-          .updateArrangement((a) =>
-            dockIntoRegion(a, this.sidebarPanelId, {
-              region: "left-sidebar",
-              edge: "left",
-              className: "wb-pane--sidebar",
-              tabsHidden: true,
-              ratio: 0.18,
-            }),
-          )
-          .pipe(Effect.orDie),
-      );
-    }
-  }
 
   static boot(): Shell {
     let instance!: Shell;
@@ -135,21 +93,13 @@ export class Shell {
           ])
           .pipe(Effect.orDie);
 
-        // The chrome workbench: a session-less Workbench whose two panels are
-        // the session sidebar and the session viewport. Process-global, scoped
-        // for the shell's lifetime — like theme and fonts.
+        // The chrome workbench: a session-less Workbench whose single panel is
+        // the session viewport. Process-global, scoped for the shell's lifetime
+        // — like theme and fonts.
         const chromeScope = yield* Scope.make();
         const chromeWorkbench = yield* Scope.extend(makeWorkbench(), chromeScope);
         const chromeRenderers = makePanelRenderers();
-        const sessionStore = new SessionStore();
         const viewportSlot = new ChromeSlot();
-        yield* Scope.extend(
-          chromeRenderers.register(
-            SessionSidebarSurface,
-            createSessionSidebarRenderer(sessionStore),
-          ),
-          chromeScope,
-        );
         yield* Scope.extend(
           chromeRenderers.register(
             SessionViewportSurface,
@@ -157,23 +107,13 @@ export class Shell {
           ),
           chromeScope,
         );
-        const sidebar = yield* chromeWorkbench.createPanel({ kind: SessionSidebarSurface });
         const viewport = yield* chromeWorkbench.createPanel({ kind: SessionViewportSurface });
         yield* chromeWorkbench
           .updateArrangement((a) => {
-            // Viewport is the root; the session sidebar docks into the
-            // "left-sidebar" region — a real dock zone (future global panels
-            // could tab in beside it), styled via the region's chrome class.
+            // The viewport is the whole chrome: a single tab-less root stack.
             let next = dockEdge(a, viewport.id, "left");
             const viewportSlotId = slotOfPanel(next, viewport.id);
             if (viewportSlotId !== undefined) next = toggleStackTabs(next, viewportSlotId);
-            next = dockIntoRegion(next, sidebar.id, {
-              region: "left-sidebar",
-              edge: "left",
-              className: "wb-pane--sidebar",
-              tabsHidden: true,
-              ratio: 0.18,
-            });
             return next;
           })
           .pipe(Effect.orDie);
@@ -189,10 +129,7 @@ export class Shell {
           fonts,
           chromeHost,
           viewportSlot,
-          sessionStore,
           chromeScope,
-          chromeWorkbench,
-          sidebar.id,
         );
       }),
     );

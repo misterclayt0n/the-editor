@@ -28,7 +28,21 @@ interface PaletteAction {
   readonly group: string;
 }
 
-export type CommandPaletteMode = "commands" | "themes";
+export type CommandPaletteMode = "commands" | "themes" | "workspaces";
+
+/** A single open workspace, projected by the host for the switcher mode. */
+export interface WorkspaceItem {
+  readonly id: string;
+  readonly label: string;
+}
+
+/** The host's workspace switcher data + actions. The palette is a pure view:
+ *  it lists these and emits select; it never owns session lifecycle. */
+export interface WorkspacePalette {
+  readonly items: readonly WorkspaceItem[];
+  readonly activeId: string | null;
+  readonly onSelect: (id: string) => void;
+}
 
 const defaultGroup = "Commands";
 
@@ -74,9 +88,17 @@ export interface CommandPaletteProps {
   readonly onOpenChange: (open: boolean) => void;
   readonly commands: Commands.Service;
   readonly themes: Themes.Service;
+  readonly workspaces: WorkspacePalette;
 }
 
-export function CommandPalette({ open, mode, onOpenChange, commands, themes }: CommandPaletteProps) {
+export function CommandPalette({
+  open,
+  mode,
+  onOpenChange,
+  commands,
+  themes,
+  workspaces,
+}: CommandPaletteProps) {
   const [actions, setActions] = useState<readonly PaletteAction[]>([]);
   const [themeItems, setThemeItems] = useState<readonly ThemeMeta[]>([]);
   const [search, setSearch] = useState("");
@@ -102,6 +124,11 @@ export function CommandPalette({ open, mode, onOpenChange, commands, themes }: C
     let cancelled = false;
     confirmedTheme.current = false;
     setSearch("");
+
+    if (mode === "workspaces") {
+      setSelectedValue(workspaces.activeId ?? workspaces.items[0]?.id ?? "");
+      return;
+    }
 
     if (mode === "themes") {
       Effect.runPromise(
@@ -153,7 +180,7 @@ export function CommandPalette({ open, mode, onOpenChange, commands, themes }: C
     return () => {
       cancelled = true;
     };
-  }, [commands, mode, open, themes]);
+  }, [commands, mode, open, themes, workspaces]);
 
   useEffect(() => {
     if (!open || mode !== "themes" || selectedValue.length === 0) return;
@@ -188,6 +215,11 @@ export function CommandPalette({ open, mode, onOpenChange, commands, themes }: C
     );
   };
 
+  const selectWorkspace = (id: string) => {
+    onOpenChange(false);
+    workspaces.onSelect(id);
+  };
+
   const selectTheme = (themeName: string) => {
     confirmedTheme.current = true;
     Effect.runFork(
@@ -200,7 +232,13 @@ export function CommandPalette({ open, mode, onOpenChange, commands, themes }: C
     <CommandDialog
       open={open}
       onOpenChange={requestOpenChange}
-      title={mode === "themes" ? "Select Theme" : "Command Palette"}
+      title={
+        mode === "themes"
+          ? "Select Theme"
+          : mode === "workspaces"
+            ? "Switch Workspace"
+            : "Command Palette"
+      }
       className="command-palette-dialog"
     >
       <Command
@@ -212,15 +250,42 @@ export function CommandPalette({ open, mode, onOpenChange, commands, themes }: C
         <CommandInput
           ref={inputRef}
           className="command-palette__input"
-          placeholder={mode === "themes" ? "Select a theme…" : "Type a command…"}
+          placeholder={
+            mode === "themes"
+              ? "Select a theme…"
+              : mode === "workspaces"
+                ? "Switch workspace…"
+                : "Type a command…"
+          }
           value={search}
           onValueChange={setSearch}
         />
         <CommandList className="command-palette__list">
           <CommandEmpty className="command-palette__empty">
-            {mode === "themes" ? "No themes found." : "No commands found."}
+            {mode === "themes"
+              ? "No themes found."
+              : mode === "workspaces"
+                ? "No workspaces found."
+                : "No commands found."}
           </CommandEmpty>
-          {mode === "themes" ? (
+          {mode === "workspaces" ? (
+            <CommandGroup className="command-palette__group" heading="Workspaces">
+              {workspaces.items.map((workspace) => (
+                <CommandItem
+                  className="command-palette__item"
+                  key={workspace.id}
+                  value={workspace.id}
+                  keywords={[workspace.label]}
+                  onSelect={() => selectWorkspace(workspace.id)}
+                >
+                  <span className="command-palette__item-title">{workspace.label}</span>
+                  {workspace.id === workspaces.activeId && (
+                    <span className="command-palette__shortcut">active</span>
+                  )}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          ) : mode === "themes" ? (
             <CommandGroup className="command-palette__group" heading="Themes">
               {themeItems.map((theme) => (
                 <CommandItem

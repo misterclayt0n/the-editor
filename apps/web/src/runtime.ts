@@ -100,6 +100,7 @@ import { editorDefaults, EditorSurface } from "./product/editorDefaults";
 import { lineNumbers } from "./product/lineNumbers";
 import { filesPackage, HostFileActions } from "./product/files";
 import { palettePackage, HostPaletteActions } from "./product/palette";
+import { workspacesPackage, HostWorkspaceActions } from "./product/workspaces";
 import { viewPackage, HostViewActions } from "./product/view";
 import { themeCommands, HostThemeActions } from "./product/themes";
 import { createFileSystemPort } from "./platform/fs";
@@ -331,6 +332,12 @@ export class AppRuntime {
   onSearchOpenRequested?: () => void;
   /** Host UI hooks: theme selector command fired (show themed palette mode). */
   onThemeSelectorOpenRequested?: () => void;
+  /** Host UI hooks: workspace switcher requested (show the palette list mode). */
+  onWorkspaceSwitcherRequested?: () => void;
+  /** Host UI hooks: create a new workspace (fresh session, open folder). */
+  onWorkspaceNewRequested?: () => void;
+  /** Host UI hooks: close the active workspace. */
+  onWorkspaceCloseRequested?: () => void;
   /** Host UI hooks: diagnostics changed for a document (status surfaces). */
   onDiagnosticsChanged?: (docId: string) => void;
   /** Host UI hooks: rename was requested at the caret (show the prompt). */
@@ -525,6 +532,11 @@ export class AppRuntime {
           Layer.succeed(HostThemeActions, {
             openSelector: () => instance.onThemeSelectorOpenRequested?.(),
           }),
+          Layer.succeed(HostWorkspaceActions, {
+            openSwitcher: () => instance.onWorkspaceSwitcherRequested?.(),
+            newWorkspace: () => instance.onWorkspaceNewRequested?.(),
+            closeWorkspace: () => instance.onWorkspaceCloseRequested?.(),
+          }),
           Layer.succeed(HostLspActions, {
             goToDefinition: () => void instance.goToDefinition(),
             formatDocument: () => void instance.formatActiveDocument(),
@@ -548,6 +560,7 @@ export class AppRuntime {
             toPackageDescriptor(filesPackage, services),
             toPackageDescriptor(palettePackage, services),
             toPackageDescriptor(themeCommands, services),
+            toPackageDescriptor(workspacesPackage, services),
             toPackageDescriptor(viewPackage, services),
             toPackageDescriptor(diffViewPackage, services),
             toPackageDescriptor(lspDefaults, services),

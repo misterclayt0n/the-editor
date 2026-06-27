@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { Effect } from "effect";
 import type { EditorSnapshot } from "@the-editor/editor";
@@ -8,7 +8,7 @@ import { AppRuntime, type EditorPane } from "./runtime";
 import { Shell } from "./shell";
 import { WorkbenchView } from "./workbench/WorkbenchView";
 import type { ChromeSlot } from "./workbench/shellHost";
-import { isMacDesktop } from "./platform/desktop";
+import { isMacDesktop, isDesktop } from "./platform/desktop";
 import { CommandPalette, type CommandPaletteMode } from "./ui/CommandPalette";
 import { FileFinder } from "./ui/FileFinder";
 import { GlobalSearch } from "./ui/GlobalSearch";
@@ -143,16 +143,15 @@ export function App() {
   activeRuntimeRef.current = active?.runtime ?? null;
   const activeIntelRef = useRef<IntelController | null>(null);
   activeIntelRef.current = active?.intel ?? null;
+  // Workspace lifecycle is owned here but reached from runtime command hooks
+  // (set in makeSession, which captures the first render). Route through refs
+  // so the commands always hit the current handlers.
+  const addWorkspaceRef = useRef<() => void>(() => {});
+  const closeWorkspaceRef = useRef<(id: WorkspaceId) => void>(() => {});
 
   // The viewport panel's DOM element; App portals the per-session workbenches
-  // into it. (The session sidebar self-mounts off the shell session store.)
+  // into it.
   const viewportEl = useChromeSlotElement(shell?.viewportSlot);
-  // Whether the session sidebar is currently placed (drives the toggle button
-  // state and the editor's left inset while hidden).
-  const sidebarVisible = useSyncExternalStore(
-    useCallback((cb: () => void) => shell?.chromeHost.subscribeWorkbench(cb) ?? (() => {}), [shell]),
-    useCallback(() => shell?.isSidebarVisible() ?? false, [shell]),
-  );
 
   // Build a session: boot a runtime, wire its host hooks to the shared chrome,
   // and attach its intel controller. Callbacks that fire from BACKGROUND work
@@ -176,6 +175,15 @@ export function App() {
     runtime.onThemeSelectorOpenRequested = () => {
       setPaletteMode("themes");
       setPaletteOpen(true);
+    };
+    runtime.onWorkspaceSwitcherRequested = () => {
+      setPaletteMode("workspaces");
+      setPaletteOpen(true);
+    };
+    runtime.onWorkspaceNewRequested = () => addWorkspaceRef.current();
+    runtime.onWorkspaceCloseRequested = () => {
+      const id = activeIdRef.current;
+      if (id !== null) closeWorkspaceRef.current(id);
     };
     runtime.onDiagnosticsChanged = () => {
       if (isActive()) setStatusEpoch((epoch) => epoch + 1);
@@ -363,20 +371,20 @@ export function App() {
     if (target !== undefined) window.requestAnimationFrame(() => target.dispose());
   }, []);
 
-  // Feed the shell session store that the self-mounting sidebar reads: the row
-  // actions and the live tab list. Session lifecycle stays here in App.
-  useEffect(() => {
-    if (shell === null) return;
-    shell.sessionStore.onSelect = switchWorkspace;
-    shell.sessionStore.onAdd = addWorkspace;
-    shell.sessionStore.onClose = closeWorkspace;
-  }, [shell, switchWorkspace, addWorkspace, closeWorkspace]);
-  useEffect(() => {
-    shell?.sessionStore.set(
-      sessions.map((session) => ({ id: session.id, label: workspaceLabel(session.root) })),
+  // Keep the runtime-command hooks pointed at the live lifecycle handlers.
+  addWorkspaceRef.current = addWorkspace;
+  closeWorkspaceRef.current = closeWorkspace;
+
+  // The workspace switcher's data, projected from App's own session state — the
+  // command palette is a pure view over this; it never owns sessions.
+  const workspaces = useMemo(
+    () => ({
+      items: sessions.map((session) => ({ id: session.id, label: workspaceLabel(session.root) })),
       activeId,
-    );
-  }, [shell, sessions, activeId]);
+      onSelect: switchWorkspace,
+    }),
+    [sessions, activeId, switchWorkspace],
+  );
 
   const handleActiveSnapshot = useCallback((next: EditorSnapshot) => setSnapshot(next), []);
   // Resolve the pending prompt exactly once (Enter fires onSubmit then onClose).
@@ -409,25 +417,8 @@ export function App() {
   const diagnostics = diagnosticDocId !== null ? activeRuntime.diagnosticsFor(diagnosticDocId) : null;
 
   return (
-    <div
-      className="app"
-      data-traffic-lights={isMacDesktop ? "" : undefined}
-      data-sidebar-hidden={sidebarVisible ? undefined : ""}
-    >
+    <div className="app">
       <WorkbenchView runtime={shell.chromeHost} active />
-      <button
-        type="button"
-        className="sidebar-toggle"
-        data-active={sidebarVisible ? "" : undefined}
-        onClick={() => shell.toggleSidebar()}
-        title="Toggle Sidebar"
-        aria-label="Toggle Sidebar"
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <rect x="1.85" y="2.85" width="12.3" height="10.3" rx="2.4" stroke="currentColor" strokeWidth="1.3" />
-          <line x1="6.15" y1="3.1" x2="6.15" y2="12.9" stroke="currentColor" strokeWidth="1.3" />
-        </svg>
-      </button>
       {viewportEl !== null &&
         createPortal(
           sessions.map((session) => (
@@ -435,7 +426,7 @@ export function App() {
               key={session.id}
               runtime={session.runtime}
               active={session.id === activeId}
-              firstTabInset={sidebarVisible ? 0 : isMacDesktop ? 120 : 40}
+              firstTabInset={isMacDesktop ? 120 : isDesktop ? 40 : 0}
               trailingAction={<FileTreeToggle runtime={session.runtime} />}
               {...(session.id === activeId ? { onActiveSnapshot: handleActiveSnapshot } : {})}
             />
@@ -448,6 +439,7 @@ export function App() {
         onOpenChange={handlePaletteOpenChange}
         commands={activeRuntime.commands}
         themes={activeRuntime.themes}
+        workspaces={workspaces}
       />
       <FileFinder
         open={fileFinderOpen}

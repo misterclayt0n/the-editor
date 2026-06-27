@@ -7,3 +7,6 @@ const bridge =
 
 /** macOS Electron host (hiddenInset title bar): reserve traffic-light space. */
 export const isMacDesktop = bridge?.theEditorDesktop?.platform === "darwin";
+
+/** Any Electron desktop host (frameless): worth a window-drag handle in chrome. */
+export const isDesktop = bridge?.theEditorDesktop !== undefined;

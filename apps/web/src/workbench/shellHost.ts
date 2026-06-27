@@ -123,6 +123,11 @@ export class ShellWorkbenchHost implements WorkbenchHost {
     );
   }
 
+  /** Chrome panels carry no unsaved document state; the gesture just closes. */
+  requestCloseTab(panelId: PanelId): void {
+    this.closeTab(panelId);
+  }
+
   moveTabToStack(panelId: PanelId, fromSlot: SlotId, toSlot: SlotId, index?: number): void {
     Effect.runSync(
       this.workbench

@@ -29,6 +29,8 @@ export interface WorkbenchHost {
   activateTab(slotId: SlotId, panelId: PanelId): void;
   /** Close a tab; the panel dies. */
   closeTab(panelId: PanelId): void;
+  /** Close a tab via user gesture: guards an unsaved editor pane with a prompt. */
+  requestCloseTab(panelId: PanelId): void;
   /** Drag commit: move a tab into another stack (or reorder within one). */
   moveTabToStack(panelId: PanelId, fromSlot: SlotId, toSlot: SlotId, index?: number): void;
   /** Drag commit: tear a tab out into a new split beside the target stack. */

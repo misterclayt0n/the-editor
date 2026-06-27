@@ -19,7 +19,13 @@
  */
 
 import { Context, Effect, Exit, Fiber, Layer, Option, Scope, Stream } from "effect";
-import { makePackageRuntime } from "@the-editor/kernel";
+import {
+  Attention,
+  makeAttention,
+  makePackageRuntime,
+  type Pending,
+} from "@the-editor/kernel";
+import { ConfirmDiscardChanges, confirmDiscardRequest } from "./product/attention.js";
 import { toPackageDescriptor } from "@the-editor/extensions";
 import { Shell } from "./shell";
 import { Commands, makeCommands } from "@the-editor/commands";
@@ -357,6 +363,8 @@ export class AppRuntime {
   panelRenderers!: PanelRenderers.Service;
   /** Diff view preferences shared by extension packages and the mounted panel. */
   diffViewPreferences!: DiffViewPreferences.Service;
+  /** Human-facing notification + request fabric (toasts, confirm dialogs). */
+  attention!: Attention.Service;
   /** Version control (undefined without a process host). */
   vcs: VcsManager | undefined;
   /** Intel provider registries (App hands them to the IntelController). */
@@ -389,6 +397,10 @@ export class AppRuntime {
   private readonly highlightsByDoc = new Map<string, DocumentHighlights>();
   private workbenchSnapshot: WorkbenchSnapshot;
   private readonly workbenchListeners = new Set<() => void>();
+  /** Imperative mirror of the attention inbox for React (useSyncExternalStore). */
+  private attentionRequests: ReadonlyArray<Pending> = [];
+  private readonly attentionListeners = new Set<() => void>();
+  private attentionFiber: Fiber.RuntimeFiber<unknown, unknown> | undefined;
   private mirrorFibers: ReadonlyArray<Fiber.RuntimeFiber<unknown, unknown>> = [];
   private themeFiber: Fiber.RuntimeFiber<unknown, unknown> | undefined;
   private fontFiber: Fiber.RuntimeFiber<unknown, unknown> | undefined;
@@ -438,6 +450,7 @@ export class AppRuntime {
         const scope = yield* Scope.make();
         const runtime = yield* makePackageRuntime;
         const workbench = yield* Scope.extend(makeWorkbench(), scope);
+        const attention = yield* Scope.extend(makeAttention(), scope);
         const commands = yield* makeCommands(runtime.contributionIndex, { workbench });
         const keymaps = yield* makeKeymaps(runtime.contributionIndex, { workbench });
 
@@ -514,6 +527,7 @@ export class AppRuntime {
           Layer.succeed(Commands, commands),
           Layer.succeed(Keymaps, keymaps),
           Layer.succeed(Workbench, workbench),
+          Layer.succeed(Attention, attention),
           Layer.succeed(DocumentRegistry, Context.get(workspaceContext, DocumentRegistry)),
           Layer.succeed(
             WorkspaceNotifications,
@@ -546,7 +560,7 @@ export class AppRuntime {
           Layer.succeed(HostViewActions, {
             splitRight: () => instance.splitFocused("row"),
             splitDown: () => instance.splitFocused("column"),
-            closeTab: () => instance.closeFocusedTab(),
+            closeTab: () => instance.requestCloseFocusedTab(),
             nextTab: () => instance.cycleTab(1),
             previousTab: () => instance.cycleTab(-1),
             toggleTabs: () => instance.toggleTabs(),
@@ -576,6 +590,7 @@ export class AppRuntime {
         const appRuntime = new AppRuntime(scope, workspace, workbench, commands, keymaps, themes, fonts);
         appRuntime.panelRenderers = panelRenderers;
         appRuntime.diffViewPreferences = diffViewPreferences;
+        appRuntime.attention = attention;
         appRuntime.intel = {
           completions: completionProviders,
           hovers: hoverProviders,
@@ -604,6 +619,7 @@ export class AppRuntime {
     );
     instance.focusSlotOfPanel(pane.panelId);
     instance.startWorkbenchMirror();
+    instance.startAttentionMirror();
     instance.startThemeListener();
     instance.startFontListener();
     return instance;
@@ -619,6 +635,43 @@ export class AppRuntime {
   subscribeWorkbench(listener: () => void): () => void {
     this.workbenchListeners.add(listener);
     return () => this.workbenchListeners.delete(listener);
+  }
+
+  // ------------------------------------------------------------- attention
+
+  /** Drain the attention inbox into an imperative mirror React can read. */
+  private startAttentionMirror(): void {
+    this.attentionFiber = Effect.runFork(
+      Stream.runForEach(this.attention.requestChanges, (requests) =>
+        Effect.sync(() => {
+          this.attentionRequests = requests;
+          for (const listener of this.attentionListeners) listener();
+        }),
+      ),
+    );
+  }
+
+  /** Current open requests, for useSyncExternalStore. */
+  attentionSnapshot(): ReadonlyArray<Pending> {
+    return this.attentionRequests;
+  }
+
+  subscribeAttention(listener: () => void): () => void {
+    this.attentionListeners.add(listener);
+    return () => void this.attentionListeners.delete(listener);
+  }
+
+  /** Mark a UI responder present until the returned disposer runs. While one
+   *  is registered, `ask` enqueues and waits; with none it falls to default. */
+  acquireAttentionResponder(): () => void {
+    const scope = Effect.runSync(Scope.make());
+    Effect.runSync(Scope.extend(this.attention.registerResponder, scope));
+    return () => void Effect.runFork(Scope.close(scope, Exit.void));
+  }
+
+  /** Answer an open request (the responder's one job). */
+  respondToRequest(request: Pending, answer: unknown): void {
+    void Effect.runPromise(request.respond(answer));
   }
 
   themeSnapshot(): ResolvedTheme {
@@ -829,6 +882,54 @@ export class AppRuntime {
   closeFocusedTab(): void {
     const focused = Effect.runSync(this.workbench.focusedPanel);
     if (Option.isSome(focused)) this.closeTab(focused.value.id);
+  }
+
+  /** Close the focused tab, guarding an editor pane with unsaved changes. */
+  requestCloseFocusedTab(): void {
+    const focused = Effect.runSync(this.workbench.focusedPanel);
+    if (Option.isSome(focused)) this.requestCloseTab(focused.value.id);
+  }
+
+  /**
+   * Close a tab, but if it is an editor pane with unsaved changes, `ask` the
+   * user first via the Attention fabric and act on their answer. Non-editor
+   * panels (terminal, file tree, multibuffer) close unconditionally — the
+   * confirmation is a property of dirty document state, not of tabs.
+   */
+  requestCloseTab(panelId: PanelId): void {
+    const pane = this.panes.get(panelId);
+    if (pane === undefined || !pane.snapshot().dirty) {
+      this.closeTab(panelId);
+      return;
+    }
+    const name = pane.fileInfo()?.path.split("/").pop() ?? "untitled";
+    const docId = pane.document.id;
+    void Effect.runPromise(
+      this.attention.ask(ConfirmDiscardChanges, confirmDiscardRequest(name), {
+        level: "warning",
+        default: "cancel",
+      }),
+    ).then((answer) => {
+      if (answer === "cancel") {
+        this.focusActivePanel();
+        return;
+      }
+      const proceed = () => {
+        if (this.panes.has(panelId)) this.closeTab(panelId);
+      };
+      if (answer === "save") void this.saveDocument(docId).then(proceed);
+      else proceed();
+    });
+  }
+
+  /** Persist one document by id (the close-confirm "Save" path). */
+  private async saveDocument(docId: DocumentId): Promise<void> {
+    const files = Context.getOption(this.workspace.context, Files);
+    if (Option.isNone(files)) return;
+    await Effect.runPromise(files.value.save(docId).pipe(Effect.catchAll(() => Effect.void)));
+    this.lsp?.documentSaved(String(docId));
+    this.vcs?.documentSaved();
+    this.onFileStateChanged?.();
   }
 
   /** Split the focused stack: a new view of the same document beside it. */
@@ -1696,6 +1797,7 @@ export class AppRuntime {
     for (const highlights of this.highlightsByDoc.values()) highlights.close();
     this.highlightsByDoc.clear();
     for (const fiber of this.mirrorFibers) Effect.runFork(Fiber.interrupt(fiber));
+    if (this.attentionFiber !== undefined) Effect.runFork(Fiber.interrupt(this.attentionFiber));
     if (this.themeFiber !== undefined) Effect.runFork(Fiber.interrupt(this.themeFiber));
     if (this.fontFiber !== undefined) Effect.runFork(Fiber.interrupt(this.fontFiber));
     const views = [...this.panes.values()].map((pane) => pane.view);

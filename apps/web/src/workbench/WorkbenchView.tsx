@@ -672,7 +672,7 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
                       className="wb-tab-close"
                       onClick={(event) => {
                         event.stopPropagation();
-                        runtime.closeTab(panelId);
+                        runtime.requestCloseTab(panelId);
                       }}
                     >
                       ×
@@ -689,7 +689,7 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
                   active={i === stack.active}
                   dragging={drag?.panelId === panelId}
                   onPointerDown={(event, title) => tree.beginTabDrag(event, panelId, stack.id, title)}
-                  onClose={() => runtime.closeTab(panelId)}
+                  onClose={() => runtime.requestCloseTab(panelId)}
                 />
               </Fragment>
             );

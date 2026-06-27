@@ -8,7 +8,8 @@ import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
-import { highlightSnippet, type SnippetSpan } from "../editor/snippetHighlight";
+import { highlightSnippet } from "../editor/snippetHighlight";
+import type { CodeSpan } from "../editor/highlightSpans";
 import type { IntelController } from "./controller";
 import type { SignatureInfo } from "./types";
 
@@ -71,9 +72,7 @@ marked.use({
 
 /** Full markdown (GFM), sanitized; hover contents come from servers. */
 function Markdown({ contents }: { readonly contents: string }) {
-  const html = DOMPurify.sanitize(
-    marked.parse(contents, { async: false, gfm: true }) as string,
-  );
+  const html = DOMPurify.sanitize(marked.parse(contents, { async: false, gfm: true }) as string);
   return <div className="intel-hover__md" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
@@ -109,7 +108,7 @@ function HighlightedCode({
  * highlight it as the header, and render the rest as the body.
  */
 type HoverHead = {
-  readonly sigSpans: SnippetSpan[] | null;
+  readonly sigSpans: CodeSpan[] | null;
   readonly sigText: string | null;
   readonly body: string;
 };
@@ -160,8 +159,7 @@ export function IntelView({ controller }: { readonly controller: IntelController
   const signatureHost = controller.signatureElement();
   const signatureResult = state.signature.result;
   const activeSignature = signatureResult?.signatures[state.signature.selected];
-  const activeParameter =
-    activeSignature?.activeParameter ?? signatureResult?.activeParameter ?? 0;
+  const activeParameter = activeSignature?.activeParameter ?? signatureResult?.activeParameter ?? 0;
 
   return (
     <>
@@ -171,24 +169,24 @@ export function IntelView({ controller }: { readonly controller: IntelController
           <div className="intel-completion-wrap">
             <div ref={listRef} className="intel-completion" role="listbox">
               {state.completion.items.slice(0, 60).map((scored, index) => (
-              <div
-                key={`${scored.providerOrder}:${scored.item.label}:${index}`}
-                role="option"
-                aria-selected={index === state.completion.selected}
-                className={`intel-item${index === state.completion.selected ? " intel-item--selected" : ""}${scored.item.deprecated ? " intel-item--deprecated" : ""}`}
-                onMouseDown={(event) => {
-                  event.preventDefault(); // keep editor focus
-                }}
-                onClick={() => controller.acceptIndex(index)}
-              >
-                <span className={`intel-item__kind intel-kind--${scored.item.kind ?? "text"}`}>
-                  {(scored.item.kind ?? "text").slice(0, 2)}
-                </span>
-                <span className="intel-item__label">{scored.item.label}</span>
-                {scored.item.detail !== undefined && (
-                  <span className="intel-item__detail">{scored.item.detail}</span>
-                )}
-              </div>
+                <div
+                  key={`${scored.providerOrder}:${scored.item.label}:${index}`}
+                  role="option"
+                  aria-selected={index === state.completion.selected}
+                  className={`intel-item${index === state.completion.selected ? " intel-item--selected" : ""}${scored.item.deprecated ? " intel-item--deprecated" : ""}`}
+                  onMouseDown={(event) => {
+                    event.preventDefault(); // keep editor focus
+                  }}
+                  onClick={() => controller.acceptIndex(index)}
+                >
+                  <span className={`intel-item__kind intel-kind--${scored.item.kind ?? "text"}`}>
+                    {(scored.item.kind ?? "text").slice(0, 2)}
+                  </span>
+                  <span className="intel-item__label">{scored.item.label}</span>
+                  {scored.item.detail !== undefined && (
+                    <span className="intel-item__detail">{scored.item.detail}</span>
+                  )}
+                </div>
               ))}
             </div>
             {state.completionDocs !== null && (

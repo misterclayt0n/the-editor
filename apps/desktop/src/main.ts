@@ -4,6 +4,7 @@ import * as fsp from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, nativeTheme } from "electron";
+import { readTextRange } from "./fs-range";
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL?.trim();
 const APP_NAME = "The Editor";
@@ -11,7 +12,11 @@ const DESKTOP_RESOURCE_DIR = path.resolve(__dirname, "..", "resources");
 const APP_ICON_PNG_PATH = path.join(DESKTOP_RESOURCE_DIR, "icon.png");
 const APP_WINDOW_ICON_PATH = path.join(
   DESKTOP_RESOURCE_DIR,
-  process.platform === "win32" ? "icon.ico" : process.platform === "darwin" ? "icon.icns" : "icon.png",
+  process.platform === "win32"
+    ? "icon.ico"
+    : process.platform === "darwin"
+      ? "icon.icns"
+      : "icon.png",
 );
 app.setName(APP_NAME);
 app.setAboutPanelOptions({ applicationName: APP_NAME });
@@ -19,7 +24,9 @@ app.setAboutPanelOptions({ applicationName: APP_NAME });
 /** Native modules (node-pty) are externalized; require them at runtime. */
 const nodeRequire = createRequire(import.meta.url);
 
-type FffResult<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: string };
+type FffResult<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly error: string };
 type FffLocation =
   | { readonly type: "line"; readonly line: number }
   | { readonly type: "position"; readonly line: number; readonly col: number }
@@ -125,6 +132,11 @@ function registerFileSystemHandlers(): void {
     const buffer = await fsp.readFile(filePath);
     return new Uint8Array(buffer);
   });
+  ipcMain.handle(
+    "fs:readTextRange",
+    async (_event, filePath: string, offset: number, maxBytes: number) =>
+      readTextRange(filePath, offset, maxBytes),
+  );
   ipcMain.handle("fs:write", async (_event, filePath: string, text: string) => {
     await fsp.mkdir(path.dirname(filePath), { recursive: true });
     await fsp.writeFile(filePath, text, "utf8");
@@ -402,13 +414,25 @@ function grepOptions(input: FinderGrepInput | FinderMultiGrepInput): FffGrepOpti
   return {
     pageSize: boundedInt(input.limit, 50, 1, 10_000),
     ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
-    ...(input.maxFileSize !== undefined ? { maxFileSize: boundedInt(input.maxFileSize, 10 * 1024 * 1024, 1, Number.MAX_SAFE_INTEGER) } : {}),
-    ...(input.maxMatchesPerFile !== undefined ? { maxMatchesPerFile: boundedInt(input.maxMatchesPerFile, 200, 0, 100_000) } : {}),
+    ...(input.maxFileSize !== undefined
+      ? { maxFileSize: boundedInt(input.maxFileSize, 10 * 1024 * 1024, 1, Number.MAX_SAFE_INTEGER) }
+      : {}),
+    ...(input.maxMatchesPerFile !== undefined
+      ? { maxMatchesPerFile: boundedInt(input.maxMatchesPerFile, 200, 0, 100_000) }
+      : {}),
     ...(input.smartCase !== undefined ? { smartCase: input.smartCase } : {}),
-    ...(input.timeBudgetMs !== undefined ? { timeBudgetMs: boundedInt(input.timeBudgetMs, 0, 0, 60_000) } : {}),
-    ...(input.beforeContext !== undefined ? { beforeContext: boundedInt(input.beforeContext, 0, 0, 1_000) } : {}),
-    ...(input.afterContext !== undefined ? { afterContext: boundedInt(input.afterContext, 0, 0, 1_000) } : {}),
-    ...(input.classifyDefinitions !== undefined ? { classifyDefinitions: input.classifyDefinitions } : {}),
+    ...(input.timeBudgetMs !== undefined
+      ? { timeBudgetMs: boundedInt(input.timeBudgetMs, 0, 0, 60_000) }
+      : {}),
+    ...(input.beforeContext !== undefined
+      ? { beforeContext: boundedInt(input.beforeContext, 0, 0, 1_000) }
+      : {}),
+    ...(input.afterContext !== undefined
+      ? { afterContext: boundedInt(input.afterContext, 0, 0, 1_000) }
+      : {}),
+    ...(input.classifyDefinitions !== undefined
+      ? { classifyDefinitions: input.classifyDefinitions }
+      : {}),
     ...("mode" in input && input.mode !== undefined ? { mode: input.mode } : {}),
   };
 }
@@ -463,7 +487,8 @@ function registerFileFinderHandlers(): void {
       const found = await getFff(input.root);
       if (!found.ok) return found;
       const patterns = input.patterns.filter((pattern) => pattern.length > 0);
-      if (patterns.length === 0) return { ok: false, error: "multiGrep requires at least one non-empty pattern" };
+      if (patterns.length === 0)
+        return { ok: false, error: "multiGrep requires at least one non-empty pattern" };
       const ready = await waitForFffContentIndex(found.value);
       if (!ready.ok) return ready;
       return found.value.multiGrep(multiGrepOptions({ ...input, patterns }));
@@ -531,7 +556,10 @@ type ClipboardTextReadOptions = {
   readonly maxBytes?: number;
 };
 
-const assertClipboardTextWithinLimit = (text: string, options?: ClipboardTextReadOptions): string => {
+const assertClipboardTextWithinLimit = (
+  text: string,
+  options?: ClipboardTextReadOptions,
+): string => {
   if (options?.maxBytes === undefined) return text;
   if (Buffer.byteLength(text, "utf8") > options.maxBytes) {
     throw new Error("Clipboard text exceeds the terminal paste limit.");
@@ -571,7 +599,9 @@ function registerTerminalHandlers(): void {
       const sender = event.sender;
       try {
         const shell =
-          options.shell ?? process.env.SHELL ?? (process.platform === "win32" ? "powershell.exe" : "/bin/bash");
+          options.shell ??
+          process.env.SHELL ??
+          (process.platform === "win32" ? "powershell.exe" : "/bin/bash");
         const child = pty.spawn(shell, [], {
           name: "xterm-256color",
           cols: Math.max(1, options.cols),

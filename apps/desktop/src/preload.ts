@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { TextRange } from "./fs-range";
 
 type FileEventPayload = {
   readonly watchId: number;
@@ -34,8 +35,7 @@ try {
     require("./syntax-engine.cjs") as typeof import("./syntax-engine");
   const engine = createSyntaxEngine(defaultRequire);
   contextBridge.exposeInMainWorld("theEditorSyntaxSync", {
-    open: (docId: string, path: string | undefined, text: string) =>
-      engine.open(docId, path, text),
+    open: (docId: string, path: string | undefined, text: string) => engine.open(docId, path, text),
     edit: (docId: string, edits: ReadonlyArray<{ start: number; end: number; text: string }>) =>
       engine.edit(docId, edits),
     pump: (docId: string, budgetMs: number) => engine.pump(docId, budgetMs),
@@ -199,10 +199,15 @@ ipcRenderer.on("term:exit", (_event, payload: { id: number; code: number | null 
 });
 
 contextBridge.exposeInMainWorld("theEditorTerminal", {
-  spawn: (options: { cols: number; rows: number; cwd?: string; shell?: string }): Promise<number | null> =>
-    ipcRenderer.invoke("term:spawn", options),
+  spawn: (options: {
+    cols: number;
+    rows: number;
+    cwd?: string;
+    shell?: string;
+  }): Promise<number | null> => ipcRenderer.invoke("term:spawn", options),
   write: (id: number, data: string): void => ipcRenderer.send("term:write", id, data),
-  resize: (id: number, cols: number, rows: number): void => ipcRenderer.send("term:resize", id, cols, rows),
+  resize: (id: number, cols: number, rows: number): void =>
+    ipcRenderer.send("term:resize", id, cols, rows),
   kill: (id: number): void => {
     termDataListeners.delete(id);
     termExitListeners.delete(id);
@@ -224,12 +229,15 @@ contextBridge.exposeInMainWorld("theEditorClipboard", {
     ipcRenderer.invoke("clipboard:readSelectionText", options),
   writeSelectionText: (text: string): Promise<void> =>
     ipcRenderer.invoke("clipboard:writeSelectionText", text),
-  saveImageAsTempFile: (): Promise<string | null> => ipcRenderer.invoke("clipboard:saveImageAsTempFile"),
+  saveImageAsTempFile: (): Promise<string | null> =>
+    ipcRenderer.invoke("clipboard:saveImageAsTempFile"),
 });
 
 contextBridge.exposeInMainWorld("theEditorFs", {
   readFile: (path: string): Promise<string> => ipcRenderer.invoke("fs:read", path),
   readBinaryFile: (path: string): Promise<Uint8Array> => ipcRenderer.invoke("fs:readBinary", path),
+  readTextRange: (path: string, offset: number, maxBytes: number): Promise<TextRange> =>
+    ipcRenderer.invoke("fs:readTextRange", path, offset, maxBytes),
   writeFile: (path: string, text: string): Promise<{ mtimeMs: number; size: number }> =>
     ipcRenderer.invoke("fs:write", path, text),
   stat: (path: string): Promise<{ mtimeMs: number; size: number } | null> =>
@@ -248,9 +256,7 @@ contextBridge.exposeInMainWorld("theEditorFs", {
   },
   pickFile: (): Promise<string | null> => ipcRenderer.invoke("fs:pick"),
   pickFolder: (): Promise<string | null> => ipcRenderer.invoke("fs:pickfolder"),
-  readDir: (
-    path: string,
-  ): Promise<Array<{ name: string; kind: "file" | "directory" }>> =>
+  readDir: (path: string): Promise<Array<{ name: string; kind: "file" | "directory" }>> =>
     ipcRenderer.invoke("fs:readdir", path),
   mkdir: (path: string): Promise<void> => ipcRenderer.invoke("fs:mkdir", path),
   watchDir: async (

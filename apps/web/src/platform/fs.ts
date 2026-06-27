@@ -19,12 +19,14 @@ import {
   type DirEntry,
   type FileEvent,
   type FileStat,
+  type FileTextRange,
   type FileSystemPort,
 } from "@the-editor/editor";
 
 type Bridge = {
   readFile(path: string): Promise<string>;
   writeFile(path: string, text: string): Promise<{ mtimeMs: number; size: number }>;
+  readTextRange?(path: string, offset: number, maxBytes: number): Promise<FileTextRange>;
   stat(path: string): Promise<{ mtimeMs: number; size: number } | null>;
   watch(path: string, onEvent: (event: { path: string; kind: string }) => void): Promise<number>;
   unwatch(id: number): Promise<void>;
@@ -52,8 +54,7 @@ function bridgePort(bridge: Bridge): FileSystemPort.Service {
   return {
     readFile: (path) => io(path, "read", () => bridge.readFile(path)),
     writeFile: (path, text) => io(path, "write", () => bridge.writeFile(path, text)),
-    stat: (path) =>
-      io(path, "stat", () => bridge.stat(path)).pipe(Effect.map(Option.fromNullable)),
+    stat: (path) => io(path, "stat", () => bridge.stat(path)).pipe(Effect.map(Option.fromNullable)),
     watch: (path, onEvent) =>
       io(path, "watch", async () => {
         const id = await bridge.watch(path, (event) =>
@@ -68,6 +69,17 @@ function bridgePort(bridge: Bridge): FileSystemPort.Service {
             io("", "pick", () => bridge.pickFolder!()).pipe(Effect.map(Option.fromNullable)),
         }
       : {}),
+    ...(bridge.readTextRange !== undefined
+      ? {
+          readTextRange: (
+            path: string,
+            options: { readonly offset?: number; readonly maxBytes: number },
+          ) =>
+            io(path, "read", () =>
+              bridge.readTextRange!(path, options.offset ?? 0, options.maxBytes),
+            ),
+        }
+      : {}),
     ...(bridge.readDir !== undefined
       ? {
           readDir: (path: string): ReturnType<NonNullable<FileSystemPort.Service["readDir"]>> =>
@@ -77,7 +89,9 @@ function bridgePort(bridge: Bridge): FileSystemPort.Service {
         }
       : {}),
     ...(bridge.mkdir !== undefined
-      ? { mkdir: (path: string) => io(path, "write", () => bridge.mkdir!(path)).pipe(Effect.asVoid) }
+      ? {
+          mkdir: (path: string) => io(path, "write", () => bridge.mkdir!(path)).pipe(Effect.asVoid),
+        }
       : {}),
     ...(bridge.watchDir !== undefined
       ? {
@@ -98,6 +112,40 @@ function bridgePort(bridge: Bridge): FileSystemPort.Service {
 }
 
 const POLL_MS = 1500;
+
+/** A UTF-8 continuation byte (0b10xxxxxx) — never starts a char. */
+const isUtf8Continuation = (byte: number): boolean => (byte & 0xc0) === 0x80;
+/** Byte count a UTF-8 lead byte introduces (1 for ASCII). */
+const utf8SequenceLength = (lead: number): number =>
+  lead < 0x80 ? 1 : lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : 4;
+
+/**
+ * Byte-align a UTF-8 window for the FS Access fallback, mirroring the canonical
+ * Node reader in apps/desktop/src/fs-range.ts (the browser and Electron-main
+ * runtimes can't share a module without crossing the app boundary). Drops a
+ * leading char split by the offset and a trailing char cut by the window end so
+ * the decoded text never carries boundary replacement chars.
+ */
+const decodeUtf8Window = (
+  bytes: Uint8Array,
+  atStart: boolean,
+  atEnd: boolean,
+): { readonly text: string; readonly start: number; readonly end: number } => {
+  let start = 0;
+  if (!atStart) while (start < bytes.length && isUtf8Continuation(bytes[start]!)) start++;
+  let end = bytes.length;
+  if (!atEnd) {
+    let i = end - 1;
+    let seen = 0;
+    while (i >= 0 && isUtf8Continuation(bytes[i]!) && seen < 3) {
+      i--;
+      seen++;
+    }
+    if (i >= 0 && end - i < utf8SequenceLength(bytes[i]!)) end = i;
+  }
+  if (start > end) start = end;
+  return { text: new TextDecoder().decode(bytes.subarray(start, end)), start, end };
+};
 
 /** File System Access fallback: picker handles + mtime polling. */
 function fsAccessPort(): FileSystemPort.Service {
@@ -161,6 +209,35 @@ function fsAccessPort(): FileSystemPort.Service {
         }, POLL_MS);
         return () => clearInterval(timer);
       }),
+    readTextRange: (path, options) =>
+      handleFor(path).pipe(
+        Effect.flatMap((handle) =>
+          io(path, "read", async (): Promise<FileTextRange> => {
+            const file = await handle.getFile();
+            const size = file.size;
+            const start = Math.min(Math.max(0, Math.trunc(options.offset ?? 0)), size);
+            const want = Math.max(0, Math.min(Math.trunc(options.maxBytes) || 0, size - start));
+            const end = start + want;
+            const eof = end >= size;
+            const bytes = new Uint8Array(await file.slice(start, end).arrayBuffer());
+            const headLimit = Math.min(bytes.length, 1024);
+            for (let i = 0; i < headLimit; i++) {
+              if (bytes[i] === 0) {
+                return { text: "", offset: start, bytesRead: want, size, eof, binary: true };
+              }
+            }
+            const aligned = decodeUtf8Window(bytes, start === 0, eof);
+            return {
+              text: aligned.text,
+              offset: start + aligned.start,
+              bytesRead: aligned.end - aligned.start,
+              size,
+              eof,
+              binary: false,
+            };
+          }),
+        ),
+      ),
     pickFile: () =>
       io("", "pick", async () => {
         const picker = (

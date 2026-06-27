@@ -56,6 +56,21 @@ export type FileStat = {
   readonly size: number;
 };
 
+export type FileTextRange = {
+  /** Decoded UTF-8 text for the window; "" when the window is binary. */
+  readonly text: string;
+  /** Byte offset where `text` actually begins (after UTF-8 alignment). */
+  readonly offset: number;
+  /** Bytes consumed to produce `text`. */
+  readonly bytesRead: number;
+  /** Total file size in bytes. */
+  readonly size: number;
+  /** Whether the window reached end of file. */
+  readonly eof: boolean;
+  /** A NUL byte was found in the leading bytes: not text. */
+  readonly binary: boolean;
+};
+
 export type FileEvent = {
   readonly path: string;
   readonly kind: "changed" | "deleted";
@@ -78,6 +93,15 @@ export namespace FileSystemPort {
     readonly writeFile: (path: string, text: string) => Effect.Effect<FileStat, FileIoError>;
     readonly stat: (path: string) => Effect.Effect<Option.Option<FileStat>, FileIoError>;
     /**
+     * Bounded UTF-8 window read for previews: never transfers more than
+     * `maxBytes`, so previewing the head of a multi-MB file stays cheap.
+     * Optional: capability-gated like readDir/watchDir.
+     */
+    readonly readTextRange?: (
+      path: string,
+      options: { readonly offset?: number; readonly maxBytes: number },
+    ) => Effect.Effect<FileTextRange, FileIoError>;
+    /**
      * Start watching one path; returns a disposer. Implementations without
      * native watching may poll (or report watch: false and return a no-op).
      */
@@ -90,9 +114,7 @@ export namespace FileSystemPort {
     /** Native open-folder dialog. Optional: capability-gated like watch. */
     readonly pickFolder?: () => Effect.Effect<Option.Option<string>, FileIoError>;
     /** Directory listing. Optional: only platforms with real paths have it. */
-    readonly readDir?: (
-      path: string,
-    ) => Effect.Effect<ReadonlyArray<DirEntry>, FileIoError>;
+    readonly readDir?: (path: string) => Effect.Effect<ReadonlyArray<DirEntry>, FileIoError>;
     /** Create a directory (recursive). Optional: only real-path platforms. */
     readonly mkdir?: (path: string) => Effect.Effect<void, FileIoError>;
     /**

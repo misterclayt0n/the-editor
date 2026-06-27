@@ -2,7 +2,7 @@
  * fff-backed quick-open dialog. It shares the command palette primitive shell
  * while owning file-specific behavior: native indexed search and frecency tracking.
  */
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { FileFinderItem, FileFinderLocation } from "../platform/fileFinder";
 import type { AppRuntime } from "../runtime";
 import { FileIcon } from "../workbench/fileIcons";
@@ -15,6 +15,9 @@ import {
   CommandItem,
   CommandList,
 } from "@/ui/command";
+import { cn } from "@/lib/utils";
+import { FilePreview } from "./FilePreviewPanel";
+import type { PreviewTarget } from "./filePreview";
 
 const SEARCH_LIMIT = 60;
 
@@ -38,7 +41,9 @@ const dirname = (relativePath: string): string => {
   return index === -1 ? "" : relativePath.slice(0, index);
 };
 
-const locationPosition = (location: FileFinderLocation | undefined): { line: number; character: number } => {
+const locationPosition = (
+  location: FileFinderLocation | undefined,
+): { line: number; character: number } => {
   if (location === undefined) return { line: 0, character: 0 };
   if (location.type === "line") return { line: Math.max(0, location.line - 1), character: 0 };
   if (location.type === "position") {
@@ -175,13 +180,32 @@ export function FileFinder({ open, runtime, onOpenChange }: FileFinderProps) {
         ? "Indexing…"
         : `${searchMeta.totalMatched.toLocaleString()} matches · ${searchMeta.totalFiles.toLocaleString()} files`;
 
+  const canPreview = useMemo(() => runtime.fileSystem()?.readTextRange !== undefined, [runtime]);
+  const focusLine =
+    searchMeta.location !== undefined ? locationPosition(searchMeta.location).line : undefined;
+  const selectedItem = items.find((item) => item.relativePath === selectedValue);
+  const selectedPath =
+    root !== null && selectedItem !== undefined ? joinRoot(root, selectedItem.relativePath) : null;
+  const selectedSize = selectedItem?.size ?? 0;
+  const previewTarget = useMemo<PreviewTarget | null>(
+    () =>
+      selectedPath === null
+        ? null
+        : {
+            path: selectedPath,
+            size: selectedSize,
+            ...(focusLine !== undefined ? { focusLine } : {}),
+          },
+    [selectedPath, selectedSize, focusLine],
+  );
+
   return (
     <CommandDialog
       open={open}
       onOpenChange={onOpenChange}
       title="Find File"
       description="Search files in the current workspace"
-      className="command-palette-dialog"
+      className={cn("command-palette-dialog", canPreview && "file-finder-dialog--preview")}
     >
       <Command
         className="command-palette file-finder"
@@ -197,30 +221,37 @@ export function FileFinder({ open, runtime, onOpenChange }: FileFinderProps) {
           value={query}
           onValueChange={setQuery}
         />
-        <div className="file-finder__body">
-          <div className="file-finder__meta">{error ?? status}</div>
-          <CommandList className="command-palette__list file-finder__list">
-            <CommandEmpty className="command-palette__empty">
-              {root === null ? "No folder open." : error === null ? "No files found." : error}
-            </CommandEmpty>
-            <CommandGroup className="command-palette__group" heading="Files">
-              {items.map((item) => (
-                <CommandItem
-                  className="command-palette__item file-finder__item"
-                  key={item.relativePath}
-                  value={item.relativePath}
-                  onSelect={() => openSelected(item)}
-                >
-                  <FileIcon fileName={item.fileName} />
-                  <span className="file-finder__item-main">
-                    <span className="command-palette__item-title file-finder__name">{item.fileName}</span>
-                    <span className="file-finder__path">{dirname(item.relativePath)}</span>
-                  </span>
-                  {item.gitStatus !== "clean" && <span className="file-finder__git">{item.gitStatus}</span>}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
+        <div className={cn("file-finder__body", canPreview && "file-finder__body--with-preview")}>
+          <div className="file-finder__list-col">
+            <div className="file-finder__meta">{error ?? status}</div>
+            <CommandList className="command-palette__list file-finder__list">
+              <CommandEmpty className="command-palette__empty">
+                {root === null ? "No folder open." : error === null ? "No files found." : error}
+              </CommandEmpty>
+              <CommandGroup className="command-palette__group" heading="Files">
+                {items.map((item) => (
+                  <CommandItem
+                    className="command-palette__item file-finder__item"
+                    key={item.relativePath}
+                    value={item.relativePath}
+                    onSelect={() => openSelected(item)}
+                  >
+                    <FileIcon fileName={item.fileName} />
+                    <span className="file-finder__item-main">
+                      <span className="command-palette__item-title file-finder__name">
+                        {item.fileName}
+                      </span>
+                      <span className="file-finder__path">{dirname(item.relativePath)}</span>
+                    </span>
+                    {item.gitStatus !== "clean" && (
+                      <span className="file-finder__git">{item.gitStatus}</span>
+                    )}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </CommandList>
+          </div>
+          {canPreview && <FilePreview target={previewTarget} runtime={runtime} />}
         </div>
       </Command>
     </CommandDialog>

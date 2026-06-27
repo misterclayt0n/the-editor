@@ -2,7 +2,7 @@
  * The terminal as a product package: a workbench panel registered through
  * PanelRenderers, like the file tree. The package owns command identity and
  * the renderer registration; the host seam supplies the renderer (xterm.js +
- * PTY) and the toggle (arrangement surgery — docked at the bottom).
+ * PTY) and the region toggle (arrangement surgery — bottom tab group).
  */
 
 import { Context, Effect } from "effect";

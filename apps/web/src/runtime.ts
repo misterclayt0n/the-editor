@@ -146,10 +146,13 @@ import {
   HoverProviders,
   SignatureProviders,
 } from "./intel/types";
+
 import { uriToPath, type lsp } from "@the-editor/lsp";
 import { MountHub } from "./editor/mounts";
 import { buildMultiBuffer, type MultiBufferMatchFile } from "./multibuffer/builder";
 import { MultiBufferPane, MultiBufferSurface } from "./multibuffer/pane";
+
+const TerminalRegion = "bottom-panel";
 /** A multibuffer is an editor surface for command/keymap availability. */
 registerSurfaceFallback(MultiBufferSurface, EditorSurface);
 
@@ -389,7 +392,7 @@ export class AppRuntime {
    *  longer "the dock terminal"; the next toggle creates a fresh one). */
   private readonly dockedPanels = new Map<SurfaceKind, PanelId>();
   /** Stashed layouts of collapsed dock regions, keyed by region id, so toggling
-   *  a sidebar restores its exact tabs/active/width (see workbench/regions). */
+   *  the terminal bottom dock or a sidebar restores exact tabs/active/size. */
   private readonly collapsedRegions = new Map<string, RegionSnapshot>();
   /** Which sidebar the file tree currently docks into (left/right). Explicit so
    *  toggle/move never have to rediscover it from the live or stashed layout. */
@@ -472,7 +475,7 @@ export class AppRuntime {
               title: (panel) => createTerminalRenderer(instance).title(panel),
               mount: (element, panel) => createTerminalRenderer(instance).mount(element, panel),
             },
-            toggle: () => instance.togglePanel(TerminalSurface, { dock: "bottom", ratio: 0.32 }),
+            toggle: () => instance.toggleTerminal(),
           }),
           Layer.succeed(HostDiffView, {
             renderer: {
@@ -851,11 +854,10 @@ export class AppRuntime {
   }
 
   /**
-   * Toggle a singleton panel of `kind` (terminal, file tree). The panel is
-   * created once and shown/hidden thereafter (Zed's dock model): toggling a
-   * visible panel un-places it but keeps it alive, so its content (a terminal's
-   * PTY + screen) survives; toggling a hidden one re-docks it. Disposal is
-   * closing its tab, never toggling.
+   * Toggle a singleton panel of `kind` (legacy edge docking). The panel is
+   * created once and shown/hidden thereafter: toggling a visible panel un-places
+   * it but keeps it alive. Region-backed docks such as the terminal and file
+   * tree use their region methods so the whole tab group round-trips together.
    */
   togglePanel(
     kind: SurfaceKind,
@@ -907,6 +909,30 @@ export class AppRuntime {
       this.workbench.updateArrangement((a) => place(a, panel.id)).pipe(Effect.orDie),
     );
     this.focusSlotOfPanel(panel.id);
+  }
+
+  /** Show/hide the terminal's bottom dock region. Hiding stashes the full stack
+   *  (tabs, active tab, height); showing restores it. First use seeds the
+   *  terminal into the bottom region so later panels can tab beside it. */
+  toggleTerminal(): void {
+    if (Regions.toggleRegion(this.workbench, this.collapsedRegions, TerminalRegion) === "empty") {
+      this.dockTerminalIntoBottom();
+      return;
+    }
+    const stack = regionStack(Effect.runSync(this.workbench.arrangement), TerminalRegion);
+    const active = stack?.panels[stack.active];
+    if (active !== undefined) this.focusSlotOfPanel(active);
+  }
+
+  private dockTerminalIntoBottom(): void {
+    const existing = this.dockedPanels.get(TerminalSurface);
+    const id = existing ?? Effect.runSync(this.workbench.createPanel({ kind: TerminalSurface })).id;
+    this.dockedPanels.set(TerminalSurface, id);
+    Regions.moveToRegion(this.workbench, this.collapsedRegions, id, TerminalRegion, TerminalRegion, {
+      edge: "bottom",
+      ratio: 0.32,
+    });
+    this.focusSlotOfPanel(id);
   }
 
   /** Whether the file tree's sidebar region is showing (drives the toggle

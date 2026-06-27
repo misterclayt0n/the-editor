@@ -8,23 +8,17 @@
 
 import { Effect } from "effect";
 import { useEffect, useRef, useState } from "react";
-import { highlightToSpans, splitSpansByLine, type CodeSpan } from "../editor/highlightSpans";
+import type { CodeSpan } from "../editor/highlightSpans";
 import type { AppRuntime } from "../runtime";
 import {
   loadFilePreview,
-  PREVIEW_WINDOW_BYTES,
-  type PreviewHighlighter,
   type PreviewReader,
   type PreviewState,
   type PreviewTarget,
 } from "./filePreview";
+import { highlightPreview } from "./previewHighlight";
 
 const PREVIEW_DEBOUNCE_MS = 40;
-
-const highlight: PreviewHighlighter = (code, ext) => {
-  const flat = highlightToSpans(code, ext, { maxChars: PREVIEW_WINDOW_BYTES, budgetMs: 8 });
-  return flat ? splitSpansByLine(flat) : null;
-};
 
 const basename = (path: string): string => path.slice(path.lastIndexOf("/") + 1);
 
@@ -45,7 +39,7 @@ function useFilePreview(target: PreviewTarget | null, runtime: AppRuntime): Prev
     const reader: PreviewReader = (path, options) => Effect.runPromise(read(path, options));
     setState({ status: "loading" });
     const timer = window.setTimeout(() => {
-      void loadFilePreview(target, { read: reader, highlight }).then((next) => {
+      void loadFilePreview(target, { read: reader, highlight: highlightPreview }).then((next) => {
         if (!cancelled) setState(next);
       });
     }, PREVIEW_DEBOUNCE_MS);

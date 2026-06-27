@@ -93,7 +93,9 @@ export interface FileFinderPort {
   }) => Promise<void>;
 }
 
-type BridgeResult<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: string };
+type BridgeResult<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly error: string };
 
 type Bridge = {
   readonly search: (input: {
@@ -103,13 +105,50 @@ type Bridge = {
     readonly currentFile?: string;
   }) => Promise<BridgeResult<FileFinderSearchResult>>;
   readonly grep: (input: FileFinderGrepInput) => Promise<BridgeResult<FileFinderGrepResult>>;
-  readonly multiGrep: (input: FileFinderMultiGrepInput) => Promise<BridgeResult<FileFinderGrepResult>>;
+  readonly multiGrep: (
+    input: FileFinderMultiGrepInput,
+  ) => Promise<BridgeResult<FileFinderGrepResult>>;
   readonly track: (input: {
     readonly root: string;
     readonly query: string;
     readonly relativePath: string;
   }) => Promise<BridgeResult<boolean>>;
 };
+
+/**
+ * fff reports `matchRanges` as UTF-8 BYTE offsets within `lineContent` (it's
+ * ripgrep-based; Neovim, its first consumer, is byte-oriented). JS string
+ * slicing and editor caret positions are UTF-16 code units, so we normalize at
+ * this boundary — every consumer (grep picker, multibuffer) then works in
+ * UTF-16. ASCII lines are unchanged (1 byte == 1 code unit).
+ */
+export function byteToUtf16Offset(text: string, byteOffset: number): number {
+  if (byteOffset <= 0) return 0;
+  let bytes = 0;
+  let i = 0;
+  while (i < text.length) {
+    if (bytes >= byteOffset) return i;
+    const code = text.codePointAt(i)!;
+    bytes += code <= 0x7f ? 1 : code <= 0x7ff ? 2 : code <= 0xffff ? 3 : 4;
+    i += code > 0xffff ? 2 : 1;
+  }
+  return text.length;
+}
+
+const normalizeGrepResult = (result: FileFinderGrepResult): FileFinderGrepResult => ({
+  ...result,
+  items: result.items.map((item) =>
+    item.matchRanges.length === 0
+      ? item
+      : {
+          ...item,
+          matchRanges: item.matchRanges.map(([from, to]): readonly [number, number] => [
+            byteToUtf16Offset(item.lineContent, from),
+            byteToUtf16Offset(item.lineContent, to),
+          ]),
+        },
+  ),
+});
 
 export function createFileFinderPort(): FileFinderPort | undefined {
   const w = window as unknown as {
@@ -129,12 +168,12 @@ export function createFileFinderPort(): FileFinderPort | undefined {
     grep: async (input) => {
       const result = await bridge.grep(input);
       if (!result.ok) throw new Error(result.error);
-      return result.value;
+      return normalizeGrepResult(result.value);
     },
     multiGrep: async (input) => {
       const result = await bridge.multiGrep(input);
       if (!result.ok) throw new Error(result.error);
-      return result.value;
+      return normalizeGrepResult(result.value);
     },
     track: async (input) => {
       const result = await bridge.track(input);

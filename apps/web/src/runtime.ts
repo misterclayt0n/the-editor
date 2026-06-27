@@ -107,6 +107,7 @@ import {
   createFileFinderPort,
   type FileFinderGrepCursor,
   type FileFinderGrepMatch,
+  type FileFinderGrepMode,
   type FileFinderPort,
 } from "./platform/fileFinder";
 import { createProcessPort } from "./platform/process";
@@ -1388,7 +1389,7 @@ export class AppRuntime {
    */
   async searchProject(
     query: string,
-    options?: { readonly contextLines?: number; readonly limit?: number },
+    options?: { readonly contextLines?: number; readonly limit?: number; readonly mode?: FileFinderGrepMode },
   ): Promise<MultiBufferPane | undefined> {
     const root = this.workspaceRoot;
     const finder = this.fileFinderPort();
@@ -1408,6 +1409,7 @@ export class AppRuntime {
         query,
         limit: pageSize,
         maxMatchesPerFile: 2000,
+        ...(options?.mode !== undefined ? { mode: options.mode } : {}),
         ...(cursor !== null ? { cursor } : {}),
       });
       for (const item of result.items) allMatches.push(item);

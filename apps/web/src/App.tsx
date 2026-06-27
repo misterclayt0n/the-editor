@@ -11,7 +11,7 @@ import type { ChromeSlot } from "./workbench/shellHost";
 import { isMacDesktop } from "./platform/desktop";
 import { CommandPalette, type CommandPaletteMode } from "./ui/CommandPalette";
 import { FileFinder } from "./ui/FileFinder";
-import { SearchDialog } from "./ui/SearchDialog";
+import { GlobalSearch } from "./ui/GlobalSearch";
 import { RenameDialog } from "./ui/RenameDialog";
 import { IntelController } from "./intel/controller";
 import { IntelView } from "./intel/IntelView";
@@ -457,7 +457,7 @@ export function App() {
           if (!open) window.requestAnimationFrame(() => activeRuntime.focusActivePanel());
         }}
       />
-      <SearchDialog
+      <GlobalSearch
         open={searchOpen}
         runtime={activeRuntime}
         onOpenChange={(open) => {

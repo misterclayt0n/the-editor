@@ -16,6 +16,12 @@ import { RenameDialog } from "./ui/RenameDialog";
 import { IntelController } from "./intel/controller";
 import { IntelView } from "./intel/IntelView";
 
+/** Left inset reserving the macOS traffic lights (plus a window-drag handle).
+ *  Sized to just clear the lights now that there's no session sidebar. */
+const MAC_TRAFFIC_INSET = 80;
+/** Non-mac desktop: a small top-left window-drag handle. */
+const DESKTOP_INSET = 40;
+
 const fileLabel = (pane: EditorPane | undefined): string => {
   if (pane === undefined) return "";
   const info = pane.fileInfo();
@@ -82,13 +88,21 @@ function useChromeSlotElement(slot: ChromeSlot | undefined): HTMLElement | null 
   );
 }
 
-/** The file-tree toggle, rendered as a real trailing action in the rightmost
- *  tab bar (not a window overlay), reflecting + flipping the session's tree. */
-function FileTreeToggle({ runtime }: { readonly runtime: AppRuntime }) {
+/** The file-tree toggle: a real action in the tab strip (never a window
+ *  overlay). Its glyph's divider sits on the docked SIDE so the icon reads as
+ *  the sidebar it controls; `SessionView` places it on that same side. */
+function FileTreeToggle({
+  runtime,
+  side,
+}: {
+  readonly runtime: AppRuntime;
+  readonly side: "left" | "right";
+}) {
   const visible = useSyncExternalStore(
     useCallback((cb: () => void) => runtime.subscribeWorkbench(cb), [runtime]),
     useCallback(() => runtime.isFileTreeVisible(), [runtime]),
   );
+  const dividerX = side === "left" ? 6.15 : 9.85;
   return (
     <button
       type="button"
@@ -104,9 +118,37 @@ function FileTreeToggle({ runtime }: { readonly runtime: AppRuntime }) {
     >
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <rect x="1.85" y="2.85" width="12.3" height="10.3" rx="2.4" stroke="currentColor" strokeWidth="1.3" />
-        <line x1="9.85" y1="3.1" x2="9.85" y2="12.9" stroke="currentColor" strokeWidth="1.3" />
+        <line x1={dividerX} y1="3.1" x2={dividerX} y2="12.9" stroke="currentColor" strokeWidth="1.3" />
       </svg>
     </button>
+  );
+}
+
+/** One mounted session's workbench. Subscribes to the runtime so the file-tree
+ *  toggle follows its sidebar: the toggle (and its glyph) render on whichever
+ *  side the tree docks to, flipping live when the user flips the sidebar. */
+function SessionView({
+  session,
+  active,
+  onActiveSnapshot,
+}: {
+  readonly session: WorkspaceSession;
+  readonly active: boolean;
+  readonly onActiveSnapshot: (snapshot: EditorSnapshot) => void;
+}) {
+  const side = useSyncExternalStore(
+    useCallback((cb: () => void) => session.runtime.subscribeWorkbench(cb), [session.runtime]),
+    useCallback(() => session.runtime.fileTreeSide(), [session.runtime]),
+  );
+  const toggle = <FileTreeToggle runtime={session.runtime} side={side} />;
+  return (
+    <WorkbenchView
+      runtime={session.runtime}
+      active={active}
+      firstTabInset={isMacDesktop ? MAC_TRAFFIC_INSET : isDesktop ? DESKTOP_INSET : 0}
+      {...(side === "left" ? { leadingAction: toggle } : { trailingAction: toggle })}
+      {...(active ? { onActiveSnapshot } : {})}
+    />
   );
 }
 
@@ -146,7 +188,7 @@ export function App() {
   // Workspace lifecycle is owned here but reached from runtime command hooks
   // (set in makeSession, which captures the first render). Route through refs
   // so the commands always hit the current handlers.
-  const addWorkspaceRef = useRef<() => void>(() => {});
+  const openFolderRef = useRef<() => void>(() => {});
   const closeWorkspaceRef = useRef<(id: WorkspaceId) => void>(() => {});
 
   // The viewport panel's DOM element; App portals the per-session workbenches
@@ -180,7 +222,7 @@ export function App() {
       setPaletteMode("workspaces");
       setPaletteOpen(true);
     };
-    runtime.onWorkspaceNewRequested = () => addWorkspaceRef.current();
+    runtime.onWorkspaceOpenFolderRequested = () => openFolderRef.current();
     runtime.onWorkspaceCloseRequested = () => {
       const id = activeIdRef.current;
       if (id !== null) closeWorkspaceRef.current(id);
@@ -343,10 +385,17 @@ export function App() {
     });
   }, [activeId]);
 
-  const addWorkspace = useCallback(() => {
+  // The one creation primitive: open a folder. If the active workspace is still
+  // an untitled scratch (no root), open the folder INTO it so we don't pile up
+  // empty tabs; otherwise spawn a fresh workspace. Cancelling the dialog leaves
+  // whatever was there (an untitled scratch the user can close).
+  const openWorkspaceFolder = useCallback(() => {
     if (shell === null) return;
-    // A new tab appears immediately (untitled), then prompts for a folder;
-    // cancelling leaves an untitled scratch workspace the user can close.
+    const activeSession = sessionsRef.current.find((entry) => entry.id === activeIdRef.current);
+    if (activeSession !== undefined && activeSession.root === null) {
+      void activeSession.runtime.openFolderViaDialog();
+      return;
+    }
     const session = makeSession(shell, null);
     setSessions((prev) => [...prev, session]);
     setActiveId(session.id);
@@ -372,18 +421,22 @@ export function App() {
   }, []);
 
   // Keep the runtime-command hooks pointed at the live lifecycle handlers.
-  addWorkspaceRef.current = addWorkspace;
+  openFolderRef.current = openWorkspaceFolder;
   closeWorkspaceRef.current = closeWorkspace;
 
-  // The workspace switcher's data, projected from App's own session state — the
-  // command palette is a pure view over this; it never owns sessions.
+  // The switcher's data + actions, projected from App's own session state — the
+  // command palette is a pure view over this; it never owns sessions. The
+  // switcher doubles as the manager (open a folder, close a row).
   const workspaces = useMemo(
     () => ({
       items: sessions.map((session) => ({ id: session.id, label: workspaceLabel(session.root) })),
       activeId,
+      canClose: sessions.length > 1,
       onSelect: switchWorkspace,
+      onClose: closeWorkspace,
+      onOpenFolder: openWorkspaceFolder,
     }),
-    [sessions, activeId, switchWorkspace],
+    [sessions, activeId, switchWorkspace, closeWorkspace, openWorkspaceFolder],
   );
 
   const handleActiveSnapshot = useCallback((next: EditorSnapshot) => setSnapshot(next), []);
@@ -422,13 +475,11 @@ export function App() {
       {viewportEl !== null &&
         createPortal(
           sessions.map((session) => (
-            <WorkbenchView
+            <SessionView
               key={session.id}
-              runtime={session.runtime}
+              session={session}
               active={session.id === activeId}
-              firstTabInset={isMacDesktop ? 120 : isDesktop ? 40 : 0}
-              trailingAction={<FileTreeToggle runtime={session.runtime} />}
-              {...(session.id === activeId ? { onActiveSnapshot: handleActiveSnapshot } : {})}
+              onActiveSnapshot={handleActiveSnapshot}
             />
           )),
           viewportEl,

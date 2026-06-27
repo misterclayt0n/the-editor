@@ -21,7 +21,6 @@ export class HostFileActions extends Context.Tag("the-editor/web/HostFileActions
   {
     readonly save: () => void;
     readonly open: () => void;
-    readonly openFolder: () => void;
     readonly find: () => void;
     readonly findInProject: () => void;
   }
@@ -60,13 +59,6 @@ export const filesPackage = definePackage("the-editor/files", () =>
       scope: SurfaceScope.global,
       palette: { group: "File", aliases: ["search", "grep", "find in files", "rg"] },
       run: () => Effect.sync(() => host.findInProject()),
-    });
-
-    yield* commands.register("file.openFolder", {
-      title: "Open Folder…",
-      scope: SurfaceScope.global,
-      palette: { group: "File", aliases: ["cd", "folder"] },
-      run: () => Effect.sync(() => host.openFolder()),
     });
 
     yield* keymaps.registerAll([

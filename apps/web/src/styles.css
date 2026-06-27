@@ -536,6 +536,16 @@ body {
   padding-right: 6px;
 }
 
+/* Leading action slot: the same control on the left, after the traffic-light
+ * reserve — used when the toggle follows a left-docked sidebar. */
+.wb-tabbar-start {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding-left: 6px;
+  padding-right: 4px;
+}
+
 /* The file-tree toggle living in that slot. */
 .wb-tabbar-toggle {
   display: inline-flex;

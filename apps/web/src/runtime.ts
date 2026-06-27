@@ -334,8 +334,8 @@ export class AppRuntime {
   onThemeSelectorOpenRequested?: () => void;
   /** Host UI hooks: workspace switcher requested (show the palette list mode). */
   onWorkspaceSwitcherRequested?: () => void;
-  /** Host UI hooks: create a new workspace (fresh session, open folder). */
-  onWorkspaceNewRequested?: () => void;
+  /** Host UI hooks: open a folder (reuse an untitled scratch session, else new). */
+  onWorkspaceOpenFolderRequested?: () => void;
   /** Host UI hooks: close the active workspace. */
   onWorkspaceCloseRequested?: () => void;
   /** Host UI hooks: diagnostics changed for a document (status surfaces). */
@@ -522,20 +522,19 @@ export class AppRuntime {
           Layer.succeed(HostFileActions, {
             save: () => void instance.saveActiveFile(),
             open: () => void instance.openFileViaDialog(),
-            openFolder: () => void instance.openFolderViaDialog(),
             find: () => instance.onFileFinderOpenRequested?.(),
             findInProject: () => instance.onSearchOpenRequested?.(),
+          }),
+          Layer.succeed(HostWorkspaceActions, {
+            openFolder: () => instance.onWorkspaceOpenFolderRequested?.(),
+            openSwitcher: () => instance.onWorkspaceSwitcherRequested?.(),
+            closeWorkspace: () => instance.onWorkspaceCloseRequested?.(),
           }),
           Layer.succeed(HostPaletteActions, {
             open: () => instance.onPaletteOpenRequested?.(),
           }),
           Layer.succeed(HostThemeActions, {
             openSelector: () => instance.onThemeSelectorOpenRequested?.(),
-          }),
-          Layer.succeed(HostWorkspaceActions, {
-            openSwitcher: () => instance.onWorkspaceSwitcherRequested?.(),
-            newWorkspace: () => instance.onWorkspaceNewRequested?.(),
-            closeWorkspace: () => instance.onWorkspaceCloseRequested?.(),
           }),
           Layer.succeed(HostLspActions, {
             goToDefinition: () => void instance.goToDefinition(),
@@ -966,6 +965,12 @@ export class AppRuntime {
     const stack = regionStack(Effect.runSync(this.workbench.arrangement), this.fileTreeRegion);
     const active = stack?.panels[stack.active];
     if (active !== undefined) this.focusSlotOfPanel(active);
+  }
+
+  /** Which side the file tree sidebar docks to. Drives the toggle's placement
+   *  and glyph; persists across hide/show so a hidden tree still has a side. */
+  fileTreeSide(): "left" | "right" {
+    return this.fileTreeRegion === "left-sidebar" ? "left" : "right";
   }
 
   /** Move the file tree to the opposite sidebar (left <-> right). */

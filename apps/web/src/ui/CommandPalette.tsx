@@ -37,11 +37,15 @@ export interface WorkspaceItem {
 }
 
 /** The host's workspace switcher data + actions. The palette is a pure view:
- *  it lists these and emits select; it never owns session lifecycle. */
+ *  it lists/opens/closes and emits the intent; it never owns session lifecycle. */
 export interface WorkspacePalette {
   readonly items: readonly WorkspaceItem[];
   readonly activeId: string | null;
+  /** False when only one workspace is open (the last can't be closed). */
+  readonly canClose: boolean;
   readonly onSelect: (id: string) => void;
+  readonly onClose: (id: string) => void;
+  readonly onOpenFolder: () => void;
 }
 
 const defaultGroup = "Commands";
@@ -220,6 +224,11 @@ export function CommandPalette({
     workspaces.onSelect(id);
   };
 
+  const openWorkspaceFolder = () => {
+    onOpenChange(false);
+    workspaces.onOpenFolder();
+  };
+
   const selectTheme = (themeName: string) => {
     confirmedTheme.current = true;
     Effect.runFork(
@@ -270,6 +279,14 @@ export function CommandPalette({
           </CommandEmpty>
           {mode === "workspaces" ? (
             <CommandGroup className="command-palette__group" heading="Workspaces">
+              <CommandItem
+                className="command-palette__item"
+                value="__open_folder__"
+                keywords={["open folder", "open workspace", "new workspace", "add"]}
+                onSelect={openWorkspaceFolder}
+              >
+                <span className="command-palette__item-title">Open Folder…</span>
+              </CommandItem>
               {workspaces.items.map((workspace) => (
                 <CommandItem
                   className="command-palette__item"
@@ -281,6 +298,26 @@ export function CommandPalette({
                   <span className="command-palette__item-title">{workspace.label}</span>
                   {workspace.id === workspaces.activeId && (
                     <span className="command-palette__shortcut">active</span>
+                  )}
+                  {workspaces.canClose && (
+                    <button
+                      type="button"
+                      className="command-palette__row-close"
+                      aria-label={`Close workspace ${workspace.label}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        workspaces.onClose(workspace.id);
+                      }}
+                    >
+                      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+                        <path
+                          d="M1 1l8 8M9 1l-8 8"
+                          stroke="currentColor"
+                          strokeWidth="1.3"
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                    </button>
                   )}
                 </CommandItem>
               ))}

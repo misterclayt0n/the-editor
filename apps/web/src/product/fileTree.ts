@@ -40,9 +40,12 @@ export const fileTreePackage = definePackage("the-editor/file-tree", () =>
       run: () => Effect.sync(() => host.toggle()),
     });
     yield* commands.register("files.moveTreeSide", {
-      title: "Move File Tree to Other Side",
+      title: "Flip Sidebar",
       scope: SurfaceScope.global,
-      palette: { group: "View", aliases: ["sidebar", "left", "right", "dock"] },
+      palette: {
+        group: "View",
+        aliases: ["sidebar", "move sidebar", "swap side", "other side", "left", "right", "dock"],
+      },
       run: () => Effect.sync(() => host.moveSide()),
     });
     yield* keymaps.registerAll([

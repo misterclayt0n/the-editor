@@ -49,6 +49,10 @@ type WorkbenchViewProps = {
   /** A real action (the file-tree toggle) rendered in the top-RIGHT stack's tab
    *  strip as a trailing element — it reserves layout space, never overlays. */
   readonly trailingAction?: ReactNode;
+  /** Like trailingAction, but rendered at the START of the top-LEFT stack's tab
+   *  strip (after the traffic-light reserve). Used when the toggle should follow
+   *  a left-docked sidebar. Pass leadingAction XOR trailingAction. */
+  readonly leadingAction?: ReactNode;
 };
 
 type DropZone = "center" | "left" | "right" | "top" | "bottom";
@@ -138,13 +142,21 @@ function lastStackId(tile: Tile | null): SlotId | undefined {
   return node !== null && node.kind === "stack" ? node.id : undefined;
 }
 
-export function WorkbenchView({ runtime, active, onActiveSnapshot, firstTabInset, trailingAction }: WorkbenchViewProps) {
+export function WorkbenchView({
+  runtime,
+  active,
+  onActiveSnapshot,
+  firstTabInset,
+  trailingAction,
+  leadingAction,
+}: WorkbenchViewProps) {
   const wb = useSyncExternalStore(
     useCallback((cb) => runtime.subscribeWorkbench(cb), [runtime]),
     () => runtime.getWorkbenchSnapshot(),
   );
   const [drag, setDrag] = useState<DragState | null>(null);
-  const leftStackId = firstTabInset ? firstStackId(wb.arrangement.tiles) : undefined;
+  const leftStackId =
+    firstTabInset || leadingAction !== undefined ? firstStackId(wb.arrangement.tiles) : undefined;
   const rightStackId = trailingAction !== undefined ? lastStackId(wb.arrangement.tiles) : undefined;
 
   // One persistent container per panel, created lazily. Panel content renders
@@ -305,7 +317,13 @@ export function WorkbenchView({ runtime, active, onActiveSnapshot, firstTabInset
         beginTabDrag={beginTabDrag}
         nodeFor={nodeFor}
         onPanelAttached={handlePanelAttached}
-        {...(leftStackId !== undefined && firstTabInset ? { leftStackId, firstTabInset } : {})}
+        {...(leftStackId !== undefined
+          ? {
+              leftStackId,
+              ...(firstTabInset ? { firstTabInset } : {}),
+              ...(leadingAction !== undefined ? { leadingAction } : {}),
+            }
+          : {})}
         {...(rightStackId !== undefined && trailingAction !== undefined ? { rightStackId, trailingAction } : {})}
       />
       <PanelInPortals
@@ -447,6 +465,9 @@ type TreeProps = {
    *  WorkbenchViewProps.firstTabInset). Absent when no inset is requested. */
   readonly leftStackId?: SlotId;
   readonly firstTabInset?: number;
+  /** A leading action (the file-tree toggle) rendered at the start of the
+   *  top-left stack's tab strip, after the traffic-light reserve. */
+  readonly leadingAction?: ReactNode;
   /** The top-right stack id and the trailing action to render in its tab strip
    *  (see WorkbenchViewProps.trailingAction). Absent when none is requested. */
   readonly rightStackId?: SlotId;
@@ -613,6 +634,9 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
       <div className="wb-tabbar" data-wb-tabbar data-slot-id={stack.id}>
         {tree.firstTabInset && tree.leftStackId === stack.id && (
           <div className="wb-tabbar-inset" style={{ width: tree.firstTabInset }} aria-hidden="true" />
+        )}
+        {tree.leadingAction !== undefined && tree.leftStackId === stack.id && (
+          <div className="wb-tabbar-start">{tree.leadingAction}</div>
         )}
         <div className="wb-tabbar-scroll" ref={tabbarRef}>
           {stack.panels.map((panelId, i) => {

@@ -273,6 +273,37 @@
   letter-spacing: 0.01em;
 }
 
+/* Per-row close in the workspace switcher: revealed on hover/selection so the
+ * switcher doubles as the workspace manager. */
+.command-palette__row-close {
+  margin-left: auto;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-dim);
+  opacity: 0;
+  cursor: default;
+  transition: opacity 120ms var(--ease-out), background-color 120ms var(--ease-out),
+    color 120ms var(--ease-out);
+}
+
+.command-palette__item:hover .command-palette__row-close,
+.command-palette__item[data-selected="true"] .command-palette__row-close {
+  opacity: 1;
+}
+
+.command-palette__row-close:hover {
+  background: var(--border);
+  color: var(--fg);
+}
+
 .command-palette .command-palette__empty.command-empty[data-slot="command-empty"] {
   height: 24px;
   padding: 0 10px;

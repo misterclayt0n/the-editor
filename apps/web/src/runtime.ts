@@ -26,7 +26,12 @@ import {
   type Notice,
   type Pending,
 } from "@the-editor/kernel";
-import { ConfirmDiscardChanges, confirmDiscardRequest } from "./product/attention.js";
+import {
+  ConfirmDiscardChanges,
+  ConfirmKillProcess,
+  confirmDiscardRequest,
+  confirmKillProcessRequest,
+} from "./product/attention.js";
 import {
   TerminalNotification,
   type TerminalNotificationPayload,
@@ -166,6 +171,18 @@ import { buildMultiBuffer, type MultiBufferMatchFile } from "./multibuffer/build
 import { MultiBufferPane, MultiBufferSurface } from "./multibuffer/pane";
 
 const TerminalRegion = "bottom-panel";
+
+/** Foreground processes that mean "terminal is idle" — closing them is safe. */
+const SHELL_PROCESSES = new Set([
+  "bash", "zsh", "sh", "fish", "dash", "ksh", "tcsh", "csh", "nu", "xonsh",
+  "pwsh", "powershell", "powershell.exe", "cmd.exe", "login",
+]);
+
+/** Whether a PTY's foreground process is just a shell prompt (not a real job). */
+function isShellProcess(name: string): boolean {
+  const base = (name.split("/").pop() ?? name).replace(/^-/, "").trim().toLowerCase();
+  return base.length === 0 || SHELL_PROCESSES.has(base);
+}
 /** A multibuffer is an editor surface for command/keymap availability. */
 registerSurfaceFallback(MultiBufferSurface, EditorSurface);
 
@@ -380,6 +397,8 @@ export class AppRuntime {
   };
 
   private readonly panes = new Map<PanelId, EditorPane>();
+  /** Terminal panel id → PTY id, so closing a tab can check for a live process. */
+  private readonly terminalIds = new Map<PanelId, number>();
   /** Multibuffer panes (read-only stitched search views), keyed like `panes`. */
   private readonly multiBufferPanes = new Map<PanelId, MultiBufferPane>();
   /**
@@ -855,6 +874,15 @@ export class AppRuntime {
     this.focusSlot(slotId);
   }
 
+  /** Map a terminal panel to its PTY id (set by the terminal renderer). */
+  setTerminalProcessId(panelId: PanelId, termId: number): void {
+    this.terminalIds.set(panelId, termId);
+  }
+
+  clearTerminalProcessId(panelId: PanelId): void {
+    this.terminalIds.delete(panelId);
+  }
+
   /** Close a tab: the panel dies; the document follows when unreferenced. */
   closeTab(panelId: PanelId): void {
     this.releaseDock(panelId);
@@ -941,7 +969,17 @@ export class AppRuntime {
    */
   requestCloseTab(panelId: PanelId): void {
     const pane = this.panes.get(panelId);
-    if (pane === undefined || !pane.snapshot().dirty) {
+    if (pane === undefined) {
+      // A terminal with a live foreground process: confirm before killing it.
+      const termId = this.terminalIds.get(panelId);
+      if (termId !== undefined) {
+        void this.requestCloseTerminal(panelId, termId);
+        return;
+      }
+      this.closeTab(panelId);
+      return;
+    }
+    if (!pane.snapshot().dirty) {
       this.closeTab(panelId);
       return;
     }
@@ -963,6 +1001,31 @@ export class AppRuntime {
       if (answer === "save") void this.saveDocument(docId).then(proceed);
       else proceed();
     });
+  }
+
+  /**
+   * Close a terminal tab, but if its PTY still has a non-shell foreground
+   * process, `ask` first (same alert dialog as unsaved buffers). Falls straight
+   * through to close on hosts without process inspection, or at an idle shell.
+   */
+  private async requestCloseTerminal(panelId: PanelId, termId: number): Promise<void> {
+    const port = this.terminalPort();
+    const name = port?.processName !== undefined ? await port.processName(termId) : null;
+    if (name === null || isShellProcess(name)) {
+      this.closeTab(panelId);
+      return;
+    }
+    const answer = await Effect.runPromise(
+      this.attention.ask(ConfirmKillProcess, confirmKillProcessRequest(name), {
+        level: "warning",
+        default: "cancel",
+      }),
+    );
+    if (answer === "kill") {
+      if (this.terminalIds.has(panelId)) this.closeTab(panelId);
+    } else {
+      this.focusActivePanel();
+    }
   }
 
   /** Persist one document by id (the close-confirm "Save" path). */

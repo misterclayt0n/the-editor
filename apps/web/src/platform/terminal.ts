@@ -19,6 +19,9 @@ export interface TerminalPort {
   /** Start a shell in a PTY; returns its id, or null if none could start. */
   spawn(options: TerminalSpawnOptions): Promise<number | null>;
   write(id: number, data: string): void;
+  /** The PTY's foreground process name. Capability-gated: absent on hosts that
+   *  can't inspect the tty (plain web, test port). */
+  processName?(id: number): Promise<string | null>;
   resize(id: number, cols: number, rows: number): void;
   kill(id: number): void;
   onData(id: number, listener: (data: string) => void): void;

@@ -44,3 +44,23 @@ export const confirmDiscardRequest = (name: string): ChoiceRequest<DiscardAnswer
     { id: "save", label: "Save", tone: "default" },
   ],
 });
+
+export type KillAnswer = "kill" | "cancel";
+
+/** Closing a terminal that still has a foreground process running. */
+export const ConfirmKillProcess: ChoiceTopic<KillAnswer> = makeRequestTopic<
+  ChoiceRequest<KillAnswer>,
+  KillAnswer
+>("@the-editor/web/confirm-kill-process");
+
+export const confirmKillProcessRequest = (processName: string): ChoiceRequest<KillAnswer> => {
+  const base = processName.split("/").pop() ?? processName;
+  return {
+    title: "A process is still running",
+    description: `“${base}” is running in this terminal. Closing it will end the process.`,
+    choices: [
+      { id: "cancel", label: "Cancel", tone: "outline", cancel: true },
+      { id: "kill", label: "Close anyway", tone: "destructive" },
+    ],
+  };
+};

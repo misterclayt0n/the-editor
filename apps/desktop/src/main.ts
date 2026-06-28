@@ -520,6 +520,8 @@ function registerFileFinderHandlers(): void {
  */
 type Pty = {
   readonly pid: number;
+  /** node-pty's foreground process name (the comm of the tty leader). */
+  readonly process: string;
   onData(cb: (data: string) => void): void;
   onExit(cb: (e: { exitCode: number }) => void): void;
   write(data: string): void;
@@ -625,6 +627,14 @@ function registerTerminalHandlers(): void {
       }
     },
   );
+  ipcMain.handle("term:process", (_event, id: number): string | null => {
+    try {
+      return terms.get(id)?.process ?? null;
+    } catch {
+      // node-pty throws once the pty is gone; treat as unknown.
+      return null;
+    }
+  });
   ipcMain.on("term:write", (_event, id: number, data: string) => {
     terms.get(id)?.write(data);
   });

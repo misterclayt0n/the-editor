@@ -206,6 +206,7 @@ contextBridge.exposeInMainWorld("theEditorTerminal", {
     shell?: string;
   }): Promise<number | null> => ipcRenderer.invoke("term:spawn", options),
   write: (id: number, data: string): void => ipcRenderer.send("term:write", id, data),
+  processName: (id: number): Promise<string | null> => ipcRenderer.invoke("term:process", id),
   resize: (id: number, cols: number, rows: number): void =>
     ipcRenderer.send("term:resize", id, cols, rows),
   kill: (id: number): void => {

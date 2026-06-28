@@ -638,6 +638,9 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
             return;
           }
           termId = id;
+          // Let the runtime map this panel → PTY id, so closing the tab can
+          // check for a running foreground process and confirm first.
+          runtime.setTerminalProcessId(panel.id, id);
           syncPtySize(spawnedTerm);
           // PTY → screen, screen → PTY, and keep the PTY's window size in sync.
           port.onData(id, (data) => {
@@ -681,6 +684,7 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
       return {
         dispose: () => {
           disposed = true;
+          runtime.clearTerminalProcessId(panel.id);
           if (refreshFrame !== null) cancelAnimationFrame(refreshFrame);
           disposeTermUi?.();
           if (termId !== null) port.kill(termId);

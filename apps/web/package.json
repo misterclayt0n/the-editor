@@ -41,6 +41,7 @@
     "marked": "^18.0.5",
     "radix-ui": "^1.5.0",
     "react": "catalog:",
+    "sonner": "^2.0.7",
     "react-dom": "catalog:",
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4.3.0",

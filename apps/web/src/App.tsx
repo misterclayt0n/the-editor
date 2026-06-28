@@ -14,6 +14,7 @@ import { FileFinder } from "./ui/FileFinder";
 import { GlobalSearch } from "./ui/GlobalSearch";
 import { RenameDialog } from "./ui/RenameDialog";
 import { AttentionLayer } from "./ui/AttentionLayer";
+import { NotificationCenter } from "./ui/NotificationCenter";
 import { IntelController } from "./intel/controller";
 import { IntelView } from "./intel/IntelView";
 
@@ -510,6 +511,7 @@ export function App() {
         }}
       />
       <AttentionLayer runtime={activeRuntime} />
+      <NotificationCenter runtime={activeRuntime} />
       <IntelView key={activeId} controller={active.intel} />
       <RenameDialog
         open={rename.open}

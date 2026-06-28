@@ -882,3 +882,34 @@
     filter: none;
   }
 }
+
+/* ----------------------------------------------------------------------------
+ * Sonner toaster: themed to the editor surface. Sonner reads the --normal-*
+ * vars set on the <Toaster> element; these tune the type accents + action
+ * button to the editor palette.
+ * ------------------------------------------------------------------------- */
+.toaster [data-sonner-toast] {
+  font-size: 12.5px;
+}
+
+.toaster [data-sonner-toast] [data-icon] {
+  color: var(--accent);
+}
+
+.toaster [data-sonner-toast][data-type="success"] [data-icon] {
+  color: var(--theme-version-control-added);
+}
+
+.toaster [data-sonner-toast][data-type="warning"] [data-icon] {
+  color: var(--theme-diagnostic-warning);
+}
+
+.toaster [data-sonner-toast][data-type="error"] [data-icon] {
+  color: var(--theme-error);
+}
+
+.toaster [data-sonner-toast] [data-button] {
+  background: color-mix(in srgb, var(--accent) 20%, var(--bg-editor));
+  color: color-mix(in srgb, var(--accent) 75%, var(--fg));
+  border-radius: var(--radius-md);
+}

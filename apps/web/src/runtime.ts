@@ -23,9 +23,14 @@ import {
   Attention,
   makeAttention,
   makePackageRuntime,
+  type Notice,
   type Pending,
 } from "@the-editor/kernel";
 import { ConfirmDiscardChanges, confirmDiscardRequest } from "./product/attention.js";
+import {
+  TerminalNotification,
+  type TerminalNotificationPayload,
+} from "./terminal/notifications.js";
 import { toPackageDescriptor } from "@the-editor/extensions";
 import { Shell } from "./shell";
 import { Commands, makeCommands } from "@the-editor/commands";
@@ -401,6 +406,9 @@ export class AppRuntime {
   private attentionRequests: ReadonlyArray<Pending> = [];
   private readonly attentionListeners = new Set<() => void>();
   private attentionFiber: Fiber.RuntimeFiber<unknown, unknown> | undefined;
+  /** Fan-out of the Attention `notices` stream to React toast/OS routers. */
+  private readonly noticeListeners = new Set<(notice: Notice) => void>();
+  private noticesFiber: Fiber.RuntimeFiber<unknown, unknown> | undefined;
   private mirrorFibers: ReadonlyArray<Fiber.RuntimeFiber<unknown, unknown>> = [];
   private themeFiber: Fiber.RuntimeFiber<unknown, unknown> | undefined;
   private fontFiber: Fiber.RuntimeFiber<unknown, unknown> | undefined;
@@ -620,6 +628,7 @@ export class AppRuntime {
     instance.focusSlotOfPanel(pane.panelId);
     instance.startWorkbenchMirror();
     instance.startAttentionMirror();
+    instance.startNoticesMirror();
     instance.startThemeListener();
     instance.startFontListener();
     return instance;
@@ -649,6 +658,40 @@ export class AppRuntime {
         }),
       ),
     );
+  }
+
+  /** Fan the Attention `notices` stream out to React consumers (the router). */
+  private startNoticesMirror(): void {
+    this.noticesFiber = Effect.runFork(
+      Stream.runForEach(this.attention.notices, (notice) =>
+        Effect.sync(() => {
+          for (const listener of this.noticeListeners) listener(notice);
+        }),
+      ),
+    );
+  }
+
+  /** Subscribe to fire-and-forget notices (the notification router's source). */
+  subscribeNotices(listener: (notice: Notice) => void): () => void {
+    this.noticeListeners.add(listener);
+    return () => void this.noticeListeners.delete(listener);
+  }
+
+  /** Publish a terminal notification onto the Attention fabric. */
+  notifyTerminal(payload: TerminalNotificationPayload): void {
+    Effect.runSync(this.attention.notify(TerminalNotification, payload));
+  }
+
+  /** Jump to a terminal panel: reveal its dock if collapsed, then activate +
+   *  focus its tab. Drives click-to-focus from a notification. */
+  focusTerminal(panelId: string): void {
+    const id = panelId as PanelId;
+    // Tucked away in a collapsed terminal dock? Bring the region back first.
+    const hidden = slotOfPanel(Effect.runSync(this.workbench.arrangement), id) === undefined;
+    if (hidden && this.dockedPanels.get(TerminalSurface) === id) this.toggleTerminal();
+    const slot = slotOfPanel(Effect.runSync(this.workbench.arrangement), id);
+    if (slot !== undefined) this.activateTab(slot, id);
+    else this.focusSlotOfPanel(id);
   }
 
   /** Current open requests, for useSyncExternalStore. */
@@ -1798,6 +1841,7 @@ export class AppRuntime {
     this.highlightsByDoc.clear();
     for (const fiber of this.mirrorFibers) Effect.runFork(Fiber.interrupt(fiber));
     if (this.attentionFiber !== undefined) Effect.runFork(Fiber.interrupt(this.attentionFiber));
+    if (this.noticesFiber !== undefined) Effect.runFork(Fiber.interrupt(this.noticesFiber));
     if (this.themeFiber !== undefined) Effect.runFork(Fiber.interrupt(this.themeFiber));
     if (this.fontFiber !== undefined) Effect.runFork(Fiber.interrupt(this.fontFiber));
     const views = [...this.panes.values()].map((pane) => pane.view);

@@ -26,6 +26,7 @@ import { terminalSearchDecorations, terminalTheme, type TerminalSearchDecoration
 import { createTerminalOptions, macEditingSequence, terminalKeyHandlerResult } from "./keys";
 import { TerminalContextMenu, type TerminalContextMenuActions } from "./TerminalContextMenu";
 import { handleOsc52ClipboardRequest } from "./osc52";
+import { parseOsc9, parseOsc777 } from "./notifications";
 import { pasteTerminalClipboard, writeTerminalPasteText, type TerminalPasteTextOptions } from "./paste";
 import { detectTerminalShortcutPlatform, terminalShortcutAction } from "./shortcuts";
 
@@ -232,7 +233,7 @@ const shellQuote = (path: string): string => `'${path.replaceAll("'", "'\\''")}'
 export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
   return {
     title: () => TERMINAL_TITLE,
-    mount: (element) => {
+    mount: (element, panel) => {
       let disposed = false;
       let term: Terminal | null = null;
       let termId: number | null = null;
@@ -533,6 +534,30 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
             writeSelectionText: (text) => clipboard?.writeSelectionText?.(text) ?? Promise.resolve(),
           }),
         ) as TerminalDisposable;
+        // Terminal notifications: bubble the desktop-notification escape
+        // sequences (and the bell) up to the Attention fabric. These fire even
+        // while the panel is hidden — xterm stays alive, detached/re-attached.
+        let terminalTitle = TERMINAL_TITLE;
+        const titleDisposable = next.onTitleChange((title) => {
+          terminalTitle = title.length > 0 ? title : TERMINAL_TITLE;
+        }) as TerminalDisposable;
+        const osc9Disposable = next.parser.registerOscHandler(9, (data) => {
+          const note = parseOsc9(data);
+          if (note !== null) runtime.notifyTerminal({ ...note, panelId: panel.id });
+          return note !== null;
+        }) as TerminalDisposable;
+        const osc777Disposable = next.parser.registerOscHandler(777, (data) => {
+          const note = parseOsc777(data);
+          if (note !== null) runtime.notifyTerminal({ ...note, panelId: panel.id });
+          return note !== null;
+        }) as TerminalDisposable;
+        const bellDisposable = next.onBell(() =>
+          runtime.notifyTerminal({
+            body: terminalTitle !== TERMINAL_TITLE ? terminalTitle : "Terminal activity",
+            fromBell: true,
+            panelId: panel.id,
+          }),
+        ) as TerminalDisposable;
 
         attachGlobalKeyHandler(next, (event) => {
           if (!eventTargetsSearchWidget(event.target) && terminalShortcutAction(event, platform) !== null) return "skip";
@@ -560,6 +585,10 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
           if (pasteSuppressionTimer !== null) window.clearTimeout(pasteSuppressionTimer);
           if (selectionClipboardTimer !== null) window.clearTimeout(selectionClipboardTimer);
           osc52Disposable.dispose();
+          titleDisposable.dispose();
+          osc9Disposable.dispose();
+          osc777Disposable.dispose();
+          bellDisposable.dispose();
           selectionDisposable.dispose();
           dataDisposable.dispose();
           resizeDisposable.dispose();

@@ -9,4 +9,5 @@ export * from "./layout";
 export * from "./notifications";
 export * from "./state";
 export * from "./visuals";
+export * from "./decorationProviders";
 export * from "./geometry";

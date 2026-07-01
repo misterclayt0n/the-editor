@@ -81,11 +81,13 @@ import {
   closeViewScope,
   closeWorkspaceScope,
   commitDocumentTransaction,
+  DecorationProviders,
   DocumentId,
   DocumentNotifications,
   DocumentRegistry,
   editorSnapshot,
   EditorVisuals,
+  makeDecorationProviders,
   Files,
   FileSystemPort,
   makeViewScope,
@@ -497,6 +499,12 @@ export class AppRuntime {
         const completionProviders = yield* makeCompletionProviders;
         const hoverProviders = yield* makeHoverProviders;
         const signatureProviders = yield* makeSignatureProviders;
+        // The decoration seam over EditorVisuals: packages register providers,
+        // the driver attaches them to every document (see lineNumbers).
+        const decorationProviders = yield* makeDecorationProviders(
+          Context.get(workspaceContext, DocumentRegistry),
+          Context.get(workspaceContext, WorkspaceNotifications),
+        );
         const themes = shell.themes;
         const fonts = shell.fonts;
         const services = Layer.mergeAll(
@@ -535,6 +543,7 @@ export class AppRuntime {
           Layer.succeed(CompletionProviders, completionProviders),
           Layer.succeed(HoverProviders, hoverProviders),
           Layer.succeed(SignatureProviders, signatureProviders),
+          Layer.succeed(DecorationProviders, decorationProviders),
           Layer.succeed(HostIntelActions, {
             triggerCompletion: () => instance.onTriggerCompletion?.(),
             triggerSignatureHelp: () => instance.onTriggerSignatureHelp?.(),

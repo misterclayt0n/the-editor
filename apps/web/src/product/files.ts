@@ -1,30 +1,17 @@
 /**
  * File commands as a product package: save and open, bound to the platform
- * through HostFileActions (the host owns dialogs and view swapping; the
- * package owns command identity and keybindings, so they are palette-ready
- * and rebindable like everything else).
+ * through FileOperations (the host owns dialogs and view swapping; the package
+ * owns command identity and keybindings, so they are palette-ready and
+ * rebindable like everything else).
  */
 
-import { Context, Effect } from "effect";
+import { Effect } from "effect";
 import { definePackage } from "@the-editor/extensions";
 import { Commands } from "@the-editor/commands";
 import { Keymaps } from "@the-editor/keymaps";
 import { SurfaceScope } from "@the-editor/workbench";
+import { FileOperations } from "@the-editor/editor";
 import { EditorSurface } from "./editorDefaults";
-
-/**
- * Host-side file actions. Save/open complete asynchronously (IO crosses the
- * platform port); the host surfaces results through its own state.
- */
-export class HostFileActions extends Context.Tag("the-editor/web/HostFileActions")<
-  HostFileActions,
-  {
-    readonly save: () => void;
-    readonly open: () => void;
-    readonly find: () => void;
-    readonly findInProject: () => void;
-  }
->() {}
 
 const editorScope = SurfaceScope.surface(EditorSurface);
 
@@ -32,33 +19,33 @@ export const filesPackage = definePackage("the-editor/files", () =>
   Effect.gen(function* () {
     const commands = yield* Commands;
     const keymaps = yield* Keymaps;
-    const host = yield* HostFileActions;
+    const files = yield* FileOperations;
 
     yield* commands.register("file.save", {
       title: "Save File",
       scope: editorScope,
       palette: { group: "File", aliases: ["w", "write"] },
-      run: () => Effect.sync(() => host.save()),
+      run: () => Effect.sync(() => files.save()),
     });
     yield* commands.register("file.open", {
       title: "Open File…",
       scope: editorScope,
       palette: { group: "File", aliases: ["e", "edit"] },
-      run: () => Effect.sync(() => host.open()),
+      run: () => Effect.sync(() => files.open()),
     });
 
     yield* commands.register("file.find", {
       title: "Find File…",
       scope: SurfaceScope.global,
       palette: { group: "File", aliases: ["quick open", "go to file", "fff"] },
-      run: () => Effect.sync(() => host.find()),
+      run: () => Effect.sync(() => files.find()),
     });
 
     yield* commands.register("file.findInProject", {
       title: "Find in Files…",
       scope: SurfaceScope.global,
       palette: { group: "File", aliases: ["search", "grep", "find in files", "rg"] },
-      run: () => Effect.sync(() => host.findInProject()),
+      run: () => Effect.sync(() => files.findInProject()),
     });
 
     yield* keymaps.registerAll([

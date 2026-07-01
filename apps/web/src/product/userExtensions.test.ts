@@ -19,13 +19,19 @@ import {
   EditorVisuals,
   FileIoError,
   Files,
+  FileOperations,
   FileSystemPort,
   FileViews,
+  LspOperations,
   makeDecorationProviders,
   makeViewScope,
   makeWorkspaceScope,
+  PaletteOperations,
+  ThemeOperations,
   ViewMountHub,
+  ViewOperations,
   WorkspaceNotifications,
+  WorkspaceOperations,
   WorkspaceRoots,
   type DirEntry,
   type FileStat,
@@ -217,6 +223,12 @@ function publishedPrimitivePackageSource(): string {
         var decorations = yield* Editor.DecorationProviders;
         var files = yield* Editor.Files;
         var fileViews = yield* Editor.FileViews;
+        var fileOps = yield* Editor.FileOperations;
+        var workspaceOps = yield* Editor.WorkspaceOperations;
+        var viewOps = yield* Editor.ViewOperations;
+        var paletteOps = yield* Editor.PaletteOperations;
+        var themeOps = yield* Editor.ThemeOperations;
+        var lspOps = yield* Editor.LspOperations;
         var opened = yield* fileViews.openInView("/project/open.txt");
         var openedAgain = yield* files.openPath("/project/open.txt");
         yield* renderers.register(PanelKind, {
@@ -277,6 +289,20 @@ function publishedPrimitivePackageSource(): string {
           floatHub: typeof Editor.FloatHub,
           fileViews: typeof Editor.FileViews,
           files: typeof Editor.Files,
+          fileOperations: typeof Editor.FileOperations,
+          workspaceOperations: typeof Editor.WorkspaceOperations,
+          viewOperations: typeof Editor.ViewOperations,
+          paletteOperations: typeof Editor.PaletteOperations,
+          themeOperations: typeof Editor.ThemeOperations,
+          lspOperations: typeof Editor.LspOperations,
+          operationMethods: [
+            typeof fileOps.save,
+            typeof workspaceOps.openFolder,
+            typeof viewOps.closeTab,
+            typeof paletteOps.open,
+            typeof themeOps.openSelector,
+            typeof lspOps.goToDefinition
+          ],
           openedPanelId: opened.panelId,
           openedViewId: opened.viewId,
           sameDocument: openedAgain.id === opened.documentId
@@ -478,6 +504,13 @@ describe("makeUserExtensionsPackage", () => {
             readonly floatHub: string;
             readonly fileViews: string;
             readonly files: string;
+            readonly fileOperations: string;
+            readonly workspaceOperations: string;
+            readonly viewOperations: string;
+            readonly paletteOperations: string;
+            readonly themeOperations: string;
+            readonly lspOperations: string;
+            readonly operationMethods: readonly string[];
             readonly openedPanelId: string;
             readonly openedViewId: string;
             readonly sameDocument: boolean;
@@ -498,6 +531,13 @@ describe("makeUserExtensionsPackage", () => {
             readonly floatHub: string;
             readonly fileViews: string;
             readonly files: string;
+            readonly fileOperations: string;
+            readonly workspaceOperations: string;
+            readonly viewOperations: string;
+            readonly paletteOperations: string;
+            readonly themeOperations: string;
+            readonly lspOperations: string;
+            readonly operationMethods: readonly string[];
             readonly openedPanelId: string;
             readonly openedViewId: string;
             readonly sameDocument: boolean;
@@ -515,6 +555,34 @@ describe("makeUserExtensionsPackage", () => {
           Layer.succeed(WorkspaceRoots, workspaceRoots),
           Layer.succeed(Files, files),
           Layer.succeed(FileViews, fileViews),
+          Layer.succeed(FileOperations, {
+            save: () => {},
+            open: () => {},
+            find: () => {},
+            findInProject: () => {},
+          }),
+          Layer.succeed(WorkspaceOperations, {
+            openFolder: () => {},
+            openSwitcher: () => {},
+            closeWorkspace: () => {},
+          }),
+          Layer.succeed(ViewOperations, {
+            splitRight: () => {},
+            splitDown: () => {},
+            closeTab: () => {},
+            nextTab: () => {},
+            previousTab: () => {},
+            toggleTabs: () => {},
+          }),
+          Layer.succeed(PaletteOperations, { open: () => {} }),
+          Layer.succeed(ThemeOperations, { openSelector: () => {} }),
+          Layer.succeed(LspOperations, {
+            goToDefinition: () => {},
+            formatDocument: () => {},
+            renameSymbol: () => {},
+            toggleInlayHints: () => {},
+            toggleLsp: () => {},
+          }),
           Layer.succeed(PanelRenderers, panelRenderers),
           Layer.succeed(CompletionProviders, completions),
           Layer.succeed(HoverProviders, hovers),
@@ -544,6 +612,20 @@ describe("makeUserExtensionsPackage", () => {
           floatHub: "function",
           fileViews: "function",
           files: "function",
+          fileOperations: "function",
+          workspaceOperations: "function",
+          viewOperations: "function",
+          paletteOperations: "function",
+          themeOperations: "function",
+          lspOperations: "function",
+          operationMethods: [
+            "function",
+            "function",
+            "function",
+            "function",
+            "function",
+            "function",
+          ],
           sameDocument: true,
         });
         expect(probe.readyPayload?.openedPanelId).toMatch(/^panel:/);

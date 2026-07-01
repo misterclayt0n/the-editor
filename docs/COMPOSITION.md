@@ -22,10 +22,9 @@ finding that anchors everything below:
 
 1. **`Host*` tag count → 0.** Every `Context.Tag("the-editor/web/Host…")` is a spot
    where a package reaches a privileged `AppRuntime` method instead of a public
-   operation. **Currently: 12.**
+   operation. **Currently: 6.**
    ```
-   HostFileActions  HostWorkspaceActions  HostPaletteActions  HostThemeActions
-   HostViewActions  HostLspActions  HostIntelActions  HostLspIntel
+   HostIntelActions  HostLspIntel
    HostFileTree  HostTerminal  HostDiffView  HostVcsDefaults
    ```
 2. **Every tag in the `services` layer is either nameable from the allowlist or on an
@@ -141,18 +140,23 @@ finding that anchors everything below:
   vocabulary, pane creation, placement, and focus policy. Boot creates the first
   editor group before package activation, so even an extension activated from the
   loader path can call `openInView` immediately and get a focused rendered tab.
-- [ ] **C2. Actions as operations.** Turn privileged `AppRuntime` methods into public
-  invokable ops, then delete the tag:
-  - [ ] `HostFileActions` → `save` / `open` / `find` / `findInProject`
-  - [ ] `HostWorkspaceActions` → `openFolder` / `openSwitcher` / `closeWorkspace`
-  - [ ] `HostViewActions` → `splitRight` / `splitDown` / `closeTab` / `nextTab` / `previousTab` / `toggleTabs`
-  - [ ] `HostThemeActions`, `HostPaletteActions` → fold into the picker op (C3)
-  - [ ] `HostLspActions` → `goToDefinition` / `format` / `rename` / `toggleInlayHints` / `toggleLsp` (depends on D1)
+- [x] **C2. Actions as operations.** The old `Host*Actions` tags for files,
+  workspaces, views, palette, themes, and LSP commands are gone. Their public
+  replacements live in allowlisted `@the-editor/editor` as synchronous intent
+  surfaces:
+  - [x] `FileOperations` → `save` / `open` / `find` / `findInProject`
+  - [x] `WorkspaceOperations` → `openFolder` / `openSwitcher` / `closeWorkspace`
+  - [x] `ViewOperations` → `splitRight` / `splitDown` / `closeTab` / `nextTab` / `previousTab` / `toggleTabs`
+  - [x] `PaletteOperations` / `ThemeOperations` replace `HostPaletteActions` /
+    `HostThemeActions`; C3 still folds both into the general picker op.
+  - [x] `LspOperations` replaces `HostLspActions` for command-level triggers;
+    D1 still owns process capability publication.
 - [ ] **C3. Picker as an operation.** One package-invokable
   `picker.open({ items, onSelect, preview? })`; the five bespoke surfaces
   (`CommandPalette`, `FileFinder`, `GlobalSearch`, theme selector, workspace
-  switcher) become callers. Retires `onPaletteOpenRequested`-style host hooks +
-  `HostPaletteActions` + `HostThemeActions`. Telescope's model: one picker, N
+  switcher) become callers. Retires the temporary `PaletteOperations` /
+  `ThemeOperations` bridge and the `onPaletteOpenRequested`-style host hooks.
+  Telescope's model: one picker, N
   sources. **Caveat found in audit:** the current React pickers render `items.map()`
   unvirtualized through cmdk — generalizing to arbitrary extension-supplied item
   counts forces the windowed-list question at the same time; solve both together.
@@ -161,8 +165,8 @@ finding that anchors everything below:
 
 - [ ] **D1. Process ownership.** Publish `ProcessPort` (and the PTY-shaped
   `TerminalPort`) as capability tags handed to packages. De-specializes LSP, VCS,
-  and the terminal at once; retires `HostTerminal`, unblocks `HostLspActions`,
-  `HostVcsDefaults`, `HostLspIntel`. **This is a trust decision as much as
+  and the terminal at once; retires `HostTerminal`, `HostVcsDefaults`, and
+  `HostLspIntel`. **This is a trust decision as much as
   plumbing** — the project-extension trust gate (`extensionTrust.ts`) exists because
   of exactly this. B3 already created one narrow process-spawn-by-proxy path:
   a public `LanguageServers` registration can cause the host LSP manager to start an

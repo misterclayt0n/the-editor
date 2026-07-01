@@ -4,23 +4,13 @@
  * owns command identity, keybindings, and palette presence.
  */
 
-import { Context, Effect } from "effect";
+import { Effect } from "effect";
 import { definePackage } from "@the-editor/extensions";
 import { Commands } from "@the-editor/commands";
 import { Keymaps } from "@the-editor/keymaps";
 import { SurfaceScope } from "@the-editor/workbench";
+import { LspOperations } from "@the-editor/editor";
 import { EditorSurface } from "./editorDefaults";
-
-export class HostLspActions extends Context.Tag("the-editor/web/HostLspActions")<
-  HostLspActions,
-  {
-    readonly goToDefinition: () => void;
-    readonly formatDocument: () => void;
-    readonly renameSymbol: () => void;
-    readonly toggleInlayHints: () => void;
-    readonly toggleLsp: () => void;
-  }
->() {}
 
 const editorScope = SurfaceScope.surface(EditorSurface);
 
@@ -28,7 +18,7 @@ export const lspActions = definePackage("the-editor/lsp-actions", () =>
   Effect.gen(function* () {
     const commands = yield* Commands;
     const keymaps = yield* Keymaps;
-    const host = yield* HostLspActions;
+    const lsp = yield* LspOperations;
 
     yield* commands.register("lsp.definition", {
       title: "Go to Definition",
@@ -36,25 +26,25 @@ export const lspActions = definePackage("the-editor/lsp-actions", () =>
       // the handler no-ops when no text pane is focused.
       scope: SurfaceScope.global,
       palette: { group: "LSP", aliases: ["gd"] },
-      run: () => Effect.sync(() => host.goToDefinition()),
+      run: () => Effect.sync(() => lsp.goToDefinition()),
     });
     yield* commands.register("lsp.format", {
       title: "Format Document",
       scope: editorScope,
       palette: { group: "LSP", aliases: ["fmt"] },
-      run: () => Effect.sync(() => host.formatDocument()),
+      run: () => Effect.sync(() => lsp.formatDocument()),
     });
     yield* commands.register("lsp.rename", {
       title: "Rename Symbol…",
       scope: editorScope,
       palette: { group: "LSP", aliases: ["rn"] },
-      run: () => Effect.sync(() => host.renameSymbol()),
+      run: () => Effect.sync(() => lsp.renameSymbol()),
     });
     yield* commands.register("lsp.toggleInlayHints", {
       title: "Toggle Inlay Hints",
       scope: editorScope,
       palette: { group: "LSP" },
-      run: () => Effect.sync(() => host.toggleInlayHints()),
+      run: () => Effect.sync(() => lsp.toggleInlayHints()),
     });
     // Global so it's reachable even when focus is on the file tree or an empty
     // workbench: stops every server, or restarts them + re-attaches open docs.
@@ -62,7 +52,7 @@ export const lspActions = definePackage("the-editor/lsp-actions", () =>
       title: "Toggle Language Servers",
       scope: SurfaceScope.global,
       palette: { group: "LSP", aliases: ["lsp", "restart lsp", "stop lsp"] },
-      run: () => Effect.sync(() => host.toggleLsp()),
+      run: () => Effect.sync(() => lsp.toggleLsp()),
     });
 
     yield* keymaps.registerAll([

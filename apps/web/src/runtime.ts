@@ -97,15 +97,21 @@ import {
   FileIoError,
   FileSystemPort,
   FileViews,
+  FileOperations,
   FloatHub,
   makeViewScope,
   makeWorkspaceScope,
   MountHub,
+  LspOperations,
+  PaletteOperations,
+  ThemeOperations,
   ViewFloatHub,
   ViewMountHub,
   setSelection,
   ViewNotifications,
+  ViewOperations,
   WorkspaceNotifications,
+  WorkspaceOperations,
   WorkspaceRoots,
   type DocumentChangeRange,
   type DocumentScope,
@@ -129,11 +135,11 @@ import {
 } from "@the-editor/engine";
 import { editorDefaults, EditorSurface } from "./product/editorDefaults";
 import { lineNumbers } from "./product/lineNumbers";
-import { filesPackage, HostFileActions } from "./product/files";
-import { palettePackage, HostPaletteActions } from "./product/palette";
-import { workspacesPackage, HostWorkspaceActions } from "./product/workspaces";
-import { viewPackage, HostViewActions } from "./product/view";
-import { themeCommands, HostThemeActions } from "./product/themes";
+import { filesPackage } from "./product/files";
+import { palettePackage } from "./product/palette";
+import { workspacesPackage } from "./product/workspaces";
+import { viewPackage } from "./product/view";
+import { themeCommands } from "./product/themes";
 import { createFileSystemPort } from "./platform/fs";
 import {
   createFileFinderPort,
@@ -151,7 +157,7 @@ import { buildExtensionVirtualModules, makeUserExtensionsPackage } from "./produ
 import { DocumentHighlights } from "./editor/highlights";
 import { LspManager, type DiagnosticCounts } from "./lsp/manager";
 import { lspDefaults } from "./product/lsp";
-import { lspActions, HostLspActions } from "./product/lspActions";
+import { lspActions } from "./product/lspActions";
 import { lspIntel, HostLspIntel } from "./product/lspIntel";
 import { intelActions, HostIntelActions } from "./product/intelActions";
 import { wordCompletions } from "./product/wordCompletions";
@@ -634,31 +640,31 @@ export class AppRuntime {
             WorkspaceNotifications,
             Context.get(workspaceContext, WorkspaceNotifications),
           ),
-          Layer.succeed(HostFileActions, {
+          Layer.succeed(FileOperations, {
             save: () => void instance.saveActiveFile(),
             open: () => void instance.openFileViaDialog(),
             find: () => instance.onFileFinderOpenRequested?.(),
             findInProject: () => instance.onSearchOpenRequested?.(),
           }),
-          Layer.succeed(HostWorkspaceActions, {
+          Layer.succeed(WorkspaceOperations, {
             openFolder: () => instance.onWorkspaceOpenFolderRequested?.(),
             openSwitcher: () => instance.onWorkspaceSwitcherRequested?.(),
             closeWorkspace: () => instance.onWorkspaceCloseRequested?.(),
           }),
-          Layer.succeed(HostPaletteActions, {
+          Layer.succeed(PaletteOperations, {
             open: () => instance.onPaletteOpenRequested?.(),
           }),
-          Layer.succeed(HostThemeActions, {
+          Layer.succeed(ThemeOperations, {
             openSelector: () => instance.onThemeSelectorOpenRequested?.(),
           }),
-          Layer.succeed(HostLspActions, {
+          Layer.succeed(LspOperations, {
             goToDefinition: () => void instance.goToDefinition(),
             formatDocument: () => void instance.formatActiveDocument(),
             renameSymbol: () => instance.startRename(),
             toggleInlayHints: () => instance.toggleInlayHints(),
             toggleLsp: () => instance.toggleLsp(),
           }),
-          Layer.succeed(HostViewActions, {
+          Layer.succeed(ViewOperations, {
             splitRight: () => instance.splitFocused("row"),
             splitDown: () => instance.splitFocused("column"),
             closeTab: () => instance.requestCloseFocusedTab(),

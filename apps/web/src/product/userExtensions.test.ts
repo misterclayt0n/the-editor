@@ -133,6 +133,35 @@ function packageSource(
   `;
 }
 
+function attentionPackageSource(): string {
+  return `
+    var ext = require("@the-editor/extensions");
+    var definePackage = ext.definePackage;
+    var Attention = ext.Attention;
+    var makeNoticeTopic = ext.makeNoticeTopic;
+    var makeRequestTopic = ext.makeRequestTopic;
+    var Effect = require("effect").Effect;
+    var probe = require("test:attention-probe");
+    var Ready = makeNoticeTopic("acme/attention-ready");
+    var Pick = makeRequestTopic("acme/attention-pick");
+    module.exports.default = definePackage("acme.attention", function () {
+      return Effect.gen(function* () {
+        var attention = yield* Attention;
+        yield* attention.notify(Ready, { message: "hello from extension" }, { level: "success" });
+        var answer = yield* attention.ask(Pick, {
+          title: "Pick one",
+          description: "Round-trip through the public Attention fabric.",
+          choices: [
+            { id: "yes", label: "Yes" },
+            { id: "no", label: "No", cancel: true }
+          ]
+        });
+        probe.answer(answer);
+      });
+    });
+  `;
+}
+
 describe("makeUserExtensionsPackage", () => {
   it.live("loads a global extension at startup and reloads it after an edit", () =>
     Effect.scoped(
@@ -183,6 +212,80 @@ describe("makeUserExtensionsPackage", () => {
         fs.remove("/home/user/.the-editor/extensions/hello.ts");
         yield* commands.execute("reload");
         yield* waitUntil(commands.get("acme.hello").pipe(Effect.map((c) => c === undefined)));
+      }),
+    ),
+  );
+
+  it.live("lets a loaded extension notify and ask through public Attention", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = makeFakeFs();
+        fs.write("/home/user/.the-editor/extensions/attention.ts", attentionPackageSource());
+
+        const runtime = yield* makePackageRuntime;
+        const attention = yield* makeAttention();
+        const workspaceRoots = yield* makeStateCell<ReadonlyArray<string>>([]);
+        const commands = yield* makeCommands(runtime.contributionIndex);
+        const questions: unknown[] = [];
+        const notices: unknown[] = [];
+        let answer: string | undefined;
+        const probe = { answer: (value: string) => void (answer = value) };
+
+        const servicesForExtensions = Layer.mergeAll(
+          Layer.succeed(Commands, commands),
+          Layer.succeed(FileSystemPort, fs.port),
+          Layer.succeed(PackageRuntimeService, runtime),
+          Layer.succeed(Attention, attention),
+          Layer.succeed(WorkspaceRoots, workspaceRoots),
+        );
+
+        yield* attention.registerResponder;
+        yield* Effect.forkScoped(
+          Stream.runForEach(attention.notices, (notice) =>
+            Effect.sync(() => {
+              notices.push(notice);
+            }),
+          ),
+        );
+        yield* Effect.forkScoped(
+          Stream.runForEach(attention.requestChanges, (pending) =>
+            Effect.forEach(
+              pending,
+              (request) =>
+                Effect.sync(() => {
+                  questions.push(request.question);
+                }).pipe(Effect.zipRight(request.respond("yes"))),
+              { discard: true },
+            ),
+          ),
+        );
+
+        const userExtensions = makeUserExtensionsPackage({
+          servicesForExtensions,
+          transpiler: identityTranspiler,
+          virtualModules: { ...testVirtualModules, "test:attention-probe": probe },
+          homeDir: "/home/user",
+        });
+
+        yield* runtime.activateGraph([toPackageDescriptor(userExtensions, servicesForExtensions)]);
+        yield* waitUntil(Effect.sync(() => answer === "yes"));
+
+        expect(answer).toEqual("yes");
+        expect(notices).toContainEqual({
+          topicId: "acme/attention-ready",
+          level: "success",
+          payload: { message: "hello from extension" },
+        });
+        expect(questions).toEqual([
+          {
+            title: "Pick one",
+            description: "Round-trip through the public Attention fabric.",
+            choices: [
+              { id: "yes", label: "Yes" },
+              { id: "no", label: "No", cancel: true },
+            ],
+          },
+        ]);
       }),
     ),
   );

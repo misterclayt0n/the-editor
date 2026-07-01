@@ -86,6 +86,54 @@ describe("attention fabric", () => {
     expect(remaining).toEqual([]);
   });
 
+  test("declined requests fail unhandled and retire from the inbox", async () => {
+    const result = await scoped(
+      Effect.gen(function* () {
+        const attention = yield* makeAttention();
+        yield* attention.registerResponder;
+        const asking = yield* attention.ask(ConfirmDiscard, { name: "bad" }).pipe(Effect.fork);
+        const pending = yield* attention.requestChanges.pipe(
+          Stream.filter((r) => r.length === 1),
+          Stream.take(1),
+          Stream.runHead,
+          Effect.map((head) => (head._tag === "Some" ? head.value[0]! : undefined)),
+        );
+        yield* (pending as Pending).decline();
+        const failed = yield* Fiber.join(asking).pipe(
+          Effect.catchAll((error) => Effect.succeed(error instanceof AttentionUnhandledError)),
+        );
+        const remaining = yield* attention.openRequests;
+        return { failed, remaining };
+      }),
+    );
+    expect(result.failed).toBe(true);
+    expect(result.remaining).toEqual([]);
+  });
+
+  test("declined requests resolve the caller's default and retire from the inbox", async () => {
+    const result = await scoped(
+      Effect.gen(function* () {
+        const attention = yield* makeAttention();
+        yield* attention.registerResponder;
+        const asking = yield* attention
+          .ask(ConfirmDiscard, { name: "bad" }, { default: "cancel" })
+          .pipe(Effect.fork);
+        const pending = yield* attention.requestChanges.pipe(
+          Stream.filter((r) => r.length === 1),
+          Stream.take(1),
+          Stream.runHead,
+          Effect.map((head) => (head._tag === "Some" ? head.value[0]! : undefined)),
+        );
+        yield* (pending as Pending).decline();
+        const answer = yield* Fiber.join(asking);
+        const remaining = yield* attention.openRequests;
+        return { answer, remaining };
+      }),
+    );
+    expect(result.answer).toBe("cancel");
+    expect(result.remaining).toEqual([]);
+  });
+
   test("with no responder, ask resolves the default instead of deadlocking", async () => {
     const answer = await scoped(
       Effect.gen(function* () {
@@ -130,9 +178,11 @@ describe("attention fabric", () => {
     const result = await scoped(
       Effect.gen(function* () {
         const attention = yield* makeAttention();
-        return yield* attention.ask(ConfirmDiscard, { name: "q" }).pipe(
-          Effect.catchAll((error) => Effect.succeed(error instanceof AttentionUnhandledError)),
-        );
+        return yield* attention
+          .ask(ConfirmDiscard, { name: "q" })
+          .pipe(
+            Effect.catchAll((error) => Effect.succeed(error instanceof AttentionUnhandledError)),
+          );
       }),
     );
     expect(result).toBe(true);

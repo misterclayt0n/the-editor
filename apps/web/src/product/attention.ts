@@ -1,4 +1,4 @@
-import { makeRequestTopic, type RequestTopic } from "@the-editor/kernel";
+import { makeRequestTopic, type ChoiceRequest, type ChoiceTopic } from "@the-editor/extensions";
 
 /**
  * The app's convention for requests that render as a modal choice. The kernel
@@ -8,25 +8,6 @@ import { makeRequestTopic, type RequestTopic } from "@the-editor/kernel";
  * `AttentionLayer` and rendered generically — the layer never switches on the
  * topic id, so any future confirm/permission prompt reuses the same surface.
  */
-export type ChoiceTone = "default" | "destructive" | "outline";
-
-export interface Choice<Answer extends string> {
-  readonly id: Answer;
-  readonly label: string;
-  readonly tone?: ChoiceTone;
-  /** The answer Escape / overlay-dismiss resolves to (exactly one choice). */
-  readonly cancel?: boolean;
-}
-
-export interface ChoiceRequest<Answer extends string> {
-  readonly title: string;
-  readonly description?: string;
-  readonly choices: ReadonlyArray<Choice<Answer>>;
-}
-
-/** A request whose answer is one of its choice ids — the generic modal shape. */
-export type ChoiceTopic<Answer extends string> = RequestTopic<ChoiceRequest<Answer>, Answer>;
-
 export type DiscardAnswer = "save" | "discard" | "cancel";
 
 /** Closing a buffer with unsaved changes. */

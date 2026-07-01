@@ -795,6 +795,11 @@ export class AppRuntime {
     void Effect.runPromise(request.respond(answer));
   }
 
+  /** Reject an open request this responder cannot render. */
+  declineRequest(request: Pending): void {
+    void Effect.runPromise(request.decline());
+  }
+
   themeSnapshot(): ResolvedTheme {
     return Effect.runSync(this.themes.active);
   }

@@ -70,8 +70,8 @@ finding that anchors everything below:
 | 3 | Decorate a buffer | ✅ `DecorationProviders` |
 | 4 | Style its own surface / ship a theme | ✅ scoped CSS vars + `Themes`/`Fonts` |
 | 5 | Manage panes/tabs/splits/focus | ✅ `Workbench` + `surgery` |
-| 6 | Hold / react to state | 🟡 `context.stores` yes; `StateCell`/`makeNoticeTopic`/`makeRegistry` unreachable (A2) |
-| 7 | Ask / notify the user | ❌ `Attention` tag lives in kernel, kernel not allowlisted, no value re-export (A1) |
+| 6 | Hold / react to state | ✅ `context.stores` + public `makeStateCell`/`makeRegistry`/topic fabric via `@the-editor/extensions` |
+| 7 | Ask / notify the user | ✅ `Attention` + public choice-request vocabulary via `@the-editor/extensions`; malformed requests fail fast |
 | 8 | Render a pane (agent panel, browser, Doom) | ❌ `PanelRenderers` app-internal (B1) |
 | 9 | Answer questions about a buffer (completion/hover/signature) | ❌ intel registries app-internal (B2) |
 | 10 | Open a file into a visible view | ❌ `Files` not in services layer (C1) |
@@ -89,15 +89,18 @@ finding that anchors everything below:
 
 ## A. Days of work, flips the scoreboard — do first
 
-- [ ] **A1. Expose `Attention`.** The service is already in the layer and
-  `AttentionLayer.tsx` is generic (never switches on topic id). Re-export the tag +
-  `makeNoticeTopic`/`makeRequestTopic` from an allowlisted package (or allowlist
-  `@the-editor/kernel`). Retires verb 7. This is the cheapest real win on the list.
-- [ ] **A2. Decide kernel value exports.** `makeStateCell`, `makeRegistry`,
-  `makeNoticeTopic` — "built on the same layer" should include the state/topic
-  fabric (editor-owned `makeNotificationBus` already leaks half of it). Either
-  allowlist kernel or value-re-export the primitives from `@the-editor/extensions`
-  (which today re-exports kernel `export type` only).
+- [x] **A1. Expose `Attention`.** Done by narrow value re-export from
+  `@the-editor/extensions`: `Attention`, `makeNoticeTopic`, `makeRequestTopic`,
+  and the typed Attention errors. The public request vocabulary is the exported
+  `ChoiceRequest`/`ChoiceTopic` shape; `AttentionLayer` declines non-choice
+  requests so malformed dynamic asks fail with `AttentionUnhandledError` instead
+  of hanging. Proven through the user-extension load path with a global extension
+  that `yield* Attention`, sends a notice, asks a choice request, and receives
+  the answer.
+- [x] **A2. Decide kernel value exports.** Done by narrow value re-export from
+  `@the-editor/extensions`: `makeStateCell`, `makeRegistry`, topic makers, and
+  the id constructors needed to mint registry contributions. Kernel itself stays
+  off the extension import allowlist (see H3).
 
 ## B. Relocate a tag (cheap, low-risk)
 
@@ -217,6 +220,13 @@ finding that anchors everything below:
   ownership + rebind; revisit only when a real extension needs advice.
 - [x] **H2. Block widgets** — settled by audit finding: all mount seams are
   element-based, so expose them (B4); no React contract leaks.
+- [x] **H3. Do not allowlist raw kernel.** A1/A2 use narrow re-exports from
+  `@the-editor/extensions`; `@the-editor/kernel` stays unallowlisted because the
+  services layer already contains `PackageRuntimeService`, and naming it would
+  let ordinary extensions activate/reload/dispose packages. Meta-extensions
+  (extension-manager UI, package dashboard) are deliberately deferred. When that
+  need arrives, prefer a bounded package-introspection service (list + statuses,
+  no dispose/reload) over exposing the raw runtime.
 
 ---
 

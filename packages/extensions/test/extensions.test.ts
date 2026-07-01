@@ -1,17 +1,25 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Context, Effect, Layer } from "effect";
 import {
-  ContributionId,
   PackageId,
-  RegistryId,
   makePackageRuntime,
-  makeRegistry,
   type ActivationId,
   type ContributionOwner,
   type IdentifiedContribution,
   type PackageId as KernelPackageId,
 } from "@the-editor/kernel";
-import { PackageActivationContext, definePackage, toPackageDescriptor } from "../src/index.js";
+import {
+  AttentionUnhandledError,
+  ContributionId,
+  PackageActivationContext,
+  RegistryId,
+  definePackage,
+  makeNoticeTopic,
+  makeRegistry,
+  makeRequestTopic,
+  makeStateCell,
+  toPackageDescriptor,
+} from "../src/index.js";
 
 interface TestContribution extends IdentifiedContribution {
   readonly value: string;
@@ -44,6 +52,19 @@ describe("extensions package authoring SDK", () => {
     expect(descriptor.id).toEqual(pid("user.config"));
     expect(descriptor.dependencies).toEqual([pid("foundation.a"), pid("foundation.b")]);
   });
+
+  it.effect("re-exports the public state/topic fabric", () =>
+    Effect.gen(function* () {
+      const cell = yield* makeStateCell(0);
+      yield* cell.set(1);
+      const notice = makeNoticeTopic<{ readonly message: string }>("test/notice");
+      const request = makeRequestTopic<{ readonly title: string }, "ok">("test/request");
+
+      expect(yield* cell.get).toBe(1);
+      expect(notice.id).toEqual("test/notice");
+      expect(new AttentionUnhandledError(request.id)).toBeInstanceOf(AttentionUnhandledError);
+    }),
+  );
 
   it.effect("activation receives ExtensionContext", () =>
     Effect.gen(function* () {

@@ -19,9 +19,10 @@
  * - `notify` announces a fact and returns immediately. It NEVER suspends, so
  *   it is safe to call from a command or the hot path. Fans out to every
  *   consumer (a toast stack, a badge counter, a needs-attention projection).
- * - `ask` poses a question and SUSPENDS until exactly one responder answers.
- *   It is an interaction by definition, never the keystroke path. Backed by a
- *   Deferred; the first responder to call `respond` wins, the rest no-op.
+ * - `ask` poses a question and SUSPENDS until exactly one responder answers or
+ *   declines it. It is an interaction by definition, never the keystroke path. Backed by a
+ *   Deferred; the first responder to call `respond` or `decline` wins, the
+ *   rest no-op. Decline rejects the request as unhandled.
  *
  * The careful corner: `ask` must never deadlock when nothing is listening
  * (headless, tests, no UI mounted). Responders register their presence for
@@ -43,10 +44,10 @@ export class InvalidAttentionTopicIdError extends AttentionError {
   }
 }
 
-/** Raised by `ask` when no responder is present and the caller gave no default. */
+/** Raised by `ask` when no responder is present or a responder declines it. */
 export class AttentionUnhandledError extends AttentionError {
   constructor(readonly topicId: AttentionTopicId) {
-    super(`no responder for attention request ${JSON.stringify(topicId)}`);
+    super(`unhandled attention request ${JSON.stringify(topicId)}`);
   }
 }
 
@@ -118,7 +119,8 @@ export type RequestId = number & { readonly RequestId: unique symbol };
 /**
  * An open question awaiting an answer. Carried in the inbox a responder reads.
  * `respond` resolves the asker's `ask` and retires the request; the first call
- * wins, later calls are no-ops. Calling it is the responder's whole job.
+ * wins, later calls are no-ops. Calling `respond` or `decline` is the
+ * responder's whole job.
  */
 export interface Pending<Question = unknown, Answer = unknown> {
   readonly id: RequestId;
@@ -126,6 +128,12 @@ export interface Pending<Question = unknown, Answer = unknown> {
   readonly level: AttentionLevel;
   readonly question: Question;
   readonly respond: (answer: Answer) => Effect.Effect<void>;
+  /**
+   * Decline this request as unhandled. Today this is a global completion, not
+   * a per-responder "pass": the first responder to decline wins, resolving the
+   * asker's default when supplied or failing AttentionUnhandledError otherwise.
+   */
+  readonly decline: () => Effect.Effect<void>;
 }
 
 export type NotifyOptions = {
@@ -134,7 +142,7 @@ export type NotifyOptions = {
 
 export type AskOptions<Answer> = {
   readonly level?: AttentionLevel;
-  /** Resolution when no responder is present (headless, tests, no UI). */
+  /** Resolution when no responder handles the request (headless, tests, declined). */
   readonly default?: Answer;
 };
 
@@ -156,8 +164,8 @@ export namespace Attention {
     ) => Effect.Effect<void>;
 
     /**
-     * Pose a question; suspend until a responder answers. With no responder
-     * present, resolve `options.default` or fail `AttentionUnhandledError`.
+     * Pose a question; suspend until a responder answers or declines it. When
+     * unhandled, resolve `options.default` or fail `AttentionUnhandledError`.
      * Interrupting the asker retires the request.
      */
     readonly ask: <Question, Answer>(
@@ -205,7 +213,9 @@ export const makeAttention = (
     let nextId = 1;
 
     const retire = (id: RequestId): Effect.Effect<void> =>
-      inbox.update((requests) => requests.filter((request) => request.id !== id)).pipe(Effect.asVoid);
+      inbox
+        .update((requests) => requests.filter((request) => request.id !== id))
+        .pipe(Effect.asVoid);
 
     const notify: Attention.Service["notify"] = (topic, payload, opts) =>
       PubSub.publish(notices, {
@@ -225,7 +235,7 @@ export const makeAttention = (
           if (opts && "default" in opts) return opts.default as Answer;
           return yield* Effect.fail(new AttentionUnhandledError(topic.id));
         }
-        const deferred = yield* Deferred.make<Answer>();
+        const deferred = yield* Deferred.make<Answer, AttentionUnhandledError>();
         const id = nextId++ as RequestId;
         const pending: Pending<Question, Answer> = {
           id,
@@ -234,6 +244,14 @@ export const makeAttention = (
           question,
           respond: (answer) =>
             Deferred.succeed(deferred, answer).pipe(
+              Effect.flatMap(() => retire(id)),
+              Effect.asVoid,
+            ),
+          decline: () =>
+            (opts && "default" in opts
+              ? Deferred.succeed(deferred, opts.default as Answer)
+              : Deferred.fail(deferred, new AttentionUnhandledError(topic.id))
+            ).pipe(
               Effect.flatMap(() => retire(id)),
               Effect.asVoid,
             ),

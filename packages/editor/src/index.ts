@@ -1,6 +1,7 @@
 export * from "./services";
 export * from "./workspace";
 export * from "./files";
+export * from "./fileViews";
 export * from "./view";
 export * from "./scope";
 export * from "./commit";

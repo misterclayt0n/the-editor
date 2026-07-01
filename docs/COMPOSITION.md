@@ -74,7 +74,7 @@ finding that anchors everything below:
 | 7 | Ask / notify the user | ✅ `Attention` + public choice-request vocabulary via `@the-editor/extensions`; malformed requests fail fast |
 | 8 | Render a pane (agent panel, browser, Doom) | ✅ `PanelRenderers` via `@the-editor/workbench` |
 | 9 | Answer questions about a buffer (completion/hover/signature) | ✅ provider registries via `@the-editor/intel` |
-| 10 | Open a file into a visible view | ❌ `Files` not in services layer (C1) |
+| 10 | Open a file into a visible view | ✅ `Files` + `FileViews.openInView` (C1) |
 | 11 | Pick from a list (completing-read) | ❌ no seam; five bespoke React surfaces (C3) |
 | 12 | Add statusline / context-menu items | ❌ no registry exists (E1) |
 | 13 | Own a background process | ❌ direct `ProcessPort`/`TerminalPort` host-only; LSP spawn-by-proxy exists via #16 (D1) |
@@ -134,10 +134,13 @@ finding that anchors everything below:
 
 ## C. Operations (retire `Host*` tags)
 
-- [ ] **C1. Open-file-into-view op.** `Files.openPath` exists but `Files` is absent
-  from the services layer; `DocumentRegistry.open` can't attach a rendered tab. For
-  an agent-driving extension this is the most basic verb after "edit". Add `Files`
-  to the layer or ship a small `openInView` operation.
+- [x] **C1. Open-file-into-view op.** `Files` is now in the package services
+  layer when a filesystem exists, and `FileViews.openInView(path)` is the public
+  visible-open operation. `Files.openPath` remains disk → document binding;
+  `FileViews` is host-implemented because rendered tabs include editor surface
+  vocabulary, pane creation, placement, and focus policy. Boot creates the first
+  editor group before package activation, so even an extension activated from the
+  loader path can call `openInView` immediately and get a focused rendered tab.
 - [ ] **C2. Actions as operations.** Turn privileged `AppRuntime` methods into public
   invokable ops, then delete the tag:
   - [ ] `HostFileActions` → `save` / `open` / `find` / `findInProject`

@@ -94,7 +94,9 @@ import {
   EditorVisuals,
   makeDecorationProviders,
   Files,
+  FileIoError,
   FileSystemPort,
+  FileViews,
   FloatHub,
   makeViewScope,
   makeWorkspaceScope,
@@ -111,6 +113,7 @@ import {
   type EditorSnapshot,
   type FileSyncStatus,
   type NotificationBus,
+  type OpenInViewResult,
   type ViewScope,
   type VisualsSnapshot,
   type WorkspaceScope,
@@ -522,6 +525,28 @@ export class AppRuntime {
         // set themselves (see lineNumbers). Per-document services flow to
         // commands through the focused panel's view context.
         const workspaceContext = workspace.context;
+        const workspaceFiles = Option.getOrUndefined(Context.getOption(workspaceContext, Files));
+        const fileViews: FileViews.Service | undefined =
+          workspaceFiles === undefined
+            ? undefined
+            : {
+                openInView: (path) =>
+                  Effect.tryPromise({
+                    try: async () => {
+                      const result = await instance.openPath(path);
+                      if (result === undefined) {
+                        throw new FileIoError(
+                          path,
+                          "read",
+                          new Error("file views did not return an opened editor view"),
+                        );
+                      }
+                      return result;
+                    },
+                    catch: (cause) =>
+                      cause instanceof FileIoError ? cause : new FileIoError(path, "read", cause),
+                  }),
+              };
         const languageServers = yield* makeLanguageServers;
         const panelRenderers = makePanelRenderers();
         const diffViewPreferences = makeDiffViewPreferences();
@@ -548,6 +573,8 @@ export class AppRuntime {
           Layer.succeed(PackageRuntimeService, runtime),
           Layer.succeed(WorkspaceRoots, workspaceRoots),
           ...(fileSystem !== undefined ? [Layer.succeed(FileSystemPort, fileSystem)] : []),
+          ...(workspaceFiles !== undefined ? [Layer.succeed(Files, workspaceFiles)] : []),
+          ...(fileViews !== undefined ? [Layer.succeed(FileViews, fileViews)] : []),
           Layer.succeed(PanelRenderers, panelRenderers),
           Layer.succeed(DiffViewPreferences, diffViewPreferences),
           Layer.succeed(VcsProviders, vcsProviders),
@@ -555,7 +582,7 @@ export class AppRuntime {
             providers: vcsProcessPort !== undefined ? [createGitProvider(vcsProcessPort)] : [],
           }),
           Layer.succeed(HostFileTree, {
-            // `instance` is assigned at the end of boot; defer every deref.
+            // Renderers are constructed on demand so they always see the live runtime.
             renderer: {
               title: (panel) => createFileTreeRenderer(instance).title(panel),
               icon: (panel) => createFileTreeRenderer(instance).icon?.(panel),
@@ -640,6 +667,65 @@ export class AppRuntime {
             toggleTabs: () => instance.toggleTabs(),
           }),
         );
+
+        const appRuntime = new AppRuntime(
+          scope,
+          workspace,
+          workbench,
+          commands,
+          keymaps,
+          themes,
+          fonts,
+        );
+        instance = appRuntime;
+        appRuntime.panelRenderers = panelRenderers;
+        appRuntime.diffViewPreferences = diffViewPreferences;
+        appRuntime.attention = attention;
+        appRuntime.decorationProviders = decorationProviders;
+        appRuntime.intel = {
+          completions: completionProviders,
+          hovers: hoverProviders,
+          signatures: signatureProviders,
+        };
+        appRuntime.workspaceRootsCell = workspaceRoots;
+        // Syntax host (absent in plain browsers: capability gating).
+        appRuntime.syntaxPort = createSyntaxPort();
+        const processPort = createProcessPort();
+        if (processPort !== undefined) {
+          appRuntime.lsp = new LspManager(
+            processPort,
+            fileSystem,
+            languageServers,
+            () => appRuntime.workspaceRoot,
+          );
+          appRuntime.lsp.onDiagnostics = (docId) => appRuntime.onDiagnosticsChanged?.(docId);
+          appRuntime.vcs = new VcsManager(vcsProviders, fileSystem);
+          // The diff gutter rides the decoration seam: registered once, the
+          // driver attaches it to every document (current + future). No more
+          // hand-driven per-document vcs.attach/detach.
+          yield* Scope.extend(
+            decorationProviders.register(vcsGutterProvider(appRuntime.vcs, workspaceFiles)),
+            scope,
+          );
+        }
+
+        // First pane: a scratch document in a single stack. This is ready before
+        // package activation so an extension calling FileViews.openInView during
+        // activation has a real editor group to target.
+        const registry = Context.get(appRuntime.workspace.context, DocumentRegistry);
+        const scratch = yield* registry.open({ text: initialText });
+        appRuntime.attachHighlights(scratch, undefined);
+        const pane = appRuntime.createPane(scratch);
+        yield* appRuntime.workbench
+          .updateArrangement((a) => ({ ...a, tiles: makeStack([pane.panelId]) }))
+          .pipe(Effect.orDie);
+        appRuntime.focusSlotOfPanel(pane.panelId);
+        appRuntime.startWorkbenchMirror();
+        appRuntime.startAttentionMirror();
+        appRuntime.startNoticesMirror();
+        appRuntime.startThemeListener();
+        appRuntime.startFontListener();
+
         yield* runtime
           .activateGraph([
             toPackageDescriptor(editorDefaults, services),
@@ -674,74 +760,22 @@ export class AppRuntime {
                       virtualModules: buildExtensionVirtualModules(),
                       homeDir: getHomeDir(),
                     }),
-                    services,
+                    Layer.mergeAll(
+                      Layer.succeed(FileSystemPort, fileSystem),
+                      Layer.succeed(PackageRuntimeService, runtime),
+                      Layer.succeed(Attention, attention),
+                      Layer.succeed(Commands, commands),
+                      Layer.succeed(WorkspaceRoots, workspaceRoots),
+                    ),
                   ),
                 ]
               : []),
           ])
           .pipe(Effect.orDie);
 
-        const appRuntime = new AppRuntime(
-          scope,
-          workspace,
-          workbench,
-          commands,
-          keymaps,
-          themes,
-          fonts,
-        );
-        appRuntime.panelRenderers = panelRenderers;
-        appRuntime.diffViewPreferences = diffViewPreferences;
-        appRuntime.attention = attention;
-        appRuntime.decorationProviders = decorationProviders;
-        appRuntime.intel = {
-          completions: completionProviders,
-          hovers: hoverProviders,
-          signatures: signatureProviders,
-        };
-        appRuntime.workspaceRootsCell = workspaceRoots;
-        const processPort = createProcessPort();
-        if (processPort !== undefined) {
-          appRuntime.lsp = new LspManager(
-            processPort,
-            fileSystem,
-            languageServers,
-            () => appRuntime.workspaceRoot,
-          );
-          appRuntime.lsp.onDiagnostics = (docId) => appRuntime.onDiagnosticsChanged?.(docId);
-          appRuntime.vcs = new VcsManager(vcsProviders, fileSystem);
-          // The diff gutter rides the decoration seam: registered once, the
-          // driver attaches it to every document (current + future). No more
-          // hand-driven per-document vcs.attach/detach.
-          const filesForVcs = Option.getOrUndefined(Context.getOption(workspaceContext, Files));
-          Effect.runSync(
-            Scope.extend(
-              decorationProviders.register(vcsGutterProvider(appRuntime.vcs, filesForVcs)),
-              scope,
-            ),
-          );
-        }
         return appRuntime;
       }),
     );
-    // Syntax host (absent in plain browsers: capability gating).
-    instance.syntaxPort = createSyntaxPort();
-    // First pane: a scratch document in a single stack.
-    const registry = Context.get(instance.workspace.context, DocumentRegistry);
-    const scratch = Effect.runSync(registry.open({ text: initialText }));
-    instance.attachHighlights(scratch, undefined);
-    const pane = instance.createPane(scratch);
-    Effect.runSync(
-      instance.workbench
-        .updateArrangement((a) => ({ ...a, tiles: makeStack([pane.panelId]) }))
-        .pipe(Effect.orDie),
-    );
-    instance.focusSlotOfPanel(pane.panelId);
-    instance.startWorkbenchMirror();
-    instance.startAttentionMirror();
-    instance.startNoticesMirror();
-    instance.startThemeListener();
-    instance.startFontListener();
     return instance;
   }
 
@@ -1557,9 +1591,9 @@ export class AppRuntime {
   }
 
   /** Open a path as a tab in the focused stack (activating an existing one). */
-  async openPath(path: string): Promise<void> {
+  async openPath(path: string): Promise<OpenInViewResult | undefined> {
     const files = Context.getOption(this.workspace.context, Files);
-    if (Option.isNone(files)) return;
+    if (Option.isNone(files)) return undefined;
     const document = await Effect.runPromise(files.value.openPath(path));
     this.attachHighlights(document, path);
     void this.lsp?.attach(document, path);
@@ -1583,9 +1617,14 @@ export class AppRuntime {
 
     if (stack !== undefined) {
       for (const panelId of stack.panels) {
-        if (this.panes.get(panelId)?.document.id === document.id) {
+        const existingPane = this.panes.get(panelId);
+        if (existingPane?.document.id === document.id) {
           this.activateTab(stack.id, panelId);
-          return;
+          return {
+            documentId: document.id,
+            viewId: existingPane.view.id,
+            panelId: String(existingPane.panelId),
+          };
         }
       }
     }
@@ -1605,6 +1644,7 @@ export class AppRuntime {
         .pipe(Effect.orDie),
     );
     this.focusSlotOfPanel(pane.panelId);
+    return { documentId: document.id, viewId: pane.view.id, panelId: String(pane.panelId) };
   }
 
   /**

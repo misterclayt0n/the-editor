@@ -18,7 +18,9 @@ import {
   DocumentRegistry,
   EditorVisuals,
   FileIoError,
+  Files,
   FileSystemPort,
+  FileViews,
   makeDecorationProviders,
   makeViewScope,
   makeWorkspaceScope,
@@ -39,7 +41,15 @@ import {
   SignatureProviders,
 } from "@the-editor/intel";
 import { makeVcsProviders, VcsProviders } from "@the-editor/vcs";
-import { makePanelRenderers, PanelRenderers, SurfaceKind } from "@the-editor/workbench";
+import {
+  collectSlots,
+  makePanelRenderers,
+  makeStack,
+  makeWorkbench,
+  PanelRenderers,
+  placeInStack,
+  SurfaceKind,
+} from "@the-editor/workbench";
 import { buildExtensionVirtualModules, makeUserExtensionsPackage } from "./userExtensions";
 
 const testVirtualModules = {
@@ -205,6 +215,10 @@ function publishedPrimitivePackageSource(): string {
         var vcs = yield* Vcs.VcsProviders;
         var diff = yield* DiffView.DiffViewPreferences;
         var decorations = yield* Editor.DecorationProviders;
+        var files = yield* Editor.Files;
+        var fileViews = yield* Editor.FileViews;
+        var opened = yield* fileViews.openInView("/project/open.txt");
+        var openedAgain = yield* files.openPath("/project/open.txt");
         yield* renderers.register(PanelKind, {
           title: function () { return "Published"; },
           mount: function (element) {
@@ -260,7 +274,12 @@ function publishedPrimitivePackageSource(): string {
         probe.ready({
           panelKind: PanelKind,
           mountHub: typeof Editor.MountHub,
-          floatHub: typeof Editor.FloatHub
+          floatHub: typeof Editor.FloatHub,
+          fileViews: typeof Editor.FileViews,
+          files: typeof Editor.Files,
+          openedPanelId: opened.panelId,
+          openedViewId: opened.viewId,
+          sameDocument: openedAgain.id === opened.documentId
         });
       });
     });
@@ -403,6 +422,7 @@ describe("makeUserExtensionsPackage", () => {
           "/home/user/.the-editor/extensions/published.ts",
           publishedPrimitivePackageSource(),
         );
+        fs.write("/project/open.txt", "opened from disk\n");
 
         const runtime = yield* makePackageRuntime;
         const attention = yield* makeAttention();
@@ -415,10 +435,38 @@ describe("makeUserExtensionsPackage", () => {
         const languageServers = yield* makeLanguageServers;
         const vcsProviders = yield* makeVcsProviders;
         const diffPreferences = makeDiffViewPreferences();
-        const ws = yield* makeWorkspaceScope();
+        const workbench = yield* makeWorkbench();
+        const ws = yield* makeWorkspaceScope({ fileSystem: fs.port });
         const registry = Context.get(ws.context, DocumentRegistry);
         const workspaceBus = Context.get(ws.context, WorkspaceNotifications);
         const decorations = yield* makeDecorationProviders(registry, workspaceBus);
+        const files = Context.get(ws.context, Files);
+        const fileViews: FileViews.Service = {
+          openInView: (path) =>
+            Effect.gen(function* () {
+              const opened = yield* files.openPath(path);
+              const openedView = yield* makeViewScope(opened);
+              yield* decorations.connectView(openedView);
+              const panel = yield* workbench.createPanel({
+                kind: SurfaceKind("the-editor/editor"),
+                context: openedView.context,
+              });
+              yield* workbench
+                .updateArrangement((arrangement) => {
+                  const stack = collectSlots(arrangement).find((slot) => slot.kind === "stack");
+                  if (arrangement.tiles === null || stack === undefined) {
+                    return { ...arrangement, tiles: makeStack([panel.id]) };
+                  }
+                  return placeInStack(arrangement, stack.id, panel.id);
+                })
+                .pipe(Effect.orDie);
+              return {
+                documentId: opened.id,
+                viewId: openedView.id,
+                panelId: String(panel.id),
+              };
+            }),
+        };
         const document = yield* registry.open({ text: "a" });
         const view = yield* makeViewScope(document);
         yield* decorations.connectView(view);
@@ -428,6 +476,11 @@ describe("makeUserExtensionsPackage", () => {
             readonly panelKind: string;
             readonly mountHub: string;
             readonly floatHub: string;
+            readonly fileViews: string;
+            readonly files: string;
+            readonly openedPanelId: string;
+            readonly openedViewId: string;
+            readonly sameDocument: boolean;
           };
           viewPayload?: {
             readonly mountHub: boolean;
@@ -443,6 +496,11 @@ describe("makeUserExtensionsPackage", () => {
             readonly panelKind: string;
             readonly mountHub: string;
             readonly floatHub: string;
+            readonly fileViews: string;
+            readonly files: string;
+            readonly openedPanelId: string;
+            readonly openedViewId: string;
+            readonly sameDocument: boolean;
           }) => void (probe.readyPayload = payload),
           viewAttached: (payload: { readonly mountHub: boolean; readonly floatHub: boolean }) =>
             void (probe.viewPayload = payload),
@@ -455,6 +513,8 @@ describe("makeUserExtensionsPackage", () => {
           Layer.succeed(PackageRuntimeService, runtime),
           Layer.succeed(Attention, attention),
           Layer.succeed(WorkspaceRoots, workspaceRoots),
+          Layer.succeed(Files, files),
+          Layer.succeed(FileViews, fileViews),
           Layer.succeed(PanelRenderers, panelRenderers),
           Layer.succeed(CompletionProviders, completions),
           Layer.succeed(HoverProviders, hovers),
@@ -478,11 +538,21 @@ describe("makeUserExtensionsPackage", () => {
         yield* runtime.activateGraph([toPackageDescriptor(userExtensions, servicesForExtensions)]);
         yield* waitUntil(Effect.sync(() => probe.readyPayload !== undefined));
 
-        expect(probe.readyPayload).toEqual({
+        expect(probe.readyPayload).toMatchObject({
           panelKind: "acme/published-panel",
           mountHub: "function",
           floatHub: "function",
+          fileViews: "function",
+          files: "function",
+          sameDocument: true,
         });
+        expect(probe.readyPayload?.openedPanelId).toMatch(/^panel:/);
+        expect(probe.readyPayload?.openedViewId).toMatch(/^view:/);
+        expect(yield* workbench.panels).toHaveLength(1);
+        const arrangedPanels = collectSlots(yield* workbench.arrangement).flatMap((slot) =>
+          slot.kind === "stack" ? slot.stack.panels.map(String) : [String(slot.overlay.panelId)],
+        );
+        expect(arrangedPanels).toContain(probe.readyPayload?.openedPanelId);
         expect(probe.viewPayload).toEqual({ mountHub: true, floatHub: true });
         const fakeEl = { textContent: "" } as HTMLElement;
         viewMounts.mounted("acme-widget", fakeEl);

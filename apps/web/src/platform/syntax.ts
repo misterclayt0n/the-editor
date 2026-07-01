@@ -20,7 +20,10 @@ export type HighlightRun = { readonly from: number; readonly to: number; readonl
 export type SyntaxStatus = "accurate" | "pending" | "inactive";
 
 export interface SyntaxPort {
-  open(docId: string, path: string | undefined, text: string): { language: string } | null;
+  /** `parseBudgetMs` caps the synchronous parse at open (default ~1000ms for the
+   *  editor; the detached preview highlighter passes a small budget so a large
+   *  file can't freeze the UI thread on every selection change). */
+  open(docId: string, path: string | undefined, text: string, parseBudgetMs?: number): { language: string } | null;
   edit(docId: string, edits: readonly SyntaxEdit[]): SyntaxStatus;
   pump(docId: string, budgetMs: number): SyntaxStatus;
   highlights(docId: string, from: number, to: number): readonly HighlightRun[];

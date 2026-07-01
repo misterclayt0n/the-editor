@@ -91,6 +91,8 @@ export interface FileFinderPort {
     readonly query: string;
     readonly relativePath: string;
   }) => Promise<void>;
+  /** Warm the native index for a root before first use (fire-and-forget). */
+  readonly prewarm: (root: string) => void;
 }
 
 type BridgeResult<T> =
@@ -113,6 +115,7 @@ type Bridge = {
     readonly query: string;
     readonly relativePath: string;
   }) => Promise<BridgeResult<boolean>>;
+  readonly prewarm?: (root: string) => void;
 };
 
 /**
@@ -179,5 +182,6 @@ export function createFileFinderPort(): FileFinderPort | undefined {
       const result = await bridge.track(input);
       if (!result.ok) throw new Error(result.error);
     },
+    prewarm: (root) => bridge.prewarm?.(root),
   };
 }

@@ -66,6 +66,13 @@ let counter = 0;
  * "ts", "rs"). Returns spans covering the whole string, or null when the
  * language is unknown, the text is too large, or no syntax host exists.
  */
+/** Total parse budget (open + pump) for a detached highlight. This is the only
+ *  highlighter on the UI thread for transient previews, and it runs on every
+ *  picker selection change — so it MUST stay bounded: a file that doesn't parse
+ *  within the budget renders plain rather than freezing the frame. The editor's
+ *  own highlighting is separate and unbounded (it owns the document). */
+const DETACHED_OPEN_BUDGET_MS = 10;
+
 export function highlightToSpans(
   code: string,
   ext: string,
@@ -78,7 +85,7 @@ export function highlightToSpans(
   }
   if (port === undefined) return null;
   const docId = `the-editor/highlight#${++counter}`;
-  const opened = port.open(docId, `code.${ext}`, code);
+  const opened = port.open(docId, `code.${ext}`, code, DETACHED_OPEN_BUDGET_MS);
   if (opened === null) return null;
   try {
     port.pump(docId, options.budgetMs ?? 5);

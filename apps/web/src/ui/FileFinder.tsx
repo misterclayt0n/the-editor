@@ -6,20 +6,19 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { FileFinderItem, FileFinderLocation } from "../platform/fileFinder";
 import type { AppRuntime } from "../runtime";
 import { FileIcon } from "../workbench/fileIcons";
-import {
-  Command,
-  CommandDialog,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/ui/command";
+import { CommandDialog } from "@/ui/command";
+import { VirtualCommand, type VirtualCommandRow } from "@/ui/virtual-command";
 import { cn } from "@/lib/utils";
 import { FilePreview } from "./FilePreviewPanel";
 import type { PreviewTarget } from "./filePreview";
 
 const SEARCH_LIMIT = 60;
+const SEARCH_DEBOUNCE_MS = 90;
+const ROW_HEIGHT = 36;
+
+interface FileRow extends VirtualCommandRow {
+  readonly item: FileFinderItem;
+}
 
 type SearchMeta = {
   readonly totalMatched: number;
@@ -125,42 +124,50 @@ export function FileFinder({ open, runtime, onOpenChange }: FileFinderProps) {
     }
     const currentFile = currentFileRelative(runtime, root);
     setLoading(true);
-    finder
-      .search({
-        root,
-        query,
-        limit: SEARCH_LIMIT,
-        ...(currentFile !== undefined ? { currentFile } : {}),
-      })
-      .then((result) => {
-        if (searchSeq.current !== seq) return;
-        startResultTransition(() => {
-          setItems(result.items);
-          setSearchMeta({
-            totalMatched: result.totalMatched,
-            totalFiles: result.totalFiles,
-            ...(result.location !== undefined ? { location: result.location } : {}),
+    // Debounce: each fff fuzzy search scores the whole index (hundreds of ms on
+    // a large workspace), so firing one per keystroke queued a storm of searches
+    // whose results re-rendered in a burst — the UI freeze. Coalesce to one
+    // search per pause; the trailing keystroke owns the result (searchSeq drops
+    // any stragglers).
+    const timer = window.setTimeout(() => {
+      finder
+        .search({
+          root,
+          query,
+          limit: SEARCH_LIMIT,
+          ...(currentFile !== undefined ? { currentFile } : {}),
+        })
+        .then((result) => {
+          if (searchSeq.current !== seq) return;
+          startResultTransition(() => {
+            setItems(result.items);
+            setSearchMeta({
+              totalMatched: result.totalMatched,
+              totalFiles: result.totalFiles,
+              ...(result.location !== undefined ? { location: result.location } : {}),
+            });
+            setError(null);
+            // A fresh search owns the initial selection. Preserving the previous
+            // selected value makes the highlight stick to an older result that is
+            // still present lower in the new list (e.g. query "main.c" ranking
+            // main.c first while the highlight remains on main.ts).
+            setSelectedValue(result.items[0]?.relativePath ?? "");
           });
-          setError(null);
-          // A fresh search owns the initial selection. Preserving the previous
-          // selected value makes the highlight stick to an older result that is
-          // still present lower in the new list (e.g. query "main.c" ranking
-          // main.c first while the highlight remains on main.ts).
-          setSelectedValue(result.items[0]?.relativePath ?? "");
+        })
+        .catch((caught) => {
+          if (searchSeq.current !== seq) return;
+          startResultTransition(() => {
+            setItems([]);
+            setSelectedValue("");
+            setSearchMeta({ totalMatched: 0, totalFiles: 0 });
+            setError(caught instanceof Error ? caught.message : String(caught));
+          });
+        })
+        .finally(() => {
+          if (searchSeq.current === seq) setLoading(false);
         });
-      })
-      .catch((caught) => {
-        if (searchSeq.current !== seq) return;
-        startResultTransition(() => {
-          setItems([]);
-          setSelectedValue("");
-          setSearchMeta({ totalMatched: 0, totalFiles: 0 });
-          setError(caught instanceof Error ? caught.message : String(caught));
-        });
-      })
-      .finally(() => {
-        if (searchSeq.current === seq) setLoading(false);
-      });
+    }, query.length === 0 ? 0 : SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
   }, [open, query, root, runtime]);
 
   const openSelected = (item: FileFinderItem) => {
@@ -199,6 +206,11 @@ export function FileFinder({ open, runtime, onOpenChange }: FileFinderProps) {
     [selectedPath, selectedSize, focusLine],
   );
 
+  const rows = useMemo<ReadonlyArray<FileRow>>(
+    () => items.map((item) => ({ id: item.relativePath, item })),
+    [items],
+  );
+
   return (
     <CommandDialog
       open={open}
@@ -207,53 +219,43 @@ export function FileFinder({ open, runtime, onOpenChange }: FileFinderProps) {
       description="Search files in the current workspace"
       className={cn("command-palette-dialog", canPreview && "file-finder-dialog--preview")}
     >
-      <Command
-        className="command-palette file-finder"
+      <VirtualCommand<FileRow>
+        className="command-palette command-root file-finder"
+        bodyClassName={cn("file-finder__body", canPreview && "file-finder__body--with-preview")}
+        listColClassName="file-finder__list-col"
+        listClassName="command-palette__list file-finder__list command-list"
+        inputClassName="command-palette__input command-input"
+        inputRef={inputRef}
+        placeholder={root === null ? "Open a folder to find files…" : "Find files…"}
+        query={query}
+        onQueryChange={setQuery}
+        rows={rows}
+        rowHeight={ROW_HEIGHT}
         value={selectedValue}
         onValueChange={setSelectedValue}
-        shouldFilter={false}
-        loop
-      >
-        <CommandInput
-          ref={inputRef}
-          className="command-palette__input"
-          placeholder={root === null ? "Open a folder to find files…" : "Find files…"}
-          value={query}
-          onValueChange={setQuery}
-        />
-        <div className={cn("file-finder__body", canPreview && "file-finder__body--with-preview")}>
-          <div className="file-finder__list-col">
-            <div className="file-finder__meta">{error ?? status}</div>
-            <CommandList className="command-palette__list file-finder__list">
-              <CommandEmpty className="command-palette__empty">
-                {root === null ? "No folder open." : error === null ? "No files found." : error}
-              </CommandEmpty>
-              <CommandGroup className="command-palette__group" heading="Files">
-                {items.map((item) => (
-                  <CommandItem
-                    className="command-palette__item file-finder__item"
-                    key={item.relativePath}
-                    value={item.relativePath}
-                    onSelect={() => openSelected(item)}
-                  >
-                    <FileIcon fileName={item.fileName} />
-                    <span className="file-finder__item-main">
-                      <span className="command-palette__item-title file-finder__name">
-                        {item.fileName}
-                      </span>
-                      <span className="file-finder__path">{dirname(item.relativePath)}</span>
-                    </span>
-                    {item.gitStatus !== "clean" && (
-                      <span className="file-finder__git">{item.gitStatus}</span>
-                    )}
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            </CommandList>
+        onChoose={(row) => openSelected(row.item)}
+        belowInput={<div className="file-finder__meta">{error ?? status}</div>}
+        empty={
+          <div className="command-palette__empty command-empty" data-slot="command-empty">
+            {root === null ? "No folder open." : error === null ? "No files found." : error}
           </div>
-          {canPreview && <FilePreview target={previewTarget} runtime={runtime} />}
-        </div>
-      </Command>
+        }
+        aside={canPreview ? <FilePreview target={previewTarget} runtime={runtime} /> : null}
+        renderRow={({ item }, { selected }) => (
+          <div
+            className="command-palette__item command-item file-finder__item"
+            data-slot="command-item"
+            data-selected={selected ? "true" : undefined}
+          >
+            <FileIcon fileName={item.fileName} />
+            <span className="file-finder__item-main">
+              <span className="command-palette__item-title file-finder__name">{item.fileName}</span>
+              <span className="file-finder__path">{dirname(item.relativePath)}</span>
+            </span>
+            {item.gitStatus !== "clean" && <span className="file-finder__git">{item.gitStatus}</span>}
+          </div>
+        )}
+      />
     </CommandDialog>
   );
 }

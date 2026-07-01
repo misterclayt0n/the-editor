@@ -8,19 +8,12 @@
 
 import { Effect } from "effect";
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { highlightToSpans, type CodeSpan } from "../editor/highlightSpans";
+import type { CodeSpan } from "../editor/highlightSpans";
 import type { FileFinderGrepMatch, FileFinderGrepMode } from "../platform/fileFinder";
 import type { AppRuntime } from "../runtime";
 import { FileIcon } from "../workbench/fileIcons";
-import {
-  Command,
-  CommandDialog,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/ui/command";
+import { CommandDialog } from "@/ui/command";
+import { VirtualCommand, type VirtualCommandRow } from "@/ui/virtual-command";
 import {
   jumpTarget,
   matchKey,
@@ -39,7 +32,7 @@ const SEARCH_DEBOUNCE_MS = 90;
 const PREVIEW_DEBOUNCE_MS = 40;
 const PREVIEW_VISIBLE_BEFORE = 12;
 const PREVIEW_VISIBLE_AFTER = 14;
-const MAX_INLINE_HIGHLIGHT_CHARS = 20_000;
+const ROW_HEIGHT = 28;
 const GREP_MODES: readonly FileFinderGrepMode[] = ["plain", "regex", "fuzzy"];
 
 type GrepMeta = {
@@ -63,12 +56,6 @@ const extensionOf = (path: string): string => {
   return dot > slash + 1 ? path.slice(dot + 1).toLowerCase() : "";
 };
 
-const syntaxSpans = (code: string, path: string): CodeSpan[] | null => {
-  const ext = extensionOf(path);
-  if (ext.length === 0) return null;
-  return highlightToSpans(code, ext, { maxChars: MAX_INLINE_HIGHLIGHT_CHARS, budgetMs: 6 });
-};
-
 type GrepRow = {
   readonly key: string;
   readonly match: FileFinderGrepMatch;
@@ -83,6 +70,10 @@ type GrepFileGroup = {
   readonly directory: string;
   readonly rows: readonly GrepRow[];
 };
+
+/** A windowed-list row: either a file heading (non-selectable) or a match. */
+type GlobalSearchRow = VirtualCommandRow &
+  ({ readonly header: GrepFileGroup; readonly row?: undefined } | { readonly row: GrepRow; readonly header?: undefined });
 
 const groupRows = (rows: readonly GrepRow[]): GrepFileGroup[] => {
   const groups = new Map<string, { fileName: string; rows: GrepRow[] }>();
@@ -365,13 +356,28 @@ export function GlobalSearch({ open, runtime, onOpenChange }: GlobalSearchProps)
           match: item,
           text: row.text,
           ranges: row.ranges,
-          spans: syntaxSpans(row.text, item.relativePath),
+          // Result rows are plain text + match highlights only. Per-row syntax
+          // highlighting loaded a tree-sitter grammar synchronously on the
+          // first search of each language → a cold-start UI freeze; the preview
+          // pane still highlights, where one file's cost is acceptable.
+          spans: null,
         };
       }),
     [items],
   );
 
   const groupedRows = useMemo(() => groupRows(rows), [rows]);
+
+  // Flatten the file groups into the windowed list: a non-selectable heading row
+  // per file, then its match rows (all uniform 28px so the window math is exact).
+  const flatRows = useMemo<ReadonlyArray<GlobalSearchRow>>(() => {
+    const out: GlobalSearchRow[] = [];
+    for (const group of groupedRows) {
+      out.push({ id: `h:${group.relativePath}`, selectable: false, header: group });
+      for (const row of group.rows) out.push({ id: row.key, row });
+    }
+    return out;
+  }, [groupedRows]);
 
   const selected = useMemo(
     () => rows.find((row) => row.key === selectedKey)?.match,
@@ -420,76 +426,72 @@ export function GlobalSearch({ open, runtime, onOpenChange }: GlobalSearchProps)
       description="Search file contents across the workspace"
       className="command-palette-dialog global-search-dialog"
     >
-      <Command
-        className="command-palette global-search"
+      <VirtualCommand<GlobalSearchRow>
+        className="command-palette command-root global-search"
+        bodyClassName="global-search__body"
+        listColClassName="global-search__list-col"
+        listClassName="command-palette__list global-search__list command-list"
+        inputClassName="command-palette__input command-input"
+        inputRef={inputRef}
+        placeholder={root === null ? "Open a folder to search…" : "Search in files…"}
+        query={query}
+        onQueryChange={setQuery}
+        onInputKeyDown={handleKeyDown}
+        rows={flatRows}
+        rowHeight={ROW_HEIGHT}
         value={selectedKey}
         onValueChange={setSelectedKey}
-        shouldFilter={false}
-        onKeyDown={handleKeyDown}
-        loop
-      >
-        <CommandInput
-          ref={inputRef}
-          className="command-palette__input"
-          placeholder={root === null ? "Open a folder to search…" : "Search in files…"}
-          value={query}
-          onValueChange={setQuery}
-        />
-        <div className="global-search__body">
-          <div className="global-search__list-col">
-            <CommandList className="command-palette__list global-search__list">
-              <CommandEmpty className="command-palette__empty">
-                {root === null
-                  ? "Open a folder to search."
-                  : query.trim().length === 0
-                    ? "Type to search file contents."
-                    : (error ?? "No matches.")}
-              </CommandEmpty>
-              {groupedRows.map((group) => (
-                <CommandGroup
-                  className="global-search__group"
-                  heading={
-                    <span className="global-search__group-heading">
-                      <FileIcon fileName={group.fileName} />
-                      <span className="global-search__group-file">{group.fileName}</span>
-                      {group.directory.length > 0 && (
-                        <span className="global-search__group-directory">{group.directory}</span>
-                      )}
-                      <span className="global-search__group-count">{group.rows.length}</span>
-                    </span>
-                  }
-                  key={group.relativePath}
-                >
-                  {group.rows.map((row) => (
-                    <CommandItem
-                      className="command-palette__item global-search__row"
-                      key={row.key}
-                      value={row.key}
-                      onSelect={() => openMatch(row.match)}
-                    >
-                      <span className="global-search__line-number">{row.match.lineNumber}</span>
-                      <span className="global-search__code">
-                        <Segments segments={styleSegments(row.text, row.ranges, row.spans)} />
-                      </span>
-                    </CommandItem>
-                  ))}
-                </CommandGroup>
-              ))}
-            </CommandList>
-            <div className="global-search__footer">
-              <span className="global-search__status">{error ?? status}</span>
-              <span className="global-search__hints">
-                <button type="button" className="global-search__mode" onClick={cycleMode}>
-                  ⌥M {mode}
-                </button>
-                <span className="global-search__hint">↵ open</span>
-                <span className="global-search__hint">⌘↵ multibuffer</span>
+        onChoose={(row) => {
+          if (row.row !== undefined) openMatch(row.row.match);
+        }}
+        empty={
+          <div className="command-palette__empty command-empty" data-slot="command-empty">
+            {root === null
+              ? "Open a folder to search."
+              : query.trim().length === 0
+                ? "Type to search file contents."
+                : (error ?? "No matches.")}
+          </div>
+        }
+        footer={
+          <div className="global-search__footer">
+            <span className="global-search__status">{error ?? status}</span>
+            <span className="global-search__hints">
+              <button type="button" className="global-search__mode" onClick={cycleMode}>
+                ⌥M {mode}
+              </button>
+              <span className="global-search__hint">↵ open</span>
+              <span className="global-search__hint">⌘↵ multibuffer</span>
+            </span>
+          </div>
+        }
+        aside={<PreviewPanel match={selected} root={root} runtime={runtime} />}
+        renderRow={(item) =>
+          item.header !== undefined ? (
+            <div className="global-search__group-row">
+              <span className="global-search__group-heading">
+                <FileIcon fileName={item.header.fileName} />
+                <span className="global-search__group-file">{item.header.fileName}</span>
+                {item.header.directory.length > 0 && (
+                  <span className="global-search__group-directory">{item.header.directory}</span>
+                )}
+                <span className="global-search__group-count">{item.header.rows.length}</span>
               </span>
             </div>
-          </div>
-          <PreviewPanel match={selected} root={root} runtime={runtime} />
-        </div>
-      </Command>
+          ) : (
+            <div
+              className="command-palette__item command-item global-search__row"
+              data-slot="command-item"
+              data-selected={item.id === selectedKey ? "true" : undefined}
+            >
+              <span className="global-search__line-number">{item.row.match.lineNumber}</span>
+              <span className="global-search__code">
+                <Segments segments={styleSegments(item.row.text, item.row.ranges, item.row.spans)} />
+              </span>
+            </div>
+          )
+        }
+      />
     </CommandDialog>
   );
 }

@@ -115,7 +115,7 @@ type Session = {
 };
 
 export interface SyntaxEngine {
-  open(docId: string, path: string | undefined, text: string): { language: string } | null;
+  open(docId: string, path: string | undefined, text: string, parseBudgetMs?: number): { language: string } | null;
   edit(docId: string, edits: readonly SyntaxEdit[]): EngineStatus;
   pump(docId: string, budgetMs: number): EngineStatus;
   highlights(docId: string, from: number, to: number): readonly HighlightRun[];
@@ -170,7 +170,7 @@ export function createSyntaxEngine(loadModule: NodeJS.Require): SyntaxEngine {
   };
 
   return {
-    open(docId, filePath, text) {
+    open(docId, filePath, text, parseBudgetMs) {
       this.close(docId);
       const syntaxText = syntaxTextFromString(text);
       const assignment = registry.detectLanguageForDocument({
@@ -200,7 +200,12 @@ export function createSyntaxEngine(loadModule: NodeJS.Require): SyntaxEngine {
       // Compile the highlight query NOW: it costs ~15ms once per language
       // and must never land on the first keystroke-frame query.
       registry.language(assignment.languageId)?.highlightQuery(registry);
-      if (text.length <= OPEN_SYNC_LIMIT_CHARS) parseStep(session, 1000);
+      // The editor opens with the full 1000ms budget (snappy file open). The
+      // detached preview highlighter passes a small budget so a large file's
+      // synchronous parse can't freeze the UI thread on every selection change —
+      // it gets whatever highlights complete in the budget, plain text otherwise.
+      const openBudget = parseBudgetMs ?? 1000;
+      if (text.length <= OPEN_SYNC_LIMIT_CHARS) parseStep(session, openBudget);
       return { language: session.language };
     },
 

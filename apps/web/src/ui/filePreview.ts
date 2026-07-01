@@ -14,6 +14,8 @@ export const PREVIEW_WINDOW_BYTES = 131_072;
 export const PREVIEW_MAX_LINES = 800;
 /** Absolute size sanity ceiling above which we don't even peek. */
 export const PREVIEW_MAX_FILE_BYTES = 10 * 1024 * 1024;
+/** Extra lines mounted outside the visible preview viewport. */
+export const PREVIEW_RENDER_OVERSCAN_LINES = 8;
 
 export type PreviewTarget = {
   readonly path: string;
@@ -42,6 +44,38 @@ export type PreviewReader = (
 /** Per-line highlighted spans for `code` as `ext`, or null to render plain. */
 export type PreviewHighlighter = (code: string, ext: string) => (readonly CodeSpan[])[] | null;
 
+export type PreviewLineWindow = {
+  readonly start: number;
+  readonly end: number;
+  readonly offsetTop: number;
+  readonly totalHeight: number;
+};
+
+export function previewLineWindow(input: {
+  readonly lineCount: number;
+  readonly scrollTop: number;
+  readonly viewportHeight: number;
+  readonly rowHeight: number;
+  readonly overscan?: number;
+}): PreviewLineWindow {
+  const lineCount = Math.max(0, input.lineCount);
+  const rowHeight = Number.isFinite(input.rowHeight) && input.rowHeight > 0 ? input.rowHeight : 18;
+  const scrollTop = Math.max(0, input.scrollTop);
+  const viewportHeight = Math.max(0, input.viewportHeight);
+  const overscan = Math.max(0, input.overscan ?? PREVIEW_RENDER_OVERSCAN_LINES);
+  const start = Math.min(lineCount, Math.max(0, Math.floor(scrollTop / rowHeight) - overscan));
+  const end = Math.min(
+    lineCount,
+    Math.max(start, Math.ceil((scrollTop + viewportHeight) / rowHeight) + overscan),
+  );
+  return {
+    start,
+    end,
+    offsetTop: start * rowHeight,
+    totalHeight: lineCount * rowHeight,
+  };
+}
+
 const extensionOf = (path: string): string => {
   const slash = path.lastIndexOf("/");
   const dot = path.lastIndexOf(".");
@@ -51,12 +85,13 @@ const extensionOf = (path: string): string => {
 const shapeLines = (
   text: string,
   ext: string,
-  highlight: PreviewHighlighter,
+  highlight?: PreviewHighlighter,
 ): { readonly lines: (readonly CodeSpan[])[]; readonly truncated: boolean } => {
   const rawLines = text.split("\n");
   const truncated = rawLines.length > PREVIEW_MAX_LINES;
   const kept = truncated ? rawLines.slice(0, PREVIEW_MAX_LINES) : rawLines;
-  const highlighted = ext.length > 0 ? highlight(kept.join("\n"), ext) : null;
+  const highlighted =
+    ext.length > 0 && highlight !== undefined ? highlight(kept.join("\n"), ext) : null;
   const lines = kept.map((line, i): readonly CodeSpan[] => {
     const spans = highlighted?.[i];
     if (spans !== undefined) return spans;
@@ -65,27 +100,64 @@ const shapeLines = (
   return { lines, truncated };
 };
 
-export async function loadFilePreview(
+/** The raw, read-but-unshaped preview window — lets a caller render plain
+ *  instantly and run the (synchronous) highlight later, off the typing frame. */
+export type PreviewWindow =
+  | { readonly status: "skipped"; readonly reason: "too-large" | "binary" }
+  | { readonly status: "error"; readonly message: string }
+  | {
+      readonly status: "ready";
+      readonly text: string;
+      readonly ext: string;
+      readonly eof: boolean;
+      readonly focusLine?: number;
+    };
+
+/** Read the bounded window. No highlighting (no syntax parse) happens here. */
+export async function readPreviewWindow(
   target: PreviewTarget,
-  deps: { readonly read: PreviewReader; readonly highlight: PreviewHighlighter },
-): Promise<PreviewState> {
+  read: PreviewReader,
+): Promise<PreviewWindow> {
   if (target.size > PREVIEW_MAX_FILE_BYTES) return { status: "skipped", reason: "too-large" };
   let range: FileTextRange;
   try {
-    range = await deps.read(target.path, { offset: 0, maxBytes: PREVIEW_WINDOW_BYTES });
+    range = await read(target.path, { offset: 0, maxBytes: PREVIEW_WINDOW_BYTES });
   } catch (caught) {
     return { status: "error", message: caught instanceof Error ? caught.message : String(caught) };
   }
   if (range.binary) return { status: "skipped", reason: "binary" };
-  const { lines, truncated } = shapeLines(range.text, extensionOf(target.path), deps.highlight);
+  return {
+    status: "ready",
+    text: range.text,
+    ext: extensionOf(target.path),
+    eof: range.eof,
+    ...(target.focusLine !== undefined ? { focusLine: target.focusLine } : {}),
+  };
+}
+
+/** Shape a read window into renderable lines. `highlight` omitted → plain text
+ *  (no tree-sitter parse), which is what the panel renders first. */
+export function shapePreview(
+  window: Extract<PreviewWindow, { status: "ready" }>,
+  highlight?: PreviewHighlighter,
+): PreviewState {
+  const { lines, truncated } = shapeLines(window.text, window.ext, highlight);
   return {
     status: "ready",
     lines,
-    truncated: truncated || !range.eof,
+    truncated: truncated || !window.eof,
     // Keep focus only when it lands inside the rendered window; a query like
     // `file.ts:1000` against an 800-line head must not highlight an unrelated row.
-    ...(target.focusLine !== undefined && target.focusLine >= 0 && target.focusLine < lines.length
-      ? { focusLine: target.focusLine }
+    ...(window.focusLine !== undefined && window.focusLine >= 0 && window.focusLine < lines.length
+      ? { focusLine: window.focusLine }
       : {}),
   };
+}
+
+export async function loadFilePreview(
+  target: PreviewTarget,
+  deps: { readonly read: PreviewReader; readonly highlight: PreviewHighlighter },
+): Promise<PreviewState> {
+  const window = await readPreviewWindow(target, deps.read);
+  return window.status === "ready" ? shapePreview(window, deps.highlight) : window;
 }

@@ -10,15 +10,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Effect } from "effect";
 import type { Commands, CommandPaletteDefinition } from "@the-editor/commands";
 import type { Themes, ThemeMeta } from "@the-editor/theme";
-import {
-  Command,
-  CommandDialog,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/ui/command";
+import { CommandDialog } from "@/ui/command";
+import { VirtualCommand, type VirtualCommandRow } from "@/ui/virtual-command";
 
 interface PaletteAction {
   readonly id: string;
@@ -74,17 +67,17 @@ const compareActions = (left: PaletteAction, right: PaletteAction, query: string
   left.title.localeCompare(right.title) ||
   left.command.localeCompare(right.command);
 
-const commandFilter = (value: string, search: string, keywords: readonly string[] = []): number => {
-  const query = normalizeSearch(search);
-  if (query.length === 0) return 1;
-  const terms = [value, ...keywords].map(normalizeSearch);
-  if (terms.some((term) => term === query)) return 4;
-  if (terms.some((term) => term.startsWith(query))) return 3;
-  if (terms.some((term) => term.split(/\s+/).some((word) => word.startsWith(query)))) return 2;
-  if (terms.some((term) => term.includes(query))) return 1;
-  return 0;
-};
+const ROW_HEIGHT = 26;
 
+/** A flat palette row. The command palette hides group headings (CSS), so all
+ *  rows are selectable items — no heading rows. */
+type PaletteRow = VirtualCommandRow &
+  (
+    | { readonly kind: "command"; readonly action: PaletteAction }
+    | { readonly kind: "theme"; readonly theme: ThemeMeta }
+    | { readonly kind: "workspace"; readonly workspace: WorkspaceItem }
+    | { readonly kind: "open-folder" }
+  );
 
 export interface CommandPaletteProps {
   readonly open: boolean;
@@ -174,7 +167,7 @@ export function CommandPalette({
       .then((nextActions) => {
         if (!cancelled) {
           setActions(nextActions);
-          setSelectedValue(nextActions[0]?.title ?? "");
+          setSelectedValue(nextActions[0]?.id ?? "");
         }
       })
       .catch((error) => {
@@ -193,15 +186,38 @@ export function CommandPalette({
     );
   }, [mode, open, selectedValue, themes]);
 
-  const groupedActions = useMemo(() => {
-    const query = normalizeSearch(search);
-    const ranked = query.length === 0 ? actions : [...actions].sort((left, right) => compareActions(left, right, query));
-    const groups = new Map<string, readonly PaletteAction[]>();
-    for (const action of ranked) {
-      groups.set(action.group, [...(groups.get(action.group) ?? []), action]);
+  // The windowed rows for the active mode. Commands are ranked/filtered/grouped
+  // here (built-in filtering off); themes/workspaces use the built-in substring
+  // filter over `searchText`.
+  const rows = useMemo<ReadonlyArray<PaletteRow>>(() => {
+    if (mode === "themes") {
+      return themeItems.map((theme) => ({
+        id: theme.name,
+        kind: "theme" as const,
+        theme,
+        searchText: `${theme.name} ${theme.family} ${theme.author} ${theme.appearance}`.toLowerCase(),
+      }));
     }
-    return [...groups.entries()];
-  }, [actions, search]);
+    if (mode === "workspaces") {
+      return [
+        { id: "__open_folder__", kind: "open-folder" as const, searchText: "open folder open workspace new workspace add" },
+        ...workspaces.items.map((workspace) => ({
+          id: workspace.id,
+          kind: "workspace" as const,
+          workspace,
+          searchText: workspace.label.toLowerCase(),
+        })),
+      ];
+    }
+    const query = normalizeSearch(search);
+    const matched = query.length === 0 ? actions : actions.filter((action) => actionRank(action, query) < 4);
+    const ranked = query.length === 0 ? matched : [...matched].sort((left, right) => compareActions(left, right, query));
+    const groups = new Map<string, PaletteAction[]>();
+    for (const action of ranked) groups.set(action.group, [...(groups.get(action.group) ?? []), action]);
+    return [...groups.values()].flat().map((action) => ({ id: action.id, kind: "command" as const, action }));
+  }, [mode, actions, themeItems, workspaces, search]);
+
+  const useBuiltinFilter = mode !== "commands";
 
   const requestOpenChange = (nextOpen: boolean) => {
     if (!nextOpen && mode === "themes" && !confirmedTheme.current) {
@@ -250,112 +266,81 @@ export function CommandPalette({
       }
       className="command-palette-dialog"
     >
-      <Command
-        className="command-palette"
+      <VirtualCommand<PaletteRow>
+        className="command-palette command-root"
+        listClassName="command-palette__list command-list"
+        inputClassName="command-palette__input command-input"
+        inputRef={inputRef}
+        placeholder={
+          mode === "themes"
+            ? "Select a theme…"
+            : mode === "workspaces"
+              ? "Switch workspace…"
+              : "Type a command…"
+        }
+        query={search}
+        onQueryChange={setSearch}
+        filter={useBuiltinFilter}
+        rows={rows}
+        rowHeight={ROW_HEIGHT}
         value={selectedValue}
         onValueChange={setSelectedValue}
-        {...(mode === "commands" ? { filter: commandFilter } : {})}
-      >
-        <CommandInput
-          ref={inputRef}
-          className="command-palette__input"
-          placeholder={
-            mode === "themes"
-              ? "Select a theme…"
-              : mode === "workspaces"
-                ? "Switch workspace…"
-                : "Type a command…"
-          }
-          value={search}
-          onValueChange={setSearch}
-        />
-        <CommandList className="command-palette__list">
-          <CommandEmpty className="command-palette__empty">
+        onChoose={(row) => {
+          if (row.kind === "command") run(row.action);
+          else if (row.kind === "theme") selectTheme(row.theme.name);
+          else if (row.kind === "workspace") selectWorkspace(row.workspace.id);
+          else openWorkspaceFolder();
+        }}
+        empty={
+          <div className="command-palette__empty command-empty" data-slot="command-empty">
             {mode === "themes"
               ? "No themes found."
               : mode === "workspaces"
                 ? "No workspaces found."
                 : "No commands found."}
-          </CommandEmpty>
-          {mode === "workspaces" ? (
-            <CommandGroup className="command-palette__group" heading="Workspaces">
-              <CommandItem
-                className="command-palette__item"
-                value="__open_folder__"
-                keywords={["open folder", "open workspace", "new workspace", "add"]}
-                onSelect={openWorkspaceFolder}
-              >
-                <span className="command-palette__item-title">Open Folder…</span>
-              </CommandItem>
-              {workspaces.items.map((workspace) => (
-                <CommandItem
-                  className="command-palette__item"
-                  key={workspace.id}
-                  value={workspace.id}
-                  keywords={[workspace.label]}
-                  onSelect={() => selectWorkspace(workspace.id)}
-                >
-                  <span className="command-palette__item-title">{workspace.label}</span>
-                  {workspace.id === workspaces.activeId && (
-                    <span className="command-palette__shortcut">active</span>
-                  )}
-                  {workspaces.canClose && (
-                    <button
-                      type="button"
-                      className="command-palette__row-close"
-                      aria-label={`Close workspace ${workspace.label}`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        workspaces.onClose(workspace.id);
-                      }}
-                    >
-                      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
-                        <path
-                          d="M1 1l8 8M9 1l-8 8"
-                          stroke="currentColor"
-                          strokeWidth="1.3"
-                          strokeLinecap="round"
-                        />
-                      </svg>
-                    </button>
-                  )}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          ) : mode === "themes" ? (
-            <CommandGroup className="command-palette__group" heading="Themes">
-              {themeItems.map((theme) => (
-                <CommandItem
-                  className="command-palette__item"
-                  key={theme.name}
-                  value={theme.name}
-                  keywords={[theme.family, theme.author, theme.appearance]}
-                  onSelect={() => selectTheme(theme.name)}
-                >
-                  <span className="command-palette__item-title">{theme.name}</span>
-                  <span className="command-palette__shortcut">{theme.appearance}</span>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          ) : (
-            groupedActions.map(([group, groupActions]) => (
-              <CommandGroup className="command-palette__group" heading={group} key={group}>
-                {groupActions.map((action) => (
-                  <CommandItem
-                    className="command-palette__item"
-                    key={action.id}
-                    value={action.title}
-                    keywords={[...action.aliases, action.command]}
-                    onSelect={() => run(action)}
+          </div>
+        }
+        renderRow={(row, { selected }) => (
+          <div
+            className="command-palette__item command-item"
+            data-slot="command-item"
+            data-selected={selected ? "true" : undefined}
+          >
+            {row.kind === "command" ? (
+              <span className="command-palette__item-title">{row.action.title}</span>
+            ) : row.kind === "theme" ? (
+              <>
+                <span className="command-palette__item-title">{row.theme.name}</span>
+                <span className="command-palette__shortcut">{row.theme.appearance}</span>
+              </>
+            ) : row.kind === "open-folder" ? (
+              <span className="command-palette__item-title">Open Folder…</span>
+            ) : (
+              <>
+                <span className="command-palette__item-title">{row.workspace.label}</span>
+                {row.workspace.id === workspaces.activeId && (
+                  <span className="command-palette__shortcut">active</span>
+                )}
+                {workspaces.canClose && (
+                  <button
+                    type="button"
+                    className="command-palette__row-close"
+                    aria-label={`Close workspace ${row.workspace.label}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      workspaces.onClose(row.workspace.id);
+                    }}
                   >
-                    <span className="command-palette__item-title">{action.title}</span>
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            ))
-          )}
-        </CommandList>
-      </Command>
+                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+                      <path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      />
     </CommandDialog>
   );
 }

@@ -4,16 +4,13 @@ import { Commands, CommandId, makeCommands } from "@the-editor/commands";
 import { toPackageDescriptor } from "@the-editor/extensions";
 import { Keymaps, makeKeymaps } from "@the-editor/keymaps";
 import { makePackageRuntime } from "@the-editor/kernel";
-import { SurfaceScope } from "@the-editor/workbench";
-import { makePanelRenderers, PanelRenderers } from "../workbench/panelRenderers";
+import { makePanelRenderers, PanelRenderers, SurfaceScope } from "@the-editor/workbench";
 import {
   DEFAULT_DIFF_VIEW_SETTINGS,
   DiffViewPreferences,
-  DiffViewSurface,
-  HostDiffView,
-  diffViewPackage,
   makeDiffViewPreferences,
-} from "./diffView";
+} from "@the-editor/diff-view";
+import { DiffViewSurface, HostDiffView, diffViewPackage } from "./diffView";
 
 const activateDiffViewPackage = Effect.gen(function* () {
   const runtime = yield* makePackageRuntime;

@@ -10,7 +10,7 @@
 
 import { Effect } from "effect";
 import { type FileSystemPort } from "@the-editor/editor";
-import type { VcsProvider, VcsProviders, VcsStatusEntry } from "../product/vcs";
+import type { VcsProvider, VcsProviders, VcsStatusEntry } from "@the-editor/vcs";
 
 const STATUS_DEBOUNCE_MS = 300;
 const MAX_BASELINE_CHARS = 2_000_000;

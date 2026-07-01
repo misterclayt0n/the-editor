@@ -5,7 +5,7 @@
  */
 
 import type { ProcessPort } from "../platform/process";
-import type { VcsFileStatus, VcsProvider, VcsStatusEntry } from "../product/vcs";
+import type { VcsFileStatus, VcsProvider, VcsStatusEntry } from "@the-editor/vcs";
 
 type RunResult = { code: number | null; stdout: string };
 

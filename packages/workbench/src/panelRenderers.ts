@@ -1,27 +1,25 @@
 /**
  * Panel renderers: the registry that makes the workbench's generic panel
- * model REAL for the React shell. The workbench core attaches no meaning to
- * a panel's kind; this registry maps kind → how to title and mount it.
- * Editor panes stay special-cased in WorkbenchView (they predate this);
- * everything else — file trees, shader toys, terminals — registers here
- * through the same scoped-contribution pattern as every other registry.
+ * model visible to a shell. The workbench core attaches no meaning to a
+ * panel's kind; this registry maps kind → how to title and mount it.
+ *
+ * Mounting is deliberately HTMLElement-based: an extension panel owns its
+ * own DOM subtree (plain DOM, custom element, canvas, framework portal) and
+ * needs no app runtime object to become a workbench pane.
  */
 
-import type { ReactNode } from "react";
 import { Context, Effect, type Scope } from "effect";
-import type { Panel, SurfaceKind } from "@the-editor/workbench";
+import type { SurfaceKind } from "./ids.js";
+import type { Panel } from "./panel.js";
 
-/** A live mounted panel: how to tear it down, and (optionally) how to take
- * keyboard focus when the workbench focuses its slot. A panel that owns its
- * own focusable content (e.g. @pierre/trees in a shadow root) implements
- * `focus` so the workbench can hand it the keyboard, the same way an editor
- * pane's `.editor` element is focused — that's what makes every surface
- * keyboard-drivable. */
+/** A live mounted panel: how to tear it down, and optionally how to focus it. */
 export type PanelMount = {
   readonly dispose: () => void;
-  /** Called after this panel's live host is reattached to a visible outlet.
-   *  Use this for measuring/refitting/repainting only; keyboard focus still
-   *  flows through the workbench's registered focuser. */
+  /**
+   * Called after this panel's live host is reattached to a visible outlet.
+   * Use this for measuring/refitting/repainting only; keyboard focus still
+   * flows through the workbench's registered focuser.
+   */
   readonly onAttached?: () => void;
   readonly focus?: () => void;
 };
@@ -29,29 +27,29 @@ export type PanelMount = {
 export type PanelRenderer = {
   /** Tab title for panels of this kind. */
   readonly title: (panel: Panel) => string;
-  /** Optional icon rendered before the tab title for panels of this kind. */
-  readonly icon?: (panel: Panel) => ReactNode;
+  /** Optional host-rendered icon before the tab title. Shell-specific shape. */
+  readonly icon?: (panel: Panel) => unknown;
   /**
    * Pane-container chrome for panels of this kind: a class applied to the
-   * enclosing `.wb-pane`. Lets a chrome surface (the session sidebar/viewport)
-   * shed the editor-pane look without teaching the workbench core about it.
+   * enclosing pane. Lets chrome surfaces shed editor-pane styling without
+   * teaching the workbench core about them.
    */
   readonly chrome?: { readonly className?: string };
   /**
    * Mount into the slot body element; returns a handle. The element belongs
-   * to the renderer until dispose — portal React, mount a canvas, whatever.
+   * to the renderer until dispose.
    */
   readonly mount: (element: HTMLElement, panel: Panel) => PanelMount;
 };
 
-export class PanelRenderers extends Context.Tag("the-editor/web/PanelRenderers")<
+export class PanelRenderers extends Context.Tag("@the-editor/workbench/PanelRenderers")<
   PanelRenderers,
   {
     readonly register: (
       kind: SurfaceKind,
       renderer: PanelRenderer,
     ) => Effect.Effect<void, never, Scope.Scope>;
-    /** Synchronous lookup — the React shell reads this during render. */
+    /** Synchronous lookup — shells may read this during render. */
     readonly get: (kind: SurfaceKind) => PanelRenderer | undefined;
     readonly onChanged: (listener: () => void) => () => void;
   }

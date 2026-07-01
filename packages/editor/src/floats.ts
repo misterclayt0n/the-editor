@@ -1,12 +1,11 @@
 /**
- * Floats: the popover primitive. A float is a DOM element anchored to a
- * TEXT OFFSET — the renderer owns its geometry, repositioning it every
- * frame (so it stays glued through scrolling, edits, and reflows, exactly
- * like the caret) and flipping it above the line when the viewport runs
- * out of room below. Products portal arbitrary UI into the element:
- * completion lists, hover cards, signature help — anything anchored to
- * text is a float.
+ * Floats: the popover primitive. A float is a DOM element anchored to a text
+ * offset. The renderer owns its geometry, repositioning it every frame so it
+ * stays glued through scrolling, edits, and reflows. Products and extensions
+ * portal arbitrary UI into the element.
  */
+
+import { Context } from "effect";
 
 export type FloatPlacement = "below" | "above";
 
@@ -28,6 +27,11 @@ export type FloatEntry = {
   anchor: FloatAnchor | null;
 };
 
+export class ViewFloatHub extends Context.Tag("@the-editor/editor/ViewFloatHub")<
+  ViewFloatHub,
+  FloatHub
+>() {}
+
 export class FloatHub {
   private readonly entries = new Set<FloatEntry>();
   private readonly listeners = new Set<() => void>();
@@ -39,7 +43,7 @@ export class FloatHub {
 
   onChanged(listener: () => void): () => void {
     this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    return () => void this.listeners.delete(listener);
   }
 
   /** Product side: create an anchored element to portal UI into. */

@@ -1,23 +1,20 @@
 /**
- * Language-intelligence extension points: completion and hover PROVIDERS.
+ * Language-intelligence extension points.
  *
- * The model is Monaco's, reduced to its essence: providers produce items
- * for a position; the CONTROLLER owns triggering, client-side fuzzy
- * filtering as the user types, and re-querying (trigger characters,
- * incomplete lists). LSP is one provider among equals — a user package
- * registers a snippet source or a custom oracle through the exact same
- * registry, with the same scoped retraction as every registry in the
- * editor.
+ * Providers produce language features for a document position; controllers own
+ * triggering, filtering, display, and acceptance. LSP is just one provider
+ * among equals, and language-server definitions are likewise ordinary scoped
+ * registry entries.
  */
 
-import { Context, Effect, Ref, Scope } from "effect";
+import { Context, Effect, Ref, type Scope } from "effect";
 import type { RenderableText } from "@the-editor/engine";
 
 export type CompletionTrigger =
-  | { readonly kind: "invoked" } // explicit (ctrl+space)
-  | { readonly kind: "typing" } // word characters as you type
+  | { readonly kind: "invoked" }
+  | { readonly kind: "typing" }
   | { readonly kind: "triggerCharacter"; readonly character: string }
-  | { readonly kind: "incomplete" }; // re-query of an incomplete list
+  | { readonly kind: "incomplete" };
 
 export type CompletionEdit = {
   readonly from: number;
@@ -41,7 +38,7 @@ export type CompletionItem = {
   readonly documentation?: string;
   /**
    * Text to insert; when `isSnippet`, LSP snippet syntax — placeholders
-   * become a tab-stop session on accept (Tab/Shift+Tab between stops).
+   * become a tab-stop session on accept.
    */
   readonly insertText: string;
   readonly isSnippet?: boolean;
@@ -49,18 +46,9 @@ export type CompletionItem = {
   readonly range?: { readonly from: number; readonly to: number };
   /** Edits known up front that ride along with the accept (auto-imports). */
   readonly additionalEdits?: ReadonlyArray<CompletionEdit>;
-  /**
-   * Called on accept for providers with lazy details (LSP
-   * completionItem/resolve). Offsets in the result are CURRENT-document.
-   * The controller calls this proactively for the SELECTED item while the
-   * popup is open — by accept time the result is usually already in hand.
-   */
+  /** Lazy details and extra edits for providers that resolve on selection. */
   readonly resolve?: () => Promise<CompletionResolution | null>;
-  /**
-   * Runs after the insert and any resolved edits are applied (LSP: the
-   * item's command via workspace/executeCommand — some servers deliver
-   * auto-imports this way).
-   */
+  /** Runs after insert and resolved edits are applied. */
   readonly postAccept?: () => Promise<void>;
   readonly filterText?: string;
   readonly sortText?: string;
@@ -88,10 +76,8 @@ export interface CompletionProvider {
   /** Characters that open a session even mid-punctuation (".", ":", "/"). */
   readonly triggerCharacters?: (docId: string) => readonly string[];
   /**
-   * Fallback providers (buffer words) only surface when NO regular provider
-   * returned items — VSCode's word-suggestion semantics. Without this, a
-   * plain-text word shadows the identically-labeled LSP item and accepting
-   * it skips imports/snippets.
+   * Fallback providers only surface when no regular provider returned items —
+   * VSCode's word-suggestion semantics.
    */
   readonly fallback?: boolean;
   provide(context: CompletionContext): Promise<CompletionResult | null> | CompletionResult | null;
@@ -118,9 +104,9 @@ export interface HoverProvider {
 }
 
 export type SignatureTrigger =
-  | { readonly kind: "invoked" } // explicit (ctrl+shift+space)
+  | { readonly kind: "invoked" }
   | { readonly kind: "triggerCharacter"; readonly character: string }
-  | { readonly kind: "contentChange" }; // edits while the widget is open
+  | { readonly kind: "contentChange" };
 
 export type SignatureParameter = {
   /** Plain text, or [start, end) offsets into the signature label. */
@@ -157,14 +143,41 @@ export interface SignatureProvider {
   readonly id: string;
   /** Characters that open the widget ("(",  ","). */
   readonly triggerCharacters?: (docId: string) => readonly string[];
-  /** Characters that re-query an OPEN widget (")" closing it server-side). */
+  /** Characters that re-query an open widget. */
   readonly retriggerCharacters?: (docId: string) => readonly string[];
-  provide(
-    context: SignatureContext,
-  ): Promise<SignatureResult | null> | SignatureResult | null;
+  provide(context: SignatureContext): Promise<SignatureResult | null> | SignatureResult | null;
 }
 
-const makeProviderRegistry = <P>() =>
+export type LanguageServerDefinition = {
+  /** Stable id; one client per (id, workspace root). */
+  readonly id: string;
+  readonly command: string;
+  readonly args?: readonly string[];
+  /** LSP languageId by file extension (bare, no dot). */
+  readonly languages: ReadonlyArray<{
+    readonly languageId: string;
+    readonly fileTypes: readonly string[];
+    /** Position in the language's server list — feature routing order. */
+    readonly priority?: number;
+    /** Helix only-features: this server serves ONLY these for the language. */
+    readonly only?: readonly string[];
+    /** Helix except-features: everything BUT these. */
+    readonly except?: readonly string[];
+  }>;
+  /** Files marking the workspace root, nearest-ancestor-wins. */
+  readonly rootMarkers?: readonly string[];
+  /** Passed verbatim in initialize. */
+  readonly initializationOptions?: unknown;
+  /** Workspace settings; answers workspace/configuration by section path. */
+  readonly settings?: Record<string, unknown>;
+};
+
+type RegistryService<P> = {
+  readonly register: (provider: P) => Effect.Effect<void, never, Scope.Scope>;
+  readonly list: Effect.Effect<ReadonlyArray<P>>;
+};
+
+const makeProviderRegistry = <P>(): Effect.Effect<RegistryService<P>> =>
   Effect.gen(function* () {
     const providers = yield* Ref.make<ReadonlyArray<P>>([]);
     return {
@@ -177,37 +190,30 @@ const makeProviderRegistry = <P>() =>
     };
   });
 
-export class CompletionProviders extends Context.Tag("the-editor/web/CompletionProviders")<
+export class CompletionProviders extends Context.Tag("@the-editor/intel/CompletionProviders")<
   CompletionProviders,
-  {
-    readonly register: (
-      provider: CompletionProvider,
-    ) => Effect.Effect<void, never, Scope.Scope>;
-    readonly list: Effect.Effect<ReadonlyArray<CompletionProvider>>;
-  }
+  RegistryService<CompletionProvider>
 >() {}
 
-export class HoverProviders extends Context.Tag("the-editor/web/HoverProviders")<
+export class HoverProviders extends Context.Tag("@the-editor/intel/HoverProviders")<
   HoverProviders,
-  {
-    readonly register: (provider: HoverProvider) => Effect.Effect<void, never, Scope.Scope>;
-    readonly list: Effect.Effect<ReadonlyArray<HoverProvider>>;
-  }
+  RegistryService<HoverProvider>
 >() {}
 
-export class SignatureProviders extends Context.Tag("the-editor/web/SignatureProviders")<
+export class SignatureProviders extends Context.Tag("@the-editor/intel/SignatureProviders")<
   SignatureProviders,
-  {
-    readonly register: (
-      provider: SignatureProvider,
-    ) => Effect.Effect<void, never, Scope.Scope>;
-    readonly list: Effect.Effect<ReadonlyArray<SignatureProvider>>;
-  }
+  RegistryService<SignatureProvider>
+>() {}
+
+export class LanguageServers extends Context.Tag("@the-editor/intel/LanguageServers")<
+  LanguageServers,
+  RegistryService<LanguageServerDefinition>
 >() {}
 
 export const makeCompletionProviders = makeProviderRegistry<CompletionProvider>();
 export const makeHoverProviders = makeProviderRegistry<HoverProvider>();
 export const makeSignatureProviders = makeProviderRegistry<SignatureProvider>();
+export const makeLanguageServers = makeProviderRegistry<LanguageServerDefinition>();
 
 export namespace CompletionProviders {
   export type Service = Context.Tag.Service<CompletionProviders>;
@@ -217,4 +223,7 @@ export namespace HoverProviders {
 }
 export namespace SignatureProviders {
   export type Service = Context.Tag.Service<SignatureProviders>;
+}
+export namespace LanguageServers {
+  export type Service = Context.Tag.Service<LanguageServers>;
 }

@@ -9,10 +9,9 @@
  * WorkbenchView's editor render branch is simply never reached for it.
  */
 
-import type { Panel, PanelId, SlotId, SplitDirection } from "@the-editor/workbench";
+import type { Panel, PanelId, PanelRenderers, SlotId, SplitDirection } from "@the-editor/workbench";
 import type { EditorPane, WorkbenchSnapshot } from "../runtime";
 import type { MultiBufferPane } from "../multibuffer/pane";
-import type { PanelRenderers } from "./panelRenderers";
 
 export interface WorkbenchHost {
   /** Subscribe to layout changes (arrangement, focus, panel set). */

@@ -11,7 +11,7 @@ import { marked } from "marked";
 import { highlightSnippet } from "../editor/snippetHighlight";
 import type { CodeSpan } from "../editor/highlightSpans";
 import type { IntelController } from "./controller";
-import type { SignatureInfo } from "./types";
+import type { SignatureInfo } from "@the-editor/intel";
 
 /** The signature label split around the active parameter's span. */
 function SignatureLabel({

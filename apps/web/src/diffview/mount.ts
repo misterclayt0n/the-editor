@@ -7,13 +7,26 @@
  * view, and the editor's active theme drives the diff viewer's light/dark mode.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { createRoot, type Root } from "react-dom/client";
 import { Effect, Fiber, Stream } from "effect";
 import { DiffIcon } from "lucide-react";
 import type { ResolvedTheme } from "@the-editor/theme";
-import { CodeView, type CodeViewDiffItem, type CodeViewItem, type CodeViewProps } from "@pierre/diffs/react";
+import {
+  CodeView,
+  type CodeViewDiffItem,
+  type CodeViewItem,
+  type CodeViewProps,
+} from "@pierre/diffs/react";
 import { parsePatchFiles } from "@pierre/diffs";
 import type { AppRuntime } from "../runtime";
 import type {
@@ -23,8 +36,8 @@ import type {
   DiffViewLineDiff,
   DiffViewSettings,
   DiffViewSettingsPatch,
-} from "../product/diffView";
-import type { PanelRenderer } from "../workbench/panelRenderers";
+} from "@the-editor/diff-view";
+import type { PanelRenderer } from "@the-editor/workbench";
 import { FileHeader } from "../ui/FileHeader";
 
 export const DIFF_VIEW_TITLE = "Changes";
@@ -308,7 +321,8 @@ function diffCodeViewOptions(
   settings: DiffViewSettings,
   appearance: ResolvedTheme["appearance"] | null,
 ): DiffCodeViewOptions {
-  const hunkSeparators = settings.hunkSeparators === "custom-css" ? "line-info" : settings.hunkSeparators;
+  const hunkSeparators =
+    settings.hunkSeparators === "custom-css" ? "line-info" : settings.hunkSeparators;
   return {
     diffStyle: settings.layout === "split" ? "split" : "unified",
     stickyHeaders: true,
@@ -326,7 +340,6 @@ function diffCodeViewOptions(
     disableVirtualizationBuffers: false,
   };
 }
-
 
 function changeTypeLabel(type: CodeViewDiffItem<undefined>["fileDiff"]["type"]): string {
   switch (type) {
@@ -434,7 +447,9 @@ function DiffViewToolbar({
     role: "toolbar",
     "aria-label": "Diff display controls",
     children: [
-      renderSegmentedControl("Layout", LAYOUT_OPTIONS, settings.layout, (layout) => update({ layout })),
+      renderSegmentedControl("Layout", LAYOUT_OPTIONS, settings.layout, (layout) =>
+        update({ layout }),
+      ),
       renderSegmentedControl("Indicators", INDICATOR_OPTIONS, settings.indicators, (indicators) =>
         update({ indicators }),
       ),
@@ -453,7 +468,9 @@ function DiffViewToolbar({
           renderToolbarToggle("Backgrounds", settings.backgrounds, () =>
             update({ backgrounds: !settings.backgrounds }),
           ),
-          renderToolbarToggle("Wrap", settings.wrapping, () => update({ wrapping: !settings.wrapping })),
+          renderToolbarToggle("Wrap", settings.wrapping, () =>
+            update({ wrapping: !settings.wrapping }),
+          ),
           renderToolbarToggle("Line numbers", settings.lineNumbers, () =>
             update({ lineNumbers: !settings.lineNumbers }),
           ),
@@ -462,7 +479,6 @@ function DiffViewToolbar({
     ],
   });
 }
-
 
 function DiffViewPanel({ runtime }: { readonly runtime: AppRuntime }) {
   const [items, setItems] = useState<CodeViewItem<undefined>[]>([]);
@@ -476,7 +492,6 @@ function DiffViewPanel({ runtime }: { readonly runtime: AppRuntime }) {
   const setCodeViewContainer = useCallback((element: HTMLDivElement | null) => {
     if (element !== null) element.tabIndex = -1;
   }, []);
-
 
   const refresh = async () => {
     const generation = ++refreshGeneration.current;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Option, Stream } from "effect";
+import { Context, Effect, Layer, Option, Stream } from "effect";
 import * as EffectNamespace from "effect";
 import {
   Attention,
@@ -9,17 +9,38 @@ import {
   PackageRuntimeService,
 } from "@the-editor/kernel";
 import { Commands, makeCommands } from "@the-editor/commands";
+import { DiffViewPreferences, makeDiffViewPreferences } from "@the-editor/diff-view";
 import * as CommandsNamespace from "@the-editor/commands";
 import { toPackageDescriptor } from "@the-editor/extensions";
 import * as ExtensionsNamespace from "@the-editor/extensions";
 import {
+  DecorationProviders,
+  DocumentRegistry,
+  EditorVisuals,
   FileIoError,
   FileSystemPort,
+  makeDecorationProviders,
+  makeViewScope,
+  makeWorkspaceScope,
+  ViewMountHub,
+  WorkspaceNotifications,
   WorkspaceRoots,
   type DirEntry,
   type FileStat,
 } from "@the-editor/editor";
-import { makeUserExtensionsPackage } from "./userExtensions";
+import {
+  CompletionProviders,
+  HoverProviders,
+  LanguageServers,
+  makeCompletionProviders,
+  makeHoverProviders,
+  makeLanguageServers,
+  makeSignatureProviders,
+  SignatureProviders,
+} from "@the-editor/intel";
+import { makeVcsProviders, VcsProviders } from "@the-editor/vcs";
+import { makePanelRenderers, PanelRenderers, SurfaceKind } from "@the-editor/workbench";
+import { buildExtensionVirtualModules, makeUserExtensionsPackage } from "./userExtensions";
 
 const testVirtualModules = {
   effect: EffectNamespace,
@@ -162,6 +183,90 @@ function attentionPackageSource(): string {
   `;
 }
 
+function publishedPrimitivePackageSource(): string {
+  return `
+    var definePackage = require("@the-editor/extensions").definePackage;
+    var Effect = require("effect").Effect;
+    var Workbench = require("@the-editor/workbench");
+    var Editor = require("@the-editor/editor");
+    var Intel = require("@the-editor/intel");
+    var Vcs = require("@the-editor/vcs");
+    var DiffView = require("@the-editor/diff-view");
+    var Engine = require("@the-editor/engine");
+    var probe = require("test:published-primitives-probe");
+    var PanelKind = Workbench.SurfaceKind("acme/published-panel");
+    module.exports.default = definePackage("acme.published-primitives", function () {
+      return Effect.gen(function* () {
+        var renderers = yield* Workbench.PanelRenderers;
+        var completions = yield* Intel.CompletionProviders;
+        var hovers = yield* Intel.HoverProviders;
+        var signatures = yield* Intel.SignatureProviders;
+        var servers = yield* Intel.LanguageServers;
+        var vcs = yield* Vcs.VcsProviders;
+        var diff = yield* DiffView.DiffViewPreferences;
+        var decorations = yield* Editor.DecorationProviders;
+        yield* renderers.register(PanelKind, {
+          title: function () { return "Published"; },
+          mount: function (element) {
+            element.textContent = "mounted by extension";
+            return { dispose: function () {} };
+          }
+        });
+        yield* completions.register({ id: "acme", provide: function () { return { items: [] }; } });
+        yield* hovers.register({ id: "acme", provide: function () { return null; } });
+        yield* signatures.register({ id: "acme", provide: function () { return null; } });
+        yield* servers.register({
+          id: "acme-lsp",
+          command: "acme-lsp",
+          languages: [{ languageId: "acme", fileTypes: ["acme"] }]
+        });
+        yield* vcs.register({
+          id: "acme-vcs",
+          detect: function () { return Promise.resolve(false); },
+          status: function () { return Promise.resolve([]); },
+          headContent: function () { return Promise.resolve(null); },
+          listFiles: function () { return Promise.resolve([]); },
+          patch: function () { return Promise.resolve(null); },
+          info: function () { return Promise.resolve(null); }
+        });
+        yield* diff.register({ id: "acme", settings: { wrapping: true } });
+        yield* decorations.register({
+          id: "acme-widget",
+          attach: function (target) {
+            return Effect.asVoid(target.visuals.contribute("acme-widget", {
+              blockWidgets: Engine.RangeSet.of([
+                { from: 0, to: 0, value: { id: "acme-widget", heightRows: 1 } }
+              ])
+            }));
+          },
+          attachView: function (target) {
+            return Effect.acquireRelease(
+              Effect.sync(function () {
+                probe.viewAttached({
+                  mountHub: target.mounts instanceof Editor.MountHub,
+                  floatHub: target.floats instanceof Editor.FloatHub
+                });
+                return target.mounts.subscribe(function (event) {
+                  if (event.type === "mounted") {
+                    event.el.textContent = "widget mounted by extension";
+                    probe.mounted(event.id, event.el.textContent);
+                  }
+                });
+              }),
+              function (unsubscribe) { return Effect.sync(unsubscribe); }
+            );
+          }
+        });
+        probe.ready({
+          panelKind: PanelKind,
+          mountHub: typeof Editor.MountHub,
+          floatHub: typeof Editor.FloatHub
+        });
+      });
+    });
+  `;
+}
+
 describe("makeUserExtensionsPackage", () => {
   it.live("loads a global extension at startup and reloads it after an edit", () =>
     Effect.scoped(
@@ -286,6 +391,118 @@ describe("makeUserExtensionsPackage", () => {
             ],
           },
         ]);
+      }),
+    ),
+  );
+
+  it.live("lets a loaded extension register published B-surface primitives", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = makeFakeFs();
+        fs.write(
+          "/home/user/.the-editor/extensions/published.ts",
+          publishedPrimitivePackageSource(),
+        );
+
+        const runtime = yield* makePackageRuntime;
+        const attention = yield* makeAttention();
+        const workspaceRoots = yield* makeStateCell<ReadonlyArray<string>>([]);
+        const commands = yield* makeCommands(runtime.contributionIndex);
+        const panelRenderers = makePanelRenderers();
+        const completions = yield* makeCompletionProviders;
+        const hovers = yield* makeHoverProviders;
+        const signatures = yield* makeSignatureProviders;
+        const languageServers = yield* makeLanguageServers;
+        const vcsProviders = yield* makeVcsProviders;
+        const diffPreferences = makeDiffViewPreferences();
+        const ws = yield* makeWorkspaceScope();
+        const registry = Context.get(ws.context, DocumentRegistry);
+        const workspaceBus = Context.get(ws.context, WorkspaceNotifications);
+        const decorations = yield* makeDecorationProviders(registry, workspaceBus);
+        const document = yield* registry.open({ text: "a" });
+        const view = yield* makeViewScope(document);
+        yield* decorations.connectView(view);
+        const viewMounts = Context.get(view.context, ViewMountHub);
+        const probe: {
+          readyPayload?: {
+            readonly panelKind: string;
+            readonly mountHub: string;
+            readonly floatHub: string;
+          };
+          viewPayload?: {
+            readonly mountHub: boolean;
+            readonly floatHub: boolean;
+          };
+          mountedPayload?: {
+            readonly id: string;
+            readonly text: string;
+          };
+        } = {};
+        const readyProbe = {
+          ready: (payload: {
+            readonly panelKind: string;
+            readonly mountHub: string;
+            readonly floatHub: string;
+          }) => void (probe.readyPayload = payload),
+          viewAttached: (payload: { readonly mountHub: boolean; readonly floatHub: boolean }) =>
+            void (probe.viewPayload = payload),
+          mounted: (id: string, text: string) => void (probe.mountedPayload = { id, text }),
+        };
+
+        const servicesForExtensions = Layer.mergeAll(
+          Layer.succeed(Commands, commands),
+          Layer.succeed(FileSystemPort, fs.port),
+          Layer.succeed(PackageRuntimeService, runtime),
+          Layer.succeed(Attention, attention),
+          Layer.succeed(WorkspaceRoots, workspaceRoots),
+          Layer.succeed(PanelRenderers, panelRenderers),
+          Layer.succeed(CompletionProviders, completions),
+          Layer.succeed(HoverProviders, hovers),
+          Layer.succeed(SignatureProviders, signatures),
+          Layer.succeed(LanguageServers, languageServers),
+          Layer.succeed(VcsProviders, vcsProviders),
+          Layer.succeed(DiffViewPreferences, diffPreferences),
+          Layer.succeed(DecorationProviders, decorations),
+        );
+
+        const userExtensions = makeUserExtensionsPackage({
+          servicesForExtensions,
+          transpiler: identityTranspiler,
+          virtualModules: {
+            ...buildExtensionVirtualModules(),
+            "test:published-primitives-probe": readyProbe,
+          },
+          homeDir: "/home/user",
+        });
+
+        yield* runtime.activateGraph([toPackageDescriptor(userExtensions, servicesForExtensions)]);
+        yield* waitUntil(Effect.sync(() => probe.readyPayload !== undefined));
+
+        expect(probe.readyPayload).toEqual({
+          panelKind: "acme/published-panel",
+          mountHub: "function",
+          floatHub: "function",
+        });
+        expect(probe.viewPayload).toEqual({ mountHub: true, floatHub: true });
+        const fakeEl = { textContent: "" } as HTMLElement;
+        viewMounts.mounted("acme-widget", fakeEl);
+        expect(probe.mountedPayload).toEqual({
+          id: "acme-widget",
+          text: "widget mounted by extension",
+        });
+        expect(fakeEl.textContent).toBe("widget mounted by extension");
+        expect((yield* Context.get(document.context, EditorVisuals).snapshot).totalWidgetRows).toBe(
+          1,
+        );
+        expect(panelRenderers.get(SurfaceKind("acme/published-panel"))?.title({} as never)).toBe(
+          "Published",
+        );
+        expect((yield* completions.list).map((provider) => provider.id)).toEqual(["acme"]);
+        expect((yield* hovers.list).map((provider) => provider.id)).toEqual(["acme"]);
+        expect((yield* signatures.list).map((provider) => provider.id)).toEqual(["acme"]);
+        expect((yield* languageServers.list).map((server) => server.id)).toEqual(["acme-lsp"]);
+        expect((yield* vcsProviders.list).map((provider) => provider.id)).toEqual(["acme-vcs"]);
+        expect(diffPreferences.current().wrapping).toBe(true);
       }),
     ),
   );

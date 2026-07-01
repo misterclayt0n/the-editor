@@ -21,13 +21,21 @@ import {
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { AppRuntime } from "../runtime";
-import type { PanelRenderer } from "../workbench/panelRenderers";
-import { terminalSearchDecorations, terminalTheme, type TerminalSearchDecorations } from "../theme/dom";
+import type { PanelRenderer } from "@the-editor/workbench";
+import {
+  terminalSearchDecorations,
+  terminalTheme,
+  type TerminalSearchDecorations,
+} from "../theme/dom";
 import { createTerminalOptions, macEditingSequence, terminalKeyHandlerResult } from "./keys";
 import { TerminalContextMenu, type TerminalContextMenuActions } from "./TerminalContextMenu";
 import { handleOsc52ClipboardRequest } from "./osc52";
 import { parseOsc9, parseOsc777 } from "./notifications";
-import { pasteTerminalClipboard, writeTerminalPasteText, type TerminalPasteTextOptions } from "./paste";
+import {
+  pasteTerminalClipboard,
+  writeTerminalPasteText,
+  type TerminalPasteTextOptions,
+} from "./paste";
 import { detectTerminalShortcutPlatform, terminalShortcutAction } from "./shortcuts";
 
 /** xterm setup is synchronous today; keep the gate so async addons can hook in later. */
@@ -49,7 +57,10 @@ type TerminalSearchWidget = {
 };
 
 const isFindShortcut = (event: KeyboardEvent): boolean =>
-  event.key.toLowerCase() === "f" && (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey;
+  event.key.toLowerCase() === "f" &&
+  (event.metaKey || event.ctrlKey) &&
+  !event.shiftKey &&
+  !event.altKey;
 
 const isFindNextShortcut = (event: KeyboardEvent): boolean =>
   event.key.toLowerCase() === "g" && (event.metaKey || event.ctrlKey) && !event.altKey;
@@ -210,7 +221,7 @@ const createTerminalSearchWidget = (
     element: root,
     open,
     close: closeSearch,
-    toggle: () => root.hidden ? open() : closeSearch(),
+    toggle: () => (root.hidden ? open() : closeSearch()),
     findNext: () => findNext(),
     findPrevious,
     refreshDecorations,
@@ -379,7 +390,9 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
         if (terminalBody === null) throw new Error("Terminal body is not mounted.");
         disposeTermUi?.();
         terminalBody.replaceChildren();
-        const next = new Terminal(createTerminalOptions(runtime.themeSnapshot(), runtime.fontSnapshot()));
+        const next = new Terminal(
+          createTerminalOptions(runtime.themeSnapshot(), runtime.fontSnapshot()),
+        );
         const fit = new FitAddon();
         next.open(terminalBody);
         const nextAddons = loadTerminalAddons(next, fit);
@@ -526,12 +539,15 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
         terminalBody.addEventListener("dragover", onDragOver);
         terminalBody.addEventListener("drop", onDrop);
 
-        const selectionDisposable = next.onSelectionChange(writeSelectionClipboardSoon) as TerminalDisposable;
+        const selectionDisposable = next.onSelectionChange(
+          writeSelectionClipboardSoon,
+        ) as TerminalDisposable;
         const osc52Disposable = next.parser.registerOscHandler(52, (data) =>
           handleOsc52ClipboardRequest(data, {
             allowClipboardWrite: true,
             writeClipboardText: (text) => clipboard?.writeText(text) ?? Promise.resolve(),
-            writeSelectionText: (text) => clipboard?.writeSelectionText?.(text) ?? Promise.resolve(),
+            writeSelectionText: (text) =>
+              clipboard?.writeSelectionText?.(text) ?? Promise.resolve(),
           }),
         ) as TerminalDisposable;
         // Terminal notifications: bubble the desktop-notification escape
@@ -560,7 +576,11 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
         ) as TerminalDisposable;
 
         attachGlobalKeyHandler(next, (event) => {
-          if (!eventTargetsSearchWidget(event.target) && terminalShortcutAction(event, platform) !== null) return "skip";
+          if (
+            !eventTargetsSearchWidget(event.target) &&
+            terminalShortcutAction(event, platform) !== null
+          )
+            return "skip";
           if (runtime.handleGlobalKey(event)) return "skip";
           const sequence = macEditingSequence(event);
           if (sequence !== null && termId !== null) {
@@ -645,12 +665,18 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
           // PTY → screen, screen → PTY, and keep the PTY's window size in sync.
           port.onData(id, (data) => {
             if (disposed) return;
-            const responses = unsupportedQueryResponses(data, terminalTheme(runtime.themeSnapshot()));
+            const responses = unsupportedQueryResponses(
+              data,
+              terminalTheme(runtime.themeSnapshot()),
+            );
             term?.write(data);
             if (responses.length > 0) port.write(id, responses);
           });
           port.onExit(id, (code) => {
-            if (!disposed) term?.write(`\r\n\x1b[90m[process exited${code === null ? "" : ` (${code})`}]\x1b[0m\r\n`);
+            if (!disposed)
+              term?.write(
+                `\r\n\x1b[90m[process exited${code === null ? "" : ` (${code})`}]\x1b[0m\r\n`,
+              );
           });
           refreshTerminalSurface({ focus: true });
         })();

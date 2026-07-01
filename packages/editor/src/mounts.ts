@@ -2,20 +2,22 @@
  * MountHub: the widget mount contract between the renderer and product code.
  *
  * The renderer owns geometry and lifecycle: when a block widget enters the
- * rendered window it creates a container element of exactly the reserved
- * size and announces it here; when the widget leaves the window the element
- * is withdrawn. Product/extension code subscribes and portals ANY framework
- * into the container (React createPortal, plain DOM, canvas).
- *
- * This decoupling is the performance guarantee: the scroll path only ever
- * moves a transform; extension rendering happens on its own schedule, and a
- * slow extension yields a stale/empty box of the promised size — never
- * layout shift, never scroll jank.
+ * rendered window it creates a container element of exactly the reserved size
+ * and announces it here; when the widget leaves the window the element is
+ * withdrawn. Product/extension code subscribes and portals any framework into
+ * the container (React createPortal, plain DOM, canvas).
  */
+
+import { Context } from "effect";
 
 export type MountEvent =
   | { readonly type: "mounted"; readonly id: string; readonly el: HTMLElement }
   | { readonly type: "unmounted"; readonly id: string };
+
+export class ViewMountHub extends Context.Tag("@the-editor/editor/ViewMountHub")<
+  ViewMountHub,
+  MountHub
+>() {}
 
 export class MountHub {
   private readonly els = new Map<string, HTMLElement>();
@@ -45,6 +47,6 @@ export class MountHub {
   subscribe(listener: (event: MountEvent) => void): () => void {
     this.listeners.add(listener);
     for (const [id, el] of this.els) listener({ type: "mounted", id, el });
-    return () => this.listeners.delete(listener);
+    return () => void this.listeners.delete(listener);
   }
 }

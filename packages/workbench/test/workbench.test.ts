@@ -6,6 +6,7 @@ import {
   dockEdge,
   floatPanel,
   makeStack,
+  makePanelRenderers,
   makeWorkbench,
   moveTab,
   PanelId,
@@ -20,6 +21,7 @@ import {
   SurfaceScope,
   UnknownPanelInArrangementError,
   type Panel,
+  type PanelRenderer,
   type SlotId,
   type Workbench,
 } from "../src/index";
@@ -51,6 +53,30 @@ const slotOf = (wb: Workbench.Service, panel: Panel) =>
   Effect.map(wb.arrangement, (a) => slotOfPanel(a, panel.id)!);
 
 describe("workbench", () => {
+  test("panel renderers register and retract by scope", () => {
+    const renderers = makePanelRenderers();
+    const renderer: PanelRenderer = {
+      title: () => "Tree",
+      mount: () => ({ dispose: () => undefined }),
+    };
+    const events: string[] = [];
+    const unsubscribe = renderers.onChanged(() => events.push("changed"));
+
+    const during = Effect.runSync(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* renderers.register(Tree, renderer);
+          return renderers.get(Tree);
+        }),
+      ),
+    );
+    unsubscribe();
+
+    expect(during).toBe(renderer);
+    expect(renderers.get(Tree)).toBeUndefined();
+    expect(events).toEqual(["changed", "changed"]);
+  });
+
   test("createPanel is detached; placing it makes it visible", () => {
     const result = withWorkbench((wb) =>
       Effect.gen(function* () {
@@ -270,7 +296,11 @@ describe("scopeApplies", () => {
   test("global and panel scopes are unaffected by fallback", () => {
     registerSurfaceFallback(MultiBuffer, Editor);
     expect(scopeApplies(SurfaceScope.global, { id: "p" as PanelId, kind: Tree })).toBe(true);
-    expect(scopeApplies(SurfaceScope.panel("p1" as PanelId), { id: "p1" as PanelId, kind: MultiBuffer })).toBe(true);
-    expect(scopeApplies(SurfaceScope.panel("p1" as PanelId), { id: "p2" as PanelId, kind: MultiBuffer })).toBe(false);
+    expect(
+      scopeApplies(SurfaceScope.panel("p1" as PanelId), { id: "p1" as PanelId, kind: MultiBuffer }),
+    ).toBe(true);
+    expect(
+      scopeApplies(SurfaceScope.panel("p1" as PanelId), { id: "p2" as PanelId, kind: MultiBuffer }),
+    ).toBe(false);
   });
 });

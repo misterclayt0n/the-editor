@@ -7,64 +7,10 @@
  * registered later still win new documents.
  */
 
-import { Context, Effect, Ref, Scope } from "effect";
+import { Effect } from "effect";
 import { definePackage } from "@the-editor/extensions";
-import {
-  generatedLanguageServers,
-  generatedServerLanguages,
-} from "../generated/languageServers";
-
-export type LanguageServerDefinition = {
-  /** Stable id; one client per (id, workspace root). */
-  readonly id: string;
-  readonly command: string;
-  readonly args?: readonly string[];
-  /** LSP languageId by file extension (bare, no dot). */
-  readonly languages: ReadonlyArray<{
-    readonly languageId: string;
-    readonly fileTypes: readonly string[];
-    /** Position in the language's server list — feature routing order. */
-    readonly priority?: number;
-    /** Helix only-features: this server serves ONLY these for the language. */
-    readonly only?: readonly string[];
-    /** Helix except-features: everything BUT these. */
-    readonly except?: readonly string[];
-  }>;
-  /** Files marking the workspace root, nearest-ancestor-wins. */
-  readonly rootMarkers?: readonly string[];
-  /** Passed verbatim in initialize. */
-  readonly initializationOptions?: unknown;
-  /** Workspace settings; answers workspace/configuration by section path. */
-  readonly settings?: Record<string, unknown>;
-};
-
-export class LanguageServers extends Context.Tag("the-editor/web/LanguageServers")<
-  LanguageServers,
-  {
-    /** Scoped: the definition retracts when the contributing scope closes. */
-    readonly register: (
-      definition: LanguageServerDefinition,
-    ) => Effect.Effect<void, never, Scope.Scope>;
-    readonly list: Effect.Effect<ReadonlyArray<LanguageServerDefinition>>;
-  }
->() {}
-
-export const makeLanguageServers = Effect.gen(function* () {
-  const definitions = yield* Ref.make<ReadonlyArray<LanguageServerDefinition>>([]);
-  return {
-    register: (definition: LanguageServerDefinition) =>
-      Effect.acquireRelease(
-        Ref.update(definitions, (list) => [...list, definition]),
-        () =>
-          Ref.update(definitions, (list) => list.filter((entry) => entry !== definition)),
-      ).pipe(Effect.asVoid),
-    list: Ref.get(definitions),
-  } satisfies LanguageServers.Service;
-});
-
-export namespace LanguageServers {
-  export type Service = Context.Tag.Service<LanguageServers>;
-}
+import { LanguageServers, type LanguageServerDefinition } from "@the-editor/intel";
+import { generatedLanguageServers, generatedServerLanguages } from "../generated/languageServers";
 
 /**
  * Stock servers: the ENTIRE helix catalog, generated from languages.toml

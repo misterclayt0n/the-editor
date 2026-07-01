@@ -72,15 +72,15 @@ finding that anchors everything below:
 | 5 | Manage panes/tabs/splits/focus | ✅ `Workbench` + `surgery` |
 | 6 | Hold / react to state | ✅ `context.stores` + public `makeStateCell`/`makeRegistry`/topic fabric via `@the-editor/extensions` |
 | 7 | Ask / notify the user | ✅ `Attention` + public choice-request vocabulary via `@the-editor/extensions`; malformed requests fail fast |
-| 8 | Render a pane (agent panel, browser, Doom) | ❌ `PanelRenderers` app-internal (B1) |
-| 9 | Answer questions about a buffer (completion/hover/signature) | ❌ intel registries app-internal (B2) |
+| 8 | Render a pane (agent panel, browser, Doom) | ✅ `PanelRenderers` via `@the-editor/workbench` |
+| 9 | Answer questions about a buffer (completion/hover/signature) | ✅ provider registries via `@the-editor/intel` |
 | 10 | Open a file into a visible view | ❌ `Files` not in services layer (C1) |
 | 11 | Pick from a list (completing-read) | ❌ no seam; five bespoke React surfaces (C3) |
 | 12 | Add statusline / context-menu items | ❌ no registry exists (E1) |
-| 13 | Own a background process | ❌ `ProcessPort`/`TerminalPort` host-only (D1) |
+| 13 | Own a background process | ❌ direct `ProcessPort`/`TerminalPort` host-only; LSP spawn-by-proxy exists via #16 (D1) |
 | 14 | React to interaction (hover/scroll/viewport/pre-key) | ❌ `PaneHost` fields are single-assignment slots (D2) |
 | 15 | Back a buffer with non-file content | 🟡 `DocumentRegistry.open({text})` exists; provider semantics + view attach missing (D3) |
-| 16 | Contribute a language server / grammar | ❌ `LanguageServers` app-internal; grammars native `.so` (B3/D1) |
+| 16 | Contribute a language server / grammar | 🟡 `LanguageServers` public via `@the-editor/intel`; grammars native `.so` (D1) |
 | 17 | Undo / redo | 🟡 engine `history` is pure data; not a public verb (F4) |
 | 18 | Be driven from outside (CLI/socket/MCP) | ❌ no inbound channel exists at all (F1) |
 | 19 | Replace the interaction model (Vim/Helix/Emacs) | ❓ undecided — no mode state machine (F3) |
@@ -104,27 +104,33 @@ finding that anchors everything below:
 
 ## B. Relocate a tag (cheap, low-risk)
 
-- [ ] **B1. Publish `PanelRenderers`.** Move from `apps/web/src/workbench/panelRenderers.ts`
-  into `@the-editor/workbench` + allowlist. The registry is already `HTMLElement`-based
-  and framework-agnostic (the file tree mounts a web component, not React) — an
-  *extension* panel mounts its own DOM and needs nothing from `AppRuntime`, so this
-  unlocks arbitrary extension panes immediately. **Do not block on** the follow-up:
-  first-party renderers (`filetree/mount.ts`, `terminal/mount.ts`, `diffview/mount.ts`)
-  take `AppRuntime` directly; dogfooding them onto a bounded panel-host API is
-  separate debt (tracked under G).
-- [ ] **B2. Publish intel providers.** `CompletionProviders`/`HoverProviders`/
-  `SignatureProviders` (`apps/web/src/intel/types.ts`) are pure Ref-backed registries
-  with scoped retraction; LSP already registers as `id:"lsp"` among equals. Move to a
-  published package (e.g. `@the-editor/intel`) + allowlist. Highest value per line of
-  work in the audit.
-- [ ] **B3. Publish the thin registries.** `VcsProviders`, `LanguageServers`,
-  `DiffViewPreferences`. Registration is pure and safe now even though the *default*
-  providers need process access (D1) — an extension could register a pure-JS provider
-  today if it could name the tag.
-- [ ] **B4. Expose `MountHub`/`FloatHub`.** Element-based in-editor block widgets and
-  anchored popovers (`apps/web/src/editor/mounts.ts`, `floats.ts`). Settles the old
-  "block widgets" decision in favor of exposure — the seams are already
-  element-based, so no framework contract leaks.
+- [x] **B1. Publish `PanelRenderers`.** Moved from `apps/web/src/workbench/panelRenderers.ts`
+  into allowlisted `@the-editor/workbench`. The registry is `HTMLElement`-based and
+  framework-agnostic: an *extension* panel mounts its own DOM and needs nothing from
+  `AppRuntime`, so arbitrary extension panes are now nameable. **Follow-up still
+  separate:** first-party renderers (`filetree/mount.ts`, `terminal/mount.ts`,
+  `diffview/mount.ts`) still take `AppRuntime` directly; dogfooding them onto a
+  bounded panel-host API remains G debt.
+- [x] **B2. Publish intel providers.** `CompletionProviders`/`HoverProviders`/
+  `SignatureProviders` now live in allowlisted `@the-editor/intel`. They remain pure
+  Ref-backed registries with scoped retraction; LSP registers as `id:"lsp"` among equals.
+- [x] **B3. Publish the thin registries.** `LanguageServers` lives in
+  `@the-editor/intel`, `VcsProviders` in `@the-editor/vcs`, and
+  `DiffViewPreferences` in `@the-editor/diff-view`; all are allowlisted.
+  `VcsProviders`/`DiffViewPreferences` are pure registry moves. `LanguageServers`
+  is declarative but process-spawn-by-proxy: an extension can register a
+  `{ command, languages }` entry that `LspManager` later starts through the host
+  `ProcessPort` when a matching file opens. This fits the trusted-local extension
+  model, but D1 must name this existing reachability instead of rediscovering it.
+- [x] **B4. Expose `MountHub`/`FloatHub`.** The classes and live per-view
+  instances now live on the public `@the-editor/editor` surface. `makeViewScope`
+  installs `ViewMountHub`/`ViewFloatHub` in every editor view context, and
+  `DecorationProviders` has a view-scoped `attachView` hook with a curated
+  `DecorationViewTarget` (`mounts`, `floats`, view notifications). `AppRuntime`
+  connects every editor pane to that driver, so a package can reserve rows via
+  `EditorVisuals` and fill each renderer-owned mount container when it appears;
+  floats are reachable from the same per-view target. Proven through the real
+  user-extension loader path.
 
 ## C. Operations (retire `Host*` tags)
 
@@ -155,8 +161,11 @@ finding that anchors everything below:
   and the terminal at once; retires `HostTerminal`, unblocks `HostLspActions`,
   `HostVcsDefaults`, `HostLspIntel`. **This is a trust decision as much as
   plumbing** — the project-extension trust gate (`extensionTrust.ts`) exists because
-  of exactly this, and `userExtensions.ts` already flags LSP exposure as "a separate,
-  deliberate call". Sequence it after A–C, with the capability story written down.
+  of exactly this. B3 already created one narrow process-spawn-by-proxy path:
+  a public `LanguageServers` registration can cause the host LSP manager to start an
+  arbitrary command for a matching file. The D1 write-up must acknowledge that
+  existing reachability and then decide whether to formalize/generalize it or
+  constrain it. Sequence it after A–C, with the capability story written down.
 - [ ] **D2. Interaction events — with multiplexing.** `PaneHost.pointerHover` /
   `pointerScrolled` / `viewportChanged` / `keyInterceptor` are **single-assignment
   slots** that `IntelController` overwrites (`intel/controller.ts`) — even internally
@@ -218,8 +227,9 @@ finding that anchors everything below:
 - [ ] **H1. Command override / advice.** Registry refuses duplicate ids; keymap
   shadowing already covers the common case (see Done). Recommend: keep strict
   ownership + rebind; revisit only when a real extension needs advice.
-- [x] **H2. Block widgets** — settled by audit finding: all mount seams are
-  element-based, so expose them (B4); no React contract leaks.
+- [x] **H2. Block widgets / floats.** Settled: the contract stays element-based
+  (no React leak), and package code gets live per-view `MountHub`/`FloatHub`
+  instances through `ViewMountHub`/`ViewFloatHub` and `DecorationViewTarget`.
 - [x] **H3. Do not allowlist raw kernel.** A1/A2 use narrow re-exports from
   `@the-editor/extensions`; `@the-editor/kernel` stays unallowlisted because the
   services layer already contains `PackageRuntimeService`, and naming it would

@@ -54,8 +54,7 @@ import {
   moveVertical,
   type Edit,
 } from "../editor/commands";
-import { FloatHub } from "../editor/floats";
-import { MountHub } from "../editor/mounts";
+import { FloatHub, MountHub } from "@the-editor/editor";
 import type { HighlightRun } from "../platform/syntax";
 import type { IntelLocation, PaneHighlights, PaneHost } from "../runtime";
 import { metasFor, type ExcerptMeta, type MultiBufferBuild } from "./builder";
@@ -384,9 +383,7 @@ export class MultiBufferPane implements PaneHost {
       Math.max(0, Math.min(result.buffer.length, sourceCaret)),
     );
     this.selection =
-      caret === undefined
-        ? this.clampSelection(this.selection)
-        : Selection.single(caret, caret);
+      caret === undefined ? this.clampSelection(this.selection) : Selection.single(caret, caret);
     this.notifyDocument([], { reveal: true });
   }
 
@@ -484,7 +481,10 @@ export class MultiBufferPane implements PaneHost {
     const matchCountByDoc = new Map<string, number>();
     for (const excerpt of this.baseExcerpts) {
       const count = (this.matchesByExcerptId.get(excerpt.id) ?? []).length;
-      matchCountByDoc.set(excerpt.documentId, (matchCountByDoc.get(excerpt.documentId) ?? 0) + count);
+      matchCountByDoc.set(
+        excerpt.documentId,
+        (matchCountByDoc.get(excerpt.documentId) ?? 0) + count,
+      );
     }
     this.metasData = metasFor(this.snapshotData, {
       pathByDoc: this.pathByDoc,
@@ -532,7 +532,6 @@ export class MultiBufferPane implements PaneHost {
     if (changed) this.invalidateVisuals();
   }
 
-
   private attachIntel(docId: string): void {
     const path = this.pathByDoc.get(docId);
     if (path === undefined) return;
@@ -578,7 +577,10 @@ export class MultiBufferPane implements PaneHost {
     // per-line query), so rebuild the visuals when the attach set or source
     // diagnostics change — that is when consumed source bands (VCS) appear.
     this.visualsData = multiBufferVisuals(this.snapshotData, this.metasData, this.sourceVisualsFor);
-    this.notify([invalidate(VisualsInvalidated, { generation: this.visualsGeneration })], "document");
+    this.notify(
+      [invalidate(VisualsInvalidated, { generation: this.visualsGeneration })],
+      "document",
+    );
     for (const listener of this.highlightListeners) listener();
   }
 
@@ -612,7 +614,10 @@ export class MultiBufferPane implements PaneHost {
         primaryRange: { start: excerpt.sourceRange.start, end: excerpt.sourceRange.start },
       });
       let j = i + 1;
-      while (j < this.baseExcerpts.length && this.baseExcerpts[j]!.documentId === excerpt.documentId)
+      while (
+        j < this.baseExcerpts.length &&
+        this.baseExcerpts[j]!.documentId === excerpt.documentId
+      )
         j++;
       i = j;
     }
@@ -647,7 +652,9 @@ export class MultiBufferPane implements PaneHost {
     const length = this.snapshotData.length;
     const clamp = (pos: number): number => Math.max(0, Math.min(length, pos));
     return Selection.create(
-      selection.ranges.map((range) => SelectionRange.create(clamp(range.anchor), clamp(range.head))),
+      selection.ranges.map((range) =>
+        SelectionRange.create(clamp(range.anchor), clamp(range.head)),
+      ),
       { primaryIndex: selection.primaryIndex },
     );
   }

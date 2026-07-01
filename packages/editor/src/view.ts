@@ -1,7 +1,7 @@
 /**
  * View scopes: one per pane. A view is a window onto a document — it owns
- * selection and the view notification bus, nothing else. Everything
- * document-shaped (text, history, document-anchored visuals) comes from the
+ * selection, the view notification bus, and renderer-local element hubs.
+ * Everything document-shaped (text, history, document-anchored visuals) comes from the
  * document context the view extends, which is what makes two splits of one
  * document share edits for free.
  *
@@ -32,12 +32,17 @@ import {
   type DocumentChangeRange,
 } from "./notifications";
 import { mapOffsetThroughChanges, ViewDocumentSync } from "./commit";
+import { MountHub, ViewMountHub } from "./mounts";
+import { FloatHub, ViewFloatHub } from "./floats";
 
 let nextViewId = 1;
 
 export type CreateViewInput = {
   readonly id?: string | EditorScopeId;
   readonly selection?: Selection;
+  /** Existing hub instances to expose through the view context; defaults create fresh ones. */
+  readonly mounts?: MountHub;
+  readonly floats?: FloatHub;
 };
 
 export interface ViewScope {
@@ -89,9 +94,13 @@ export function makeViewScope(
       DocumentNotifications,
     );
     const syncedVersion = yield* Ref.make(yield* textDocument.version);
+    const mounts = input.mounts ?? new MountHub();
+    const floats = input.floats ?? new FloatHub();
 
     const context = documentContext.pipe(
       Context.add(ActiveEditorScopeId, id),
+      Context.add(ViewMountHub, mounts),
+      Context.add(ViewFloatHub, floats),
       Context.add(SelectionState, selectionState),
       Context.add(ViewNotifications, bus),
       Context.add(ViewDocumentSync, syncedVersion),

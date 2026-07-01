@@ -11,3 +11,5 @@ export * from "./state";
 export * from "./visuals";
 export * from "./decorationProviders";
 export * from "./geometry";
+export * from "./mounts";
+export * from "./floats";

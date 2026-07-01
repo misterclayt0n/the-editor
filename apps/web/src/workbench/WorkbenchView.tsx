@@ -25,13 +25,12 @@ import {
 import { createPortal } from "react-dom";
 import { SearchIcon } from "lucide-react";
 import type { EditorSnapshot } from "@the-editor/editor";
-import type { PanelId, SlotId, Stack, Tile } from "@the-editor/workbench";
+import type { PanelId, PanelMount, SlotId, Stack, Tile } from "@the-editor/workbench";
 import type { EditorPane } from "../runtime";
 import type { WorkbenchHost } from "./host";
 import { EditorView } from "../editor/EditorView";
 import { MultiBufferView } from "../multibuffer/MultiBufferView";
 import { FileIcon } from "./fileIcons";
-import type { PanelMount } from "./panelRenderers";
 import { createPortalNode, OutPortal, type PortalNode } from "./panelPortal";
 
 type WorkbenchViewProps = {
@@ -136,7 +135,8 @@ function firstStackId(tile: Tile | null): SlotId | undefined {
 function lastStackId(tile: Tile | null): SlotId | undefined {
   let node = tile;
   while (node !== null && node.kind === "split") {
-    const child = node.direction === "row" ? node.children[node.children.length - 1] : node.children[0];
+    const child =
+      node.direction === "row" ? node.children[node.children.length - 1] : node.children[0];
     node = child?.tile ?? null;
   }
   return node !== null && node.kind === "stack" ? node.id : undefined;
@@ -221,12 +221,7 @@ export function WorkbenchView({
   );
 
   const beginTabDrag = useCallback(
-    (
-      event: React.PointerEvent,
-      panelId: PanelId,
-      fromSlot: SlotId,
-      title: string,
-    ) => {
+    (event: React.PointerEvent, panelId: PanelId, fromSlot: SlotId, title: string) => {
       if (event.button !== 0) return;
       const startX = event.clientX;
       const startY = event.clientY;
@@ -324,7 +319,9 @@ export function WorkbenchView({
               ...(leadingAction !== undefined ? { leadingAction } : {}),
             }
           : {})}
-        {...(rightStackId !== undefined && trailingAction !== undefined ? { rightStackId, trailingAction } : {})}
+        {...(rightStackId !== undefined && trailingAction !== undefined
+          ? { rightStackId, trailingAction }
+          : {})}
       />
       <PanelInPortals
         runtime={runtime}
@@ -447,7 +444,9 @@ function PanelBody({
   if (multiBuffer !== undefined) {
     return <MultiBufferView runtime={runtime} pane={multiBuffer} focused={focused} />;
   }
-  return <CustomPanelView runtime={runtime} panelId={panelId} registerPanelMount={registerPanelMount} />;
+  return (
+    <CustomPanelView runtime={runtime} panelId={panelId} registerPanelMount={registerPanelMount} />
+  );
 }
 
 type TreeProps = {
@@ -475,7 +474,11 @@ type TreeProps = {
   readonly onPanelAttached: (panelId: PanelId, focused: boolean) => void;
 };
 
-function TileView({ tile, path, ...tree }: TreeProps & { tile: Tile; path: ReadonlyArray<number> }) {
+function TileView({
+  tile,
+  path,
+  ...tree
+}: TreeProps & { tile: Tile; path: ReadonlyArray<number> }) {
   if (tile.kind === "stack") return <StackView stack={tile} {...tree} />;
   return <SplitView split={tile} path={path} {...tree} />;
 }
@@ -564,7 +567,10 @@ function SplitDivider({
       const deltaWeight = (((horizontal ? move.clientX : move.clientY) - start) / sizePx) * total;
       const left = Math.max(
         minWeight,
-        Math.min(startWeights[index - 1]! + startWeights[index]! - minWeight, startWeights[index - 1]! + deltaWeight),
+        Math.min(
+          startWeights[index - 1]! + startWeights[index]! - minWeight,
+          startWeights[index - 1]! + deltaWeight,
+        ),
       );
       const right = startWeights[index - 1]! + startWeights[index]! - left;
       const weights = [...startWeights];
@@ -581,12 +587,7 @@ function SplitDivider({
     window.addEventListener("pointerup", onUp);
   };
 
-  return (
-    <div
-      className={`wb-divider wb-divider-${direction}`}
-      onPointerDown={onPointerDown}
-    />
-  );
+  return <div className={`wb-divider wb-divider-${direction}`} onPointerDown={onPointerDown} />;
 }
 
 function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
@@ -603,7 +604,9 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
   const activePanel = activePanelId !== undefined ? runtime.panelById(activePanelId) : undefined;
   const chromeClass =
     stack.className ??
-    (activePanel !== undefined ? runtime.panelRenderers.get(activePanel.kind)?.chrome?.className : undefined);
+    (activePanel !== undefined
+      ? runtime.panelRenderers.get(activePanel.kind)?.chrome?.className
+      : undefined);
 
   const dropZone =
     drag !== null && drag.target?.kind === "zone" && drag.target.slotId === stack.id
@@ -629,83 +632,88 @@ function StackView({ stack, ...tree }: TreeProps & { stack: Stack }) {
   }, [stack.active, activePanelId]);
 
   return (
-    <section className={`wb-pane${focused ? " wb-pane--focused" : ""}${chromeClass ? ` ${chromeClass}` : ""}`}>
+    <section
+      className={`wb-pane${focused ? " wb-pane--focused" : ""}${chromeClass ? ` ${chromeClass}` : ""}`}
+    >
       {(stack.panels.length > 1 || stack.tabsHidden !== true) && (
-      <div className="wb-tabbar" data-wb-tabbar data-slot-id={stack.id}>
-        {tree.firstTabInset && tree.leftStackId === stack.id && (
-          <div className="wb-tabbar-inset" style={{ width: tree.firstTabInset }} aria-hidden="true" />
-        )}
-        {tree.leadingAction !== undefined && tree.leftStackId === stack.id && (
-          <div className="wb-tabbar-start">{tree.leadingAction}</div>
-        )}
-        <div className="wb-tabbar-scroll" ref={tabbarRef}>
-          {stack.panels.map((panelId, i) => {
-            const tabPane = runtime.pane(panelId);
-            if (tabPane === undefined) {
-              // Non-editor panel: title comes from the renderer registry.
-              const panel = runtime.panelById(panelId);
-              const multiBuffer = runtime.multiBufferPane(panelId);
-              const renderer = panel !== undefined ? runtime.panelRenderers.get(panel.kind) : undefined;
-              const title =
-                multiBuffer !== undefined
-                  ? multiBuffer.title
-                  : panel !== undefined && renderer !== undefined
-                    ? renderer.title(panel)
-                    : "panel";
-              const icon =
-                multiBuffer !== undefined ? (
-                  <SearchIcon className="wb-tab-search-icon" aria-hidden="true" />
-                ) : panel !== undefined && renderer !== undefined ? (
-                  renderer.icon?.(panel)
-                ) : null;
+        <div className="wb-tabbar" data-wb-tabbar data-slot-id={stack.id}>
+          {tree.firstTabInset && tree.leftStackId === stack.id && (
+            <div
+              className="wb-tabbar-inset"
+              style={{ width: tree.firstTabInset }}
+              aria-hidden="true"
+            />
+          )}
+          {tree.leadingAction !== undefined && tree.leftStackId === stack.id && (
+            <div className="wb-tabbar-start">{tree.leadingAction}</div>
+          )}
+          <div className="wb-tabbar-scroll" ref={tabbarRef}>
+            {stack.panels.map((panelId, i) => {
+              const tabPane = runtime.pane(panelId);
+              if (tabPane === undefined) {
+                // Non-editor panel: title comes from the renderer registry.
+                const panel = runtime.panelById(panelId);
+                const multiBuffer = runtime.multiBufferPane(panelId);
+                const renderer =
+                  panel !== undefined ? runtime.panelRenderers.get(panel.kind) : undefined;
+                const title =
+                  multiBuffer !== undefined
+                    ? multiBuffer.title
+                    : panel !== undefined && renderer !== undefined
+                      ? renderer.title(panel)
+                      : "panel";
+                const icon =
+                  multiBuffer !== undefined ? (
+                    <SearchIcon className="wb-tab-search-icon" aria-hidden="true" />
+                  ) : panel !== undefined && renderer !== undefined ? (
+                    (renderer.icon?.(panel) as ReactNode)
+                  ) : null;
+                return (
+                  <Fragment key={panelId}>
+                    {dropTabIndex === i && <div className="wb-tab-insert" />}
+                    <div
+                      className={`wb-tab${i === stack.active ? " wb-tab--active" : ""}`}
+                      onPointerDown={(event) => tree.beginTabDrag(event, panelId, stack.id, title)}
+                    >
+                      {icon}
+                      <span className="wb-tab-name">{title}</span>
+                      <button
+                        type="button"
+                        className="wb-tab-close"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          runtime.requestCloseTab(panelId);
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </Fragment>
+                );
+              }
               return (
                 <Fragment key={panelId}>
                   {dropTabIndex === i && <div className="wb-tab-insert" />}
-                  <div
-                    className={`wb-tab${i === stack.active ? " wb-tab--active" : ""}`}
-                    onPointerDown={(event) => tree.beginTabDrag(event, panelId, stack.id, title)}
-                  >
-                    {icon}
-                    <span className="wb-tab-name">{title}</span>
-                    <button
-                      type="button"
-                      className="wb-tab-close"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        runtime.requestCloseTab(panelId);
-                      }}
-                    >
-                      ×
-                    </button>
-                  </div>
+                  <Tab
+                    pane={tabPane}
+                    active={i === stack.active}
+                    dragging={drag?.panelId === panelId}
+                    onPointerDown={(event, title) =>
+                      tree.beginTabDrag(event, panelId, stack.id, title)
+                    }
+                    onClose={() => runtime.requestCloseTab(panelId)}
+                  />
                 </Fragment>
               );
-            }
-            return (
-              <Fragment key={panelId}>
-                {dropTabIndex === i && <div className="wb-tab-insert" />}
-                <Tab
-                  pane={tabPane}
-                  active={i === stack.active}
-                  dragging={drag?.panelId === panelId}
-                  onPointerDown={(event, title) => tree.beginTabDrag(event, panelId, stack.id, title)}
-                  onClose={() => runtime.requestCloseTab(panelId)}
-                />
-              </Fragment>
-            );
-          })}
-          {dropTabIndex === stack.panels.length && <div className="wb-tab-insert" />}
+            })}
+            {dropTabIndex === stack.panels.length && <div className="wb-tab-insert" />}
+          </div>
+          {tree.trailingAction !== undefined && tree.rightStackId === stack.id && (
+            <div className="wb-tabbar-end">{tree.trailingAction}</div>
+          )}
         </div>
-        {tree.trailingAction !== undefined && tree.rightStackId === stack.id && (
-          <div className="wb-tabbar-end">{tree.trailingAction}</div>
-        )}
-      </div>
       )}
-      <div
-        className="wb-body"
-        data-wb-body
-        data-slot-id={stack.id}
-      >
+      <div className="wb-body" data-wb-body data-slot-id={stack.id}>
         {activePanelId !== undefined && (
           <OutPortal
             node={tree.nodeFor(activePanelId)}
@@ -758,13 +766,7 @@ function CustomPanelView({
     [runtime, panelId],
   );
 
-  return (
-    <div
-      ref={hostRef}
-      className="wb-custom-panel"
-      data-panel-id={panelId}
-    />
-  );
+  return <div ref={hostRef} className="wb-custom-panel" data-panel-id={panelId} />;
 }
 
 type TabInfo = { readonly name: string; readonly dirty: boolean; readonly conflict: boolean };
@@ -772,8 +774,7 @@ type TabInfo = { readonly name: string; readonly dirty: boolean; readonly confli
 function readTabInfo(pane: EditorPane): TabInfo {
   const file = pane.fileInfo();
   const snapshot = pane.snapshot();
-  const name =
-    file === null ? "untitled" : (file.path.split("/").pop() ?? file.path);
+  const name = file === null ? "untitled" : (file.path.split("/").pop() ?? file.path);
   return {
     name,
     dirty: snapshot.dirty,

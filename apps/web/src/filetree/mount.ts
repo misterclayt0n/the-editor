@@ -11,7 +11,7 @@ import { FileTree, type GitStatusEntry } from "@pierre/trees";
 import { createElement } from "react";
 import { Files } from "lucide-react";
 import type { AppRuntime } from "../runtime";
-import type { PanelRenderer } from "../workbench/panelRenderers";
+import type { PanelRenderer } from "@the-editor/workbench";
 
 const WALK_IGNORE = new Set([".git", ".jj", "node_modules", ".DS_Store"]);
 const WALK_MAX_PATHS = 30_000;

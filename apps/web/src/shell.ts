@@ -25,15 +25,16 @@ import { Fonts, fontDefaults, makeFonts, type ResolvedFontSystem } from "@the-ed
 import { createExtensionTranspiler } from "./platform/extensionTranspiler";
 import {
   dockEdge,
+  makePanelRenderers,
   makeWorkbench,
   slotOfPanel,
   SurfaceKind,
   toggleStackTabs,
+  type PanelRenderer,
 } from "@the-editor/workbench";
 import { applyThemeToDocument } from "./theme/dom";
 import { createFontDomDriver } from "./fonts/dom";
 import { createFontFileLoader } from "./platform/fonts";
-import { makePanelRenderers, type PanelRenderer } from "./workbench/panelRenderers";
 import { ChromeSlot, ShellWorkbenchHost } from "./workbench/shellHost";
 
 /** The shell chrome's one panel kind: the viewport that hosts the active
@@ -128,10 +129,8 @@ export class Shell {
             return next;
           })
           .pipe(Effect.orDie);
-        const chromeHost = new ShellWorkbenchHost(
-          chromeWorkbench,
-          chromeRenderers,
-          () => instance.onFocusActiveSession?.(),
+        const chromeHost = new ShellWorkbenchHost(chromeWorkbench, chromeRenderers, () =>
+          instance.onFocusActiveSession?.(),
         );
 
         return new Shell(

@@ -49,6 +49,9 @@ import * as KeymapsNamespace from "@the-editor/keymaps";
 import * as WorkbenchNamespace from "@the-editor/workbench";
 import * as EditorNamespace from "@the-editor/editor";
 import * as EngineNamespace from "@the-editor/engine";
+import * as IntelNamespace from "@the-editor/intel";
+import * as VcsNamespace from "@the-editor/vcs";
+import * as DiffViewNamespace from "@the-editor/diff-view";
 import * as ThemeNamespace from "@the-editor/theme";
 import * as FontsNamespace from "@the-editor/fonts";
 import { FileSystemPort, WorkspaceRoots, type DirEntry } from "@the-editor/editor";
@@ -67,9 +70,8 @@ import { makeExtensionTrust } from "./extensionTrust";
  *  through the same command for free.
  *
  *  (`@the-editor/lsp` is deliberately NOT here: it's low-level protocol
- *  plumbing, not a registration seam — the language-server registration
- *  service is `LanguageServers` in product/lsp. Exposing that is a separate,
- *  deliberate call if/when extensions should contribute language servers.) */
+ *  plumbing, not a registration seam. Language-server contributions use the
+ *  public `LanguageServers` registry from `@the-editor/intel`.) */
 export function buildExtensionVirtualModules(): Readonly<Record<string, unknown>> {
   return {
     effect: EffectNamespace,
@@ -79,6 +81,9 @@ export function buildExtensionVirtualModules(): Readonly<Record<string, unknown>
     "@the-editor/workbench": WorkbenchNamespace,
     "@the-editor/editor": EditorNamespace,
     "@the-editor/engine": EngineNamespace,
+    "@the-editor/intel": IntelNamespace,
+    "@the-editor/vcs": VcsNamespace,
+    "@the-editor/diff-view": DiffViewNamespace,
     "@the-editor/theme": ThemeNamespace,
     "@the-editor/fonts": FontsNamespace,
   };
@@ -128,14 +133,14 @@ function discoverDir(
     const stats = yield* Effect.forEach(
       candidates,
       (path) =>
-        fs
-          .stat(path)
-          .pipe(
-            Effect.map((maybe): DiscoveredSource | null =>
-              Option.isSome(maybe) ? { path, mtimeMs: maybe.value.mtimeMs, size: maybe.value.size } : null,
-            ),
-            Effect.orElseSucceed(() => null),
+        fs.stat(path).pipe(
+          Effect.map((maybe): DiscoveredSource | null =>
+            Option.isSome(maybe)
+              ? { path, mtimeMs: maybe.value.mtimeMs, size: maybe.value.size }
+              : null,
           ),
+          Effect.orElseSucceed(() => null),
+        ),
       { concurrency: "unbounded" },
     );
     return stats.filter((entry): entry is DiscoveredSource => entry !== null);
@@ -155,7 +160,9 @@ export interface MakeUserExtensionsPackageOptions<ExtR> {
 
 export function makeUserExtensionsPackage<ExtR>(
   options: MakeUserExtensionsPackageOptions<ExtR>,
-): ExtensionPackage<FileSystemPort | PackageRuntimeService | Attention | Commands | WorkspaceRoots> {
+): ExtensionPackage<
+  FileSystemPort | PackageRuntimeService | Attention | Commands | WorkspaceRoots
+> {
   return definePackage("the-editor/user-extensions", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystemPort;
@@ -209,7 +216,11 @@ export function makeUserExtensionsPackage<ExtR>(
 
           for (const source of sources) {
             const prior = activeMap.get(source.path);
-            if (prior !== undefined && prior.mtimeMs === source.mtimeMs && prior.size === source.size) {
+            if (
+              prior !== undefined &&
+              prior.mtimeMs === source.mtimeMs &&
+              prior.size === source.size
+            ) {
               continue;
             }
 
@@ -305,9 +316,7 @@ export function makeUserExtensionsPackage<ExtR>(
       // `withPermits(1)` turns "many producers" into "one queue".
       const reloadLock = yield* Effect.makeSemaphore(1);
       const reloadAll = () =>
-        reloadLock.withPermits(1)(
-          Effect.all([reloadGlobal(), reloadProject()], { discard: true }),
-        );
+        reloadLock.withPermits(1)(Effect.all([reloadGlobal(), reloadProject()], { discard: true }));
 
       // "Reload", not "Reload Extensions": in this editor everything is a
       // package, so a disk theme/keymap/panel is just an extension and
@@ -332,9 +341,7 @@ export function makeUserExtensionsPackage<ExtR>(
       // and "reload the project half when the folder changes". Forked so
       // this real IO never blocks package activation itself, which the boot
       // sequence runs synchronously.
-      yield* Effect.forkScoped(
-        Stream.runForEach(workspaceRoots.changes, () => reloadAll()),
-      );
+      yield* Effect.forkScoped(Stream.runForEach(workspaceRoots.changes, () => reloadAll()));
     }),
   );
 }

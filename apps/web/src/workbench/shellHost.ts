@@ -22,13 +22,13 @@ import {
   Workbench,
   type Panel,
   type PanelId,
+  type PanelRenderers,
   type SlotId,
   type SplitDirection,
   type Tile,
 } from "@the-editor/workbench";
 import type { EditorPane, WorkbenchSnapshot } from "../runtime";
 import type { MultiBufferPane } from "../multibuffer/pane";
-import type { PanelRenderers } from "./panelRenderers";
 import type { WorkbenchHost } from "./host";
 
 /**

@@ -8,7 +8,7 @@
 
 import { Effect } from "effect";
 import { definePackage } from "@the-editor/extensions";
-import { CompletionProviders, type CompletionItem } from "../intel/types";
+import { CompletionProviders, type CompletionItem } from "@the-editor/intel";
 
 const WORD_REGEX = /[\p{L}_$][\p{L}\p{N}_$]*/gu;
 /** Word scanning is capped: beyond this the document stops contributing. */

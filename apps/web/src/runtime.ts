@@ -59,6 +59,7 @@ import {
   dockIntoRegion,
   findSlot,
   makeStack,
+  makePanelRenderers,
   makeWorkbench,
   moveTab,
   placeInStack,
@@ -69,6 +70,7 @@ import {
   splitBeside,
   toggleStackTabs,
   Workbench,
+  PanelRenderers,
   type Arrangement,
   type Panel,
   type RegionSnapshot,
@@ -93,8 +95,12 @@ import {
   makeDecorationProviders,
   Files,
   FileSystemPort,
+  FloatHub,
   makeViewScope,
   makeWorkspaceScope,
+  MountHub,
+  ViewFloatHub,
+  ViewMountHub,
   setSelection,
   ViewNotifications,
   WorkspaceNotifications,
@@ -140,28 +146,22 @@ import { createSyntaxPort, type HighlightRun, type SyntaxPort } from "./platform
 import { getHomeDir } from "./platform/homeDir";
 import { buildExtensionVirtualModules, makeUserExtensionsPackage } from "./product/userExtensions";
 import { DocumentHighlights } from "./editor/highlights";
-import { FloatHub } from "./editor/floats";
 import { LspManager, type DiagnosticCounts } from "./lsp/manager";
-import { lspDefaults, LanguageServers, makeLanguageServers } from "./product/lsp";
+import { lspDefaults } from "./product/lsp";
 import { lspActions, HostLspActions } from "./product/lspActions";
 import { lspIntel, HostLspIntel } from "./product/lspIntel";
 import { intelActions, HostIntelActions } from "./product/intelActions";
 import { wordCompletions } from "./product/wordCompletions";
-import { makePanelRenderers, PanelRenderers } from "./workbench/panelRenderers";
 import { fileTreePackage, FileTreeSurface, HostFileTree } from "./product/fileTree";
 import { createFileTreeRenderer } from "./filetree/mount";
 import * as Regions from "./workbench/regions";
-import {
-  diffViewPackage,
-  DiffViewPreferences,
-  DiffViewSurface,
-  HostDiffView,
-  makeDiffViewPreferences,
-} from "./product/diffView";
+import { diffViewPackage, DiffViewSurface, HostDiffView } from "./product/diffView";
+import { DiffViewPreferences, makeDiffViewPreferences } from "@the-editor/diff-view";
 import { createDiffViewRenderer } from "./diffview/mount";
 import { terminalPackage, TerminalSurface, HostTerminal } from "./product/terminal";
 import { createTerminalRenderer } from "./terminal/mount";
-import { HostVcsDefaults, makeVcsProviders, vcsDefaults, VcsProviders } from "./product/vcs";
+import { HostVcsDefaults, vcsDefaults } from "./product/vcs";
+import { makeVcsProviders, VcsProviders } from "@the-editor/vcs";
 import { createGitProvider } from "./vcs/git";
 import { VcsManager } from "./vcs/manager";
 import { vcsGutterProvider } from "./vcs/gutter";
@@ -172,10 +172,11 @@ import {
   CompletionProviders,
   HoverProviders,
   SignatureProviders,
-} from "./intel/types";
+  LanguageServers,
+  makeLanguageServers,
+} from "@the-editor/intel";
 
 import { uriToPath, type lsp } from "@the-editor/lsp";
-import { MountHub } from "./editor/mounts";
 import { buildMultiBuffer, type MultiBufferMatchFile } from "./multibuffer/builder";
 import { MultiBufferPane, MultiBufferSurface } from "./multibuffer/pane";
 
@@ -183,8 +184,21 @@ const TerminalRegion = "bottom-panel";
 
 /** Foreground processes that mean "terminal is idle" — closing them is safe. */
 const SHELL_PROCESSES = new Set([
-  "bash", "zsh", "sh", "fish", "dash", "ksh", "tcsh", "csh", "nu", "xonsh",
-  "pwsh", "powershell", "powershell.exe", "cmd.exe", "login",
+  "bash",
+  "zsh",
+  "sh",
+  "fish",
+  "dash",
+  "ksh",
+  "tcsh",
+  "csh",
+  "nu",
+  "xonsh",
+  "pwsh",
+  "powershell",
+  "powershell.exe",
+  "cmd.exe",
+  "login",
 ]);
 
 /** Whether a PTY's foreground process is just a shell prompt (not a real job). */
@@ -259,8 +273,8 @@ export type PaneFileInfo = { readonly path: string; readonly status: FileSyncSta
  * Panes are content; the arrangement decides where (and whether) they show.
  */
 export class EditorPane implements PaneHost {
-  readonly mounts = new MountHub();
-  readonly floats = new FloatHub();
+  readonly mounts: MountHub;
+  readonly floats: FloatHub;
   keyInterceptor?: ((event: KeyboardEventLike) => boolean) | undefined;
   pointerHover?: ((offset: number | null) => void) | undefined;
   pointerScrolled?: (() => void) | undefined;
@@ -270,7 +284,10 @@ export class EditorPane implements PaneHost {
     readonly document: DocumentScope,
     readonly view: ViewScope,
     private readonly runtime: AppRuntime,
-  ) {}
+  ) {
+    this.mounts = Context.get(view.context as Context.Context<ViewMountHub>, ViewMountHub);
+    this.floats = Context.get(view.context as Context.Context<ViewFloatHub>, ViewFloatHub);
+  }
 
   /** Highlight source for this pane's document (absent without a host). */
   get highlights(): PaneHighlights | undefined {
@@ -396,6 +413,8 @@ export class AppRuntime {
   diffViewPreferences!: DiffViewPreferences.Service;
   /** Human-facing notification + request fabric (toasts, confirm dialogs). */
   attention!: Attention.Service;
+  /** Document/view decoration driver for extension visual providers. */
+  decorationProviders!: DecorationProviders.Service;
   /** Version control (undefined without a process host). */
   vcs: VcsManager | undefined;
   /** Intel provider registries (App hands them to the IntelController). */
@@ -662,10 +681,19 @@ export class AppRuntime {
           ])
           .pipe(Effect.orDie);
 
-        const appRuntime = new AppRuntime(scope, workspace, workbench, commands, keymaps, themes, fonts);
+        const appRuntime = new AppRuntime(
+          scope,
+          workspace,
+          workbench,
+          commands,
+          keymaps,
+          themes,
+          fonts,
+        );
         appRuntime.panelRenderers = panelRenderers;
         appRuntime.diffViewPreferences = diffViewPreferences;
         appRuntime.attention = attention;
+        appRuntime.decorationProviders = decorationProviders;
         appRuntime.intel = {
           completions: completionProviders,
           hovers: hoverProviders,
@@ -674,7 +702,12 @@ export class AppRuntime {
         appRuntime.workspaceRootsCell = workspaceRoots;
         const processPort = createProcessPort();
         if (processPort !== undefined) {
-          appRuntime.lsp = new LspManager(processPort, fileSystem, languageServers, () => appRuntime.workspaceRoot);
+          appRuntime.lsp = new LspManager(
+            processPort,
+            fileSystem,
+            languageServers,
+            () => appRuntime.workspaceRoot,
+          );
           appRuntime.lsp.onDiagnostics = (docId) => appRuntime.onDiagnosticsChanged?.(docId);
           appRuntime.vcs = new VcsManager(vcsProviders, fileSystem);
           // The diff gutter rides the decoration seam: registered once, the
@@ -899,7 +932,10 @@ export class AppRuntime {
   /** Does this slot's stack currently host at least one editor pane? */
   private stackHostsEditors(slotId: SlotId): boolean {
     const slot = findSlot(this.workbenchSnapshot.arrangement, slotId);
-    return slot?.kind === "stack" && slot.stack.panels.some((id) => this.panes.has(id) || this.multiBufferPanes.has(id));
+    return (
+      slot?.kind === "stack" &&
+      slot.stack.panels.some((id) => this.panes.has(id) || this.multiBufferPanes.has(id))
+    );
   }
 
   // ------------------------------------------------------------- gestures
@@ -982,7 +1018,8 @@ export class AppRuntime {
   private releaseDocument(docId: DocumentId): void {
     const id = String(docId);
     for (const other of this.panes.values()) if (String(other.document.id) === id) return;
-    for (const mb of this.multiBufferPanes.values()) if (mb.sourceDocumentIds().includes(id)) return;
+    for (const mb of this.multiBufferPanes.values())
+      if (mb.sourceDocumentIds().includes(id)) return;
     this.lsp?.detach(id);
     this.highlightsByDoc.get(id)?.close();
     this.highlightsByDoc.delete(id);
@@ -1121,15 +1158,18 @@ export class AppRuntime {
   }
 
   private isCenterContentPanel(panelId: PanelId): boolean {
-    return this.panes.has(panelId) || this.multiBufferPanes.has(panelId) || panelId === this.diffViewPanelId;
+    return (
+      this.panes.has(panelId) ||
+      this.multiBufferPanes.has(panelId) ||
+      panelId === this.diffViewPanelId
+    );
   }
 
   /** Open the working-tree diff as a center tab, like a multibuffer/file. */
   openDiffView(): void {
     const existing =
       this.diffViewPanelId === null ? undefined : this.panelById(this.diffViewPanelId);
-    const panel =
-      existing ?? Effect.runSync(this.workbench.createPanel({ kind: DiffViewSurface }));
+    const panel = existing ?? Effect.runSync(this.workbench.createPanel({ kind: DiffViewSurface }));
     this.diffViewPanelId = panel.id;
     this.placeAsCenterTab(panel.id);
   }
@@ -1186,9 +1226,7 @@ export class AppRuntime {
     // No dock panel yet: create one, remember it as this kind's dock, place it.
     const panel = Effect.runSync(this.workbench.createPanel({ kind }));
     this.dockedPanels.set(kind, panel.id);
-    Effect.runSync(
-      this.workbench.updateArrangement((a) => place(a, panel.id)).pipe(Effect.orDie),
-    );
+    Effect.runSync(this.workbench.updateArrangement((a) => place(a, panel.id)).pipe(Effect.orDie));
     this.focusSlotOfPanel(panel.id);
   }
 
@@ -1209,10 +1247,17 @@ export class AppRuntime {
     const existing = this.dockedPanels.get(TerminalSurface);
     const id = existing ?? Effect.runSync(this.workbench.createPanel({ kind: TerminalSurface })).id;
     this.dockedPanels.set(TerminalSurface, id);
-    Regions.moveToRegion(this.workbench, this.collapsedRegions, id, TerminalRegion, TerminalRegion, {
-      edge: "bottom",
-      ratio: 0.32,
-    });
+    Regions.moveToRegion(
+      this.workbench,
+      this.collapsedRegions,
+      id,
+      TerminalRegion,
+      TerminalRegion,
+      {
+        edge: "bottom",
+        ratio: 0.32,
+      },
+    );
     this.focusSlotOfPanel(id);
   }
 
@@ -1226,7 +1271,9 @@ export class AppRuntime {
    *  first use seeds the file tree; thereafter the layout round-trips through
    *  collapse/restore. */
   toggleFileTree(): void {
-    if (Regions.toggleRegion(this.workbench, this.collapsedRegions, this.fileTreeRegion) === "empty") {
+    if (
+      Regions.toggleRegion(this.workbench, this.collapsedRegions, this.fileTreeRegion) === "empty"
+    ) {
       this.dockFileTreeInto(this.fileTreeRegion);
       return;
     }
@@ -1243,7 +1290,9 @@ export class AppRuntime {
 
   /** Move the file tree to the opposite sidebar (left <-> right). */
   moveFileTreeSide(): void {
-    this.dockFileTreeInto(this.fileTreeRegion === "left-sidebar" ? "right-sidebar" : "left-sidebar");
+    this.dockFileTreeInto(
+      this.fileTreeRegion === "left-sidebar" ? "right-sidebar" : "left-sidebar",
+    );
   }
 
   /** Dock the file tree (creating it once) into a sidebar region and remember
@@ -1308,7 +1357,13 @@ export class AppRuntime {
               if (from !== -1 && from < insertAt) insertAt -= 1;
             }
           }
-          return moveTab(a, panelId, fromSlot, toSlot, insertAt === undefined ? {} : { index: insertAt });
+          return moveTab(
+            a,
+            panelId,
+            fromSlot,
+            toSlot,
+            insertAt === undefined ? {} : { index: insertAt },
+          );
         })
         .pipe(Effect.orDie),
     );
@@ -1363,9 +1418,7 @@ export class AppRuntime {
     };
     Effect.runSync(
       this.workbench
-        .updateArrangement((a) =>
-          a.tiles === null ? a : { ...a, tiles: rewrite(a.tiles, 0) },
-        )
+        .updateArrangement((a) => (a.tiles === null ? a : { ...a, tiles: rewrite(a.tiles, 0) }))
         .pipe(Effect.ignore),
     );
   }
@@ -1489,10 +1542,7 @@ export class AppRuntime {
     if (this.syntaxPort === undefined) return;
     const key = String(document.id);
     if (this.highlightsByDoc.has(key)) return;
-    this.highlightsByDoc.set(
-      key,
-      new DocumentHighlights(this.syntaxPort, key, document, path),
-    );
+    this.highlightsByDoc.set(key, new DocumentHighlights(this.syntaxPort, key, document, path));
   }
 
   // ----------------------------------------------------------------- files
@@ -1523,16 +1573,13 @@ export class AppRuntime {
     // the user worked in (tool panels like the file tree don't count). Fall
     // back to the focused stack if it's an editor (first open in a fresh group),
     // then any editor group, then none → a new group is docked below.
-    const focusedSlotStack =
-      focusedSlot === null ? undefined : findSlot(arrangement, focusedSlot);
+    const focusedSlotStack = focusedSlot === null ? undefined : findSlot(arrangement, focusedSlot);
     const focusedEditor =
       focusedSlotStack?.kind === "stack" && hostsEditors(focusedSlotStack.stack)
         ? focusedSlotStack.stack
         : undefined;
     const stack: Stack | undefined =
-      editorStacks.find((s) => s.id === this.lastEditorSlot) ??
-      focusedEditor ??
-      editorStacks[0];
+      editorStacks.find((s) => s.id === this.lastEditorSlot) ?? focusedEditor ?? editorStacks[0];
 
     if (stack !== undefined) {
       for (const panelId of stack.panels) {
@@ -1620,7 +1667,10 @@ export class AppRuntime {
     );
     if (Option.isNone(transaction)) return undefined;
     Effect.runSync(
-      commitDocumentTransaction(transaction.value).pipe(Effect.provide(scope.value.context), Effect.orDie),
+      commitDocumentTransaction(transaction.value).pipe(
+        Effect.provide(scope.value.context),
+        Effect.orDie,
+      ),
     );
     return { change: transaction.value.changes.desc(), buffer: Effect.runSync(text.get) };
   }
@@ -1674,7 +1724,11 @@ export class AppRuntime {
    */
   async searchProject(
     query: string,
-    options?: { readonly contextLines?: number; readonly limit?: number; readonly mode?: FileFinderGrepMode },
+    options?: {
+      readonly contextLines?: number;
+      readonly limit?: number;
+      readonly mode?: FileFinderGrepMode;
+    },
   ): Promise<MultiBufferPane | undefined> {
     const root = this.workspaceRoot;
     const finder = this.fileFinderPort();
@@ -1739,25 +1793,37 @@ export class AppRuntime {
       const editorStacks = collectSlots(arrangement).flatMap((slot) =>
         slot.kind === "stack" && hosts(slot.stack) ? [slot.stack] : [],
       );
-      const focusedSlotStack = focusedSlot === null ? undefined : findSlot(arrangement, focusedSlot);
+      const focusedSlotStack =
+        focusedSlot === null ? undefined : findSlot(arrangement, focusedSlot);
       const focusedEditor =
         focusedSlotStack?.kind === "stack" && hosts(focusedSlotStack.stack)
           ? focusedSlotStack.stack
           : undefined;
-      return editorStacks.find((stack) => stack.id === this.lastEditorSlot) ?? focusedEditor ?? editorStacks[0];
+      return (
+        editorStacks.find((stack) => stack.id === this.lastEditorSlot) ??
+        focusedEditor ??
+        editorStacks[0]
+      );
     };
 
     Effect.runSync(
       this.workbench
         .updateArrangement((arrangement) => {
           const withoutPanel =
-            slotOfPanel(arrangement, panelId) === undefined ? arrangement : removePanel(arrangement, panelId);
+            slotOfPanel(arrangement, panelId) === undefined
+              ? arrangement
+              : removePanel(arrangement, panelId);
           if (withoutPanel.tiles === null) return { ...withoutPanel, tiles: makeStack([panelId]) };
           const stack = chooseStack(withoutPanel);
           if (stack !== undefined) return placeInStack(withoutPanel, stack.id, panelId);
-          return dockEdge(withoutPanel, panelId, this.fileTreeRegion === "left-sidebar" ? "right" : "left", {
-            ratio: 0.8,
-          });
+          return dockEdge(
+            withoutPanel,
+            panelId,
+            this.fileTreeRegion === "left-sidebar" ? "right" : "left",
+            {
+              ratio: 0.8,
+            },
+          );
         })
         .pipe(Effect.orDie),
     );
@@ -1824,9 +1890,7 @@ export class AppRuntime {
     const files = Context.getOption(this.workspace.context, Files);
     if (Option.isNone(files)) return;
     const docId = DocumentId.make(location.docId);
-    await Effect.runPromise(
-      files.value.save(docId).pipe(Effect.catchAll(() => Effect.void)),
-    );
+    await Effect.runPromise(files.value.save(docId).pipe(Effect.catchAll(() => Effect.void)));
     this.lsp?.documentSaved(String(docId));
     this.vcs?.documentSaved();
     this.onFileStateChanged?.();
@@ -1853,8 +1917,12 @@ export class AppRuntime {
     if (!editable && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "c") {
       const selection = window.getSelection();
       const node = selection?.anchorNode ?? null;
-      const element = node instanceof Element ? node : node?.parentElement ?? null;
-      if (selection !== null && !selection.isCollapsed && element?.closest(".editor-float") != null) {
+      const element = node instanceof Element ? node : (node?.parentElement ?? null);
+      if (
+        selection !== null &&
+        !selection.isCollapsed &&
+        element?.closest(".editor-float") != null
+      ) {
         return;
       }
     }
@@ -1948,6 +2016,7 @@ export class AppRuntime {
     const view = Effect.runSync(
       makeViewScope(document, options?.selection ? { selection: options.selection } : {}),
     );
+    Effect.runSync(this.decorationProviders.connectView(view));
     const panel: Panel = Effect.runSync(
       this.workbench.createPanel({ kind: EditorSurface, context: view.context }),
     );

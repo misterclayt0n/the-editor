@@ -147,6 +147,9 @@ importers:
       '@the-editor/commands':
         specifier: workspace:*
         version: link:../../packages/commands
+      '@the-editor/diff-view':
+        specifier: workspace:*
+        version: link:../../packages/diff-view
       '@the-editor/editor':
         specifier: workspace:*
         version: link:../../packages/editor
@@ -159,6 +162,9 @@ importers:
       '@the-editor/fonts':
         specifier: workspace:*
         version: link:../../packages/fonts
+      '@the-editor/intel':
+        specifier: workspace:*
+        version: link:../../packages/intel
       '@the-editor/kernel':
         specifier: workspace:*
         version: link:../../packages/kernel
@@ -171,6 +177,9 @@ importers:
       '@the-editor/theme':
         specifier: workspace:*
         version: link:../../packages/theme
+      '@the-editor/vcs':
+        specifier: workspace:*
+        version: link:../../packages/vcs
       '@the-editor/workbench':
         specifier: workspace:*
         version: link:../../packages/workbench
@@ -281,6 +290,25 @@ importers:
       '@effect/vitest':
         specifier: 'catalog:'
         version: 0.29.0(effect@3.21.2)(vitest@3.2.4(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4))
+      tsdown:
+        specifier: 'catalog:'
+        version: 0.20.3(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(@typescript/native-preview@7.0.0-dev.20260522.1)(typescript@5.9.3)
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 3.2.4(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)
+
+  packages/diff-view:
+    dependencies:
+      effect:
+        specifier: 'catalog:'
+        version: 3.21.2
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.12.4
       tsdown:
         specifier: 'catalog:'
         version: 0.20.3(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(@typescript/native-preview@7.0.0-dev.20260522.1)(typescript@5.9.3)
@@ -406,6 +434,28 @@ importers:
         specifier: ^11.0.0
         version: 11.5.0
 
+  packages/intel:
+    dependencies:
+      '@the-editor/engine':
+        specifier: workspace:*
+        version: link:../engine
+      effect:
+        specifier: 'catalog:'
+        version: 3.21.2
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.12.4
+      tsdown:
+        specifier: 'catalog:'
+        version: 0.20.3(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(@typescript/native-preview@7.0.0-dev.20260522.1)(typescript@5.9.3)
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 3.2.4(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)
+
   packages/kernel:
     dependencies:
       '@effect/platform-node':
@@ -524,6 +574,25 @@ importers:
       '@effect/vitest':
         specifier: 'catalog:'
         version: 0.29.0(effect@3.21.2)(vitest@3.2.4(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4))
+      tsdown:
+        specifier: 'catalog:'
+        version: 0.20.3(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(@typescript/native-preview@7.0.0-dev.20260522.1)(typescript@5.9.3)
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 3.2.4(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)
+
+  packages/vcs:
+    dependencies:
+      effect:
+        specifier: 'catalog:'
+        version: 3.21.2
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.12.4
       tsdown:
         specifier: 'catalog:'
         version: 0.20.3(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(@typescript/native-preview@7.0.0-dev.20260522.1)(typescript@5.9.3)

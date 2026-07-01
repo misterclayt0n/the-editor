@@ -25,13 +25,13 @@ import {
   EditorVisuals,
   payloadsOf,
   type EditorNotification,
+  type FloatHandle,
   type VisualsHandle,
 } from "@the-editor/editor";
 import { RangeSet, Transaction, Selection, SelectionRange } from "@the-editor/engine";
 import type { KeyboardEventLike } from "@the-editor/keymaps";
 import { EditorPane, type AppRuntime, type IntelLocation, type PaneHost } from "../runtime";
 import { MultiBufferPane } from "../multibuffer/pane";
-import type { FloatHandle } from "../editor/floats";
 import { fuzzyScore } from "./fuzzy";
 import { looksLikeSnippet, parseSnippet, type SnippetStop } from "./snippet";
 import type {
@@ -46,7 +46,7 @@ import type {
   SignatureProviders,
   SignatureResult,
   SignatureTrigger,
-} from "./types";
+} from "@the-editor/intel";
 
 const HOVER_DELAY_MS = 300;
 /** Grace before a shown hover hides — long enough to mouse INTO the card.
@@ -99,7 +99,12 @@ type CompletionSession = {
   /** Providers answered; before this, empty results mean "still loading". */
   loaded: boolean;
   /** Raw provider results, in provider registration order. */
-  sources: Array<{ provider: CompletionProvider; order: number; items: readonly CompletionItem[]; isIncomplete: boolean }>;
+  sources: Array<{
+    provider: CompletionProvider;
+    order: number;
+    items: readonly CompletionItem[];
+    isIncomplete: boolean;
+  }>;
   scored: readonly ScoredItem[];
   selected: number;
 };
@@ -166,7 +171,10 @@ const mapOffsetThrough = (
   return offset + delta;
 };
 
-const wordStart = (text: { sliceString(from: number, to: number): string }, offset: number): number => {
+const wordStart = (
+  text: { sliceString(from: number, to: number): string },
+  offset: number,
+): number => {
   let start = offset;
   while (start > 0 && WORD_CHAR.test(text.sliceString(start - 1, start))) start--;
   return start;
@@ -268,11 +276,16 @@ export class IntelController {
       providers: Effect.runSync(this.completionProviders.list).map((p) => p.id),
       hoverProviders: Effect.runSync(this.hoverProviders.list).map((p) => p.id),
       ptrCalls: this.ptrCalls,
-      session: this.session !== null ? { loaded: this.session.loaded, sources: this.session.sources.length, scored: this.session.scored.length } : null,
-      snippet:
-        this.snippet !== null
-          ? { current: this.snippet.current, stops: this.snippet.stops }
+      session:
+        this.session !== null
+          ? {
+              loaded: this.session.loaded,
+              sources: this.session.sources.length,
+              scored: this.session.scored.length,
+            }
           : null,
+      snippet:
+        this.snippet !== null ? { current: this.snippet.current, stops: this.snippet.stops } : null,
       signature:
         this.signatureSession !== null
           ? {
@@ -284,7 +297,7 @@ export class IntelController {
         const docId = this.resolveCaret()?.docId ?? null;
         return Effect.runSync(this.signatureProviders.list).map((provider) => ({
           id: provider.id,
-          triggers: docId !== null ? provider.triggerCharacters?.(docId) ?? [] : [],
+          triggers: docId !== null ? (provider.triggerCharacters?.(docId) ?? []) : [],
         }));
       })(),
     };
@@ -806,8 +819,7 @@ export class IntelController {
   private moveSelection(delta: number): void {
     const session = this.session;
     if (session === null || session.scored.length === 0) return;
-    session.selected =
-      (session.selected + delta + session.scored.length) % session.scored.length;
+    session.selected = (session.selected + delta + session.scored.length) % session.scored.length;
     this.publish();
     this.preresolveSelected();
   }
@@ -823,8 +835,7 @@ export class IntelController {
     const caret = snapshot.selection.primary.head; // PANE coords (anchors the float)
     const location = pane.resolveSource(caret);
     if (location === null) return;
-    const anchor =
-      trigger.kind === "triggerCharacter" ? caret : wordStart(snapshot.text, caret);
+    const anchor = trigger.kind === "triggerCharacter" ? caret : wordStart(snapshot.text, caret);
     const session: CompletionSession = {
       pane,
       docId: location.docId,
@@ -1005,7 +1016,10 @@ export class IntelController {
     const pane = this.pane;
     if (pane === null) return;
     const caret = pane.snapshot().selection.primary.head;
-    if (this.session !== null && (caret < this.session.anchor || caret > this.session.anchor + 200)) {
+    if (
+      this.session !== null &&
+      (caret < this.session.anchor || caret > this.session.anchor + 200)
+    ) {
       this.dismissCompletion();
     }
     if (this.snippet !== null) {
@@ -1032,9 +1046,7 @@ export class IntelController {
     const docId = this.resolveCaret()?.docId;
     if (docId === undefined) return false;
     const providers = Effect.runSync(this.completionProviders.list);
-    return providers.some((provider) =>
-      provider.triggerCharacters?.(docId).includes(character),
-    );
+    return providers.some((provider) => provider.triggerCharacters?.(docId).includes(character));
   }
 
   private dismissCompletion(): void {
@@ -1232,7 +1244,7 @@ export class IntelController {
     const documentation = resolved?.documentation ?? selectedItem?.documentation;
     const detail = resolved?.detail ?? selectedItem?.detail;
     const basename =
-      selectedItem !== undefined ? this.resolveCaret()?.path?.split("/").pop() ?? "" : "";
+      selectedItem !== undefined ? (this.resolveCaret()?.path?.split("/").pop() ?? "") : "";
     const dot = basename.lastIndexOf(".");
     const language = dot > 0 ? basename.slice(dot + 1) : undefined;
     this.state = {

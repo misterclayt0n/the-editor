@@ -16,14 +16,12 @@ import {
   type HoverResult,
   type SignatureContext,
   type SignatureResult,
-} from "../intel/types";
+} from "@the-editor/intel";
 
 export class HostLspIntel extends Context.Tag("the-editor/web/HostLspIntel")<
   HostLspIntel,
   {
-    readonly completion: (
-      context: CompletionContext,
-    ) => Promise<CompletionResult | null>;
+    readonly completion: (context: CompletionContext) => Promise<CompletionResult | null>;
     readonly hover: (context: HoverContext) => Promise<HoverResult | null>;
     readonly diagnosticsHover: (context: HoverContext) => HoverResult | null;
     readonly triggerCharacters: (docId: string) => readonly string[];

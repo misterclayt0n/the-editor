@@ -9,8 +9,12 @@ import { Context, Effect } from "effect";
 import { definePackage } from "@the-editor/extensions";
 import { Commands } from "@the-editor/commands";
 import { Keymaps } from "@the-editor/keymaps";
-import { SurfaceKind, SurfaceScope } from "@the-editor/workbench";
-import { PanelRenderers, type PanelRenderer } from "../workbench/panelRenderers";
+import {
+  PanelRenderers,
+  SurfaceKind,
+  SurfaceScope,
+  type PanelRenderer,
+} from "@the-editor/workbench";
 
 export const TerminalSurface = SurfaceKind("the-editor/terminal");
 

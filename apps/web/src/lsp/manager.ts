@@ -45,7 +45,7 @@ import {
 import type { DecorationSpec, VirtualTextSpec } from "@the-editor/editor";
 import type { ProcessPort } from "../platform/process";
 import { chooseServerRoot } from "./roots";
-import type { LanguageServerDefinition, LanguageServers } from "../product/lsp";
+import type { LanguageServerDefinition, LanguageServers } from "@the-editor/intel";
 import type {
   CompletionContext,
   CompletionItem,
@@ -54,7 +54,7 @@ import type {
   HoverResult,
   SignatureContext,
   SignatureResult,
-} from "../intel/types";
+} from "@the-editor/intel";
 
 const FULL_SYNC_DEBOUNCE_MS = 150;
 const INLAY_HINT_DEBOUNCE_MS = 400;
@@ -146,11 +146,31 @@ const offsetToPosition = (buffer: TextBuffer, offset: number): lsp.Position => {
 };
 
 const completionKindNames: Record<number, string> = {
-  1: "text", 2: "method", 3: "function", 4: "constructor", 5: "field",
-  6: "variable", 7: "class", 8: "interface", 9: "module", 10: "property",
-  11: "unit", 12: "value", 13: "enum", 14: "keyword", 15: "snippet",
-  16: "color", 17: "file", 18: "reference", 19: "folder", 20: "enum-member",
-  21: "constant", 22: "struct", 23: "event", 24: "operator", 25: "type-parameter",
+  1: "text",
+  2: "method",
+  3: "function",
+  4: "constructor",
+  5: "field",
+  6: "variable",
+  7: "class",
+  8: "interface",
+  9: "module",
+  10: "property",
+  11: "unit",
+  12: "value",
+  13: "enum",
+  14: "keyword",
+  15: "snippet",
+  16: "color",
+  17: "file",
+  18: "reference",
+  19: "folder",
+  20: "enum-member",
+  21: "constant",
+  22: "struct",
+  23: "event",
+  24: "operator",
+  25: "type-parameter",
 };
 
 const editsFromTextEdits = (
@@ -454,8 +474,7 @@ export class LspManager {
       let range: { from: number; to: number } | undefined;
       if (item.textEdit !== undefined) {
         insertText = item.textEdit.newText;
-        const editRange =
-          "range" in item.textEdit ? item.textEdit.range : item.textEdit.replace;
+        const editRange = "range" in item.textEdit ? item.textEdit.range : item.textEdit.replace;
         range = {
           from: positionToOffset(buffer, editRange.start),
           to: positionToOffset(buffer, editRange.end),
@@ -973,9 +992,7 @@ export class LspManager {
         text: edit.newText,
       }))
       .sort((a, b) => a.from - b.from);
-    const transaction = Effect.runSync(
-      Transaction.fromReplacements(buffer.length, replacements),
-    );
+    const transaction = Effect.runSync(Transaction.fromReplacements(buffer.length, replacements));
     Effect.runSync(
       commitDocumentTransaction(transaction).pipe(
         Effect.provide(attachment.document.context as Context.Context<any>),

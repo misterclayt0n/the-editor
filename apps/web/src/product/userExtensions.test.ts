@@ -174,14 +174,14 @@ describe("makeUserExtensionsPackage", () => {
           "/home/user/.the-editor/extensions/hello.ts",
           packageSource("acme.hello", "acme.hello", "Hello v2"),
         );
-        yield* commands.execute("extensions.reload");
+        yield* commands.execute("reload");
         yield* waitUntil(
           commands.get("acme.hello").pipe(Effect.map((c) => c?.contribution.title === "Hello v2")),
         );
 
         // Delete the file and reload: the command should disappear.
         fs.remove("/home/user/.the-editor/extensions/hello.ts");
-        yield* commands.execute("extensions.reload");
+        yield* commands.execute("reload");
         yield* waitUntil(commands.get("acme.hello").pipe(Effect.map((c) => c === undefined)));
       }),
     ),
@@ -389,9 +389,9 @@ describe("makeUserExtensionsPackage", () => {
           // serialize.
           yield* Effect.all(
             [
-              ...Array.from({ length: 8 }, () => commands.execute("extensions.reload")),
+              ...Array.from({ length: 8 }, () => commands.execute("reload")),
               workspaceRoots.set(["/workspace"]),
-              commands.execute("extensions.reload"),
+              commands.execute("reload"),
             ],
             { concurrency: "unbounded", discard: true },
           );

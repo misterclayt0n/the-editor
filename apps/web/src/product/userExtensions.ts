@@ -20,7 +20,7 @@
  *
  * `reconcile` is a check-then-act sequence against shared `Map`/`Set` state,
  * and it has THREE independent entry points (boot, the reactive workspace-
- * root subscription, and the `extensions.reload` command) that can all fire
+ * root subscription, and the `reload` command) that can all fire
  * concurrently. All three funnel through `reloadAll`, which holds a single
  * `Effect.makeSemaphore(1)` permit for the whole discover+reconcile pass —
  * one serialized worker, many producers, no interleaved check-then-act races.
@@ -49,13 +49,27 @@ import * as KeymapsNamespace from "@the-editor/keymaps";
 import * as WorkbenchNamespace from "@the-editor/workbench";
 import * as EditorNamespace from "@the-editor/editor";
 import * as EngineNamespace from "@the-editor/engine";
+import * as ThemeNamespace from "@the-editor/theme";
+import * as FontsNamespace from "@the-editor/fonts";
 import { FileSystemPort, WorkspaceRoots, type DirEntry } from "@the-editor/editor";
 import { SurfaceScope } from "@the-editor/workbench";
 import { makeExtensionTrust } from "./extensionTrust";
 
 /** The fixed import surface a user extension gets. Deliberately closed
  *  rather than resolved against a real module graph (see loadModule.ts) —
- *  this is the whole seam, not a sandbox. */
+ *  this is the whole seam, not a sandbox.
+ *
+ *  It mirrors the import surface first-party product packages already use:
+ *  everything here is a package tag whose SERVICE is in the layer extensions
+ *  activate through, so "a theme is just an extension" is literally true — a
+ *  `~/.the-editor/extensions/my-theme.ts` can `yield* Themes;
+ *  themes.registerFamily(...)` exactly like product/themes.ts, and reloads
+ *  through the same command for free.
+ *
+ *  (`@the-editor/lsp` is deliberately NOT here: it's low-level protocol
+ *  plumbing, not a registration seam — the language-server registration
+ *  service is `LanguageServers` in product/lsp. Exposing that is a separate,
+ *  deliberate call if/when extensions should contribute language servers.) */
 export function buildExtensionVirtualModules(): Readonly<Record<string, unknown>> {
   return {
     effect: EffectNamespace,
@@ -65,6 +79,8 @@ export function buildExtensionVirtualModules(): Readonly<Record<string, unknown>
     "@the-editor/workbench": WorkbenchNamespace,
     "@the-editor/editor": EditorNamespace,
     "@the-editor/engine": EngineNamespace,
+    "@the-editor/theme": ThemeNamespace,
+    "@the-editor/fonts": FontsNamespace,
   };
 }
 
@@ -283,20 +299,24 @@ export function makeUserExtensionsPackage<ExtR>(
         });
 
       // One serialized worker for the whole discover+reconcile surface. Boot,
-      // the reactive workspace-root subscription, and the `extensions.reload`
-      // command are three independent producers of "please reconcile now" —
-      // without this, their check-then-act sequences inside `reconcile` could
-      // interleave. `withPermits(1)` turns "many producers" into "one queue".
+      // the reactive workspace-root subscription, and the `reload` command are
+      // three independent producers of "please reconcile now" — without this,
+      // their check-then-act sequences inside `reconcile` could interleave.
+      // `withPermits(1)` turns "many producers" into "one queue".
       const reloadLock = yield* Effect.makeSemaphore(1);
       const reloadAll = () =>
         reloadLock.withPermits(1)(
           Effect.all([reloadGlobal(), reloadProject()], { discard: true }),
         );
 
-      yield* commands.register("extensions.reload", {
-        title: "Reload Extensions",
+      // "Reload", not "Reload Extensions": in this editor everything is a
+      // package, so a disk theme/keymap/panel is just an extension and
+      // reloads through this one command. There is no per-subsystem reload;
+      // future disk resources (user config, etc.) join `reloadAll`'s pass.
+      yield* commands.register("reload", {
+        title: "Reload",
         scope: SurfaceScope.global,
-        palette: { group: "Extensions", aliases: ["reload"] },
+        palette: { group: "Extensions", aliases: ["reload extensions", "reload themes"] },
         // Commands.execute already wraps this in Effect.exit and turns
         // failures into CommandExecutionError; the palette's own
         // Effect.runFork(...).pipe(Effect.catchAll(...)) is the one place

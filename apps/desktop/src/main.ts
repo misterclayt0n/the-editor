@@ -184,7 +184,18 @@ function registerFileSystemHandlers(): void {
     watchers.delete(id);
   });
   ipcMain.handle("fs:readdir", async (_event, dirPath: string) => {
-    const entries = await fsp.readdir(dirPath, { withFileTypes: true });
+    let entries;
+    try {
+      entries = await fsp.readdir(dirPath, { withFileTypes: true });
+    } catch (error) {
+      // A directory that isn't there just has no entries. This is the normal
+      // case for capability-gated discovery (e.g. a project without a
+      // `.the-editor/extensions` folder), so it must not throw — an uncaught
+      // reject here is logged main-side on every folder-open. Real failures
+      // (permissions, not-a-directory) still surface.
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
     return entries.map((entry) => ({
       name: entry.name,
       kind: entry.isDirectory() ? "directory" : "file",

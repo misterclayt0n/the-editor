@@ -278,6 +278,11 @@ export const makeFiles = (
         };
         yield* Ref.update(bindings, (map) => new Map(map).set(document.id, state));
         yield* Ref.update(byPath, (map) => new Map(map).set(path, document.id));
+        // Announce that the document is now file-bound. `open` published
+        // DocumentsChanged BEFORE this binding existed, so anything that reacts
+        // per-document and needs the path (the VCS gutter) would otherwise miss
+        // it. This closes that gap on the document's own bus.
+        yield* publishStatus(state);
         return document;
       });
 

@@ -158,6 +158,7 @@ import { createTerminalRenderer } from "./terminal/mount";
 import { HostVcsDefaults, makeVcsProviders, vcsDefaults, VcsProviders } from "./product/vcs";
 import { createGitProvider } from "./vcs/git";
 import { VcsManager } from "./vcs/manager";
+import { vcsGutterProvider } from "./vcs/gutter";
 import {
   makeCompletionProviders,
   makeHoverProviders,
@@ -637,6 +638,16 @@ export class AppRuntime {
           appRuntime.lsp = new LspManager(processPort, fileSystem, languageServers, () => appRuntime.workspaceRoot);
           appRuntime.lsp.onDiagnostics = (docId) => appRuntime.onDiagnosticsChanged?.(docId);
           appRuntime.vcs = new VcsManager(vcsProviders, fileSystem);
+          // The diff gutter rides the decoration seam: registered once, the
+          // driver attaches it to every document (current + future). No more
+          // hand-driven per-document vcs.attach/detach.
+          const filesForVcs = Option.getOrUndefined(Context.getOption(workspaceContext, Files));
+          Effect.runSync(
+            Scope.extend(
+              decorationProviders.register(vcsGutterProvider(appRuntime.vcs, filesForVcs)),
+              scope,
+            ),
+          );
         }
         return appRuntime;
       }),
@@ -929,7 +940,6 @@ export class AppRuntime {
     for (const other of this.panes.values()) if (String(other.document.id) === id) return;
     for (const mb of this.multiBufferPanes.values()) if (mb.sourceDocumentIds().includes(id)) return;
     this.lsp?.detach(id);
-    this.vcs?.detach(id);
     this.highlightsByDoc.get(id)?.close();
     this.highlightsByDoc.delete(id);
     const files = Context.getOption(this.workspace.context, Files);
@@ -945,7 +955,6 @@ export class AppRuntime {
     if (Option.isNone(scope)) return;
     this.attachHighlights(scope.value, path);
     void this.lsp?.attach(scope.value, path);
-    this.vcs?.attach(scope.value, path);
   }
 
   /** MultiBufferHost: detach intel once no pane shows the document (keeps the
@@ -954,7 +963,6 @@ export class AppRuntime {
     for (const other of this.panes.values()) if (String(other.document.id) === docId) return;
     for (const mb of this.multiBufferPanes.values()) if (mb.usesDocument(docId)) return;
     this.lsp?.detach(docId);
-    this.vcs?.detach(docId);
     this.highlightsByDoc.get(docId)?.close();
     this.highlightsByDoc.delete(docId);
   }
@@ -1461,7 +1469,6 @@ export class AppRuntime {
     const document = await Effect.runPromise(files.value.openPath(path));
     this.attachHighlights(document, path);
     void this.lsp?.attach(document, path);
-    this.vcs?.attach(document, path);
 
     const { arrangement, focusedSlot } = this.workbenchSnapshot;
     const hostsEditors = (s: Stack) => s.panels.some((id) => this.isCenterContentPanel(id));

@@ -1128,18 +1128,18 @@ body {
 }
 
 .editor-band-cell.vcs-gutter-added {
-  background: var(--theme-version-control-added);
+  background: var(--theme-created, var(--theme-version-control-added));
 }
 
 .editor-band-cell.vcs-gutter-modified {
-  background: var(--theme-version-control-modified);
+  background: var(--theme-modified, var(--theme-version-control-modified));
 }
 
 /* Deletion marker: a short block at the boundary, not a full bar. */
 .editor-band-cell.vcs-gutter-deleted {
   height: 7px;
   margin-top: -3px;
-  background: var(--theme-version-control-deleted);
+  background: var(--theme-deleted, var(--theme-version-control-deleted));
 }
 
 /* Terminal panel host: xterm.js fills the panel body. */

@@ -23,8 +23,11 @@ import {
   Attention,
   makeAttention,
   makePackageRuntime,
+  makeStateCell,
+  PackageRuntimeService,
   type Notice,
   type Pending,
+  type StateCell,
 } from "@the-editor/kernel";
 import {
   ConfirmDiscardChanges,
@@ -95,6 +98,7 @@ import {
   setSelection,
   ViewNotifications,
   WorkspaceNotifications,
+  WorkspaceRoots,
   type DocumentChangeRange,
   type DocumentScope,
   type EditorNotification,
@@ -133,6 +137,8 @@ import { createProcessPort } from "./platform/process";
 import { createTerminalPort, type TerminalPort } from "./platform/terminal";
 import { createClipboardPort, type ClipboardPort } from "./platform/clipboard";
 import { createSyntaxPort, type HighlightRun, type SyntaxPort } from "./platform/syntax";
+import { getHomeDir } from "./platform/homeDir";
+import { buildExtensionVirtualModules, makeUserExtensionsPackage } from "./product/userExtensions";
 import { DocumentHighlights } from "./editor/highlights";
 import { FloatHub } from "./editor/floats";
 import { LspManager, type DiagnosticCounts } from "./lsp/manager";
@@ -398,6 +404,11 @@ export class AppRuntime {
     readonly hovers: HoverProviders.Service;
     readonly signatures: SignatureProviders.Service;
   };
+  /** The public seam for "what folder is this workspace open on": the
+   *  package-facing WorkspaceRoots cell from @the-editor/editor.
+   *  `openFolder` is its one writer — packages (including user extensions)
+   *  read it through `WorkspaceRoots`, never through this class. */
+  private workspaceRootsCell!: StateCell<ReadonlyArray<string>>;
 
   private readonly panes = new Map<PanelId, EditorPane>();
   /** Terminal panel id → PTY id, so closing a tab can check for a live process. */
@@ -497,6 +508,10 @@ export class AppRuntime {
         const diffViewPreferences = makeDiffViewPreferences();
         const vcsProviders = yield* makeVcsProviders;
         const vcsProcessPort = createProcessPort();
+        // The public seam for "what folder(s) is this workspace open on" —
+        // any package can depend on WorkspaceRoots instead of reaching into
+        // host-private state; AppRuntime.openFolder is just its one writer.
+        const workspaceRoots = yield* makeStateCell<ReadonlyArray<string>>([]);
         const completionProviders = yield* makeCompletionProviders;
         const hoverProviders = yield* makeHoverProviders;
         const signatureProviders = yield* makeSignatureProviders;
@@ -511,6 +526,9 @@ export class AppRuntime {
         const services = Layer.mergeAll(
           Layer.succeed(Themes, themes),
           Layer.succeed(Fonts, fonts),
+          Layer.succeed(PackageRuntimeService, runtime),
+          Layer.succeed(WorkspaceRoots, workspaceRoots),
+          ...(fileSystem !== undefined ? [Layer.succeed(FileSystemPort, fileSystem)] : []),
           Layer.succeed(PanelRenderers, panelRenderers),
           Layer.succeed(DiffViewPreferences, diffViewPreferences),
           Layer.succeed(VcsProviders, vcsProviders),
@@ -621,6 +639,26 @@ export class AppRuntime {
             toPackageDescriptor(vcsDefaults, services),
             toPackageDescriptor(fileTreePackage, services),
             toPackageDescriptor(terminalPackage, services),
+            // Last: user extensions activate after every first-party product
+            // package, so a shadowing keybinding/command from the user wins
+            // the way a later-loaded pi extension would. Skipped entirely
+            // without a real filesystem — nothing to discover from disk.
+            ...(fileSystem !== undefined
+              ? [
+                  toPackageDescriptor(
+                    makeUserExtensionsPackage({
+                      servicesForExtensions: services,
+                      // Shell-owned: esbuild-wasm's `initialize()` can only run
+                      // once per JS realm, and sessions are kept mounted
+                      // concurrently, so this can't be constructed per-session.
+                      transpiler: shell.extensionTranspiler,
+                      virtualModules: buildExtensionVirtualModules(),
+                      homeDir: getHomeDir(),
+                    }),
+                    services,
+                  ),
+                ]
+              : []),
           ])
           .pipe(Effect.orDie);
 
@@ -633,6 +671,7 @@ export class AppRuntime {
           hovers: hoverProviders,
           signatures: signatureProviders,
         };
+        appRuntime.workspaceRootsCell = workspaceRoots;
         const processPort = createProcessPort();
         if (processPort !== undefined) {
           appRuntime.lsp = new LspManager(processPort, fileSystem, languageServers, () => appRuntime.workspaceRoot);
@@ -1754,6 +1793,7 @@ export class AppRuntime {
   openFolder(root: string): void {
     this.workspaceRoot = root.replace(/\/+$/, "") || "/";
     void this.vcs?.setRoot(this.workspaceRoot);
+    Effect.runSync(this.workspaceRootsCell.set([this.workspaceRoot]));
     for (const listener of this.workspaceRootListeners) listener(this.workspaceRoot);
   }
 

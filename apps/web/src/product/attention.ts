@@ -45,6 +45,25 @@ export const confirmDiscardRequest = (name: string): ChoiceRequest<DiscardAnswer
   ],
 });
 
+export type TrustAnswer = "trust" | "skip";
+
+/** A workspace has a `.the-editor/extensions` folder the user hasn't
+ *  decided about yet (mirrors pi's project_trust: global extensions are
+ *  implicitly trusted, project-local ones are not). */
+export const ConfirmTrustProjectExtensions: ChoiceTopic<TrustAnswer> = makeRequestTopic<
+  ChoiceRequest<TrustAnswer>,
+  TrustAnswer
+>("@the-editor/web/confirm-trust-project-extensions");
+
+export const confirmTrustExtensionsRequest = (root: string): ChoiceRequest<TrustAnswer> => ({
+  title: "Trust this workspace's extensions?",
+  description: `"${root}" has a .the-editor/extensions folder. Extensions run with full local code execution — only trust folders you wrote or control.`,
+  choices: [
+    { id: "skip", label: "Don't Load", tone: "outline", cancel: true },
+    { id: "trust", label: "Trust & Load", tone: "default" },
+  ],
+});
+
 export type KillAnswer = "kill" | "cancel";
 
 /** Closing a terminal that still has a foreground process running. */

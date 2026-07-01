@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import { homedir } from "node:os";
 import type { TextRange } from "./fs-range";
 
 type FileEventPayload = {
@@ -15,6 +16,10 @@ ipcRenderer.on("fs:event", (_event, payload: FileEventPayload) => {
 
 contextBridge.exposeInMainWorld("theEditorDesktop", {
   platform: process.platform,
+  // Resolved once here (Node-capable preload context) since the renderer has
+  // no notion of a home directory of its own — used to anchor the global
+  // `~/.the-editor` extension/config directory.
+  homeDir: homedir(),
 });
 
 /**

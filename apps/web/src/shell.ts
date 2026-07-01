@@ -19,9 +19,10 @@
 
 import { Effect, Exit, Fiber, Layer, Scope, Stream } from "effect";
 import { makePackageRuntime, type PackageRuntime } from "@the-editor/kernel";
-import { toPackageDescriptor } from "@the-editor/extensions";
+import { toPackageDescriptor, type ExtensionTranspiler } from "@the-editor/extensions";
 import { makeThemes, Themes, themeDefaults, type ResolvedTheme } from "@the-editor/theme";
 import { Fonts, fontDefaults, makeFonts, type ResolvedFontSystem } from "@the-editor/fonts";
+import { createExtensionTranspiler } from "./platform/extensionTranspiler";
 import {
   dockEdge,
   makeWorkbench,
@@ -70,6 +71,15 @@ export class Shell {
     readonly themes: Themes.Service,
     /** The shared font service injected into every session's package graph. */
     readonly fonts: Fonts.Service,
+    /**
+     * The shared extension transpiler, injected into every session's user-
+     * extensions package. `esbuild-wasm` can only be `initialize()`d once per
+     * JS realm — exactly the theme/fonts shape (a process-global resource,
+     * not a per-workspace one) — so it lives here, not inside AppRuntime.boot,
+     * where a second concurrently-mounted session would call `initialize`
+     * again and crash every session after the first.
+     */
+    readonly extensionTranspiler: ExtensionTranspiler,
     /** The outer chrome workbench host: just the viewport panel. */
     readonly chromeHost: ShellWorkbenchHost,
     /** The viewport mount point the chrome renderer publishes; App portals the
@@ -85,6 +95,7 @@ export class Shell {
         const packages = yield* makePackageRuntime;
         const themes = yield* makeThemes();
         const fonts = yield* makeFonts;
+        const extensionTranspiler = createExtensionTranspiler();
         // Register bundled process-global appearance defaults ONCE, here — not per session.
         yield* packages
           .activateGraph([
@@ -127,6 +138,7 @@ export class Shell {
           packages,
           themes,
           fonts,
+          extensionTranspiler,
           chromeHost,
           viewportSlot,
           chromeScope,

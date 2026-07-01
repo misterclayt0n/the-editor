@@ -210,6 +210,9 @@ importers:
       effect:
         specifier: 'catalog:'
         version: 3.21.2
+      esbuild-wasm:
+        specifier: ^0.28.1
+        version: 0.28.1
       lucide-react:
         specifier: ^1.17.0
         version: 1.17.0(react@19.2.7)
@@ -355,6 +358,9 @@ importers:
       effect:
         specifier: 'catalog:'
         version: 3.21.2
+      esbuild-wasm:
+        specifier: ^0.28.1
+        version: 0.28.1
     devDependencies:
       '@effect/vitest':
         specifier: 'catalog:'
@@ -3262,6 +3268,11 @@ packages:
 
   es6-error@4.1.1:
     resolution: {integrity: sha512-Um/+FxMr9CISWh0bi5Zv0iOD+4cFh5qLeks1qhAopKVAJw3drgKbKySikp7wGhDL0HPeaja0P5ULZrxLkniUVg==}
+
+  esbuild-wasm@0.28.1:
+    resolution: {integrity: sha512-p/GD4E8oYRjg3kjdKrnMb0s4PzXgJF42e0MF4H0+ACyK/kIlFRp3e0fzOleIG+wBBm6MM3XQrbpe7soEA+vJIA==}
+    engines: {node: '>=18'}
+    hasBin: true
 
   esbuild@0.27.7:
     resolution: {integrity: sha512-IxpibTjyVnmrIQo5aqNpCgoACA/dTKLTlhMHihVHhdkxKyPO1uBBthumT0rdHmcsk9uMonIWS0m4FljWzILh3w==}
@@ -6571,6 +6582,8 @@ snapshots:
 
   es6-error@4.1.1:
     optional: true
+
+  esbuild-wasm@0.28.1: {}
 
   esbuild@0.27.7:
     optionalDependencies:

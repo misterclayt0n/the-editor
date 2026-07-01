@@ -19,7 +19,8 @@
   },
   "dependencies": {
     "@the-editor/kernel": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "esbuild-wasm": "^0.28.1"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

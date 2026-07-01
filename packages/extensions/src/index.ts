@@ -2,6 +2,7 @@ export * from "./definePackage.js";
 export * from "./ExtensionContext.js";
 export * from "./contributions.js";
 export * from "./stores.js";
+export * from "./loadModule.js";
 
 export type {
   ActivationId,

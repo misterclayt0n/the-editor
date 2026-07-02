@@ -74,7 +74,7 @@ finding that anchors everything below:
 | 8 | Render a pane (agent panel, browser, Doom) | ✅ `PanelRenderers` via `@the-editor/workbench` |
 | 9 | Answer questions about a buffer (completion/hover/signature) | ✅ provider registries via `@the-editor/intel` |
 | 10 | Open a file into a visible view | ✅ `Files` + `FileViews.openInView` (C1) |
-| 11 | Pick from a list (completing-read) | ❌ no seam; five bespoke React surfaces (C3) |
+| 11 | Pick from a list (completing-read) | ✅ `Picker` via `@the-editor/picker`; one windowed host, N sources (GlobalSearch conversion pending) |
 | 12 | Add statusline / context-menu items | ❌ no registry exists (E1) |
 | 13 | Own a background process | ❌ direct `ProcessPort`/`TerminalPort` host-only; LSP spawn-by-proxy exists via #16 (D1) |
 | 14 | React to interaction (hover/scroll/viewport/pre-key) | ❌ `PaneHost` fields are single-assignment slots (D2) |
@@ -147,19 +147,36 @@ finding that anchors everything below:
   - [x] `FileOperations` → `save` / `open` / `find` / `findInProject`
   - [x] `WorkspaceOperations` → `openFolder` / `openSwitcher` / `closeWorkspace`
   - [x] `ViewOperations` → `splitRight` / `splitDown` / `closeTab` / `nextTab` / `previousTab` / `toggleTabs`
-  - [x] `PaletteOperations` / `ThemeOperations` replace `HostPaletteActions` /
-    `HostThemeActions`; C3 still folds both into the general picker op.
+  - [x] `PaletteOperations` / `ThemeOperations` were an interim bridge; C3
+    retired both (the palette/theme packages call `Picker` directly).
   - [x] `LspOperations` replaces `HostLspActions` for command-level triggers;
     D1 still owns process capability publication.
-- [ ] **C3. Picker as an operation.** One package-invokable
-  `picker.open({ items, onSelect, preview? })`; the five bespoke surfaces
-  (`CommandPalette`, `FileFinder`, `GlobalSearch`, theme selector, workspace
-  switcher) become callers. Retires the temporary `PaletteOperations` /
-  `ThemeOperations` bridge and the `onPaletteOpenRequested`-style host hooks.
-  Telescope's model: one picker, N
-  sources. **Caveat found in audit:** the current React pickers render `items.map()`
-  unvirtualized through cmdk — generalizing to arbitrary extension-supplied item
-  counts forces the windowed-list question at the same time; solve both together.
+- [x] **C3. Picker as an operation.** `@the-editor/picker` (allowlisted):
+  data-driven `PickerItem`s, a `PickerSource` protocol (debounce, `preRanked`,
+  sync-or-async answers), and one `Picker.open(request)` service. The
+  controller owns the lifecycle every bespoke surface used to hand-roll —
+  debounce, generation-counter staleness, tiered ranking (stable sort keeps
+  group clusters), select-first-on-fresh-results, live `onSelectionChange`
+  with choose/dismiss semantics (the theme preview transaction, generalized),
+  and `refresh` for sources whose data mutates under an open picker. One
+  `PickerHost` in the shell renders every request over `VirtualCommand`
+  (windowed rows, cmdk removed) with the shared file-preview pane.
+  Converted callers: command palette + theme selector are now **pure package
+  code on public seams** (`Commands`/`Themes` + `Picker` — a user extension
+  could ship those exact files); the file finder is a host-built fff source
+  behind `FileOperations.find`; the workspace switcher is an App-built source
+  (App owns sessions) using the `renderItem` escape hatch for its inline close
+  button. Retired: `CommandPalette.tsx`, `FileFinder.tsx`,
+  `PaletteOperations`, `ThemeOperations`, and the `onPaletteOpenRequested` /
+  `onFileFinderOpenRequested` / `onThemeSelectorOpenRequested` host hooks.
+  Proven through the loader path: an extension opens a picker with its own
+  source, gets ranked items + selection callbacks, and receives the choice.
+- [ ] **C4. Global search as a picker source.** Follow-up from C3: `GlobalSearch`
+  still renders bespoke (grouped rows, per-row syntax segments, grep-mode
+  cycling, Cmd+Enter → multibuffer) even though it already rides
+  `VirtualCommand`. Converting it to a `PickerSource` needs styled-segment rows
+  and secondary actions in the item model, and its per-row synchronous highlight
+  pass should move to idle-time upgrade when touched.
 
 ## D. New primitives (real design work)
 

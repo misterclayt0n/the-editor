@@ -103,8 +103,6 @@ import {
   makeWorkspaceScope,
   MountHub,
   LspOperations,
-  PaletteOperations,
-  ThemeOperations,
   ViewFloatHub,
   ViewMountHub,
   setSelection,
@@ -166,6 +164,13 @@ import { createFileTreeRenderer } from "./filetree/mount";
 import * as Regions from "./workbench/regions";
 import { diffViewPackage, DiffViewSurface, HostDiffView } from "./product/diffView";
 import { DiffViewPreferences, makeDiffViewPreferences } from "@the-editor/diff-view";
+import {
+  makePicker,
+  makePickerController,
+  Picker,
+  type PickerController,
+} from "@the-editor/picker";
+import { fileFinderRequest } from "./pickers/fileFinder";
 import { createDiffViewRenderer } from "./diffview/mount";
 import { terminalPackage, TerminalSurface, HostTerminal } from "./product/terminal";
 import { createTerminalRenderer } from "./terminal/mount";
@@ -387,15 +392,9 @@ export type WorkbenchSnapshot = {
 export class AppRuntime {
   /** Host UI hooks: file sync state changed (refresh status surfaces). */
   onFileStateChanged?: () => void;
-  /** Host UI hooks: the palette.open command fired (show the dialog). */
-  onPaletteOpenRequested?: () => void;
-  /** Host UI hooks: file.find command fired (show the fff picker). */
-  onFileFinderOpenRequested?: () => void;
   /** Host UI hooks: file.findInProject command fired (show the search dialog). */
   onSearchOpenRequested?: () => void;
-  /** Host UI hooks: theme selector command fired (show themed palette mode). */
-  onThemeSelectorOpenRequested?: () => void;
-  /** Host UI hooks: workspace switcher requested (show the palette list mode). */
+  /** Host UI hooks: workspace switcher requested (App owns the session list). */
   onWorkspaceSwitcherRequested?: () => void;
   /** Host UI hooks: open a folder (reuse an untitled scratch session, else new). */
   onWorkspaceOpenFolderRequested?: () => void;
@@ -418,6 +417,8 @@ export class AppRuntime {
   }) => Promise<string | null>;
   /** Panel renderers for non-editor surface kinds (file tree, custom UIs). */
   panelRenderers!: PanelRenderers.Service;
+  /** The single picker surface's state machine; `PickerHost` renders it. */
+  pickerController!: PickerController;
   /** Diff view preferences shared by extension packages and the mounted panel. */
   diffViewPreferences!: DiffViewPreferences.Service;
   /** Human-facing notification + request fabric (toasts, confirm dialogs). */
@@ -555,6 +556,8 @@ export class AppRuntime {
               };
         const languageServers = yield* makeLanguageServers;
         const panelRenderers = makePanelRenderers();
+        const pickerController = makePickerController();
+        const pickerService = makePicker(pickerController);
         const diffViewPreferences = makeDiffViewPreferences();
         const vcsProviders = yield* makeVcsProviders;
         const vcsProcessPort = createProcessPort();
@@ -643,7 +646,7 @@ export class AppRuntime {
           Layer.succeed(FileOperations, {
             save: () => void instance.saveActiveFile(),
             open: () => void instance.openFileViaDialog(),
-            find: () => instance.onFileFinderOpenRequested?.(),
+            find: () => pickerService.open(fileFinderRequest(instance)),
             findInProject: () => instance.onSearchOpenRequested?.(),
           }),
           Layer.succeed(WorkspaceOperations, {
@@ -651,12 +654,7 @@ export class AppRuntime {
             openSwitcher: () => instance.onWorkspaceSwitcherRequested?.(),
             closeWorkspace: () => instance.onWorkspaceCloseRequested?.(),
           }),
-          Layer.succeed(PaletteOperations, {
-            open: () => instance.onPaletteOpenRequested?.(),
-          }),
-          Layer.succeed(ThemeOperations, {
-            openSelector: () => instance.onThemeSelectorOpenRequested?.(),
-          }),
+          Layer.succeed(Picker, pickerService),
           Layer.succeed(LspOperations, {
             goToDefinition: () => void instance.goToDefinition(),
             formatDocument: () => void instance.formatActiveDocument(),
@@ -685,6 +683,7 @@ export class AppRuntime {
         );
         instance = appRuntime;
         appRuntime.panelRenderers = panelRenderers;
+        appRuntime.pickerController = pickerController;
         appRuntime.diffViewPreferences = diffViewPreferences;
         appRuntime.attention = attention;
         appRuntime.decorationProviders = decorationProviders;

@@ -25,6 +25,7 @@
     "@the-editor/kernel": "workspace:*",
     "@the-editor/keymaps": "workspace:*",
     "@the-editor/lsp": "workspace:*",
+    "@the-editor/picker": "workspace:*",
     "@the-editor/theme": "workspace:*",
     "@the-editor/vcs": "workspace:*",
     "@the-editor/workbench": "workspace:*",

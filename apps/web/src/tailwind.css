@@ -275,8 +275,10 @@
   .command-palette__item.command-item[data-slot="command-item"][data-selected="true"]::before {
   content: "›";
   position: absolute;
+  top: 50%;
   left: 2px;
   color: var(--fg-dim);
+  transform: translateY(-50%);
 }
 
 /* `/tree` rows: a branch graph, an active-path bullet, a colored role tag, and
@@ -420,7 +422,7 @@
 }
 
 .command-palette .file-finder__item.command-item[data-slot="command-item"] {
-  height: 36px;
+  height: 100%;
   align-items: center;
   line-height: 1.25;
 }

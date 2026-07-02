@@ -26,8 +26,6 @@ import {
   makeDecorationProviders,
   makeViewScope,
   makeWorkspaceScope,
-  PaletteOperations,
-  ThemeOperations,
   ViewMountHub,
   ViewOperations,
   WorkspaceNotifications,
@@ -47,6 +45,7 @@ import {
   SignatureProviders,
 } from "@the-editor/intel";
 import { makeVcsProviders, VcsProviders } from "@the-editor/vcs";
+import { makePicker, makePickerController, Picker } from "@the-editor/picker";
 import {
   collectSlots,
   makePanelRenderers,
@@ -226,8 +225,7 @@ function publishedPrimitivePackageSource(): string {
         var fileOps = yield* Editor.FileOperations;
         var workspaceOps = yield* Editor.WorkspaceOperations;
         var viewOps = yield* Editor.ViewOperations;
-        var paletteOps = yield* Editor.PaletteOperations;
-        var themeOps = yield* Editor.ThemeOperations;
+        var picker = yield* require("@the-editor/picker").Picker;
         var lspOps = yield* Editor.LspOperations;
         var opened = yield* fileViews.openInView("/project/open.txt");
         var openedAgain = yield* files.openPath("/project/open.txt");
@@ -292,15 +290,12 @@ function publishedPrimitivePackageSource(): string {
           fileOperations: typeof Editor.FileOperations,
           workspaceOperations: typeof Editor.WorkspaceOperations,
           viewOperations: typeof Editor.ViewOperations,
-          paletteOperations: typeof Editor.PaletteOperations,
-          themeOperations: typeof Editor.ThemeOperations,
           lspOperations: typeof Editor.LspOperations,
           operationMethods: [
             typeof fileOps.save,
             typeof workspaceOps.openFolder,
             typeof viewOps.closeTab,
-            typeof paletteOps.open,
-            typeof themeOps.openSelector,
+            typeof picker.open,
             typeof lspOps.goToDefinition
           ],
           openedPanelId: opened.panelId,
@@ -507,8 +502,6 @@ describe("makeUserExtensionsPackage", () => {
             readonly fileOperations: string;
             readonly workspaceOperations: string;
             readonly viewOperations: string;
-            readonly paletteOperations: string;
-            readonly themeOperations: string;
             readonly lspOperations: string;
             readonly operationMethods: readonly string[];
             readonly openedPanelId: string;
@@ -534,8 +527,6 @@ describe("makeUserExtensionsPackage", () => {
             readonly fileOperations: string;
             readonly workspaceOperations: string;
             readonly viewOperations: string;
-            readonly paletteOperations: string;
-            readonly themeOperations: string;
             readonly lspOperations: string;
             readonly operationMethods: readonly string[];
             readonly openedPanelId: string;
@@ -574,8 +565,7 @@ describe("makeUserExtensionsPackage", () => {
             previousTab: () => {},
             toggleTabs: () => {},
           }),
-          Layer.succeed(PaletteOperations, { open: () => {} }),
-          Layer.succeed(ThemeOperations, { openSelector: () => {} }),
+          Layer.succeed(Picker, makePicker(makePickerController())),
           Layer.succeed(LspOperations, {
             goToDefinition: () => {},
             formatDocument: () => {},
@@ -615,11 +605,8 @@ describe("makeUserExtensionsPackage", () => {
           fileOperations: "function",
           workspaceOperations: "function",
           viewOperations: "function",
-          paletteOperations: "function",
-          themeOperations: "function",
           lspOperations: "function",
           operationMethods: [
-            "function",
             "function",
             "function",
             "function",
@@ -655,6 +642,86 @@ describe("makeUserExtensionsPackage", () => {
         expect((yield* languageServers.list).map((server) => server.id)).toEqual(["acme-lsp"]);
         expect((yield* vcsProviders.list).map((provider) => provider.id)).toEqual(["acme-vcs"]);
         expect(diffPreferences.current().wrapping).toBe(true);
+      }),
+    ),
+  );
+
+  it.live("lets a loaded extension drive the picker end to end", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = makeFakeFs();
+        fs.write(
+          "/home/user/.the-editor/extensions/picker.ts",
+          `
+            var definePackage = require("@the-editor/extensions").definePackage;
+            var Effect = require("effect").Effect;
+            var Picker = require("@the-editor/picker").Picker;
+            var probe = require("test:picker-probe");
+            module.exports.default = definePackage("acme.picker", function () {
+              return Effect.gen(function* () {
+                var picker = yield* Picker;
+                picker.open({
+                  title: "Acme Picker",
+                  source: {
+                    id: "acme/things",
+                    query: function () {
+                      return { items: [
+                        { id: "alpha", label: "Alpha Thing", data: "alpha" },
+                        { id: "beta", label: "Beta Thing", searchTerms: ["b"], data: "beta" }
+                      ] };
+                    }
+                  },
+                  onChoose: function (item) { probe.chose(item.data); },
+                  onSelectionChange: function (item) { probe.selected(item === null ? null : item.id); }
+                });
+              });
+            });
+          `,
+        );
+
+        const runtime = yield* makePackageRuntime;
+        const attention = yield* makeAttention();
+        const workspaceRoots = yield* makeStateCell<ReadonlyArray<string>>([]);
+        const commands = yield* makeCommands(runtime.contributionIndex);
+        const controller = makePickerController();
+        const chosen: string[] = [];
+        const selections: Array<string | null> = [];
+        const probe = {
+          chose: (value: string) => void chosen.push(value),
+          selected: (id: string | null) => void selections.push(id),
+        };
+
+        const servicesForExtensions = Layer.mergeAll(
+          Layer.succeed(Commands, commands),
+          Layer.succeed(FileSystemPort, fs.port),
+          Layer.succeed(PackageRuntimeService, runtime),
+          Layer.succeed(Attention, attention),
+          Layer.succeed(WorkspaceRoots, workspaceRoots),
+          Layer.succeed(Picker, makePicker(controller)),
+        );
+
+        const userExtensions = makeUserExtensionsPackage({
+          servicesForExtensions,
+          transpiler: identityTranspiler,
+          virtualModules: {
+            ...buildExtensionVirtualModules(),
+            "test:picker-probe": probe,
+          },
+          homeDir: "/home/user",
+        });
+
+        yield* runtime.activateGraph([toPackageDescriptor(userExtensions, servicesForExtensions)]);
+        yield* waitUntil(Effect.sync(() => controller.state().open));
+
+        // The host controller now serves the extension's source: ranked items,
+        // live selection callbacks, and the choose round-trip.
+        expect(controller.state().items.map((item) => item.id)).toEqual(["alpha", "beta"]);
+        expect(selections).toEqual(["alpha"]);
+        controller.setQuery("b"); // "b" is beta's alias → exact tier beats substring
+        expect(controller.state().items[0]?.id).toBe("beta");
+        controller.choose();
+        expect(chosen).toEqual(["beta"]);
+        expect(controller.state().open).toBe(false);
       }),
     ),
   );

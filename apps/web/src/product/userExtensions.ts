@@ -50,6 +50,7 @@ import * as WorkbenchNamespace from "@the-editor/workbench";
 import * as EditorNamespace from "@the-editor/editor";
 import * as EngineNamespace from "@the-editor/engine";
 import * as IntelNamespace from "@the-editor/intel";
+import * as PickerNamespace from "@the-editor/picker";
 import * as VcsNamespace from "@the-editor/vcs";
 import * as DiffViewNamespace from "@the-editor/diff-view";
 import * as ThemeNamespace from "@the-editor/theme";
@@ -82,6 +83,7 @@ export function buildExtensionVirtualModules(): Readonly<Record<string, unknown>
     "@the-editor/editor": EditorNamespace,
     "@the-editor/engine": EngineNamespace,
     "@the-editor/intel": IntelNamespace,
+    "@the-editor/picker": PickerNamespace,
     "@the-editor/vcs": VcsNamespace,
     "@the-editor/diff-view": DiffViewNamespace,
     "@the-editor/theme": ThemeNamespace,

@@ -42,15 +42,6 @@ export class ViewOperations extends Context.Tag("@the-editor/editor/ViewOperatio
   }
 >() {}
 
-export class PaletteOperations extends Context.Tag("@the-editor/editor/PaletteOperations")<
-  PaletteOperations,
-  { readonly open: () => void }
->() {}
-
-export class ThemeOperations extends Context.Tag("@the-editor/editor/ThemeOperations")<
-  ThemeOperations,
-  { readonly openSelector: () => void }
->() {}
 
 export class LspOperations extends Context.Tag("@the-editor/editor/LspOperations")<
   LspOperations,

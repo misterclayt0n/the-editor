@@ -9,9 +9,10 @@ import { Shell } from "./shell";
 import { WorkbenchView } from "./workbench/WorkbenchView";
 import type { ChromeSlot } from "./workbench/shellHost";
 import { isMacDesktop, isDesktop } from "./platform/desktop";
-import { CommandPalette, type CommandPaletteMode } from "./ui/CommandPalette";
-import { FileFinder } from "./ui/FileFinder";
 import { GlobalSearch } from "./ui/GlobalSearch";
+import { PickerHost } from "./ui/PickerHost";
+import { fileFinderRequest } from "./pickers/fileFinder";
+import { workspaceSwitcherRequest, type WorkspacePalette } from "./pickers/workspaces";
 import { RenameDialog } from "./ui/RenameDialog";
 import { AttentionLayer } from "./ui/AttentionLayer";
 import { NotificationCenter } from "./ui/NotificationCenter";
@@ -165,9 +166,6 @@ export function App() {
 
   const [snapshot, setSnapshot] = useState<EditorSnapshot | null>(null);
   const [pending, setPending] = useState<ReadonlyArray<Chord>>([]);
-  const [paletteOpen, setPaletteOpen] = useState(false);
-  const [paletteMode, setPaletteMode] = useState<CommandPaletteMode>("commands");
-  const [fileFinderOpen, setFileFinderOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [rename, setRename] = useState<{ open: boolean; initial: string }>({ open: false, initial: "" });
   // Generic string prompt (new file/folder names, etc.); resolves null on cancel.
@@ -210,19 +208,16 @@ export function App() {
     runtime.onFileStateChanged = () => {
       if (isActive()) setStatusEpoch((epoch) => epoch + 1);
     };
-    runtime.onPaletteOpenRequested = () => {
-      setPaletteMode("commands");
-      setPaletteOpen(true);
-    };
-    runtime.onFileFinderOpenRequested = () => setFileFinderOpen(true);
     runtime.onSearchOpenRequested = () => setSearchOpen(true);
-    runtime.onThemeSelectorOpenRequested = () => {
-      setPaletteMode("themes");
-      setPaletteOpen(true);
-    };
+    // App owns the session list, so App supplies the switcher source; the
+    // picker itself is the same generic surface every other source uses.
     runtime.onWorkspaceSwitcherRequested = () => {
-      setPaletteMode("workspaces");
-      setPaletteOpen(true);
+      runtime.pickerController.open(
+        workspaceSwitcherRequest(
+          () => workspacesRef.current,
+          () => runtime.pickerController.refresh(),
+        ),
+      );
     };
     runtime.onWorkspaceOpenFolderRequested = () => openFolderRef.current();
     runtime.onWorkspaceCloseRequested = () => {
@@ -329,7 +324,10 @@ export function App() {
             runtime.commands.execute("diffs.openDiffView").pipe(Effect.catchAll(() => Effect.void)),
           );
         },
-        findFile: () => setFileFinderOpen(true),
+        findFile: () => {
+          const runtime = host();
+          if (runtime !== null) runtime.pickerController.open(fileFinderRequest(runtime));
+        },
         searchProject: (query: string) => host()?.searchProject(query),
         multiBuffer: (
           specs: readonly { path: string; text: string; matches: readonly { start: number; end: number }[] }[],
@@ -376,8 +374,7 @@ export function App() {
     if (activeId === null) return;
     const session = sessionsRef.current.find((entry) => entry.id === activeId);
     if (session === undefined) return;
-    setPaletteOpen(false);
-    setFileFinderOpen(false);
+    for (const entry of sessionsRef.current) entry.runtime.pickerController.dismiss();
     setSearchOpen(false);
     setPending([]);
     setSnapshot(session.runtime.focusedPaneHost()?.snapshot() ?? null);
@@ -427,9 +424,10 @@ export function App() {
   closeWorkspaceRef.current = closeWorkspace;
 
   // The switcher's data + actions, projected from App's own session state — the
-  // command palette is a pure view over this; it never owns sessions. The
-  // switcher doubles as the manager (open a folder, close a row).
-  const workspaces = useMemo(
+  // picker is a pure view over this; it never owns sessions. The switcher
+  // doubles as the manager (open a folder, close a row), so the picker source
+  // reads through a ref: the list stays live while the dialog is open.
+  const workspaces = useMemo<WorkspacePalette>(
     () => ({
       items: sessions.map((session) => ({ id: session.id, label: workspaceLabel(session.root) })),
       activeId,
@@ -440,6 +438,8 @@ export function App() {
     }),
     [sessions, activeId, switchWorkspace, closeWorkspace, openWorkspaceFolder],
   );
+  const workspacesRef = useRef<WorkspacePalette>(workspaces);
+  workspacesRef.current = workspaces;
 
   const handleActiveSnapshot = useCallback((next: EditorSnapshot) => setSnapshot(next), []);
   // Resolve the pending prompt exactly once (Enter fires onSubmit then onClose).
@@ -450,14 +450,10 @@ export function App() {
     resolve?.(value);
     window.requestAnimationFrame(() => activeRuntimeRef.current?.focusActivePanel());
   }, []);
-  const handlePaletteOpenChange = useCallback((open: boolean) => {
-    setPaletteOpen(open);
-    // Radix restores focus to the previously focused element, but command
-    // execution may have swapped the layout out from under it.
-    if (!open) {
-      window.requestAnimationFrame(() => activeRuntimeRef.current?.focusActivePanel());
-      setPaletteMode("commands");
-    }
+  // Radix restores focus to the previously focused element, but command
+  // execution may have swapped the layout out from under it.
+  const handlePickerClosed = useCallback(() => {
+    window.requestAnimationFrame(() => activeRuntimeRef.current?.focusActivePanel());
   }, []);
 
   if (shell === null || active === null) return <div className="app" />;
@@ -486,21 +482,10 @@ export function App() {
           )),
           viewportEl,
         )}
-      <CommandPalette
-        open={paletteOpen}
-        mode={paletteMode}
-        onOpenChange={handlePaletteOpenChange}
-        commands={activeRuntime.commands}
-        themes={activeRuntime.themes}
-        workspaces={workspaces}
-      />
-      <FileFinder
-        open={fileFinderOpen}
+      <PickerHost
+        controller={activeRuntime.pickerController}
         runtime={activeRuntime}
-        onOpenChange={(open) => {
-          setFileFinderOpen(open);
-          if (!open) window.requestAnimationFrame(() => activeRuntime.focusActivePanel());
-        }}
+        onClosed={handlePickerClosed}
       />
       <GlobalSearch
         open={searchOpen}

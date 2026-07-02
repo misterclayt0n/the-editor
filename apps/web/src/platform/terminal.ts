@@ -1,8 +1,9 @@
 /**
- * TerminalPort: the platform seam for interactive PTYs (the terminal panel).
- * Capability-gated like every port — no host (plain web, headless), no
- * terminal. Distinct from ProcessPort (LSP): a PTY is a single merged byte
- * stream with a window size, not stdout/stderr pipes.
+ * TerminalPort: the low-level, HOST-ONLY driver behind the public `Ptys` seam
+ * (`@the-editor/process`). Structurally a `PtyDriver`; packages get
+ * `makePtys(driver)`'s scoped handles, never this raw bridge. A PTY is a single
+ * merged byte stream with a window size, distinct from ProcessPort's
+ * stdout/stderr pipes. Capability-gated: no host, no terminal.
  *
  * Priority: dev test port (headless verification) > Electron bridge.
  */

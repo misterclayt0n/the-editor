@@ -22,10 +22,10 @@ finding that anchors everything below:
 
 1. **`Host*` tag count → 0.** Every `Context.Tag("the-editor/web/Host…")` is a spot
    where a package reaches a privileged `AppRuntime` method instead of a public
-   operation. **Currently: 6.**
+   operation. **Currently: 5.**
    ```
    HostIntelActions  HostLspIntel
-   HostFileTree  HostTerminal  HostDiffView  HostVcsDefaults
+   HostFileTree  HostTerminal  HostDiffView
    ```
 2. **Every tag in the `services` layer is either nameable from the allowlist or on an
    explicit host-only list.** Sharper than the verb table: the layer already contains
@@ -76,7 +76,7 @@ finding that anchors everything below:
 | 10 | Open a file into a visible view | ✅ `Files` + `FileViews.openInView` (C1) |
 | 11 | Pick from a list (completing-read) | ✅ `Picker` via `@the-editor/picker`; one windowed host, N sources — all five surfaces converted |
 | 12 | Add statusline / context-menu items | ❌ no registry exists (E1) |
-| 13 | Own a background process | ❌ direct `ProcessPort`/`TerminalPort` host-only; LSP spawn-by-proxy exists via #16 (D1) |
+| 13 | Own a background process | ✅ `Processes` / `Ptys` via `@the-editor/process`; Scope-bound handles, killed on dispose |
 | 14 | React to interaction (hover/scroll/viewport/pre-key) | ❌ `PaneHost` fields are single-assignment slots (D2) |
 | 15 | Back a buffer with non-file content | 🟡 `DocumentRegistry.open({text})` exists; provider semantics + view attach missing (D3) |
 | 16 | Contribute a language server / grammar | 🟡 `LanguageServers` public via `@the-editor/intel`; grammars native `.so` (D1) |
@@ -191,16 +191,62 @@ finding that anchors everything below:
 
 ## D. New primitives (real design work)
 
-- [ ] **D1. Process ownership.** Publish `ProcessPort` (and the PTY-shaped
-  `TerminalPort`) as capability tags handed to packages. De-specializes LSP, VCS,
-  and the terminal at once; retires `HostTerminal`, `HostVcsDefaults`, and
-  `HostLspIntel`. **This is a trust decision as much as
-  plumbing** — the project-extension trust gate (`extensionTrust.ts`) exists because
-  of exactly this. B3 already created one narrow process-spawn-by-proxy path:
-  a public `LanguageServers` registration can cause the host LSP manager to start an
-  arbitrary command for a matching file. The D1 write-up must acknowledge that
-  existing reachability and then decide whether to formalize/generalize it or
-  constrain it. Sequence it after A–C, with the capability story written down.
+- [x] **D1. Process ownership.** Shipped as `@the-editor/process` (allowlisted):
+  `Processes` (stdout/stderr pipes) + `Ptys` (terminal PTYs), each with a
+  **Scope-bound `spawn` returning a handle** — you touch only what you spawned,
+  and the acquiring scope closing (package dispose/reload, or an `Effect.scoped`
+  block) kills it. `Processes` also has `run(opts) → {code, stdout, stderr}` for
+  one-shot consumers. Byte streaming stays plain callbacks; handles buffer
+  output until the first listener then go live. Capability-gated: the service is
+  always in the layer, but `spawn`/`run` fail `ProcessUnavailableError` when no
+  host bridge exists — so a process-using extension activates and degrades at
+  the call. The raw window bridges (`platform/process.ts`, `platform/terminal.ts`)
+  are now the host-only `ProcessDriver`/`PtyDriver` behind
+  `makeProcesses`/`makePtys`. Added `env` (merged over host env) to the spawn
+  options + IPC. Refactored consumers: git provider (`vcs/git.ts`) on
+  `processes.run`, registered by the `vcsDefaults` package on public seams only
+  (retires `HostVcsDefaults` fully); `LspManager` spawns via `Processes` into
+  per-client scopes (`HostLspIntel` unblocked, retired in D1b); terminal mount
+  spawns via `Ptys` into a per-terminal scope, PTY handles held by the runtime
+  for the foreground-process close prompt. Proxy equivalence stands: a
+  `LanguageServers` entry ≡ holding `Processes`, kept as-is. The load-path test
+  asserts the assertion that matters — reloading an extension kills the process
+  it spawned. Host* count 6 → 5. Deferred with the renderer (G/D2): the
+  terminal's clipboard + key-routing coupling and `HostTerminal` itself.
+  - **Posture: trusted-local; consent at extension load, never per spawn.**
+    `EXTENSIONS.md` §20 says extensions run local processes; `extensionTrust`
+    already asks "full local code execution?" once per project root; global
+    extensions are implicitly trusted; and the B3 `LanguageServers` proxy path
+    would bypass any per-spawn prompt anyway. No capability manifests.
+  - **The raw ports are the wrong shape to publish.** `ProcessPort` is an
+    id-multiplexed global: any holder can `write`/`kill` any id, and nothing
+    ties a process to its spawner's lifetime (reload would leak orphans).
+  - **The seam: a new `@the-editor/process` package** with two tags,
+    `Processes` (stdout/stderr pipes) and `Ptys` (terminal PTYs), whose
+    `spawn` is **Scope-bound and returns a handle** — you can only touch what
+    you spawned, and package dispose/reload kills its processes (ownership =
+    lifetime, same rule as every registry). Byte streaming stays plain
+    callbacks (hot-path rule). Capability-gated in the layer like
+    `FileSystemPort`. Optional `label` for attribution; add a `run(cmd) →
+    {stdout, code}` convenience for run-to-completion consumers (git,
+    formatters). The raw window bridges become host-adapter internals on the
+    explicit host-only list.
+  - **What it retires:** `HostVcsDefaults` fully (git provider rebuilt on
+    `Processes` inside the package; a jj provider becomes a droppable user
+    extension). `HostTerminal` partially (PTY half → `Ptys`; the renderer's
+    clipboard + key-routing coupling is G/D2 debt, not D1's). `HostLspIntel`
+    is **unblocked, not retired** — retiring it is LSP-as-a-package (D1b,
+    below); D1 swaps `LspManager`'s internals onto the public seam and stops.
+  - **Proxy equivalence, written down:** registering a `LanguageServers`
+    entry ≡ holding `Processes`. Keep the proxy (lazy, host-timed spawn is
+    the better citizen for servers); no extra friction on either path.
+  - **Order:** package + adapter + allowlist + loader-path test (asserting
+    reload kills the spawn — the assertion that matters) → git provider →
+    LspManager internals → terminal PTY half (+ publish clipboard).
+- [ ] **D1b. LSP as a package.** Rebuild `LspManager` as package code on
+  `Processes` + `LanguageServers` + `FileSystemPort` + notification buses;
+  retires `HostLspIntel` and the manager's runtime coupling (panes,
+  workspaceRoot getter, diagnostics callbacks). Real work; do after D1.
 - [ ] **D2. Interaction events — with multiplexing.** `PaneHost.pointerHover` /
   `pointerScrolled` / `viewportChanged` / `keyInterceptor` are **single-assignment
   slots** that `IntelController` overwrites (`intel/controller.ts`) — even internally

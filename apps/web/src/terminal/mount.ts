@@ -20,6 +20,8 @@ import {
 } from "./backend";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { Effect, Exit, Scope } from "effect";
+import type { PtyHandle } from "@the-editor/process";
 import type { AppRuntime } from "../runtime";
 import type { PanelRenderer } from "@the-editor/workbench";
 import {
@@ -256,13 +258,17 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
       let body: HTMLElement | null = null;
       let started = false;
       let reactRoot: Root | null = null;
-      const port = runtime.terminalPort();
+      // The PTY is spawned into this scope; closing it kills the process even
+      // if dispose is skipped (ownership = lifetime).
+      let pty: PtyHandle | null = null;
+      let ptyScope: Scope.CloseableScope | null = null;
+      const ptys = runtime.ptys();
       const clipboard = runtime.clipboardPort();
       const platform = detectTerminalShortcutPlatform();
 
       element.classList.add("terminal-host");
 
-      if (port === undefined) {
+      if (!runtime.terminalAvailable()) {
         const note = document.createElement("div");
         note.className = "terminal-empty";
         note.textContent = "No terminal available (needs the desktop app).";
@@ -281,7 +287,7 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
         target instanceof Element && target.closest(".terminal-search") !== null;
 
       const writePtyInput = (data: string): void => {
-        if (termId !== null) port.write(termId, data);
+        pty?.write(data);
       };
 
       const canCopySelection = (): boolean => term?.hasSelection() === true;
@@ -335,7 +341,7 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
 
       const syncPtySize = (current: Terminal): void => {
         if (termId === null || current.cols <= 0 || current.rows <= 0) return;
-        port.resize(termId, current.cols, current.rows);
+        pty?.resize(current.cols, current.rows);
       };
 
       const refreshVisibleRows = (current: Terminal): void => {
@@ -583,18 +589,18 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
             return "skip";
           if (runtime.handleGlobalKey(event)) return "skip";
           const sequence = macEditingSequence(event);
-          if (sequence !== null && termId !== null) {
-            port.write(termId, sequence);
+          if (sequence !== null && pty !== null) {
+            pty.write(sequence);
             return "skip";
           }
           return terminalKeyHandlerResult(event);
         });
 
         const dataDisposable = next.onData((data) => {
-          if (termId !== null) port.write(termId, data);
+          pty?.write(data);
         }) as TerminalDisposable;
         const resizeDisposable = next.onResize(({ cols, rows }) => {
-          if (termId !== null) port.resize(termId, cols, rows);
+          pty?.resize(cols, rows);
         }) as TerminalDisposable;
 
         term = next;
@@ -644,35 +650,43 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
           if (disposed) return;
           const spawnedTerm = openTerminal();
 
-          const id = await port.spawn({
-            cols: spawnedTerm.cols,
-            rows: spawnedTerm.rows,
-            ...(runtime.workspaceRoot !== null ? { cwd: runtime.workspaceRoot } : {}),
-          });
-          if (disposed) {
-            if (id !== null) port.kill(id);
+          const scope = Effect.runSync(Scope.make());
+          const spawned = await Effect.runPromise(
+            runtime
+              .ptys()
+              .spawn({
+                cols: spawnedTerm.cols,
+                rows: spawnedTerm.rows,
+                ...(runtime.workspaceRoot !== null ? { cwd: runtime.workspaceRoot } : {}),
+                label: "terminal",
+              })
+              .pipe(Scope.extend(scope), Effect.option),
+          );
+          if (disposed || spawned._tag === "None") {
+            void Effect.runPromise(Scope.close(scope, Exit.void));
+            if (!disposed && spawned._tag === "None") {
+              spawnedTerm.write("\r\n  \x1b[31mcould not start a shell\x1b[0m\r\n");
+            }
             return;
           }
-          if (id === null) {
-            spawnedTerm.write("\r\n  \x1b[31mcould not start a shell\x1b[0m\r\n");
-            return;
-          }
-          termId = id;
-          // Let the runtime map this panel → PTY id, so closing the tab can
+          pty = spawned.value;
+          ptyScope = scope;
+          termId = pty.pid;
+          // Let the runtime hold this panel's PTY handle, so closing the tab can
           // check for a running foreground process and confirm first.
-          runtime.setTerminalProcessId(panel.id, id);
+          runtime.setTerminalProcess(panel.id, pty);
           syncPtySize(spawnedTerm);
           // PTY → screen, screen → PTY, and keep the PTY's window size in sync.
-          port.onData(id, (data) => {
+          pty.onData((data) => {
             if (disposed) return;
             const responses = unsupportedQueryResponses(
               data,
               terminalTheme(runtime.themeSnapshot()),
             );
             term?.write(data);
-            if (responses.length > 0) port.write(id, responses);
+            if (responses.length > 0) pty?.write(responses);
           });
-          port.onExit(id, (code) => {
+          pty.onExit((code) => {
             if (!disposed)
               term?.write(
                 `\r\n\x1b[90m[process exited${code === null ? "" : ` (${code})`}]\x1b[0m\r\n`,
@@ -710,10 +724,11 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
       return {
         dispose: () => {
           disposed = true;
-          runtime.clearTerminalProcessId(panel.id);
+          runtime.clearTerminalProcess(panel.id);
           if (refreshFrame !== null) cancelAnimationFrame(refreshFrame);
           disposeTermUi?.();
-          if (termId !== null) port.kill(termId);
+          pty?.kill();
+          if (ptyScope !== null) void Effect.runPromise(Scope.close(ptyScope, Exit.void));
           unsubscribeTheme();
           unsubscribeFont();
           reactRoot?.unmount();

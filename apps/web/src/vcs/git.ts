@@ -1,40 +1,23 @@
 /**
- * The git provider: plain `git` subprocesses over the ProcessPort (the
- * same seam language servers ride — no native library, no extra surface).
+ * The git provider: plain `git` subprocesses over the public `Processes` seam
+ * (the same capability language servers ride — no native library, no extra
+ * surface). Written entirely on `@the-editor/process` + `@the-editor/vcs`, so
+ * it could ship as a user extension; a jj/hg provider is the same shape.
  * Porcelain -z output is NUL-delimited and stable across locales.
  */
 
-import type { ProcessPort } from "../platform/process";
+import { Effect } from "effect";
+import type { Processes, RunResult } from "@the-editor/process";
 import type { VcsFileStatus, VcsProvider, VcsStatusEntry } from "@the-editor/vcs";
 
-type RunResult = { code: number | null; stdout: string };
-
-const decoder = new TextDecoder();
-
-async function run(
-  port: ProcessPort,
+const run = async (
+  processes: Processes.Service,
   cwd: string,
   args: readonly string[],
-): Promise<RunResult | null> {
-  const id = await port.spawn({ command: "git", args: [...args], cwd });
-  if (id === null) return null;
-  return new Promise((resolve) => {
-    const chunks: Uint8Array[] = [];
-    port.onData(id, (chunk, stream) => {
-      if (stream === "stdout") chunks.push(chunk);
-    });
-    port.onExit(id, (code) => {
-      const total = chunks.reduce((n, c) => n + c.length, 0);
-      const merged = new Uint8Array(total);
-      let at = 0;
-      for (const chunk of chunks) {
-        merged.set(chunk, at);
-        at += chunk.length;
-      }
-      resolve({ code, stdout: decoder.decode(merged) });
-    });
-  });
-}
+): Promise<RunResult | null> => {
+  const exit = await Effect.runPromiseExit(processes.run({ command: "git", args: [...args], cwd }));
+  return exit._tag === "Success" ? exit.value : null;
+};
 
 /** Porcelain v1 XY → tree badge status (worktree column wins). */
 function statusOf(xy: string): VcsFileStatus | null {
@@ -50,17 +33,17 @@ function statusOf(xy: string): VcsFileStatus | null {
   return null;
 }
 
-export function createGitProvider(port: ProcessPort): VcsProvider {
+export function createGitProvider(processes: Processes.Service): VcsProvider {
   return {
     id: "git",
 
     async detect(root) {
-      const result = await run(port, root, ["rev-parse", "--is-inside-work-tree"]);
+      const result = await run(processes, root, ["rev-parse", "--is-inside-work-tree"]);
       return result?.code === 0 && result.stdout.trim() === "true";
     },
 
     async status(root) {
-      const result = await run(port, root, [
+      const result = await run(processes, root, [
         "status",
         "--porcelain",
         "-z",
@@ -83,12 +66,12 @@ export function createGitProvider(port: ProcessPort): VcsProvider {
     },
 
     async headContent(root, relPath) {
-      const result = await run(port, root, ["show", `HEAD:${relPath}`]);
+      const result = await run(processes, root, ["show", `HEAD:${relPath}`]);
       return result !== null && result.code === 0 ? result.stdout : null;
     },
 
     async listFiles(root) {
-      const result = await run(port, root, [
+      const result = await run(processes, root, [
         "ls-files",
         "--cached",
         "--others",
@@ -100,14 +83,19 @@ export function createGitProvider(port: ProcessPort): VcsProvider {
     },
 
     async patch(root) {
-      const tracked = await run(port, root, ["diff", "HEAD"]);
+      const tracked = await run(processes, root, ["diff", "HEAD"]);
       if (tracked === null || tracked.code !== 0) return null;
-      const untracked = await run(port, root, ["ls-files", "--others", "--exclude-standard", "-z"]);
+      const untracked = await run(processes, root, [
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+        "-z",
+      ]);
       if (untracked === null || untracked.code !== 0) return tracked.stdout;
       const chunks = [tracked.stdout];
       for (const path of untracked.stdout.split("\0")) {
         if (path.length === 0) continue;
-        const added = await run(port, root, ["diff", "--no-index", "--", "/dev/null", path]);
+        const added = await run(processes, root, ["diff", "--no-index", "--", "/dev/null", path]);
         // `git diff --no-index` exits 1 when it successfully found differences.
         if (added !== null && (added.code === 0 || added.code === 1)) chunks.push(added.stdout);
       }
@@ -115,7 +103,7 @@ export function createGitProvider(port: ProcessPort): VcsProvider {
     },
 
     async info(root) {
-      const result = await run(port, root, ["rev-parse", "--abbrev-ref", "HEAD"]);
+      const result = await run(processes, root, ["rev-parse", "--abbrev-ref", "HEAD"]);
       if (result === null || result.code !== 0) return null;
       return { branch: result.stdout.trim() };
     },

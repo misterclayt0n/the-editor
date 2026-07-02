@@ -254,11 +254,21 @@ const procs = new Map<number, ChildProcess>();
 function registerProcessHandlers(): void {
   ipcMain.handle(
     "proc:spawn",
-    (event, options: { command: string; args?: string[]; cwd?: string }) => {
+    (
+      event,
+      options: {
+        command: string;
+        args?: string[];
+        cwd?: string;
+        env?: Record<string, string>;
+      },
+    ) => {
       const sender = event.sender;
       try {
         const child = spawn(options.command, options.args ?? [], {
           ...(options.cwd ? { cwd: options.cwd } : {}),
+          // Extra env is merged OVER the host environment, never replacing it.
+          ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
           stdio: ["pipe", "pipe", "pipe"],
         });
         const id = nextProcId++;
@@ -606,7 +616,16 @@ function registerClipboardHandlers(): void {
 function registerTerminalHandlers(): void {
   ipcMain.handle(
     "term:spawn",
-    (event, options: { cols: number; rows: number; cwd?: string; shell?: string }) => {
+    (
+      event,
+      options: {
+        cols: number;
+        rows: number;
+        cwd?: string;
+        shell?: string;
+        env?: Record<string, string>;
+      },
+    ) => {
       const pty = loadPty();
       if (pty === null) return null;
       const sender = event.sender;
@@ -620,7 +639,7 @@ function registerTerminalHandlers(): void {
           cols: Math.max(1, options.cols),
           rows: Math.max(1, options.rows),
           cwd: options.cwd ?? process.env.HOME ?? process.cwd(),
-          env: { ...process.env, TERM: "xterm-256color" },
+          env: { ...process.env, TERM: "xterm-256color", ...options.env },
         });
         const id = nextTermId++;
         terms.set(id, child);

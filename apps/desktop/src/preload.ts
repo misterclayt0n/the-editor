@@ -73,8 +73,12 @@ ipcRenderer.on("proc:exit", (_event, payload: { id: number; code: number | null 
 });
 
 contextBridge.exposeInMainWorld("theEditorProc", {
-  spawn: (options: { command: string; args?: string[]; cwd?: string }): Promise<number | null> =>
-    ipcRenderer.invoke("proc:spawn", options),
+  spawn: (options: {
+    command: string;
+    args?: string[];
+    cwd?: string;
+    env?: Record<string, string>;
+  }): Promise<number | null> => ipcRenderer.invoke("proc:spawn", options),
   write: (id: number, chunk: Uint8Array): Promise<void> =>
     ipcRenderer.invoke("proc:write", id, chunk),
   kill: (id: number): Promise<void> => {
@@ -209,6 +213,7 @@ contextBridge.exposeInMainWorld("theEditorTerminal", {
     rows: number;
     cwd?: string;
     shell?: string;
+    env?: Record<string, string>;
   }): Promise<number | null> => ipcRenderer.invoke("term:spawn", options),
   write: (id: number, data: string): void => ipcRenderer.send("term:write", id, data),
   processName: (id: number): Promise<string | null> => ipcRenderer.invoke("term:process", id),

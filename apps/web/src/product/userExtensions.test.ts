@@ -46,6 +46,7 @@ import {
 } from "@the-editor/intel";
 import { makeVcsProviders, VcsProviders } from "@the-editor/vcs";
 import { makePicker, makePickerController, Picker } from "@the-editor/picker";
+import { makeProcesses, Processes, type ProcessDriver } from "@the-editor/process";
 import {
   collectSlots,
   makePanelRenderers,
@@ -722,6 +723,76 @@ describe("makeUserExtensionsPackage", () => {
         controller.choose();
         expect(chosen).toEqual(["beta"]);
         expect(controller.state().open).toBe(false);
+      }),
+    ),
+  );
+
+  it.live("kills an extension's spawned process when the extension reloads", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // An extension that spawns a long-lived process in its activation scope.
+        const source = `
+          var definePackage = require("@the-editor/extensions").definePackage;
+          var Effect = require("effect").Effect;
+          var Processes = require("@the-editor/process").Processes;
+          module.exports.default = definePackage("acme.daemon", function () {
+            return Effect.gen(function* () {
+              var processes = yield* Processes;
+              yield* processes.spawn({ command: "daemon", label: "acme" });
+            });
+          });
+        `;
+        const fs = makeFakeFs();
+        fs.write("/home/user/.the-editor/extensions/daemon.ts", source);
+
+        // A driver that records spawns and kills — the assertion surface.
+        const spawned: number[] = [];
+        const killed: number[] = [];
+        let nextId = 1;
+        const driver: ProcessDriver = {
+          spawn: () => {
+            const id = nextId++;
+            spawned.push(id);
+            return Promise.resolve(id);
+          },
+          write: () => {},
+          kill: (id) => void killed.push(id),
+          onData: () => {},
+          onExit: () => {},
+        };
+
+        const runtime = yield* makePackageRuntime;
+        const attention = yield* makeAttention();
+        const workspaceRoots = yield* makeStateCell<ReadonlyArray<string>>([]);
+        const commands = yield* makeCommands(runtime.contributionIndex);
+
+        const servicesForExtensions = Layer.mergeAll(
+          Layer.succeed(Commands, commands),
+          Layer.succeed(FileSystemPort, fs.port),
+          Layer.succeed(PackageRuntimeService, runtime),
+          Layer.succeed(Attention, attention),
+          Layer.succeed(WorkspaceRoots, workspaceRoots),
+          Layer.succeed(Processes, makeProcesses(driver)),
+        );
+
+        const userExtensions = makeUserExtensionsPackage({
+          servicesForExtensions,
+          transpiler: identityTranspiler,
+          virtualModules: buildExtensionVirtualModules(),
+          homeDir: "/home/user",
+        });
+
+        yield* runtime.activateGraph([toPackageDescriptor(userExtensions, servicesForExtensions)]);
+        yield* waitUntil(Effect.sync(() => spawned.length === 1));
+        expect(killed).toEqual([]); // still alive while activated
+
+        // Edit the source → reload disposes the old activation scope → the
+        // process it spawned is killed (ownership = lifetime). This is the D1
+        // assertion that matters.
+        fs.write("/home/user/.the-editor/extensions/daemon.ts", `${source}\n// v2`);
+        yield* commands.execute("reload");
+        yield* waitUntil(Effect.sync(() => spawned.length === 2));
+        expect(killed).toContain(1); // the first activation's process died
       }),
     ),
   );

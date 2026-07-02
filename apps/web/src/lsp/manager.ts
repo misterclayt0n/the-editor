@@ -43,7 +43,7 @@ import {
   type ByteStreams,
 } from "@the-editor/lsp";
 import type { DecorationSpec, VirtualTextSpec } from "@the-editor/editor";
-import type { ProcessPort } from "../platform/process";
+import type { Processes, ProcessHandle } from "@the-editor/process";
 import { chooseServerRoot } from "./roots";
 import type { LanguageServerDefinition, LanguageServers } from "@the-editor/intel";
 import type {
@@ -78,9 +78,17 @@ type ClientHandle = {
   readonly key: string;
   readonly definition: LanguageServerDefinition;
   readonly client: LspClient;
-  readonly procId: number;
+  readonly proc: ProcessHandle;
+  /** The spawn's scope; closing it kills the process (belt to `proc.kill`). */
+  readonly scope: Scope.CloseableScope;
   ready: Promise<boolean>;
   alive: boolean;
+};
+
+/** Kill a client's process and release its scope. Idempotent. */
+const closeClient = (handle: ClientHandle): void => {
+  handle.proc.kill();
+  void Effect.runPromise(Scope.close(handle.scope, Exit.void));
 };
 
 type DiagnosticEntry = {
@@ -210,7 +218,7 @@ export class LspManager {
   onDiagnostics?: (docId: string) => void;
 
   constructor(
-    private readonly port: ProcessPort,
+    private readonly processes: Processes.Service,
     private readonly fileSystem: FileSystemPort.Service | undefined,
     private readonly servers: LanguageServers.Service,
     private readonly workspaceRoot: () => string | null = () => null,
@@ -352,7 +360,7 @@ export class LspManager {
     for (const [key, handle] of [...this.clients]) {
       if (inUse.has(handle)) continue;
       this.clients.delete(key);
-      if (handle.alive) void handle.client.shutdown().then(() => this.port.kill(handle.procId));
+      if (handle.alive) void handle.client.shutdown().then(() => closeClient(handle));
     }
   }
 
@@ -737,7 +745,7 @@ export class LspManager {
     for (const docId of [...this.attachments.keys()]) this.detach(docId);
     for (const handle of this.clients.values()) {
       if (handle.alive) {
-        void handle.client.shutdown().then(() => this.port.kill(handle.procId));
+        void handle.client.shutdown().then(() => closeClient(handle));
       }
     }
     this.clients.clear();
@@ -758,7 +766,7 @@ export class LspManager {
     for (const docId of [...this.attachments.keys()]) this.detach(docId);
     for (const handle of this.clients.values()) {
       if (handle.alive) {
-        void handle.client.shutdown().then(() => this.port.kill(handle.procId));
+        void handle.client.shutdown().then(() => closeClient(handle));
       }
     }
     this.clients.clear();
@@ -1066,27 +1074,39 @@ export class LspManager {
     const failedAt = this.failedSpawns.get(key);
     if (failedAt !== undefined && Date.now() - failedAt < SPAWN_RETRY_MS) return null;
 
-    const procId = await this.port.spawn({
-      command: definition.command,
-      args: definition.args ?? [],
-      cwd: root,
-    });
-    if (procId === null) {
+    // Per-client scope: the process is bound to it, so closeClient() (shutdown,
+    // detach-reap, stop, dispose) kills it deterministically. If the manager's
+    // owning scope is torn down without a clean shutdown, the process still dies
+    // — ownership is lifetime.
+    const scope = Effect.runSync(Scope.make());
+    const proc = await Effect.runPromise(
+      this.processes
+        .spawn({
+          command: definition.command,
+          args: definition.args ?? [],
+          cwd: root,
+          label: `lsp:${definition.id}`,
+        })
+        .pipe(Scope.extend(scope), Effect.option),
+    );
+    if (proc._tag === "None") {
+      void Effect.runPromise(Scope.close(scope, Exit.void));
       this.failedSpawns.set(key, Date.now());
       return null;
     }
+    const procHandle = proc.value;
 
     const chunkListeners = new Set<(chunk: Uint8Array) => void>();
     const closeListeners = new Set<() => void>();
-    this.port.onData(procId, (chunk, stream) => {
+    procHandle.onData((chunk, stream) => {
       if (stream !== "stdout") return; // stderr is server log noise
       for (const listener of chunkListeners) listener(chunk);
     });
-    this.port.onExit(procId, () => {
+    procHandle.onExit(() => {
       for (const listener of closeListeners) listener();
     });
     const streams: ByteStreams = {
-      send: (chunk) => this.port.write(procId, chunk),
+      send: (chunk) => procHandle.write(chunk),
       onChunk: (listener) => void chunkListeners.add(listener),
       onClose: (listener) => void closeListeners.add(listener),
     };
@@ -1094,7 +1114,8 @@ export class LspManager {
     const handle: ClientHandle = {
       key,
       definition,
-      procId,
+      proc: procHandle,
+      scope,
       alive: true,
       ready: Promise.resolve(false),
       client: new LspClient(createByteConnection(streams), {

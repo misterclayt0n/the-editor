@@ -147,7 +147,8 @@ import {
   type FileFinderPort,
 } from "./platform/fileFinder";
 import { createProcessPort } from "./platform/process";
-import { createTerminalPort, type TerminalPort } from "./platform/terminal";
+import { createTerminalPort } from "./platform/terminal";
+import { makeProcesses, makePtys, Processes, Ptys, type PtyHandle } from "@the-editor/process";
 import { createClipboardPort, type ClipboardPort } from "./platform/clipboard";
 import { createSyntaxPort, type HighlightRun, type SyntaxPort } from "./platform/syntax";
 import { getHomeDir } from "./platform/homeDir";
@@ -175,9 +176,8 @@ import { globalSearchRequest } from "./pickers/globalSearch";
 import { createDiffViewRenderer } from "./diffview/mount";
 import { terminalPackage, TerminalSurface, HostTerminal } from "./product/terminal";
 import { createTerminalRenderer } from "./terminal/mount";
-import { HostVcsDefaults, vcsDefaults } from "./product/vcs";
+import { vcsDefaults } from "./product/vcs";
 import { makeVcsProviders, VcsProviders } from "@the-editor/vcs";
-import { createGitProvider } from "./vcs/git";
 import { VcsManager } from "./vcs/manager";
 import { vcsGutterProvider } from "./vcs/gutter";
 import {
@@ -440,7 +440,7 @@ export class AppRuntime {
 
   private readonly panes = new Map<PanelId, EditorPane>();
   /** Terminal panel id → PTY id, so closing a tab can check for a live process. */
-  private readonly terminalIds = new Map<PanelId, number>();
+  private readonly terminalProcs = new Map<PanelId, PtyHandle>();
   /** Multibuffer panes (read-only stitched search views), keyed like `panes`. */
   private readonly multiBufferPanes = new Map<PanelId, MultiBufferPane>();
   /**
@@ -455,7 +455,9 @@ export class AppRuntime {
   private republishWorkbench: () => void = () => {};
   private syntaxPort: SyntaxPort | undefined;
   private lsp: LspManager | undefined;
-  private terminal: TerminalPort | undefined;
+  /** The PTY service (always present); `ptyAvailable` gates the empty state. */
+  ptysService!: Ptys.Service;
+  ptyAvailable = false;
   private clipboard: ClipboardPort | undefined | null = undefined;
   private fileFinder: FileFinderPort | undefined | null = undefined;
   private diffViewPanelId: PanelId | null = null;
@@ -559,7 +561,12 @@ export class AppRuntime {
         const pickerService = makePicker(pickerController);
         const diffViewPreferences = makeDiffViewPreferences();
         const vcsProviders = yield* makeVcsProviders;
-        const vcsProcessPort = createProcessPort();
+        // The process capability, wrapped from the raw window bridges (host-only
+        // drivers). Always in the layer so a process-using package activates;
+        // spawn/run fail with ProcessUnavailableError when no bridge is present.
+        const ptyDriver = createTerminalPort();
+        const processes = makeProcesses(createProcessPort());
+        const ptys = makePtys(ptyDriver);
         // The public seam for "what folder(s) is this workspace open on" —
         // any package can depend on WorkspaceRoots instead of reaching into
         // host-private state; AppRuntime.openFolder is just its one writer.
@@ -586,9 +593,8 @@ export class AppRuntime {
           Layer.succeed(PanelRenderers, panelRenderers),
           Layer.succeed(DiffViewPreferences, diffViewPreferences),
           Layer.succeed(VcsProviders, vcsProviders),
-          Layer.succeed(HostVcsDefaults, {
-            providers: vcsProcessPort !== undefined ? [createGitProvider(vcsProcessPort)] : [],
-          }),
+          Layer.succeed(Processes, processes),
+          Layer.succeed(Ptys, ptys),
           Layer.succeed(HostFileTree, {
             // Renderers are constructed on demand so they always see the live runtime.
             renderer: {
@@ -692,26 +698,28 @@ export class AppRuntime {
           signatures: signatureProviders,
         };
         appRuntime.workspaceRootsCell = workspaceRoots;
+        appRuntime.ptysService = ptys;
+        appRuntime.ptyAvailable = ptyDriver !== undefined;
         // Syntax host (absent in plain browsers: capability gating).
         appRuntime.syntaxPort = createSyntaxPort();
-        const processPort = createProcessPort();
-        if (processPort !== undefined) {
-          appRuntime.lsp = new LspManager(
-            processPort,
-            fileSystem,
-            languageServers,
-            () => appRuntime.workspaceRoot,
-          );
-          appRuntime.lsp.onDiagnostics = (docId) => appRuntime.onDiagnosticsChanged?.(docId);
-          appRuntime.vcs = new VcsManager(vcsProviders, fileSystem);
-          // The diff gutter rides the decoration seam: registered once, the
-          // driver attaches it to every document (current + future). No more
-          // hand-driven per-document vcs.attach/detach.
-          yield* Scope.extend(
-            decorationProviders.register(vcsGutterProvider(appRuntime.vcs, workspaceFiles)),
-            scope,
-          );
-        }
+        // LSP and VCS both ride the public `Processes` seam now: on a host with
+        // no process bridge they construct but stay inert (spawn/run fail), so
+        // there's no capability branch here — the seam degrades, not the wiring.
+        appRuntime.lsp = new LspManager(
+          processes,
+          fileSystem,
+          languageServers,
+          () => appRuntime.workspaceRoot,
+        );
+        appRuntime.lsp.onDiagnostics = (docId) => appRuntime.onDiagnosticsChanged?.(docId);
+        appRuntime.vcs = new VcsManager(vcsProviders, fileSystem);
+        // The diff gutter rides the decoration seam: registered once, the
+        // driver attaches it to every document (current + future). No more
+        // hand-driven per-document vcs.attach/detach.
+        yield* Scope.extend(
+          decorationProviders.register(vcsGutterProvider(appRuntime.vcs, workspaceFiles)),
+          scope,
+        );
 
         // First pane: a scratch document in a single stack. This is ready before
         // package activation so an extension calling FileViews.openInView during
@@ -1012,13 +1020,13 @@ export class AppRuntime {
     this.focusSlot(slotId);
   }
 
-  /** Map a terminal panel to its PTY id (set by the terminal renderer). */
-  setTerminalProcessId(panelId: PanelId, termId: number): void {
-    this.terminalIds.set(panelId, termId);
+  /** Map a terminal panel to its live PTY handle (set by the renderer). */
+  setTerminalProcess(panelId: PanelId, handle: PtyHandle): void {
+    this.terminalProcs.set(panelId, handle);
   }
 
-  clearTerminalProcessId(panelId: PanelId): void {
-    this.terminalIds.delete(panelId);
+  clearTerminalProcess(panelId: PanelId): void {
+    this.terminalProcs.delete(panelId);
   }
 
   /** Close a tab: the panel dies; the document follows when unreferenced. */
@@ -1107,9 +1115,9 @@ export class AppRuntime {
     const pane = this.panes.get(panelId);
     if (pane === undefined) {
       // A terminal with a live foreground process: confirm before killing it.
-      const termId = this.terminalIds.get(panelId);
-      if (termId !== undefined) {
-        void this.requestCloseTerminal(panelId, termId);
+      const handle = this.terminalProcs.get(panelId);
+      if (handle !== undefined) {
+        void this.requestCloseTerminal(panelId, handle);
         return;
       }
       this.closeTab(panelId);
@@ -1144,9 +1152,8 @@ export class AppRuntime {
    * process, `ask` first (same alert dialog as unsaved buffers). Falls straight
    * through to close on hosts without process inspection, or at an idle shell.
    */
-  private async requestCloseTerminal(panelId: PanelId, termId: number): Promise<void> {
-    const port = this.terminalPort();
-    const name = port?.processName !== undefined ? await port.processName(termId) : null;
+  private async requestCloseTerminal(panelId: PanelId, handle: PtyHandle): Promise<void> {
+    const name = handle.processName !== undefined ? await handle.processName() : null;
     if (name === null || isShellProcess(name)) {
       this.closeTab(panelId);
       return;
@@ -1158,7 +1165,7 @@ export class AppRuntime {
       }),
     );
     if (answer === "kill") {
-      if (this.terminalIds.has(panelId)) this.closeTab(panelId);
+      if (this.terminalProcs.has(panelId)) this.closeTab(panelId);
     } else {
       this.focusActivePanel();
     }
@@ -1888,9 +1895,14 @@ export class AppRuntime {
     return Option.getOrUndefined(Context.getOption(this.workspace.context, FileSystemPort));
   }
 
-  /** The platform PTY transport for the terminal panel (Electron / dev echo). */
-  terminalPort(): TerminalPort | undefined {
-    return (this.terminal ??= createTerminalPort());
+  /** The PTY capability for the terminal renderer (scoped handles). */
+  ptys(): Ptys.Service {
+    return this.ptysService;
+  }
+
+  /** Whether a real PTY bridge exists (else the terminal shows an empty state). */
+  terminalAvailable(): boolean {
+    return this.ptyAvailable;
   }
 
   /** The native clipboard bridge, falling back to browser clipboard APIs. */

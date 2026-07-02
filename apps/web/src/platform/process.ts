@@ -1,7 +1,9 @@
 /**
- * ProcessPort: the platform seam for external processes (language servers
- * first; formatters and tools later). Capability-gated like every port —
- * no host, no processes, the editor simply has no LSP.
+ * ProcessPort: the low-level, HOST-ONLY driver behind the public `Processes`
+ * seam (`@the-editor/process`). This is the raw id-multiplexed window bridge;
+ * packages never see it — they get `makeProcesses(driver)`'s scoped handles.
+ * It stays out of the extension allowlist deliberately (on the host-only list).
+ * Structurally a `ProcessDriver`. Capability-gated: no host, no processes.
  *
  * Priority: dev test port (headless verification) > Electron bridge.
  */

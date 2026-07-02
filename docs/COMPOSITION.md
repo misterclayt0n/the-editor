@@ -82,6 +82,7 @@ finding that anchors everything below:
 | 17 | Undo / redo | 🟡 engine `history` is pure data; not a public verb (F4) |
 | 18 | Be driven from outside (CLI/socket/MCP) | ❌ no inbound channel exists at all (F1) |
 | 19 | Replace the interaction model (Vim/Helix/Emacs) | ❓ undecided — no mode state machine (F3) |
+| 20 | Opt OUT of / replace a default (not just add) | ✅ default set is a manifest; `~/.the-editor/config.ts` `disable`s a swappable package (I1) |
 
 ---
 
@@ -251,6 +252,13 @@ finding that anchors everything below:
   package code / no runtime coupling" rewrite (panes, workspaceRoot getter,
   diagnostics callbacks) remains a separate effort. The Host* tag and
   extension-reachability goals are met; the god-object thinning is not.
+  **Reassessed low priority:** every LSP capability is already reachable
+  (`LanguageServers`, the intel registries, `Lsp`, `Processes` — an extension can
+  add a server, add providers, query LSP, or ship a whole alternative client),
+  and LSP contributes zero to the Host* count. The rewrite buys only dogfooding
+  purity + `AppRuntime` thinning, is a large unverifiable-without-a-live-server
+  change, and is only *meaningful* once I1 lets the LSP package be swapped out at
+  all. Sequence it after I1, or leave it as documented debt.
 - [x] **D2. Interaction events — multiplexed + extension-reachable.** The
   single-assignment slots are replaced by a fan-out hub (`ViewInteraction` in
   `@the-editor/editor`, `makeInteractionHub`): many subscribers, boolean events
@@ -334,9 +342,12 @@ finding that anchors everything below:
 
 ## H. Decisions
 
-- [ ] **H1. Command override / advice.** Registry refuses duplicate ids; keymap
-  shadowing already covers the common case (see Done). Recommend: keep strict
-  ownership + rebind; revisit only when a real extension needs advice.
+- [x] **H1. Command override / advice — settled: no advice.** Registry refuses
+  duplicate ids; keymap shadowing covers "change what a key does" (see Done). For
+  the harder "remove/replace a default entirely," the answer is **I1's manifest
+  opt-out (don't load the package), not per-contribution advice** — advice breaks
+  single-owner + reload (see I1). Keep strict ownership + rebind; opt-out is a
+  manifest edit.
 - [x] **H2. Block widgets / floats.** Settled: the contract stays element-based
   (no React leak), and package code gets live per-view `MountHub`/`FloatHub`
   instances through `ViewMountHub`/`ViewFloatHub` and `DecorationViewTarget`.
@@ -348,22 +359,109 @@ finding that anchors everything below:
   need arrives, prefer a bounded package-introspection service (list + statuses,
   no dispose/reload) over exposing the raw runtime.
 
+## I. The default set is data (opt-out / replace)
+
+The thesis is "the-editor is just a default *set* of packages." Sections A–H made
+every *capability* reachable — an extension can **add** commands, panes, intel,
+statusline segments, processes, decorations, interaction listeners. The last
+structural gap is the other half: a user can add alongside a default but cannot
+**drop or replace** one. The first-party set is a hardcoded `activateGraph([...])`
+list in `boot()`, and contributions are owned by their package, so nobody can
+retract a first-party contribution. Wanting "no built-in `"lsp"` provider" or
+"*only* my palette" is currently impossible.
+
+**This is the highest-leverage remaining architectural item** — it makes the
+premise true across the board rather than per-feature. D1b (LSP as pure package
+code) is a *subset* of it: relocating `LspManager` only matters once the LSP
+package can actually be swapped out, so do this before any god-object thinning.
+
+### The two needs, kept separate
+
+- **Add alongside — already solved.** Most "replace the default" desires are
+  really composition: a statusline segment beside the branch segment, a
+  completion provider competing with `"lsp"`, a keybinding shadowing the default
+  (later-registration-wins is live), a command opening your palette. The additive
+  registries + shadowing cover the large majority. Don't over-build for this.
+- **Remove / truly replace — the gap.** Narrow but real: *no* built-in `"lsp"`
+  provider, *only* my palette, *these* default keymaps should not exist.
+
+### The design (settled)
+
+- [x] **I1. Default set as a manifest; package is the unit of opt-out.** Shipped.
+  `apps/web/src/product/manifest.ts` is the hardcoded boot list turned into
+  data: an ordered `defaultPackages()` of `{ pkg, required }` entries
+  (`editorDefaults` is the sole `required` foundation; the rest swappable). The
+  config-as-a-package layer (`@the-editor/extensions`: `EditorConfig`,
+  `defineConfig`, `loadConfig`, sharing `evaluateModuleDefault` with the
+  extension loader) reads `~/.the-editor/config.ts` + a trust-gated project
+  `.the-editor/config.ts` (`makeReadEditorConfig`, merging `disable` lists over
+  a shared trust gate — one prompt per root). `makeDefaultPackagesController`
+  computes the effective set and drives the kernel: `initialDescriptors()` for
+  boot's `activateGraph` (dependency-safe), `reconcile()` for `reload`
+  (dispose newly-disabled, re-activate re-enabled). Disabling `the-editor/lsp-intel`
+  means its providers **never register** — not suppressed, never activated;
+  "replace" = disable + ship your own extension. A `disable` naming a `required`
+  package is ignored with a notice. Reload rides the existing `reload` command
+  (a `beforeReload` hook runs the manifest reconcile before the disk-extension
+  pass). Proven: config-layer tests (source → `EditorConfig`), read-merge tests
+  (global + trusted/untrusted project), and controller tests against the real
+  `PackageRuntime` (disabled swappable never loads, required protected, reload
+  disposes/re-activates). Browser-verified boot has no regression.
+  - **Reject per-contribution suppression / advice.** A "config disables
+    contribution X" or "advice wraps Y" mechanism breaks the one rule the whole
+    model rests on — a contribution has exactly one owner, and reload disposes
+    exactly what a package registered. A second party retracting a first party's
+    contribution makes reload semantics undefined (what happens when the
+    suppressed package reloads? the suppressor?) and reintroduces the global
+    mutable bag the architecture bans. It also doesn't compose (two extensions
+    suppressing each other). The manifest approach is reload-clean *because* it's
+    just "which packages activate" — the existing dispose-on-unload mechanism, no
+    new suppression tracking. (This is the concrete answer to H1: opt-out is a
+    manifest edit, not command advice.)
+  - **Package is the right granularity; coarseness is a split signal.** Dropping
+    `lspIntel` drops its completion+hover+signature together — correct: the
+    package is the replacement unit. If a default bundles two things you want to
+    split, *split the package*; don't add finer suppression. That pressure
+    improves the default set over time.
+  - **This needs config read EARLY — it's the config-as-a-package layer.**
+    Opt-out declarations must be known *before* the defaults activate, but user
+    extensions load *last*. So I1 is really "build the minimal config-as-a-package
+    layer" (`EXTENSIONS.md` §6, still aspirational), split into a **manifest
+    phase** (read first: what loads, with the transform applied) and a
+    **contribution phase** (loaded last: add behavior). The existing `reload`
+    discovery pipeline re-runs it, so opt-out rides reload for free.
+  - **Retire roles/arbitration (`EXTENSIONS.md` §11) — subsumed.** The
+    registry + host-render-surface pattern (statusline segments, picker sources,
+    one `PickerHost`) already models "N contributions, host composes/picks,"
+    singletons included. Manifest (what loads) + registries (what they
+    contribute) + host surfaces (that compose) cover it; don't build a separate
+    role registry.
+  - **First step: prove one swap end to end.** Make the boot set a manifest with
+    required/swappable marks, and demonstrate a config that drops `lspIntel` and
+    loads a replacement, reloadable. One vertical slice validates the model before
+    converting the whole set — and only then does D1b's "LSP as pure package
+    code" become meaningful (it can otherwise stay a documented non-priority).
+
 ---
 
 ## Suggested order
 
-1. **A1 + A2** — days of work; flips verbs 6–7 and unblocks every extension that
-   wants to talk to the user.
-2. **B1 + B2** — relocations; unlocks extension panes + non-LSP intel. With A, the
-   verb table goes from ~6/19 to ~11/19 on tag moves alone.
-3. **C1** (open-file op) — the most basic missing agent verb.
-4. **C2 + C3** — retires the bulk of the `Host*` tags; picker collapses five surfaces.
-5. **D1** (process) — highest leverage, but do the trust write-up first.
-6. **F1 + F-flagship** — the agent bridge and the agent-panel-as-extension proof.
-7. **D2, E1/E2, D3** — interaction fan-out, statusline/menu registries, virtual buffers.
-8. **G1 + G2 early and continuously** — cheap to add, and they hold the line while
-   everything above lands.
+A1–E2 and I1 are **done** (see checkboxes above). What remains, in leverage order:
 
-Definition of done: `Host*` count is 0, G1/G2 green in CI, and the F-flagship agent
-panel runs from `~/.the-editor/extensions` with no privileged imports. At that point
-the-editor is, literally, a package like any other.
+1. **F1 + F-flagship** — the agent bridge and the agent-panel-as-extension proof.
+   This is the actual payoff of the whole arc: it exercises every seam built in
+   A–E/I and demonstrates *why* they mattered. Do it first.
+2. **G1 + G2** — the lint rule + load-path test; cheap, and they hold the line so
+   the finished seams can't silently regress.
+3. **F3 / F4** — interaction-model decision and undo-as-a-verb, as real extensions
+   need them.
+4. **D1b (LSP as pure package code)** — I1 now makes the LSP package swappable, so
+   this is only worth it if god-object thinning earns its keep; otherwise
+   documented debt.
+5. **G3 (AppRuntime shrinks)** — a consequence to track, not a task.
+
+Definition of done: `Host*` count is 0, G1/G2 green in CI, the F-flagship agent
+panel runs from `~/.the-editor/extensions` with no privileged imports, and I1 lets
+a user config drop a first-party default and load a replacement. At that point
+the-editor is, literally, a package like any other — one you can add to, drive,
+*and* subtract from.

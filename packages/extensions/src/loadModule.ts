@@ -128,17 +128,18 @@ export interface LoadExtensionPackageOptions {
 }
 
 /**
- * Compile + evaluate one extension source file and validate its default
- * export is an `ExtensionPackage` (i.e. `export default definePackage(...)`).
- * Never throws for extension-authored problems — every failure mode reports
- * through `ExtensionLoadError` so a caller can isolate one bad file instead
- * of aborting a whole discovery pass.
+ * Compile + evaluate one TypeScript source file against the fixed virtual
+ * module surface and return its `default` export (unknown — callers validate
+ * the shape). Shared by the extension loader and the config loader: both are
+ * "a `.ts` file that `export default`s a value," they just validate different
+ * shapes. Never throws for authored problems — everything is an
+ * `ExtensionLoadError`.
  */
-export function loadExtensionPackage(
+export function evaluateModuleDefault(
   source: string,
   path: string,
   options: LoadExtensionPackageOptions,
-): Effect.Effect<ExtensionPackage<never>, ExtensionLoadError> {
+): Effect.Effect<unknown, ExtensionLoadError> {
   return Effect.gen(function* () {
     const code = yield* Effect.tryPromise({
       try: () => options.transpiler.transform(source, path),
@@ -161,7 +162,24 @@ export function loadExtensionPackage(
       catch: (cause) => new ExtensionLoadError(path, "failed to run", { cause }),
     });
 
-    const candidate = (moduleObject.exports as { default?: unknown }).default;
+    return (moduleObject.exports as { default?: unknown }).default;
+  });
+}
+
+/**
+ * Compile + evaluate one extension source file and validate its default
+ * export is an `ExtensionPackage` (i.e. `export default definePackage(...)`).
+ * Never throws for extension-authored problems — every failure mode reports
+ * through `ExtensionLoadError` so a caller can isolate one bad file instead
+ * of aborting a whole discovery pass.
+ */
+export function loadExtensionPackage(
+  source: string,
+  path: string,
+  options: LoadExtensionPackageOptions,
+): Effect.Effect<ExtensionPackage<never>, ExtensionLoadError> {
+  return Effect.gen(function* () {
+    const candidate = yield* evaluateModuleDefault(source, path, options);
     if (!isExtensionPackage(candidate)) {
       return yield* Effect.fail(
         new ExtensionLoadError(

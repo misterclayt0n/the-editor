@@ -145,13 +145,7 @@ import {
   type Span,
   type TextBuffer,
 } from "@the-editor/engine";
-import { editorDefaults, EditorSurface } from "./product/editorDefaults";
-import { lineNumbers } from "./product/lineNumbers";
-import { filesPackage } from "./product/files";
-import { palettePackage } from "./product/palette";
-import { workspacesPackage } from "./product/workspaces";
-import { viewPackage } from "./product/view";
-import { themeCommands } from "./product/themes";
+import { EditorSurface } from "./product/editorDefaults";
 import { createFileSystemPort } from "./platform/fs";
 import {
   createFileFinderPort,
@@ -169,17 +163,16 @@ import { createClipboardPort, type ClipboardPort } from "./platform/clipboard";
 import { createSyntaxPort, type HighlightRun, type SyntaxPort } from "./platform/syntax";
 import { getHomeDir } from "./platform/homeDir";
 import { buildExtensionVirtualModules, makeUserExtensionsPackage } from "./product/userExtensions";
+import { makeExtensionTrust } from "./product/extensionTrust";
+import { defaultPackages } from "./product/manifest";
+import { makeDefaultPackagesController, makeReadEditorConfig } from "./product/defaultPackages";
+import type { EditorConfig } from "@the-editor/extensions";
 import { DocumentHighlights } from "./editor/highlights";
 import { LspManager, type DiagnosticCounts } from "./lsp/manager";
-import { lspDefaults } from "./product/lsp";
-import { lspActions } from "./product/lspActions";
-import { lspIntel } from "./product/lspIntel";
-import { intelActions } from "./product/intelActions";
-import { wordCompletions } from "./product/wordCompletions";
-import { fileTreePackage, FileTreeSurface, HostFileTree } from "./product/fileTree";
+import { FileTreeSurface, HostFileTree } from "./product/fileTree";
 import { createFileTreeRenderer } from "./filetree/mount";
 import * as Regions from "./workbench/regions";
-import { diffViewPackage, DiffViewSurface, HostDiffView } from "./product/diffView";
+import { DiffViewSurface, HostDiffView } from "./product/diffView";
 import { DiffViewPreferences, makeDiffViewPreferences } from "@the-editor/diff-view";
 import {
   makePicker,
@@ -190,9 +183,8 @@ import {
 import { fileFinderRequest } from "./pickers/fileFinder";
 import { globalSearchRequest } from "./pickers/globalSearch";
 import { createDiffViewRenderer } from "./diffview/mount";
-import { terminalPackage, TerminalSurface, HostTerminal } from "./product/terminal";
+import { TerminalSurface, HostTerminal } from "./product/terminal";
 import { createTerminalRenderer } from "./terminal/mount";
-import { vcsDefaults } from "./product/vcs";
 import { makeVcsProviders, VcsProviders } from "@the-editor/vcs";
 import { VcsManager } from "./vcs/manager";
 import { vcsGutterProvider } from "./vcs/gutter";
@@ -775,24 +767,41 @@ export class AppRuntime {
         appRuntime.startThemeListener();
         appRuntime.startFontListener();
 
+        // The default package set is DATA (see manifest.ts). Config's "manifest
+        // phase" runs first: read `~/.the-editor/config.ts` (+ trusted project
+        // config), drop any `disable`d swappable defaults, and activate only the
+        // effective set. A shared trust instance is used for both config and the
+        // extension loader so a project root prompts at most once.
+        const homeDir = getHomeDir();
+        const trust =
+          fileSystem !== undefined
+            ? makeExtensionTrust(fileSystem, attention, homeDir)
+            : undefined;
+        const extensionVirtualModules = buildExtensionVirtualModules();
+        const readConfig: () => Effect.Effect<EditorConfig> =
+          fileSystem !== undefined && trust !== undefined
+            ? makeReadEditorConfig({
+                fileSystem,
+                transpiler: shell.extensionTranspiler,
+                virtualModules: extensionVirtualModules,
+                attention,
+                homeDir,
+                currentRoot: () => workspaceRoots.get.pipe(Effect.map((roots) => roots[0])),
+                trust,
+              })
+            : () => Effect.succeed({});
+        const defaultsController = makeDefaultPackagesController({
+          entries: defaultPackages(),
+          services,
+          packages: runtime,
+          attention,
+          readConfig,
+        });
+        const defaultDescriptors = yield* defaultsController.initialDescriptors();
+
         yield* runtime
           .activateGraph([
-            toPackageDescriptor(editorDefaults, services),
-            toPackageDescriptor(lineNumbers, services),
-            toPackageDescriptor(filesPackage, services),
-            toPackageDescriptor(palettePackage, services),
-            toPackageDescriptor(themeCommands, services),
-            toPackageDescriptor(workspacesPackage, services),
-            toPackageDescriptor(viewPackage, services),
-            toPackageDescriptor(diffViewPackage, services),
-            toPackageDescriptor(lspDefaults, services),
-            toPackageDescriptor(lspActions, services),
-            toPackageDescriptor(lspIntel, services),
-            toPackageDescriptor(wordCompletions, services),
-            toPackageDescriptor(intelActions, services),
-            toPackageDescriptor(vcsDefaults, services),
-            toPackageDescriptor(fileTreePackage, services),
-            toPackageDescriptor(terminalPackage, services),
+            ...defaultDescriptors,
             // Last: user extensions activate after every first-party product
             // package, so a shadowing keybinding/command from the user wins
             // the way a later-loaded pi extension would. Skipped entirely
@@ -806,8 +815,12 @@ export class AppRuntime {
                       // once per JS realm, and sessions are kept mounted
                       // concurrently, so this can't be constructed per-session.
                       transpiler: shell.extensionTranspiler,
-                      virtualModules: buildExtensionVirtualModules(),
-                      homeDir: getHomeDir(),
+                      virtualModules: extensionVirtualModules,
+                      homeDir,
+                      // Share the trust gate; run the config/manifest reconcile
+                      // first on every reload so opt-out rides the same command.
+                      ...(trust !== undefined ? { trust } : {}),
+                      beforeReload: () => defaultsController.reconcile(),
                     }),
                     Layer.mergeAll(
                       Layer.succeed(FileSystemPort, fileSystem),

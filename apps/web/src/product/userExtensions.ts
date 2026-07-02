@@ -58,7 +58,7 @@ import * as ThemeNamespace from "@the-editor/theme";
 import * as FontsNamespace from "@the-editor/fonts";
 import { FileSystemPort, WorkspaceRoots, type DirEntry } from "@the-editor/editor";
 import { SurfaceScope } from "@the-editor/workbench";
-import { makeExtensionTrust } from "./extensionTrust";
+import { makeExtensionTrust, type ExtensionTrust } from "./extensionTrust";
 
 /** The fixed import surface a user extension gets. Deliberately closed
  *  rather than resolved against a real module graph (see loadModule.ts) —
@@ -160,6 +160,14 @@ export interface MakeUserExtensionsPackageOptions<ExtR> {
   /** Absent without an Electron bridge: global discovery capability-gates
    *  off, same as every other host-only port in this app. */
   readonly homeDir: string | undefined;
+  /** Shared trust instance (also used for reading project config), so a root is
+   *  prompted at most once across config + extensions. Created internally if
+   *  omitted. */
+  readonly trust?: ExtensionTrust;
+  /** Runs FIRST inside `reload`, before the disk-extension reconcile — the
+   *  manifest phase (re-read config, reconcile the first-party default set) so
+   *  opt-out rides the same explicit reload. */
+  readonly beforeReload?: () => Effect.Effect<void>;
 }
 
 export function makeUserExtensionsPackage<ExtR>(
@@ -174,7 +182,7 @@ export function makeUserExtensionsPackage<ExtR>(
       const attention = yield* Attention;
       const commands = yield* Commands;
       const workspaceRoots = yield* WorkspaceRoots;
-      const trust = makeExtensionTrust(fileSystem, attention, options.homeDir);
+      const trust = options.trust ?? makeExtensionTrust(fileSystem, attention, options.homeDir);
 
       const globalActive = new Map<string, ActiveEntry>();
       const projectActive = new Map<string, ActiveEntry>();
@@ -320,7 +328,17 @@ export function makeUserExtensionsPackage<ExtR>(
       // `withPermits(1)` turns "many producers" into "one queue".
       const reloadLock = yield* Effect.makeSemaphore(1);
       const reloadAll = () =>
-        reloadLock.withPermits(1)(Effect.all([reloadGlobal(), reloadProject()], { discard: true }));
+        reloadLock.withPermits(1)(
+          Effect.gen(function* () {
+            // Manifest phase first: re-read config, reconcile the first-party
+            // default set (a newly-disabled default is disposed, a re-enabled
+            // one activated) BEFORE disk extensions reconcile on top.
+            if (options.beforeReload !== undefined) {
+              yield* options.beforeReload().pipe(Effect.ignore);
+            }
+            yield* Effect.all([reloadGlobal(), reloadProject()], { discard: true });
+          }),
+        );
 
       // "Reload", not "Reload Extensions": in this editor everything is a
       // package, so a disk theme/keymap/panel is just an extension and

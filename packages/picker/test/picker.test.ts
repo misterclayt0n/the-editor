@@ -46,6 +46,19 @@ describe("rankItems", () => {
     expect(rankItems(items, "")).toEqual(items);
   });
 
+  it("headers always pass the filter, and header lists are never re-sorted", () => {
+    const items = [
+      item("h1", { label: "src/a.ts", header: true }),
+      item("m1", { label: "zzz open zzz" }),
+      item("h2", { label: "src/b.ts", header: true }),
+      item("m2", { label: "open" }),
+      item("m3", { label: "unrelated" }),
+    ];
+    const ranked = rankItems(items, "open");
+    // m3 filtered out; exact-match m2 does NOT jump above m1 — group order holds.
+    expect(ranked.map((entry) => entry.id)).toEqual(["h1", "m1", "h2", "m2"]);
+  });
+
   it("matches against searchTerms (aliases), not just the label", () => {
     const items = [item("save", { label: "Save File", searchTerms: ["w", "write"] })];
     expect(rankItems(items, "w").length).toBe(1);
@@ -217,6 +230,51 @@ describe("makePickerController", () => {
     });
     expect(firstDismissed).toBe(1);
     expect(controller.state().items[0]?.id).toBe("two");
+  });
+
+  it("selection and choose skip header rows", () => {
+    const chosen: string[] = [];
+    const controller = makePickerController();
+    controller.open({
+      source: memorySource([
+        item("h", { label: "file.ts", header: true }),
+        item("alpha"),
+        item("beta"),
+      ]),
+      onChoose: (entry) => chosen.push(entry.id),
+    });
+    // First selection lands on the first NON-header row.
+    expect(controller.state().selectedId).toBe("alpha");
+    controller.setSelected("h"); // headers are not selectable
+    expect(controller.state().selectedId).toBe("alpha");
+    controller.choose("h"); // and not choosable
+    expect(chosen).toEqual([]);
+    expect(controller.state().open).toBe(true);
+    controller.choose("beta");
+    expect(chosen).toEqual(["beta"]);
+  });
+
+  it("refresh re-runs the current query and keeps a surviving selection", () => {
+    let generation = 0;
+    const controller = makePickerController();
+    controller.open({
+      source: {
+        id: "mutating",
+        preRanked: true,
+        query: () => ({
+          items:
+            generation === 0
+              ? [item("one"), item("two"), item("three")]
+              : [item("one"), item("three")],
+        }),
+      },
+      onChoose: () => {},
+    });
+    controller.setSelected("three");
+    generation = 1;
+    controller.refresh();
+    expect(controller.state().items.map((entry) => entry.id)).toEqual(["one", "three"]);
+    expect(controller.state().selectedId).toBe("three"); // survived the requery
   });
 
   it("makePicker exposes open/close over the controller", () => {

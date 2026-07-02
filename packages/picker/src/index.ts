@@ -26,6 +26,14 @@ import { Context } from "effect";
 // Items and sources
 // ---------------------------------------------------------------------------
 
+/** A styled slice of a result line: `match` marks the hit range, `className`
+ *  carries host-theme styling (a syntax token class). */
+export interface PickerSegment {
+  readonly text: string;
+  readonly match?: boolean;
+  readonly className?: string;
+}
+
 export interface PickerItem<T = unknown> {
   /** Stable identity: selection value and the unit of navigation. */
   readonly id: string;
@@ -38,9 +46,34 @@ export interface PickerItem<T = unknown> {
   readonly icon?: { readonly kind: "file"; readonly fileName: string };
   /** Trailing status badge (a git status). */
   readonly badge?: string;
+  /**
+   * A non-selectable group heading (a grep result's file row). Headers always
+   * survive the built-in filter (the source prunes empty groups on requery)
+   * and the keyboard cursor skips them. Best used with `preRanked` sources —
+   * the built-in ranking never re-sorts a list containing headers, so group
+   * clusters stay intact.
+   */
+  readonly header?: boolean;
+  /** Styled line content rendered in place of the plain `label`. */
+  readonly segments?: ReadonlyArray<PickerSegment>;
   /** Extra haystacks for the built-in ranking (command ids, aliases). */
   readonly searchTerms?: readonly string[];
   readonly data: T;
+}
+
+/**
+ * A secondary keyboard action on an open picker (grep's Cmd+Enter →
+ * multibuffer, Alt+M → cycle mode). `keys` is a single chord like
+ * `"meta+enter"` or `"alt+m"`. `label` feeds the host's footer hint; a
+ * function form re-reads per render (live mode indicators). `closes: false`
+ * keeps the picker open — pair it with `Picker.refresh` when the action
+ * mutates the source's data.
+ */
+export interface PickerAction<T = unknown> {
+  readonly keys: string;
+  readonly label: string | (() => string);
+  readonly run: (item: PickerItem<T> | null, query: string) => void;
+  readonly closes?: boolean;
 }
 
 export interface PickerSourceResult<T = unknown> {
@@ -100,6 +133,21 @@ export interface PickerRequest<T = unknown> {
   readonly onDismiss?: () => void;
   /** A file preview for the highlighted item, when the host can render one. */
   readonly preview?: (item: PickerItem<T>) => PickerFilePreview | null;
+  /** Secondary keyboard actions; the host also surfaces them as footer hints. */
+  readonly actions?: ReadonlyArray<PickerAction<T>>;
+  /** Shown in the empty state before falling back to the host's default. */
+  readonly emptyText?: (query: string) => string | undefined;
+  /**
+   * Shell-specific chrome classes (the default shell's CSS hooks). Plain
+   * data — harmless for other shells to ignore.
+   */
+  readonly chrome?: {
+    readonly dialogClassName?: string;
+    readonly rootClassName?: string;
+    readonly bodyClassName?: string;
+    readonly listColClassName?: string;
+    readonly listClassName?: string;
+  };
   /**
    * Shell-specific row rendering (the host defines the shape, e.g. a React
    * node in the default shell). Prefer the data fields; this is the escape
@@ -109,6 +157,12 @@ export interface PickerRequest<T = unknown> {
     item: PickerItem<T>,
     ctx: { readonly selected: boolean; readonly query: string },
   ) => unknown;
+  /**
+   * Shell-specific preview pane for the highlighted item (`null` = none
+   * highlighted). Same escape-hatch contract as `renderItem`; prefer the
+   * data-driven `preview` when a plain file window suffices.
+   */
+  readonly renderPreview?: (item: PickerItem<T> | null) => unknown;
 }
 
 // ---------------------------------------------------------------------------
@@ -129,14 +183,17 @@ export const rankItem = (item: PickerItem, query: string): number => {
 };
 
 /** Filter + stable-rank. Ties keep source order, so a source that clusters
- *  its items (groups) keeps its clusters at the empty query. */
+ *  its items (groups) keeps its clusters at the empty query. Header rows
+ *  always pass, and a list containing headers is filtered but never re-sorted
+ *  (re-ordering would tear rows out of their groups). */
 export const rankItems = <T>(
   items: ReadonlyArray<PickerItem<T>>,
   query: string,
 ): ReadonlyArray<PickerItem<T>> => {
   const q = normalize(query);
   if (q.length === 0) return items;
-  const matched = items.filter((item) => rankItem(item, q) < 4);
+  const matched = items.filter((item) => item.header === true || rankItem(item, q) < 4);
+  if (items.some((item) => item.header === true)) return matched;
   return matched.sort((left, right) => rankItem(left, q) - rankItem(right, q));
 };
 
@@ -206,12 +263,16 @@ export function makePickerController(): PickerController {
     }
   };
 
+  const selectable = (item: PickerItem): boolean => item.header !== true;
+
   const selectionOf = (
     items: ReadonlyArray<PickerItem>,
     preferred: string | null,
   ): string | null => {
-    if (preferred !== null && items.some((item) => item.id === preferred)) return preferred;
-    return items[0]?.id ?? null;
+    if (preferred !== null && items.some((item) => item.id === preferred && selectable(item))) {
+      return preferred;
+    }
+    return items.find(selectable)?.id ?? null;
   };
 
   const fireSelectionChange = (request: PickerRequest, id: string | null) => {
@@ -316,7 +377,7 @@ export function makePickerController(): PickerController {
     setSelected: (id) => {
       const request = state.request;
       if (!state.open || request === null || state.selectedId === id) return;
-      if (!state.items.some((item) => item.id === id)) return;
+      if (!state.items.some((item) => item.id === id && selectable(item))) return;
       set({ selectedId: id });
       fireSelectionChange(request, id);
     },
@@ -325,7 +386,7 @@ export function makePickerController(): PickerController {
       const request = state.request;
       if (!state.open || request === null) return;
       const targetId = id ?? state.selectedId;
-      const item = state.items.find((entry) => entry.id === targetId);
+      const item = state.items.find((entry) => entry.id === targetId && selectable(entry));
       if (item === undefined) return;
       clearDebounce();
       generation++;

@@ -9,7 +9,6 @@ import { Shell } from "./shell";
 import { WorkbenchView } from "./workbench/WorkbenchView";
 import type { ChromeSlot } from "./workbench/shellHost";
 import { isMacDesktop, isDesktop } from "./platform/desktop";
-import { GlobalSearch } from "./ui/GlobalSearch";
 import { PickerHost } from "./ui/PickerHost";
 import { fileFinderRequest } from "./pickers/fileFinder";
 import { workspaceSwitcherRequest, type WorkspacePalette } from "./pickers/workspaces";
@@ -166,7 +165,6 @@ export function App() {
 
   const [snapshot, setSnapshot] = useState<EditorSnapshot | null>(null);
   const [pending, setPending] = useState<ReadonlyArray<Chord>>([]);
-  const [searchOpen, setSearchOpen] = useState(false);
   const [rename, setRename] = useState<{ open: boolean; initial: string }>({ open: false, initial: "" });
   // Generic string prompt (new file/folder names, etc.); resolves null on cancel.
   const [prompt, setPrompt] = useState<{ initial: string; placeholder: string } | null>(null);
@@ -208,7 +206,6 @@ export function App() {
     runtime.onFileStateChanged = () => {
       if (isActive()) setStatusEpoch((epoch) => epoch + 1);
     };
-    runtime.onSearchOpenRequested = () => setSearchOpen(true);
     // App owns the session list, so App supplies the switcher source; the
     // picker itself is the same generic surface every other source uses.
     runtime.onWorkspaceSwitcherRequested = () => {
@@ -375,7 +372,6 @@ export function App() {
     const session = sessionsRef.current.find((entry) => entry.id === activeId);
     if (session === undefined) return;
     for (const entry of sessionsRef.current) entry.runtime.pickerController.dismiss();
-    setSearchOpen(false);
     setPending([]);
     setSnapshot(session.runtime.focusedPaneHost()?.snapshot() ?? null);
     setStatusEpoch((epoch) => epoch + 1);
@@ -486,14 +482,6 @@ export function App() {
         controller={activeRuntime.pickerController}
         runtime={activeRuntime}
         onClosed={handlePickerClosed}
-      />
-      <GlobalSearch
-        open={searchOpen}
-        runtime={activeRuntime}
-        onOpenChange={(open) => {
-          setSearchOpen(open);
-          if (!open) window.requestAnimationFrame(() => activeRuntime.focusActivePanel());
-        }}
       />
       <AttentionLayer runtime={activeRuntime} />
       <NotificationCenter runtime={activeRuntime} />

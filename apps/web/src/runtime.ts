@@ -171,6 +171,7 @@ import {
   type PickerController,
 } from "@the-editor/picker";
 import { fileFinderRequest } from "./pickers/fileFinder";
+import { globalSearchRequest } from "./pickers/globalSearch";
 import { createDiffViewRenderer } from "./diffview/mount";
 import { terminalPackage, TerminalSurface, HostTerminal } from "./product/terminal";
 import { createTerminalRenderer } from "./terminal/mount";
@@ -392,8 +393,6 @@ export type WorkbenchSnapshot = {
 export class AppRuntime {
   /** Host UI hooks: file sync state changed (refresh status surfaces). */
   onFileStateChanged?: () => void;
-  /** Host UI hooks: file.findInProject command fired (show the search dialog). */
-  onSearchOpenRequested?: () => void;
   /** Host UI hooks: workspace switcher requested (App owns the session list). */
   onWorkspaceSwitcherRequested?: () => void;
   /** Host UI hooks: open a folder (reuse an untitled scratch session, else new). */
@@ -647,7 +646,7 @@ export class AppRuntime {
             save: () => void instance.saveActiveFile(),
             open: () => void instance.openFileViaDialog(),
             find: () => pickerService.open(fileFinderRequest(instance)),
-            findInProject: () => instance.onSearchOpenRequested?.(),
+            findInProject: () => pickerService.open(globalSearchRequest(instance)),
           }),
           Layer.succeed(WorkspaceOperations, {
             openFolder: () => instance.onWorkspaceOpenFolderRequested?.(),

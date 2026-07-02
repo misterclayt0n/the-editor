@@ -74,7 +74,7 @@ finding that anchors everything below:
 | 8 | Render a pane (agent panel, browser, Doom) | ✅ `PanelRenderers` via `@the-editor/workbench` |
 | 9 | Answer questions about a buffer (completion/hover/signature) | ✅ provider registries via `@the-editor/intel` |
 | 10 | Open a file into a visible view | ✅ `Files` + `FileViews.openInView` (C1) |
-| 11 | Pick from a list (completing-read) | ✅ `Picker` via `@the-editor/picker`; one windowed host, N sources (GlobalSearch conversion pending) |
+| 11 | Pick from a list (completing-read) | ✅ `Picker` via `@the-editor/picker`; one windowed host, N sources — all five surfaces converted |
 | 12 | Add statusline / context-menu items | ❌ no registry exists (E1) |
 | 13 | Own a background process | ❌ direct `ProcessPort`/`TerminalPort` host-only; LSP spawn-by-proxy exists via #16 (D1) |
 | 14 | React to interaction (hover/scroll/viewport/pre-key) | ❌ `PaneHost` fields are single-assignment slots (D2) |
@@ -171,12 +171,23 @@ finding that anchors everything below:
   `onFileFinderOpenRequested` / `onThemeSelectorOpenRequested` host hooks.
   Proven through the loader path: an extension opens a picker with its own
   source, gets ranked items + selection callbacks, and receives the choice.
-- [ ] **C4. Global search as a picker source.** Follow-up from C3: `GlobalSearch`
-  still renders bespoke (grouped rows, per-row syntax segments, grep-mode
-  cycling, Cmd+Enter → multibuffer) even though it already rides
-  `VirtualCommand`. Converting it to a `PickerSource` needs styled-segment rows
-  and secondary actions in the item model, and its per-row synchronous highlight
-  pass should move to idle-time upgrade when touched.
+- [x] **C4. Global search as a picker source.** `GlobalSearch.tsx` is deleted;
+  find-in-files is a host-built `PickerRequest` (`pickers/globalSearch.tsx`)
+  behind `FileOperations.findInProject`. The item model grew the general
+  pieces: `segments` (styled line slices with match marks), `header` rows
+  (non-selectable group headings — always survive the filter, never re-sorted,
+  skipped by selection/choose), and request-level `actions`
+  (`{keys, label, run, closes?}` — Cmd+Enter → multibuffer closes; Alt+M
+  cycles grep mode with `closes: false` + `Picker.refresh`, the same live-
+  mutation primitive the workspace switcher uses). `emptyText`, `chrome`
+  class hooks, and a `renderPreview` escape hatch round out the request; the
+  grep preview panel (file window + context fallback) rides `renderPreview`.
+  The per-row syntax-highlight concern resolved itself upstream: the ported
+  surface already renders result rows as plain text + match marks (per-row
+  tree-sitter was removed for cold-start freezes); only the preview pane
+  highlights, where one file's cost is acceptable. The last picker host hook
+  (`onSearchOpenRequested`) is gone — every picker surface now opens through
+  `Picker.open`.
 
 ## D. New primitives (real design work)
 

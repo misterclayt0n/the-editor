@@ -1,21 +1,29 @@
 /**
- * Pane interaction as a FAN-OUT hub: many subscribers, not one slot. Lives in
- * its own module (no runtime imports) so panes can construct a hub without
- * dragging the whole AppRuntime — and its heavy LSP/process deps — into their
- * bundle. `runtime.ts` re-exports these for the rest of the app.
+ * Pane interaction as a FAN-OUT hub, exposed on the view context so it's a
+ * public, view-scoped seam: many subscribers, not one slot. `IntelController`
+ * is one subscriber; an extension reacting to hover/scroll (via a decoration
+ * provider's `attachView`, which carries `interaction`) is another; a pane's
+ * own behavior (multibuffer nav) is another.
  *
- * `IntelController` is one subscriber; an extension reacting to hover/scroll is
- * another; a pane's own behavior (multibuffer nav) is another. Boolean events
- * (`keyIntercept`, `gutterClick`) try subscribers newest-first — later
- * registration wins, matching the keymap resolver — and stop at the first that
- * returns true; void events notify every subscriber. Each `on*` returns an
- * unsubscribe.
+ * Boolean events (`keyIntercept`, `gutterClick`) try subscribers newest-first —
+ * later registration wins, matching the keymap resolver — and stop at the first
+ * that returns true; void events notify every subscriber. Each `on*` returns an
+ * unsubscribe. `PaneKeyEvent` mirrors `@the-editor/keymaps`' `KeyboardEventLike`
+ * structurally so the editor package needn't depend on keymaps.
  */
 
-import type { KeyboardEventLike } from "@the-editor/keymaps";
+import { Context } from "effect";
+
+export type PaneKeyEvent = {
+  readonly key: string;
+  readonly ctrlKey: boolean;
+  readonly altKey: boolean;
+  readonly shiftKey: boolean;
+  readonly metaKey: boolean;
+};
 
 export interface PaneInteraction {
-  onKeyIntercept(fn: (event: KeyboardEventLike) => boolean): () => void;
+  onKeyIntercept(fn: (event: PaneKeyEvent) => boolean): () => void;
   onPointerHover(fn: (offset: number | null) => void): () => void;
   onPointerScrolled(fn: () => void): () => void;
   onViewportChanged(fn: (topLine: number, startLine: number, endLine: number) => void): () => void;
@@ -24,7 +32,7 @@ export interface PaneInteraction {
 
 /** The producer half: the renderer emits into the hub. */
 export interface InteractionDispatch {
-  keyIntercept(event: KeyboardEventLike): boolean;
+  keyIntercept(event: PaneKeyEvent): boolean;
   pointerHover(offset: number | null): void;
   pointerScrolled(): void;
   viewportChanged(topLine: number, startLine: number, endLine: number): void;
@@ -35,7 +43,7 @@ export function makeInteractionHub(): {
   readonly interaction: PaneInteraction;
   readonly dispatch: InteractionDispatch;
 } {
-  const key = new Set<(event: KeyboardEventLike) => boolean>();
+  const key = new Set<(event: PaneKeyEvent) => boolean>();
   const hover = new Set<(offset: number | null) => void>();
   const scrolled = new Set<() => void>();
   const viewport = new Set<(top: number, start: number, end: number) => void>();
@@ -73,3 +81,10 @@ export function makeInteractionHub(): {
     },
   };
 }
+
+/** The view's interaction hub, on the view context — read by the pane (to
+ *  dispatch) and by decoration providers' `attachView` (to subscribe). */
+export class ViewInteraction extends Context.Tag("@the-editor/editor/ViewInteraction")<
+  ViewInteraction,
+  { readonly interaction: PaneInteraction; readonly dispatch: InteractionDispatch }
+>() {}

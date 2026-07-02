@@ -56,7 +56,7 @@ import {
 } from "../editor/commands";
 import { FloatHub, MountHub } from "@the-editor/editor";
 import type { HighlightRun } from "../platform/syntax";
-import { makeInteractionHub } from "../editor/interaction";
+import { makeInteractionHub } from "@the-editor/editor";
 import type { IntelLocation, PaneHighlights, PaneHost } from "../runtime";
 import { metasFor, type ExcerptMeta, type MultiBufferBuild } from "./builder";
 import { excerptSlicesInRange, multiBufferVisuals } from "./visuals";

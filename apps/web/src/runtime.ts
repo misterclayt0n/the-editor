@@ -116,6 +116,9 @@ import {
   LspOperations,
   ViewFloatHub,
   ViewMountHub,
+  ViewInteraction,
+  type PaneInteraction,
+  type InteractionDispatch,
   setSelection,
   ViewNotifications,
   ViewOperations,
@@ -164,12 +167,6 @@ import { createMenuPort, popupDomMenu, type MenuPort } from "./platform/menu";
 import type { ContextMenuRequest, MenuPosition } from "@the-editor/workbench";
 import { createClipboardPort, type ClipboardPort } from "./platform/clipboard";
 import { createSyntaxPort, type HighlightRun, type SyntaxPort } from "./platform/syntax";
-import {
-  makeInteractionHub,
-  type InteractionDispatch,
-  type PaneInteraction,
-} from "./editor/interaction";
-export { makeInteractionHub, type InteractionDispatch, type PaneInteraction };
 import { getHomeDir } from "./platform/homeDir";
 import { buildExtensionVirtualModules, makeUserExtensionsPackage } from "./product/userExtensions";
 import { DocumentHighlights } from "./editor/highlights";
@@ -306,9 +303,10 @@ export type PaneFileInfo = { readonly path: string; readonly status: FileSyncSta
 export class EditorPane implements PaneHost {
   readonly mounts: MountHub;
   readonly floats: FloatHub;
-  private readonly hub = makeInteractionHub();
-  readonly interaction = this.hub.interaction;
-  readonly dispatch = this.hub.dispatch;
+  // The interaction hub lives on the view context (so decoration providers'
+  // attachView can subscribe); the pane just surfaces it + its dispatch.
+  readonly interaction: PaneInteraction;
+  readonly dispatch: InteractionDispatch;
 
   constructor(
     readonly panelId: PanelId,
@@ -318,6 +316,9 @@ export class EditorPane implements PaneHost {
   ) {
     this.mounts = Context.get(view.context as Context.Context<ViewMountHub>, ViewMountHub);
     this.floats = Context.get(view.context as Context.Context<ViewFloatHub>, ViewFloatHub);
+    const hub = Context.get(view.context as Context.Context<ViewInteraction>, ViewInteraction);
+    this.interaction = hub.interaction;
+    this.dispatch = hub.dispatch;
   }
 
   /** Highlight source for this pane's document (absent without a host). */

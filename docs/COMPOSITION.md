@@ -74,9 +74,9 @@ finding that anchors everything below:
 | 9 | Answer questions about a buffer (completion/hover/signature) | ✅ provider registries via `@the-editor/intel` |
 | 10 | Open a file into a visible view | ✅ `Files` + `FileViews.openInView` (C1) |
 | 11 | Pick from a list (completing-read) | ✅ `Picker` via `@the-editor/picker`; one windowed host, N sources — all five surfaces converted |
-| 12 | Add statusline / context-menu items | ❌ no registry exists (E1) |
+| 12 | Add statusline / context-menu items | ✅ `StatuslineSegments` + `ContextMenuProviders` in `@the-editor/workbench` (E1/E2) |
 | 13 | Own a background process | ✅ `Processes` / `Ptys` via `@the-editor/process`; Scope-bound handles, killed on dispose |
-| 14 | React to interaction (hover/scroll/viewport/pre-key) | 🟡 multiplexed fan-out hub (D2); `IntelController` a subscriber, `HostIntelActions` retired — extension-facing subscribe pending a view-context exposure |
+| 14 | React to interaction (hover/scroll/viewport/pre-key) | ✅ multiplexed hub on the view context; extensions subscribe via `DecorationViewTarget.interaction` in `attachView` (D2) |
 | 15 | Back a buffer with non-file content | ✅ `VirtualViews.open` + `DocumentPolicy` (read-only → edits become operations) (D3) |
 | 16 | Contribute a language server / grammar | 🟡 `LanguageServers` public via `@the-editor/intel`; grammars native `.so` (D1) |
 | 17 | Undo / redo | 🟡 engine `history` is pure data; not a public verb (F4) |
@@ -251,17 +251,17 @@ finding that anchors everything below:
   package code / no runtime coupling" rewrite (panes, workspaceRoot getter,
   diagnostics callbacks) remains a separate effort. The Host* tag and
   extension-reachability goals are met; the god-object thinning is not.
-- [x] **D2. Interaction events — multiplexed.** `PaneHost`'s single-assignment
-  `keyInterceptor`/`pointerHover`/`pointerScrolled`/`viewportChanged`/`gutterClick`
-  slots are replaced by a fan-out hub (`editor/interaction.ts`,
-  `makeInteractionHub`): many subscribers, boolean events tried newest-first (later
-  wins, matching the keymap resolver), void events broadcast. `IntelController` is
-  now one subscriber (storing disposers), the multibuffer's intrinsic nav another;
-  the renderer emits via `pane.dispatch`. `HostIntelActions` retired the C2 way — the
-  triggers are the public `IntelActions` tag in `@the-editor/intel`. **Pending for
-  full verb 14:** the hub's `interaction` sits on the app-internal `PaneHost`; an
-  *extension* subscribing to hover/scroll needs it exposed on the view context /
-  `DecorationViewTarget` — a small follow-up.
+- [x] **D2. Interaction events — multiplexed + extension-reachable.** The
+  single-assignment slots are replaced by a fan-out hub (`ViewInteraction` in
+  `@the-editor/editor`, `makeInteractionHub`): many subscribers, boolean events
+  tried newest-first (later wins, matching the keymap resolver), void events
+  broadcast. The hub lives on the **view context** (like `ViewMountHub`/
+  `ViewFloatHub`), so `IntelController` is one subscriber, the multibuffer's
+  intrinsic nav another, and — the verb-14 payoff — an **extension** subscribes
+  through `DecorationViewTarget.interaction` in a decoration provider's
+  `attachView` (proven by an editor test: a provider's `onPointerHover` fires on
+  dispatch and retracts with the view). `HostIntelActions` retired the C2 way —
+  the triggers are the public `IntelActions` tag in `@the-editor/intel`.
 - [x] **D3. Virtual buffers.** `VirtualViews.open(spec)` in `@the-editor/editor`
   (allowlisted, host-implemented) opens a provider-backed in-memory document into a
   rendered tab and returns a handle (`setText` / `close`) — the C1 equivalent for a
@@ -275,11 +275,24 @@ finding that anchors everything below:
 
 ## E. Build a registry
 
-- [ ] **E1. Statusline contributions.** Hardcoded JSX in `App.tsx` reading
-  `runtime.vcs?.branch()` directly. Build a segment registry, publish it, render the
-  statusline *from* it.
-- [ ] **E2. Context-menu contributions.** No registry; menus exist only for the
-  terminal, hardcoded per-use. Same registry pattern as E1.
+- [x] **E1. Statusline contributions.** `StatuslineSegments` in
+  `@the-editor/workbench` (allowlisted): pull-based data segments (side +
+  priority), recomputed each render — no per-segment subscription. The default
+  segments (branch, file+position, diagnostics, pending chords, buffer stats)
+  are host-registered in boot reading live runtime state; `App.tsx` renders the
+  bar purely from `activeRuntime.statuslineSegments`. An extension adds a segment
+  through the same service.
+- [x] **E2. Context-menu contributions — rendered by the OS.** Two allowlisted
+  seams in `@the-editor/workbench`: `ContextMenuProviders` (the contribution
+  registry — providers return entries for a named menu, grouped with separators)
+  and `ContextMenus` (the host `open(request, position)` op). The platform draws
+  the menu: Electron `Menu.popup` on desktop (new `menu:popup` IPC), a minimal
+  plain-DOM `.os-menu` fallback on the web (`platform/menu.ts`) — no component
+  library. The terminal's menu is now a registry provider (`terminal/menu.ts`,
+  entries as data); its mount dropped the React root + shadcn trigger and pops
+  the OS menu from a plain `contextmenu` listener. **shadcn's context menu is
+  removed entirely** — `ui/context-menu.tsx`, `TerminalContextMenu.tsx`, and the
+  shadcn context-menu preflight/CSS are gone.
 
 ## F. Agent-first items (the point of the whole exercise)
 

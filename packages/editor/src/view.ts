@@ -34,6 +34,7 @@ import {
 import { mapOffsetThroughChanges, ViewDocumentSync } from "./commit";
 import { MountHub, ViewMountHub } from "./mounts";
 import { FloatHub, ViewFloatHub } from "./floats";
+import { makeInteractionHub, ViewInteraction } from "./interaction";
 
 let nextViewId = 1;
 
@@ -96,11 +97,13 @@ export function makeViewScope(
     const syncedVersion = yield* Ref.make(yield* textDocument.version);
     const mounts = input.mounts ?? new MountHub();
     const floats = input.floats ?? new FloatHub();
+    const hub = makeInteractionHub();
 
     const context = documentContext.pipe(
       Context.add(ActiveEditorScopeId, id),
       Context.add(ViewMountHub, mounts),
       Context.add(ViewFloatHub, floats),
+      Context.add(ViewInteraction, hub),
       Context.add(SelectionState, selectionState),
       Context.add(ViewNotifications, bus),
       Context.add(ViewDocumentSync, syncedVersion),

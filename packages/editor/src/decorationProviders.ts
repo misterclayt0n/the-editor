@@ -39,6 +39,7 @@ import type { ViewScope } from "./view";
 import type { DocumentId, EditorScopeId } from "./services";
 import { ViewMountHub, type MountHub } from "./mounts";
 import { ViewFloatHub, type FloatHub } from "./floats";
+import { ViewInteraction, type PaneInteraction } from "./interaction";
 
 /**
  * What a decoration provider gets for one document: its identity, a live text
@@ -62,6 +63,8 @@ export interface DecorationViewTarget extends DecorationTarget {
   readonly viewNotifications: NotificationBus;
   readonly mounts: MountHub;
   readonly floats: FloatHub;
+  /** Subscribe to this view's hover / scroll / viewport / pre-keymap events. */
+  readonly interaction: PaneInteraction;
 }
 
 export interface DecorationProvider {
@@ -132,6 +135,7 @@ const viewTargetOf = (view: ViewScope): DecorationViewTarget => {
     | ViewNotifications
     | ViewMountHub
     | ViewFloatHub
+    | ViewInteraction
   >;
   return {
     ...targetOfContext(view.documentId, ctx),
@@ -139,6 +143,7 @@ const viewTargetOf = (view: ViewScope): DecorationViewTarget => {
     viewNotifications: Context.get(ctx, ViewNotifications),
     mounts: Context.get(ctx, ViewMountHub),
     floats: Context.get(ctx, ViewFloatHub),
+    interaction: Context.get(ctx, ViewInteraction).interaction,
   };
 };
 

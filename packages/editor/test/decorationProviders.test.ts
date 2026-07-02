@@ -9,6 +9,7 @@ import {
   closeViewScope,
   ViewFloatHub,
   ViewMountHub,
+  ViewInteraction,
   type DecorationTarget,
   type DecorationViewTarget,
 } from "../src";
@@ -138,6 +139,46 @@ describe("DecorationProviders", () => {
 
           yield* closeViewScope(view);
           expect(yield* Ref.get(live)).toBe(0);
+        }),
+      ),
+    ));
+
+  it("gives view providers the interaction hub to subscribe to (verb 14)", () =>
+    Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const ws = yield* makeWorkspaceScope();
+          const registry = Context.get(ws.context, DocumentRegistry);
+          const bus = Context.get(ws.context, WorkspaceNotifications);
+          const providers = yield* makeDecorationProviders(registry, bus);
+          const document = yield* registry.open({ text: "a" });
+          const view = yield* makeViewScope(document);
+
+          const hovers = yield* Ref.make<Array<number | null>>([]);
+          yield* providers.register({
+            id: "hover-watcher",
+            attachView: (target: DecorationViewTarget) =>
+              Effect.acquireRelease(
+                Effect.sync(() =>
+                  target.interaction.onPointerHover((offset) => {
+                    void Effect.runSync(Ref.update(hovers, (list) => [...list, offset]));
+                  }),
+                ),
+                (unsubscribe) => Effect.sync(unsubscribe),
+              ).pipe(Effect.asVoid),
+          });
+          yield* providers.connectView(view);
+
+          // The pane dispatches through the same view-context hub.
+          const hub = Context.get(view.context, ViewInteraction);
+          hub.dispatch.pointerHover(3);
+          hub.dispatch.pointerHover(null);
+          expect(yield* Ref.get(hovers)).toEqual([3, null]);
+
+          // Subscription retracts with the view.
+          yield* closeViewScope(view);
+          hub.dispatch.pointerHover(9);
+          expect(yield* Ref.get(hovers)).toEqual([3, null]);
         }),
       ),
     ));

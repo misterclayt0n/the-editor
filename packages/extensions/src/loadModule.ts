@@ -86,7 +86,12 @@ export function createEsbuildTranspiler(
     transform: async (source, filename) => {
       const esbuild = await startEsbuild(options.wasmURL);
       const result = await esbuild.transform(source, {
-        loader: "ts",
+        // `.tsx` compiles JSX to the NATIVE DOM builder, not React:
+        // `h`/`Fragment` from @the-editor/extensions (see h.ts). An extension
+        // opts in per file with the extension + an `import { h, Fragment }`.
+        loader: filename.endsWith(".tsx") ? "tsx" : "ts",
+        jsxFactory: "h",
+        jsxFragment: "Fragment",
         format: "cjs",
         target: "es2022",
         sourcefile: filename,

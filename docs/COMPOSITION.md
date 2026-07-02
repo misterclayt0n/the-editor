@@ -304,22 +304,44 @@ finding that anchors everything below:
 
 ## F. Agent-first items (the point of the whole exercise)
 
-- [ ] **F1. External drive bridge.** There is **no inbound channel at all** — no CLI,
-  socket, or MCP; Electron IPC is outbound capability plumbing only. The hard part is
-  already done: `Commands.execute` + `list` (titles, groups, aliases) is a
-  self-describing operation surface. A small bridge (socket or MCP server in the
-  Electron main process) forwarding to `Commands.execute` and streaming
-  `editorSnapshot` back makes the-editor drivable through its own public seam
-  instead of synthetic keystrokes.
+- [ ] **F1. The editor as a drivable service (external agents) — optional, re-scoped.**
+  Originally framed as a prerequisite for the agent panel; it is NOT (the panel
+  spawns its own agent via `Processes` — proven, see F-flagship). What F1 actually
+  is: an *inbound* channel so an agent the editor did NOT spawn (a terminal
+  Claude/Codex session, headless CI, a script) can drive an already-running
+  editor. The hard part is done — `Commands.execute` + `list` is a
+  self-describing tool surface; a small socket/MCP bridge in the Electron main
+  forwarding to it is the missing 10%. Valued for headless + ecosystem reach;
+  build when that need is real.
 - [ ] **F2. Resolve `packages/acp` + `packages/agent`.** `acp/` is an empty
   node_modules-only shell; `agent/` is untracked dist-only dead code (a clean ACP
   session read-model — `foldSessionUpdate`, `makeAgentSession` — with no transport,
-  no panel, no imports). Delete both, or resurrect `agent` as source when F-flagship
-  starts. Dead packages contradict the premise.
-- [ ] **F-flagship. The agent panel is a user extension.** The definition-of-done
-  demo: an agent panel living in `~/.the-editor/extensions`, using only allowlisted
-  imports — panel rendering (B1), attention (A1), process/transport (D1 or F1),
-  commands, decorations. When this works, the premise is proven.
+  no panel, no imports). The flagship POC hand-rolled its client inline, so these
+  are still dead: delete them (or extract the POC into a maintained example that
+  uses `agent` as source). Dead packages contradict the premise.
+- [x] **F-flagship. The agent panel is a user extension — PROVEN.** A POC agent
+  panel at `~/.the-editor/extensions/agent-panel/index.ts` (authored by a
+  mid-tier model against the seams alone, no host changes) spawns **pi** via
+  `Processes` (killed on reload), renders a plain-DOM panel via
+  `PanelRenderers` + `Workbench.createPanel`/`dockEdge`, registers `agent.open`
+  + a keybinding, speaks ACP/JSON-RPC over the process handle, maps
+  `fs/read_text_file`/`fs/write_text_file` to `FileSystemPort` +
+  `FileViews.openInView`, and routes `session/request_permission` through
+  `Attention.ask`. Chat round-trips with pi work end to end. The premise holds:
+  an agent panel is just an extension. Follow-up: graduate the POC into a
+  maintained `examples/` extension (and see F2).
+- [x] **F5. Extension authoring layer** (the flagship's lesson: the seams work,
+  the *authoring comfort* was the gap). Shipped: `.tsx` extensions compile JSX
+  to a native ~100-line `h`/`Fragment` DOM builder in `@the-editor/extensions`
+  (esbuild `jsxFactory: "h"`) — ergonomic components with zero framework, the
+  pi-tui move (their escape hatch is their own `render(): string[]`; ours is
+  the DOM). Discovery accepts `.tsx` + `dir/index.tsx`. Deliberately NOT added:
+  React in the allowlist — the contract stays element-based; authors who want
+  React/shadcn/Tailwind pre-bundle with `effect` + `@the-editor/*` as externals
+  (works today, documented). `docs/EXTENSION-AUTHORING.md` is the guide: module
+  surface, seams-by-task, theme tokens for native-looking UI, the prebundle
+  recipe, config, and the debugging workflow (Reload → toast → Extension
+  Issues).
 - [ ] **F3. Interaction-model decision.** `docs/EXTENSIONS.md` promises Vim/Helix/
   Emacs replacement via interaction profiles; current `Keymaps` has scopes + chords
   but no mode state machine. Decide: extension-owned mode state + scoped keymaps +
@@ -330,9 +352,12 @@ finding that anchors everything below:
 
 ## G. Enforcement (make the premise a CI assertion)
 
-- [ ] **G1. Lint rule:** `apps/web/src/product/*.ts` may import only from the
-  allowlisted module set. Every violation is exactly one unit of dogfooding debt,
-  automatically counted — this *is* the `Host*` metric, mechanized.
+- [x] **G1. Product-package import guard.** `productPackageImportGuard.test.ts`
+  derives first-party product packages from the default-set manifest (plus
+  non-infra `definePackage` files), compares their imports against the exact
+  `buildExtensionVirtualModules()` allowlist, and counts `the-editor/web/Host*`
+  tags. The guard is baselined to the current 12 seam-debt entries, so new debt
+  fails CI and paying debt requires deleting a ledger line.
 - [ ] **G2. Load-path test:** an integration test that loads each first-party product
   package through `loadExtensionPackage` itself. When it passes for the file tree,
   "the-editor is just a default package" is proven, not asserted.
@@ -446,22 +471,24 @@ package can actually be swapped out, so do this before any god-object thinning.
 
 ## Suggested order
 
-A1–E2 and I1 are **done** (see checkboxes above). What remains, in leverage order:
+A1–E2, G1, I1, **F-flagship (proven)**, and F5 (authoring layer) are **done**
+(see checkboxes above). What remains, in leverage order:
 
-1. **F1 + F-flagship** — the agent bridge and the agent-panel-as-extension proof.
-   This is the actual payoff of the whole arc: it exercises every seam built in
-   A–E/I and demonstrates *why* they mattered. Do it first.
-2. **G1 + G2** — the lint rule + load-path test; cheap, and they hold the line so
-   the finished seams can't silently regress.
+1. **F2** — graduate the POC agent panel into a maintained `examples/`
+   extension and delete/resurrect the dead `acp`/`agent` packages accordingly.
+2. **G2** — the load-path test; cheap, and it holds the line so the finished seams
+   can't silently regress.
 3. **F3 / F4** — interaction-model decision and undo-as-a-verb, as real extensions
    need them.
-4. **D1b (LSP as pure package code)** — I1 now makes the LSP package swappable, so
+4. **F1** — the editor as an externally-drivable service (socket/MCP), when
+   headless/external-agent need is real; explicitly NOT a panel prerequisite.
+5. **D1b (LSP as pure package code)** — I1 now makes the LSP package swappable, so
    this is only worth it if god-object thinning earns its keep; otherwise
    documented debt.
-5. **G3 (AppRuntime shrinks)** — a consequence to track, not a task.
+6. **G3 (AppRuntime shrinks)** — a consequence to track, not a task.
 
 Definition of done: `Host*` count is 0, G1/G2 green in CI, the F-flagship agent
-panel runs from `~/.the-editor/extensions` with no privileged imports, and I1 lets
-a user config drop a first-party default and load a replacement. At that point
-the-editor is, literally, a package like any other — one you can add to, drive,
-*and* subtract from.
+panel runs from `~/.the-editor/extensions` with no privileged imports **(done —
+proven with pi)**, and I1 lets a user config drop a first-party default and load
+a replacement **(done)**. At that point the-editor is, literally, a package like
+any other — one you can add to, drive, *and* subtract from.

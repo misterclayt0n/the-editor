@@ -797,10 +797,17 @@ export class AppRuntime {
           attention,
           readConfig,
         });
-        const defaultDescriptors = yield* defaultsController.initialDescriptors();
-
-        yield* runtime
-          .activateGraph([
+        // Activation phase — FORKED, not awaited. Boot stays synchronous
+        // (runSync); reading user config crosses the fs bridge, which is an
+        // async IPC round-trip on desktop, so it cannot run under runSync
+        // (AsyncFiberException). The runtime above is already fully usable
+        // (scratch pane, host surfaces, mirrors); packages activate a beat
+        // later in ONE ordered chain, preserving both invariants: a
+        // config-disabled default is never activated, and user extensions
+        // still land after every first-party package.
+        const activation = Effect.gen(function* () {
+          const defaultDescriptors = yield* defaultsController.initialDescriptors();
+          yield* runtime.activateGraph([
             ...defaultDescriptors,
             // Last: user extensions activate after every first-party product
             // package, so a shadowing keybinding/command from the user wins
@@ -828,12 +835,22 @@ export class AppRuntime {
                       Layer.succeed(Attention, attention),
                       Layer.succeed(Commands, commands),
                       Layer.succeed(WorkspaceRoots, workspaceRoots),
+                      // Optional for the loader (serviceOption): powers the
+                      // "Extension Issues" report buffer.
+                      Layer.succeed(VirtualViews, {
+                        open: (spec) => Effect.sync(() => instance.openVirtual(spec)),
+                      }),
                     ),
                   ),
                 ]
               : []),
-          ])
-          .pipe(Effect.orDie);
+          ]);
+        }).pipe(
+          Effect.tapErrorCause((cause) =>
+            Effect.sync(() => console.error("package activation failed", cause)),
+          ),
+        );
+        yield* Effect.forkIn(activation, scope);
 
         return appRuntime;
       }),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Ref } from "effect";
+import { Effect, Layer, Option, Ref } from "effect";
 import { makeAttention, makePackageRuntime } from "@the-editor/kernel";
 import { definePackage, type EditorConfig } from "@the-editor/extensions";
 import * as ExtensionsNamespace from "@the-editor/extensions";
@@ -96,9 +96,13 @@ describe("makeDefaultPackagesController", () => {
   );
 });
 
-// Config reading only calls readFile; a partial stub is enough.
+// Config reading stats then reads; a partial stub with both is enough.
 const configFs = (files: Record<string, string>): FileSystemPort.Service =>
   ({
+    stat: (path: string) =>
+      Effect.succeed(
+        path in files ? Option.some({ mtimeMs: 1, size: files[path]!.length }) : Option.none(),
+      ),
     readFile: (path: string) =>
       path in files
         ? Effect.succeed(files[path]!)

@@ -12,7 +12,7 @@
  * ignored with a notice — the foundation stays.
  */
 
-import { Effect, Either, type Layer } from "effect";
+import { Effect, Either, Option, type Layer } from "effect";
 import { Attention, makeNoticeTopic, PackageId, type PackageRuntime } from "@the-editor/kernel";
 import {
   loadConfig,
@@ -62,8 +62,14 @@ export function makeReadEditorConfig(
 
   const readOne = (path: string): Effect.Effect<EditorConfig | undefined> =>
     Effect.gen(function* () {
+      // stat-first: a missing config file is the COMMON case (most users have
+      // none). Reading it directly makes the host fs bridge log a scary ENOENT
+      // even though we handle the failure — `stat` reports absence as `None`
+      // with no noise (the same reason extension discovery stats candidates).
+      const stat = yield* fileSystem.stat(path).pipe(Effect.orElseSucceed(() => Option.none()));
+      if (Option.isNone(stat)) return undefined;
       const source = yield* fileSystem.readFile(path).pipe(Effect.either);
-      if (Either.isLeft(source)) return undefined; // no config file at this path
+      if (Either.isLeft(source)) return undefined; // raced away since stat
       const loaded = yield* loadConfig(source.right, path, { transpiler, virtualModules }).pipe(
         Effect.either,
       );

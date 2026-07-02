@@ -1,0 +1,8 @@
+.rx-panel {
+  display: flex;
+  background: var(--bg-panel);
+  color: var(--fg);
+}
+.rx-button {
+  border: 1px solid var(--border);
+}

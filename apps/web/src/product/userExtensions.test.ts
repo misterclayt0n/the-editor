@@ -876,6 +876,115 @@ describe("makeUserExtensionsPackage", () => {
     ),
   );
 
+  it.live("contains a defecting extension and reports the author's actual error", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // Activation THROWS (a defect, not a typed failure) — the black-screen
+        // class of bug. The loader must (a) not let it kill the reconcile
+        // fiber, (b) still load OTHER extensions, and (c) surface the deepest
+        // cause message, not a wrapper tag like "PackageActivationError".
+        const fs = makeFakeFs();
+        fs.write(
+          "/home/user/.the-editor/extensions/broken.ts",
+          `
+            var definePackage = require("@the-editor/extensions").definePackage;
+            var Effect = require("effect").Effect;
+            module.exports.default = definePackage("acme.broken", function () {
+              return Effect.sync(function () {
+                throw new Error("boom: pi is not installed");
+              });
+            });
+          `,
+        );
+        fs.write(
+          "/home/user/.the-editor/extensions/fine.ts",
+          packageSource("acme.fine", "acme.fine", "Fine"),
+        );
+
+        const runtime = yield* makePackageRuntime;
+        const attention = yield* makeAttention();
+        const workspaceRoots = yield* makeStateCell<ReadonlyArray<string>>([]);
+        const commands = yield* makeCommands(runtime.contributionIndex);
+        const notices: Array<{ path: string; message: string }> = [];
+        yield* Effect.forkScoped(
+          Stream.runForEach(attention.notices, (notice) =>
+            Effect.sync(() => {
+              if (String(notice.topicId).includes("extension-lifecycle-failed")) {
+                notices.push(notice.payload as { path: string; message: string });
+              }
+            }),
+          ),
+        );
+
+        const servicesForExtensions = Layer.mergeAll(
+          Layer.succeed(Commands, commands),
+          Layer.succeed(FileSystemPort, fs.port),
+          Layer.succeed(PackageRuntimeService, runtime),
+          Layer.succeed(Attention, attention),
+          Layer.succeed(WorkspaceRoots, workspaceRoots),
+        );
+        const userExtensions = makeUserExtensionsPackage({
+          servicesForExtensions,
+          transpiler: identityTranspiler,
+          virtualModules: testVirtualModules,
+          homeDir: "/home/user",
+        });
+
+        yield* runtime.activateGraph([toPackageDescriptor(userExtensions, servicesForExtensions)]);
+        // The healthy sibling still activates (isolation held)...
+        yield* waitUntil(commands.get("acme.fine").pipe(Effect.map((c) => c !== undefined)));
+        // ...and the failure notice carries the AUTHOR'S message, not the tag.
+        yield* waitUntil(Effect.sync(() => notices.length > 0));
+        const notice = notices.find((n) => n.path.endsWith("broken.ts"));
+        expect(notice).toBeDefined();
+        expect(notice!.message).toContain("boom: pi is not installed");
+        expect(notice!.message).not.toContain("PackageActivationError");
+        expect(notice!.message).toContain("Extension Issues");
+      }),
+    ),
+  );
+
+  it.live("discovers .tsx extensions (files and dir/index.tsx)", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // JSX-compilation itself is covered in @the-editor/extensions
+        // (tsx.test.ts, real esbuild); this asserts DISCOVERY: .tsx files and
+        // dir/index.tsx flow through the loader like .ts. (Plain TS bodies so
+        // the identity transpiler works.)
+        const fs = makeFakeFs();
+        fs.write(
+          "/home/user/.the-editor/extensions/flat.tsx",
+          packageSource("acme.flat-tsx", "acme.flatTsx", "Flat TSX"),
+        );
+        fs.write(
+          "/home/user/.the-editor/extensions/dir/index.tsx",
+          packageSource("acme.dir-tsx", "acme.dirTsx", "Dir TSX"),
+        );
+
+        const runtime = yield* makePackageRuntime;
+        const attention = yield* makeAttention();
+        const workspaceRoots = yield* makeStateCell<ReadonlyArray<string>>([]);
+        const commands = yield* makeCommands(runtime.contributionIndex);
+        const servicesForExtensions = Layer.mergeAll(
+          Layer.succeed(Commands, commands),
+          Layer.succeed(FileSystemPort, fs.port),
+          Layer.succeed(PackageRuntimeService, runtime),
+          Layer.succeed(Attention, attention),
+          Layer.succeed(WorkspaceRoots, workspaceRoots),
+        );
+        const userExtensions = makeUserExtensionsPackage({
+          servicesForExtensions,
+          transpiler: identityTranspiler,
+          virtualModules: testVirtualModules,
+          homeDir: "/home/user",
+        });
+        yield* runtime.activateGraph([toPackageDescriptor(userExtensions, servicesForExtensions)]);
+        yield* waitUntil(commands.get("acme.flatTsx").pipe(Effect.map((c) => c !== undefined)));
+        yield* waitUntil(commands.get("acme.dirTsx").pipe(Effect.map((c) => c !== undefined)));
+      }),
+    ),
+  );
+
   it.live("refuses to load an extension whose id collides with an active package", () =>
     Effect.scoped(
       Effect.gen(function* () {

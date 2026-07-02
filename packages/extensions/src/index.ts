@@ -4,6 +4,7 @@ export * from "./contributions.js";
 export * from "./stores.js";
 export * from "./loadModule.js";
 export * from "./config.js";
+export * from "./h.js";
 export type { Choice, ChoiceRequest, ChoiceTone, ChoiceTopic } from "./attention.js";
 
 export {

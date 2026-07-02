@@ -26,7 +26,7 @@
  * one serialized worker, many producers, no interleaved check-then-act races.
  */
 
-import { Effect, Either, Layer, Option, Stream } from "effect";
+import { Cause, Effect, Either, Exit, Layer, Option, Stream } from "effect";
 import * as EffectNamespace from "effect";
 import {
   Attention,
@@ -56,7 +56,7 @@ import * as VcsNamespace from "@the-editor/vcs";
 import * as DiffViewNamespace from "@the-editor/diff-view";
 import * as ThemeNamespace from "@the-editor/theme";
 import * as FontsNamespace from "@the-editor/fonts";
-import { FileSystemPort, WorkspaceRoots, type DirEntry } from "@the-editor/editor";
+import { FileSystemPort, VirtualViews, WorkspaceRoots, type DirEntry } from "@the-editor/editor";
 import { SurfaceScope } from "@the-editor/workbench";
 import { makeExtensionTrust, type ExtensionTrust } from "./extensionTrust";
 
@@ -101,6 +101,53 @@ const ExtensionLifecycleFailed = makeNoticeTopic<{
   readonly message: string;
 }>("@the-editor/web/extension-lifecycle-failed");
 
+/**
+ * Unwrap an extension failure to what the AUTHOR needs: the deepest cause's
+ * message (their actual bug), not the wrapper's tag name. Effect's tagged
+ * errors (`PackageActivationError` etc.) stringify to just their name with the
+ * real error hidden in `.cause` — walking the chain recovers "Cannot read
+ * properties of undefined" instead of "PackageActivationError". `detail` adds
+ * the full chain + the deepest stack for the issues report.
+ */
+export function describeExtensionError(error: unknown): {
+  readonly concise: string;
+  readonly detail: string;
+} {
+  const chain: unknown[] = [];
+  let current: unknown = error;
+  while (current !== undefined && current !== null && chain.length < 8) {
+    chain.push(current);
+    current = (current as { cause?: unknown }).cause;
+  }
+  const describe = (entry: unknown): string => {
+    if (entry instanceof Error) {
+      const tag = (entry as { _tag?: unknown })._tag;
+      const name = typeof tag === "string" ? tag : entry.name;
+      return entry.message.length > 0 ? `${name}: ${entry.message}` : name;
+    }
+    return String(entry);
+  };
+  const deepest = chain[chain.length - 1] ?? error;
+  const deepestText =
+    deepest instanceof Error && deepest.message.length > 0 ? deepest.message : describe(deepest);
+  const stack =
+    deepest instanceof Error && deepest.stack !== undefined
+      ? deepest.stack.split("\n").slice(0, 9).join("\n")
+      : undefined;
+  return {
+    concise: deepestText,
+    detail: [chain.map(describe).join("\n  caused by: "), stack].filter(Boolean).join("\n"),
+  };
+}
+
+/** One recorded lifecycle failure, kept for the issues report. */
+export type ExtensionIssue = {
+  readonly path: string;
+  readonly message: string;
+  readonly detail: string;
+  readonly at: string;
+};
+
 type DiscoveredSource = {
   readonly path: string;
   readonly mtimeMs: number;
@@ -128,10 +175,15 @@ function discoverDir(
     const candidates: string[] = [];
     for (const entry of entries) {
       if (entry.name.startsWith(".")) continue;
-      if (entry.kind === "file" && entry.name.endsWith(".ts")) {
+      // `.tsx` extensions compile JSX to the native `h` DOM builder (see
+      // @the-editor/extensions h.ts) — no framework implied.
+      if (entry.kind === "file" && (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx"))) {
         candidates.push(`${dir}/${entry.name}`);
       } else if (entry.kind === "directory") {
-        candidates.push(`${dir}/${entry.name}/index.ts`);
+        // index.ts preferred; index.tsx only when index.ts doesn't exist
+        // (stat filters the missing one — if BOTH exist, .ts wins by the
+        // duplicate-id guard in reconcile).
+        candidates.push(`${dir}/${entry.name}/index.ts`, `${dir}/${entry.name}/index.tsx`);
       }
     }
     const stats = yield* Effect.forEach(
@@ -184,6 +236,35 @@ export function makeUserExtensionsPackage<ExtR>(
       const workspaceRoots = yield* WorkspaceRoots;
       const trust = options.trust ?? makeExtensionTrust(fileSystem, attention, options.homeDir);
 
+      // Lifecycle failures are power-user territory: the toast carries the
+      // DEEPEST cause message (the author's actual bug, not a wrapper's tag
+      // name), and every failure is recorded here for the "Extension Issues"
+      // report — a persistent, copyable surface (pi renders the same as its
+      // "[Extension issues]" block).
+      const issues: ExtensionIssue[] = [];
+      const recordIssue = (path: string, message: string, detail: string) =>
+        Effect.gen(function* () {
+          issues.push({ path, message, detail, at: new Date().toLocaleTimeString() });
+          if (issues.length > 50) issues.shift();
+          const name = path.split("/").slice(-2).join("/");
+          yield* attention.notify(
+            ExtensionLifecycleFailed,
+            { path, message: `${name}: ${message} — run “Extension Issues” for details` },
+            { level: "error" },
+          );
+        });
+      const recordCause = (path: string, cause: Cause.Cause<unknown>) => {
+        const { concise, detail } = describeExtensionError(Cause.squash(cause));
+        return recordIssue(path, concise, detail);
+      };
+      /** A path that loads cleanly (or is deleted) clears its recorded issues,
+       *  so the report always reflects the CURRENT state, not history. */
+      const clearIssues = (path: string) => {
+        for (let i = issues.length - 1; i >= 0; i--) {
+          if (issues[i]!.path === path) issues.splice(i, 1);
+        }
+      };
+
       const globalActive = new Map<string, ActiveEntry>();
       const projectActive = new Map<string, ActiveEntry>();
       /** Ids this loader activated — the only ones it's allowed to reload or
@@ -214,13 +295,15 @@ export function makeUserExtensionsPackage<ExtR>(
 
           for (const [path, entry] of [...activeMap]) {
             if (seen.has(path)) continue;
-            const disposed = yield* packages.disposePackage(entry.id).pipe(Effect.either);
-            if (Either.isLeft(disposed)) {
-              yield* attention.notify(
-                ExtensionLifecycleFailed,
-                { path, message: String(disposed.left) },
-                { level: "error" },
-              );
+            // Effect.exit, not Effect.either: either passes DEFECTS through,
+            // so a throwing dispose/activate could kill the whole reconcile
+            // fiber. exit contains failures AND defects — one broken extension
+            // must never take down the loader (or the shell).
+            const disposed = yield* packages.disposePackage(entry.id).pipe(Effect.exit);
+            if (Exit.isFailure(disposed)) {
+              yield* recordCause(path, disposed.cause);
+            } else {
+              clearIssues(path); // file gone, cleanly unloaded — not an issue anymore
             }
             activeMap.delete(path);
             ownedIds.delete(entry.id);
@@ -238,11 +321,8 @@ export function makeUserExtensionsPackage<ExtR>(
 
             const loaded = yield* readAndLoad(source.path).pipe(Effect.either);
             if (Either.isLeft(loaded)) {
-              yield* attention.notify(
-                ExtensionLifecycleFailed,
-                { path: source.path, message: loaded.left.message },
-                { level: "error" },
-              );
+              const { concise, detail } = describeExtensionError(loaded.left);
+              yield* recordIssue(source.path, concise, detail);
               continue; // keep whatever version (if any) was already running
             }
             const pkg = loaded.right;
@@ -255,14 +335,8 @@ export function makeUserExtensionsPackage<ExtR>(
 
             const existing: PackageSnapshot | undefined = yield* packages.getPackage(pkg.id);
             if (existing !== undefined && existing.status !== "disposed" && !ownedIds.has(pkg.id)) {
-              yield* attention.notify(
-                ExtensionLifecycleFailed,
-                {
-                  path: source.path,
-                  message: `id "${pkg.id}" is already used by another package — skipped`,
-                },
-                { level: "error" },
-              );
+              const message = `id "${pkg.id}" is already used by another package — skipped`;
+              yield* recordIssue(source.path, message, message);
               continue;
             }
 
@@ -270,13 +344,12 @@ export function makeUserExtensionsPackage<ExtR>(
             const activation = ownedIds.has(pkg.id)
               ? packages.reloadPackage(pkg.id, descriptor)
               : packages.activatePackage(descriptor);
-            const result = yield* activation.pipe(Effect.either);
-            if (Either.isLeft(result)) {
-              yield* attention.notify(
-                ExtensionLifecycleFailed,
-                { path: source.path, message: String(result.left) },
-                { level: "error" },
-              );
+            // exit, not either — see the dispose comment: defects contained.
+            const result = yield* activation.pipe(Effect.exit);
+            if (Exit.isFailure(result)) {
+              yield* recordCause(source.path, result.cause);
+            } else {
+              clearIssues(source.path); // fixed + reloaded cleanly
             }
             activeMap.set(source.path, { id: pkg.id, mtimeMs: source.mtimeMs, size: source.size });
             ownedIds.add(pkg.id);
@@ -344,6 +417,37 @@ export function makeUserExtensionsPackage<ExtR>(
       // package, so a disk theme/keymap/panel is just an extension and
       // reloads through this one command. There is no per-subsystem reload;
       // future disk resources (user config, etc.) join `reloadAll`'s pass.
+      // The persistent, copyable failure report (pi's "[Extension issues]"
+      // block, as a read-only virtual buffer — D3 dogfooding). VirtualViews is
+      // optional so the loader still works in minimal hosts/tests without it.
+      const virtualViews = yield* Effect.serviceOption(VirtualViews);
+      yield* commands.register("extensions.issues", {
+        title: "Extension Issues",
+        scope: SurfaceScope.global,
+        palette: { group: "Extensions", aliases: ["extension errors", "why is my extension broken"] },
+        run: () =>
+          Effect.gen(function* () {
+            if (Option.isNone(virtualViews)) return;
+            const report =
+              issues.length === 0
+                ? "No extension issues. 🎉\n\nEvery discovered extension loaded and activated cleanly."
+                : issues
+                    .map(
+                      (issue) =>
+                        `━━ ${issue.path}\n   at ${issue.at}\n\n${issue.detail
+                          .split("\n")
+                          .map((line) => `   ${line}`)
+                          .join("\n")}`,
+                    )
+                    .join("\n\n");
+            const handle = yield* virtualViews.value.open({
+              title: "Extension Issues",
+              initialText: `Extension issues (${issues.length})\nFix the source and run “Reload”.\n\n${report}\n`,
+            });
+            void handle; // read-only view; closing the tab disposes it
+          }),
+      });
+
       yield* commands.register("reload", {
         title: "Reload",
         scope: SurfaceScope.global,

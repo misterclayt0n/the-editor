@@ -2,30 +2,30 @@ packages:
   - "apps/*"
   - "packages/*"
 
+catalog:
+  "@effect/language-service": ^0.86.2
+  "@effect/platform-node": ^0.106.0
+  "@effect/vitest": ^0.29.0
+  "@types/node": ^24.10.13
+  "@types/react": ^19.2.17
+  "@types/react-dom": ^19.2.3
+  "@typescript/native-preview": ^7.0.0-dev.20260521.1
+  "@vitejs/plugin-react": ^6.0.0
+  effect: ^3.21.2
+  electron: 41.5.0
+  oxfmt: ^0.40.0
+  oxlint: ^1.55.0
+  react: ^19.2.7
+  react-dom: ^19.2.7
+  tsdown: ^0.20.3
+  tsx: ^4.20.0
+  turbo: ^2.3.3
+  typescript: ^5.9.2
+  vite: ^8.0.0
+  vitest: ^3.2.0
+
 onlyBuiltDependencies:
   - electron
 
 patchedDependencies:
   "@xterm/addon-ligatures@0.11.0-beta.285": "config/patches/@xterm__addon-ligatures@0.11.0-beta.285.patch"
-
-catalog:
-  effect: ^3.21.2
-  electron: 41.5.0
-  react: ^19.2.0
-  react-dom: ^19.2.0
-  "@types/react": ^19.2.0
-  "@types/react-dom": ^19.2.0
-  "@vitejs/plugin-react": ^6.0.0
-  vite: ^8.0.0
-  "@effect/language-service": ^0.86.2
-  "@effect/platform-node": ^0.106.0
-  "@effect/vitest": ^0.29.0
-  "@types/node": ^24.10.13
-  "@typescript/native-preview": ^7.0.0-dev.20260521.1
-  oxfmt: ^0.40.0
-  oxlint: ^1.55.0
-  tsdown: ^0.20.3
-  tsx: ^4.20.0
-  turbo: ^2.3.3
-  typescript: ^5.9.2
-  vitest: ^3.2.0

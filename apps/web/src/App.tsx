@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { createPortal } from "react-dom";
 import { Effect } from "effect";
 import type { EditorSnapshot } from "@the-editor/editor";
-import { formatChords, type Chord } from "@the-editor/keymaps";
+import type { Chord } from "@the-editor/keymaps";
 import type { Tile } from "@the-editor/workbench";
-import { AppRuntime, type EditorPane } from "./runtime";
+import { AppRuntime } from "./runtime";
 import { Shell } from "./shell";
 import { WorkbenchView } from "./workbench/WorkbenchView";
 import type { ChromeSlot } from "./workbench/shellHost";
@@ -23,16 +23,6 @@ import { IntelView } from "./intel/IntelView";
 const MAC_TRAFFIC_INSET = 80;
 /** Non-mac desktop: a small top-left window-drag handle. */
 const DESKTOP_INSET = 40;
-
-const fileLabel = (pane: EditorPane | undefined): string => {
-  if (pane === undefined) return "";
-  const info = pane.fileInfo();
-  if (info === null) return "untitled";
-  const name = info.path.split("/").pop() ?? info.path;
-  if (info.status === "conflict") return `${name} · CONFLICT (file changed on disk)`;
-  if (info.status === "missing") return `${name} · deleted on disk`;
-  return info.status === "dirty" ? `${name} •` : name;
-};
 
 /** Serializable layout summary for dev tooling and headless verification. */
 const layoutSummary = (runtime: AppRuntime): unknown => {
@@ -455,13 +445,6 @@ export function App() {
   if (shell === null || active === null) return <div className="app" />;
 
   const activeRuntime = active.runtime;
-  const focusedPane = activeRuntime.focusedPane();
-  const head = snapshot?.selection.primary.head;
-  const line = snapshot && head !== undefined ? snapshot.text.lineRangeAt(head) : null;
-  // Diagnostics for the focused document — the caret's SOURCE doc in a multibuffer.
-  const diagnosticDocId =
-    head !== undefined ? (activeRuntime.focusedPaneHost()?.resolveSource(head)?.docId ?? null) : null;
-  const diagnostics = diagnosticDocId !== null ? activeRuntime.diagnosticsFor(diagnosticDocId) : null;
 
   return (
     <div className="app">
@@ -505,28 +488,24 @@ export function App() {
       />
       <div className="status-bar">
         <span>
-          {activeRuntime.vcs?.branch() != null && (
-            <span className="status-branch">{activeRuntime.vcs.branch()} · </span>
-          )}
-          {fileLabel(focusedPane)}
-          {line !== null && head !== undefined
-            ? ` · Ln ${line.index + 1}, Col ${head - line.from + 1}`
-            : ""}
-          {diagnostics !== null && diagnostics.errors + diagnostics.warnings > 0 && (
-            <span className="status-diagnostics">
-              {diagnostics.errors > 0 && (
-                <span className="status-diagnostics-errors"> ✗ {diagnostics.errors}</span>
-              )}
-              {diagnostics.warnings > 0 && (
-                <span className="status-diagnostics-warnings"> ⚠ {diagnostics.warnings}</span>
-              )}
-            </span>
-          )}
-          {pending.length > 0 ? ` · ${formatChords(pending)} …` : ""}
+          {activeRuntime.statuslineSegments.forSide("left").map((segment) => {
+            const content = segment.content();
+            return content === null ? null : (
+              <span key={segment.id} className={content.className} title={content.tooltip}>
+                {content.text}
+              </span>
+            );
+          })}
         </span>
         <span>
-          {snapshot !== null ? `${snapshot.text.length} chars · v${snapshot.version}` : ""}
-          {snapshot?.dirty ? " · modified" : ""}
+          {activeRuntime.statuslineSegments.forSide("right").map((segment) => {
+            const content = segment.content();
+            return content === null ? null : (
+              <span key={segment.id} className={content.className} title={content.tooltip}>
+                {content.text}
+              </span>
+            );
+          })}
         </span>
       </div>
     </div>

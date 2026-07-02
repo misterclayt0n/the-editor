@@ -237,11 +237,11 @@ export class EditorRenderer {
     this.root.focus({ preventScroll: true });
     // A click in the gutter (left of the text) can be claimed by the pane
     // (the multibuffer jumps to that source line); fall through otherwise.
-    if (this.runtime.gutterClick !== undefined) {
+    {
       const rect = this.viewport.getBoundingClientRect();
       if (event.clientX - rect.left < this.textOriginX) {
         const line = this.geometry.lineAt(event.clientY - rect.top + this.scrollY);
-        if (this.runtime.gutterClick(line)) return;
+        if (this.runtime.dispatch.gutterClick(line)) return;
       }
     }
     const offset = this.offsetAt(event.clientX, event.clientY);
@@ -387,7 +387,6 @@ export class EditorRenderer {
   private hoverRaf = 0;
   private lastPointerClient: { x: number; y: number } | null = null;
   private readonly handleMouseMove = (event: MouseEvent) => {
-    if (this.runtime.pointerHover === undefined) return;
     // Dragging a selection — the window-level handler owns the pointer; don't
     // also arm hover.
     if (this.drag !== null) return;
@@ -415,7 +414,7 @@ export class EditorRenderer {
       if (this.disposed) return;
       const rect = this.viewport.getBoundingClientRect();
       if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
-        this.runtime.pointerHover?.(null);
+        this.runtime.dispatch.pointerHover(null);
         return;
       }
       // Hover is EXACT: empty space right of a line, widget rows, and the
@@ -424,7 +423,7 @@ export class EditorRenderer {
       const line = this.geometry.lineAt(contentY);
       const lineTop = this.geometry.lineTop(line);
       if (contentY < lineTop || contentY >= lineTop + LINE_HEIGHT) {
-        this.runtime.pointerHover?.(null);
+        this.runtime.dispatch.pointerHover(null);
         return;
       }
       const hit = hitTestTextPositionExact({
@@ -438,11 +437,11 @@ export class EditorRenderer {
         tabWidth: TAB_WIDTH,
         virtualText: this.lineVirtuals(line),
       });
-      this.runtime.pointerHover?.(hit?.offset ?? null);
+      this.runtime.dispatch.pointerHover(hit?.offset ?? null);
     });
   };
   private readonly handleMouseLeave = () => {
-    this.runtime.pointerHover?.(null);
+    this.runtime.dispatch.pointerHover(null);
   };
   private readonly handleNativeScrollLeak = () => {
     if (this.viewport.scrollLeft !== 0) this.viewport.scrollLeft = 0;
@@ -766,7 +765,7 @@ export class EditorRenderer {
     this.scrollX = nx;
     // Every scroll position change hides hover immediately (Zed's model);
     // it re-arms only on a REAL mouse move afterwards.
-    this.runtime.pointerScrolled?.();
+    this.runtime.dispatch.pointerScrolled();
     queueRender(this.renderPass);
   }
 
@@ -1124,7 +1123,7 @@ export class EditorRenderer {
     };
 
     this.positionFloats();
-    this.runtime.viewportChanged?.(this.geometry.lineAt(this.scrollY), this.windowStart, this.windowEnd);
+    this.runtime.dispatch.viewportChanged(this.geometry.lineAt(this.scrollY), this.windowStart, this.windowEnd);
 
     if (docDirty || selDirty) this.options.onSnapshot?.(this.snapshot);
   }

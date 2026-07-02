@@ -18,8 +18,6 @@ import {
   resetTerminalSearchSession,
   type TerminalAddonSet,
 } from "./backend";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
 import { Effect, Exit, Scope } from "effect";
 import type { PtyHandle } from "@the-editor/process";
 import type { AppRuntime } from "../runtime";
@@ -30,7 +28,7 @@ import {
   type TerminalSearchDecorations,
 } from "../theme/dom";
 import { createTerminalOptions, macEditingSequence, terminalKeyHandlerResult } from "./keys";
-import { TerminalContextMenu, type TerminalContextMenuActions } from "./TerminalContextMenu";
+import type { TerminalContextMenuActions } from "./menu";
 import { handleOsc52ClipboardRequest } from "./osc52";
 import { parseOsc9, parseOsc777 } from "./notifications";
 import {
@@ -257,7 +255,6 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
       let refreshFrame: number | null = null;
       let body: HTMLElement | null = null;
       let started = false;
-      let reactRoot: Root | null = null;
       // The PTY is spawned into this scope; closing it kills the process even
       // if dispose is skipped (ownership = lifetime).
       let pty: PtyHandle | null = null;
@@ -708,18 +705,26 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
         selectAll: selectAllTerminal,
         focus: () => refreshTerminalSurface({ focus: true }),
       };
-      reactRoot = createRoot(element);
-      reactRoot.render(
-        React.createElement(TerminalContextMenu, {
-          actions: contextMenuActions,
-          canCopy: canCopySelection,
-          onBodyReady: (node: HTMLDivElement | null) => {
-            body = node;
-            if (node !== null) startTerminal();
+      // The body is plain DOM now — the context menu is the OS menu, popped via
+      // the ContextMenus registry (no component library, no React root).
+      const bodyEl = document.createElement("div");
+      bodyEl.className = "terminal-body";
+      const onContextMenu = (event: MouseEvent) => {
+        // The search widget owns its own field's default menu.
+        if (event.target instanceof Element && event.target.closest(".terminal-search")) return;
+        event.preventDefault();
+        runtime.openContextMenu(
+          {
+            menu: "terminal",
+            data: { actions: contextMenuActions, canCopy: canCopySelection, platform },
           },
-          platform,
-        }),
-      );
+          { x: event.clientX, y: event.clientY },
+        );
+      };
+      bodyEl.addEventListener("contextmenu", onContextMenu);
+      element.replaceChildren(bodyEl);
+      body = bodyEl;
+      startTerminal();
 
       return {
         dispose: () => {
@@ -731,7 +736,7 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
           if (ptyScope !== null) void Effect.runPromise(Scope.close(ptyScope, Exit.void));
           unsubscribeTheme();
           unsubscribeFont();
-          reactRoot?.unmount();
+          bodyEl.removeEventListener("contextmenu", onContextMenu);
           element.replaceChildren();
         },
         onAttached: () => {

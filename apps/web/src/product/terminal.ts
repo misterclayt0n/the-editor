@@ -10,11 +10,13 @@ import { definePackage } from "@the-editor/extensions";
 import { Commands } from "@the-editor/commands";
 import { Keymaps } from "@the-editor/keymaps";
 import {
+  ContextMenuProviders,
   PanelRenderers,
   SurfaceKind,
   SurfaceScope,
   type PanelRenderer,
 } from "@the-editor/workbench";
+import { isTerminalMenuData, terminalMenuEntries } from "../terminal/menu";
 
 export const TerminalSurface = SurfaceKind("the-editor/terminal");
 
@@ -31,9 +33,21 @@ export const terminalPackage = definePackage("the-editor/terminal", () =>
     const commands = yield* Commands;
     const keymaps = yield* Keymaps;
     const renderers = yield* PanelRenderers;
+    const contextMenus = yield* ContextMenuProviders;
     const host = yield* HostTerminal;
 
     yield* renderers.register(TerminalSurface, host.renderer);
+
+    // The terminal's context menu is a registry contribution rendered by the
+    // OS: one provider builds entries from each popup's per-instance data (the
+    // terminal's actions + live copy-enabled state).
+    yield* contextMenus.register({
+      id: "terminal",
+      provide: (request) =>
+        request.menu === "terminal" && isTerminalMenuData(request.data)
+          ? terminalMenuEntries(request.data)
+          : [],
+    });
 
     yield* commands.register("terminal.toggle", {
       title: "Toggle Terminal",

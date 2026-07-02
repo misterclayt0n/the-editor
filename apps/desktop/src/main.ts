@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, nativeTheme } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme } from "electron";
 import { readTextRange } from "./fs-range";
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL?.trim();
@@ -721,12 +721,54 @@ function createWindow(): void {
   }
 }
 
+type MenuItemData =
+  | { readonly id: string; readonly label: string; readonly enabled?: boolean; readonly accelerator?: string }
+  | { readonly separator: true };
+
+function registerMenuHandlers(): void {
+  ipcMain.handle(
+    "menu:popup",
+    (event, items: ReadonlyArray<MenuItemData>, position: { x: number; y: number }) => {
+      const window = BrowserWindow.fromWebContents(event.sender);
+      if (window === null) return Promise.resolve(null);
+      return new Promise<string | null>((resolve) => {
+        let chosen: string | null = null;
+        const template = items.map((item) =>
+          "separator" in item
+            ? { type: "separator" as const }
+            : {
+                label: item.label,
+                enabled: item.enabled !== false,
+                ...(item.accelerator !== undefined
+                  ? { accelerator: item.accelerator, acceleratorWorksWhenHidden: false }
+                  : {}),
+                // registerAccelerator false: the label shows the hint but the
+                // editor's own keymap owns the actual key — no double-binding.
+                registerAccelerator: false,
+                click: () => {
+                  chosen = item.id;
+                },
+              },
+        );
+        const menu = Menu.buildFromTemplate(template);
+        menu.popup({
+          window,
+          x: Math.round(position.x),
+          y: Math.round(position.y),
+          callback: () => resolve(chosen),
+        });
+      });
+    },
+  );
+}
+
 void app.whenReady().then(() => {
   registerFileSystemHandlers();
   registerProcessHandlers();
   registerFileFinderHandlers();
   registerClipboardHandlers();
   registerTerminalHandlers();
+  registerMenuHandlers();
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

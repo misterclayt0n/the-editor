@@ -71,6 +71,14 @@ import {
   toggleStackTabs,
   Workbench,
   PanelRenderers,
+  ContextMenuProviders,
+  ContextMenus,
+  makeContextMenuProviders,
+  isMenuSeparator,
+  StatuslineSegments,
+  makeStatuslineSegments,
+  type ContextMenuEntry,
+  type ContextMenuItem,
   type Arrangement,
   type Panel,
   type RegionSnapshot,
@@ -97,6 +105,9 @@ import {
   FileIoError,
   FileSystemPort,
   FileViews,
+  VirtualViews,
+  type VirtualViewSpec,
+  type VirtualViewHandle,
   FileOperations,
   FloatHub,
   makeViewScope,
@@ -149,16 +160,24 @@ import {
 import { createProcessPort } from "./platform/process";
 import { createTerminalPort } from "./platform/terminal";
 import { makeProcesses, makePtys, Processes, Ptys, type PtyHandle } from "@the-editor/process";
+import { createMenuPort, popupDomMenu, type MenuPort } from "./platform/menu";
+import type { ContextMenuRequest, MenuPosition } from "@the-editor/workbench";
 import { createClipboardPort, type ClipboardPort } from "./platform/clipboard";
 import { createSyntaxPort, type HighlightRun, type SyntaxPort } from "./platform/syntax";
+import {
+  makeInteractionHub,
+  type InteractionDispatch,
+  type PaneInteraction,
+} from "./editor/interaction";
+export { makeInteractionHub, type InteractionDispatch, type PaneInteraction };
 import { getHomeDir } from "./platform/homeDir";
 import { buildExtensionVirtualModules, makeUserExtensionsPackage } from "./product/userExtensions";
 import { DocumentHighlights } from "./editor/highlights";
 import { LspManager, type DiagnosticCounts } from "./lsp/manager";
 import { lspDefaults } from "./product/lsp";
 import { lspActions } from "./product/lspActions";
-import { lspIntel, HostLspIntel } from "./product/lspIntel";
-import { intelActions, HostIntelActions } from "./product/intelActions";
+import { lspIntel } from "./product/lspIntel";
+import { intelActions } from "./product/intelActions";
 import { wordCompletions } from "./product/wordCompletions";
 import { fileTreePackage, FileTreeSurface, HostFileTree } from "./product/fileTree";
 import { createFileTreeRenderer } from "./filetree/mount";
@@ -180,6 +199,7 @@ import { vcsDefaults } from "./product/vcs";
 import { makeVcsProviders, VcsProviders } from "@the-editor/vcs";
 import { VcsManager } from "./vcs/manager";
 import { vcsGutterProvider } from "./vcs/gutter";
+import { defaultStatuslineSegments } from "./product/statuslineDefaults";
 import {
   makeCompletionProviders,
   makeHoverProviders,
@@ -187,6 +207,8 @@ import {
   CompletionProviders,
   HoverProviders,
   SignatureProviders,
+  IntelActions,
+  Lsp,
   LanguageServers,
   makeLanguageServers,
 } from "@the-editor/intel";
@@ -259,16 +281,10 @@ export interface PaneHost {
   readonly mounts: MountHub;
   readonly floats: FloatHub;
   readonly highlights?: PaneHighlights | undefined;
-  /** Intercepts keydown BEFORE keymaps (completion navigation). */
-  keyInterceptor?: ((event: KeyboardEventLike) => boolean) | undefined;
-  /** Pointer hover over text: offset (null = left the text). */
-  pointerHover?: ((offset: number | null) => void) | undefined;
-  /** Scroll position changed: hover must hide NOW (Zed semantics). */
-  pointerScrolled?: (() => void) | undefined;
-  /** A click in the gutter at `line`; return true if the pane handled it. */
-  gutterClick?: ((line: number) => boolean) | undefined;
-  /** Viewport changed: top visible line (sticky header) + the rendered line window. */
-  viewportChanged?: ((topLine: number, startLine: number, endLine: number) => void) | undefined;
+  /** Subscribe to this pane's interaction events (multiplexed). */
+  readonly interaction: PaneInteraction;
+  /** Producer side, called by the renderer/host to emit events into the hub. */
+  readonly dispatch: InteractionDispatch;
   /** Map a pane offset to its underlying source document + offset (LSP/intel). */
   resolveSource(offset: number): IntelLocation | null;
   snapshot(): EditorSnapshot;
@@ -290,9 +306,9 @@ export type PaneFileInfo = { readonly path: string; readonly status: FileSyncSta
 export class EditorPane implements PaneHost {
   readonly mounts: MountHub;
   readonly floats: FloatHub;
-  keyInterceptor?: ((event: KeyboardEventLike) => boolean) | undefined;
-  pointerHover?: ((offset: number | null) => void) | undefined;
-  pointerScrolled?: (() => void) | undefined;
+  private readonly hub = makeInteractionHub();
+  readonly interaction = this.hub.interaction;
+  readonly dispatch = this.hub.dispatch;
 
   constructor(
     readonly panelId: PanelId,
@@ -416,6 +432,9 @@ export class AppRuntime {
   }) => Promise<string | null>;
   /** Panel renderers for non-editor surface kinds (file tree, custom UIs). */
   panelRenderers!: PanelRenderers.Service;
+  contextMenuProviders!: ContextMenuProviders.Service;
+  statuslineSegments!: StatuslineSegments.Service;
+  private menuPort: MenuPort | undefined | null = undefined;
   /** The single picker surface's state machine; `PickerHost` renders it. */
   pickerController!: PickerController;
   /** Diff view preferences shared by extension packages and the mounted panel. */
@@ -557,6 +576,8 @@ export class AppRuntime {
               };
         const languageServers = yield* makeLanguageServers;
         const panelRenderers = makePanelRenderers();
+        const contextMenuProviders = makeContextMenuProviders();
+        const statuslineSegments = makeStatuslineSegments();
         const pickerController = makePickerController();
         const pickerService = makePicker(pickerController);
         const diffViewPreferences = makeDiffViewPreferences();
@@ -590,7 +611,13 @@ export class AppRuntime {
           ...(fileSystem !== undefined ? [Layer.succeed(FileSystemPort, fileSystem)] : []),
           ...(workspaceFiles !== undefined ? [Layer.succeed(Files, workspaceFiles)] : []),
           ...(fileViews !== undefined ? [Layer.succeed(FileViews, fileViews)] : []),
+          Layer.succeed(VirtualViews, { open: (spec) => Effect.sync(() => instance.openVirtual(spec)) }),
           Layer.succeed(PanelRenderers, panelRenderers),
+          Layer.succeed(ContextMenuProviders, contextMenuProviders),
+          Layer.succeed(ContextMenus, {
+            open: (request, position) => instance.openContextMenu(request, position),
+          }),
+          Layer.succeed(StatuslineSegments, statuslineSegments),
           Layer.succeed(DiffViewPreferences, diffViewPreferences),
           Layer.succeed(VcsProviders, vcsProviders),
           Layer.succeed(Processes, processes),
@@ -623,11 +650,11 @@ export class AppRuntime {
           Layer.succeed(HoverProviders, hoverProviders),
           Layer.succeed(SignatureProviders, signatureProviders),
           Layer.succeed(DecorationProviders, decorationProviders),
-          Layer.succeed(HostIntelActions, {
+          Layer.succeed(IntelActions, {
             triggerCompletion: () => instance.onTriggerCompletion?.(),
             triggerSignatureHelp: () => instance.onTriggerSignatureHelp?.(),
           }),
-          Layer.succeed(HostLspIntel, {
+          Layer.succeed(Lsp, {
             completion: (context) => instance.lsp?.completionAt(context) ?? Promise.resolve(null),
             hover: (context) => instance.lsp?.hoverAt(context) ?? Promise.resolve(null),
             diagnosticsHover: (context) => instance.lsp?.diagnosticsHoverAt(context) ?? null,
@@ -688,6 +715,8 @@ export class AppRuntime {
         );
         instance = appRuntime;
         appRuntime.panelRenderers = panelRenderers;
+        appRuntime.contextMenuProviders = contextMenuProviders;
+        appRuntime.statuslineSegments = statuslineSegments;
         appRuntime.pickerController = pickerController;
         appRuntime.diffViewPreferences = diffViewPreferences;
         appRuntime.attention = attention;
@@ -720,6 +749,13 @@ export class AppRuntime {
           decorationProviders.register(vcsGutterProvider(appRuntime.vcs, workspaceFiles)),
           scope,
         );
+
+        // Default statusline segments: host-registered (they read live host
+        // state), rendered by the shell purely from the registry. Extensions
+        // add their own segments through the same service.
+        for (const segment of defaultStatuslineSegments(appRuntime)) {
+          yield* Scope.extend(statuslineSegments.register(segment), scope);
+        }
 
         // First pane: a scratch document in a single stack. This is ready before
         // package activation so an extension calling FileViews.openInView during
@@ -1659,6 +1695,54 @@ export class AppRuntime {
   }
 
   /**
+   * Open a provider-backed virtual document as a center editor tab (the
+   * `VirtualViews.open` implementation). A read-only virtual buffer rejects
+   * typing at commit; the provider drives content through the returned
+   * `setText` and reacts through scoped commands/keymaps.
+   */
+  openVirtual(spec: VirtualViewSpec): VirtualViewHandle {
+    const registry = Context.get(this.workspace.context, DocumentRegistry);
+    const document = Effect.runSync(
+      registry.open({
+        ...(spec.initialText !== undefined ? { text: spec.initialText } : {}),
+        readOnly: spec.editable !== true,
+      }),
+    );
+    this.attachHighlights(document, undefined);
+    const pane = this.createPane(document);
+    this.placeAsCenterTab(pane.panelId);
+    this.focusSlotOfPanel(pane.panelId);
+    return {
+      documentId: document.id,
+      viewId: pane.view.id,
+      panelId: String(pane.panelId),
+      setText: (text) => {
+        const before = Effect.runSync(
+          editorSnapshot().pipe(Effect.provide(document.context as Context.Context<any>)),
+        );
+        const transaction = Effect.runSync(
+          Transaction.fromReplacements(before.text.length, [
+            { from: 0, to: before.text.length, text },
+          ]).pipe(Effect.option),
+        );
+        if (transaction._tag === "None") return;
+        // Forced: the provider always writes, even though the buffer rejects
+        // user typing.
+        Effect.runSync(
+          commitDocumentTransaction(transaction.value, { force: true }).pipe(
+            Effect.provide(document.context as Context.Context<any>),
+            Effect.orDie,
+          ),
+        );
+      },
+      close: () => {
+        this.closeTab(pane.panelId);
+        Effect.runSync(registry.close(document.id));
+      },
+    };
+  }
+
+  /**
    * Open a read-only multibuffer (stitched search excerpts) as a CENTER editor
    * tab. The same EditorRenderer paints it; cards are block widgets portaled by
    * MultiBufferView. Returns the pane (or undefined when there are no excerpts).
@@ -1911,6 +1995,34 @@ export class AppRuntime {
     return this.clipboard ?? undefined;
   }
 
+  /**
+   * The `ContextMenus.open` implementation: collect entries from the registry
+   * for the request, then draw the OS menu (native on desktop, a plain-DOM
+   * fallback on the web) and run the chosen item. No-op when nothing matched.
+   */
+  openContextMenu(request: ContextMenuRequest, position: MenuPosition): void {
+    const entries = this.contextMenuProviders.entriesFor(request);
+    if (entries.length === 0) return;
+    const actions = new Map<string, () => void>();
+    const items = entries.map((entry: ContextMenuEntry) => {
+      if (isMenuSeparator(entry)) return { separator: true as const };
+      const item = entry as ContextMenuItem;
+      actions.set(item.id, item.run);
+      return {
+        id: item.id,
+        label: item.label,
+        ...(item.enabled !== undefined ? { enabled: item.enabled } : {}),
+        ...(item.accelerator !== undefined ? { accelerator: item.accelerator } : {}),
+      };
+    });
+    if (this.menuPort === undefined) this.menuPort = createMenuPort() ?? null;
+    const popup =
+      this.menuPort !== null ? this.menuPort.popup(items, position) : popupDomMenu(items, position);
+    void popup.then((chosen) => {
+      if (chosen !== null) actions.get(chosen)?.();
+    });
+  }
+
   /** The native fff-backed finder, when the desktop bridge is present. */
   fileFinderPort(): FileFinderPort | undefined {
     if (this.fileFinder === undefined) this.fileFinder = createFileFinderPort() ?? null;
@@ -1985,7 +2097,7 @@ export class AppRuntime {
 
     // The focused editor's completion/snippet interceptor runs before keymaps
     // (never over an editable surface — completion only lives in the editor).
-    if (!editable && this.focusedPaneHost()?.keyInterceptor?.(event) === true) {
+    if (!editable && this.focusedPaneHost()?.dispatch.keyIntercept(event) === true) {
       event.preventDefault();
       this.onPendingChords?.(this.pendingChords());
       return;

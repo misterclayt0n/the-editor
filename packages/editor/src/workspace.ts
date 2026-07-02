@@ -45,6 +45,7 @@ import {
   invalidate,
 } from "./notifications";
 import { ActiveEditor } from "./state";
+import { DocumentPolicy } from "./policy";
 import { EditorVisuals, makeEditorVisuals } from "./visuals";
 import { Files, FileSystemPort, makeFiles } from "./files";
 
@@ -77,6 +78,9 @@ export interface DocumentScope {
 export type OpenDocumentInput = {
   readonly id?: string | DocumentId;
   readonly text?: string | TextBuffer;
+  /** Provider-backed virtual buffers: typing is rejected at commit; the
+   *  provider drives content via the forced commit path. Default editable. */
+  readonly readOnly?: boolean;
 };
 
 export class DocumentRegistry extends Context.Tag("@the-editor/editor/DocumentRegistry")<
@@ -156,6 +160,7 @@ export function makeWorkspaceScope(
           Context.add(TextDocument, textDocument),
           Context.add(DocumentNotifications, docBus),
           Context.add(EditorVisuals, visuals),
+          Context.add(DocumentPolicy, { readOnly: openInput.readOnly === true }),
         ) as Context.Context<any>;
         const document: DocumentScope = { id: docId, scope: docScope, context };
         yield* Ref.update(documents, (map) => new Map(map).set(docId, document));

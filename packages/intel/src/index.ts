@@ -227,3 +227,45 @@ export namespace SignatureProviders {
 export namespace LanguageServers {
   export type Service = Context.Tag.Service<LanguageServers>;
 }
+
+/**
+ * Explicit intel triggers (ctrl+space / ctrl+shift+space). The completion UI
+ * lives in the host (per-pane floats), so this is a host-implemented operation
+ * — the public seam a command package or extension invokes to force a
+ * completion / parameter-hints query on the focused editor.
+ */
+export class IntelActions extends Context.Tag("@the-editor/intel/IntelActions")<
+  IntelActions,
+  {
+    readonly triggerCompletion: () => void;
+    readonly triggerSignatureHelp: () => void;
+  }
+>() {}
+
+export namespace IntelActions {
+  export type Service = Context.Tag.Service<IntelActions>;
+}
+
+/**
+ * The language-server query surface, as a public capability. The manager runs
+ * host-side (it owns the server processes and per-document diagnostics), but
+ * its per-position queries are exposed here so the LSP intel providers register
+ * from ordinary package code — and an extension can query LSP directly. Absent
+ * of a running server every method simply answers null/[] (present-but-inert).
+ */
+export class Lsp extends Context.Tag("@the-editor/intel/Lsp")<
+  Lsp,
+  {
+    readonly completion: (context: CompletionContext) => Promise<CompletionResult | null>;
+    readonly hover: (context: HoverContext) => Promise<HoverResult | null>;
+    readonly diagnosticsHover: (context: HoverContext) => HoverResult | null;
+    readonly triggerCharacters: (docId: string) => readonly string[];
+    readonly signature: (context: SignatureContext) => Promise<SignatureResult | null>;
+    readonly signatureTriggerCharacters: (docId: string) => readonly string[];
+    readonly signatureRetriggerCharacters: (docId: string) => readonly string[];
+  }
+>() {}
+
+export namespace Lsp {
+  export type Service = Context.Tag.Service<Lsp>;
+}

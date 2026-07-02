@@ -2,6 +2,8 @@ export * from "./services";
 export * from "./workspace";
 export * from "./files";
 export * from "./fileViews";
+export * from "./virtualViews";
+export * from "./policy";
 export * from "./operations";
 export * from "./view";
 export * from "./scope";

@@ -232,6 +232,18 @@ contextBridge.exposeInMainWorld("theEditorTerminal", {
   },
 });
 
+contextBridge.exposeInMainWorld("theEditorMenu", {
+  /** Pop the OS context menu; resolves to the chosen item id, or null if
+   *  dismissed. Items are flat data (separators as {separator:true}). */
+  popup: (
+    items: ReadonlyArray<
+      | { readonly id: string; readonly label: string; readonly enabled?: boolean; readonly accelerator?: string }
+      | { readonly separator: true }
+    >,
+    position: { readonly x: number; readonly y: number },
+  ): Promise<string | null> => ipcRenderer.invoke("menu:popup", items, position),
+});
+
 contextBridge.exposeInMainWorld("theEditorClipboard", {
   readText: (options?: { maxBytes?: number }): Promise<string> =>
     ipcRenderer.invoke("clipboard:readText", options),

@@ -26,6 +26,7 @@ import {
   makeDecorationProviders,
   makeViewScope,
   makeWorkspaceScope,
+  VirtualViews,
   ViewMountHub,
   ViewOperations,
   WorkspaceNotifications,
@@ -793,6 +794,84 @@ describe("makeUserExtensionsPackage", () => {
         yield* commands.execute("reload");
         yield* waitUntil(Effect.sync(() => spawned.length === 2));
         expect(killed).toContain(1); // the first activation's process died
+      }),
+    ),
+  );
+
+  it.live("lets a loaded extension open and drive a virtual document", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const source = `
+          var definePackage = require("@the-editor/extensions").definePackage;
+          var Effect = require("effect").Effect;
+          var VirtualViews = require("@the-editor/editor").VirtualViews;
+          var probe = require("test:virtual-probe");
+          module.exports.default = definePackage("acme.status", function () {
+            return Effect.gen(function* () {
+              var views = yield* VirtualViews;
+              var handle = yield* views.open({ title: "Acme Status", initialText: "loading…" });
+              probe.opened(handle.documentId);
+              handle.setText("ready");
+              handle.close();
+            });
+          });
+        `;
+        const fs = makeFakeFs();
+        fs.write("/home/user/.the-editor/extensions/status.ts", source);
+
+        const runtime = yield* makePackageRuntime;
+        const attention = yield* makeAttention();
+        const workspaceRoots = yield* makeStateCell<ReadonlyArray<string>>([]);
+        const commands = yield* makeCommands(runtime.contributionIndex);
+
+        // Host-shaped VirtualViews mock: records the open + the content the
+        // provider drives (the real impl needs a live pane).
+        const events: string[] = [];
+        let content = "";
+        const virtualViews = {
+          open: (spec: { readonly title: string; readonly initialText?: string }) =>
+            Effect.sync(() => {
+              content = spec.initialText ?? "";
+              events.push(`open:${spec.title}`);
+              return {
+                documentId: "document:virtual-1",
+                viewId: "view:virtual-1",
+                panelId: "panel:virtual-1",
+                setText: (text: string) => {
+                  content = text;
+                  events.push(`setText:${text}`);
+                },
+                close: () => void events.push("close"),
+              };
+            }),
+        };
+
+        const servicesForExtensions = Layer.mergeAll(
+          Layer.succeed(Commands, commands),
+          Layer.succeed(FileSystemPort, fs.port),
+          Layer.succeed(PackageRuntimeService, runtime),
+          Layer.succeed(Attention, attention),
+          Layer.succeed(WorkspaceRoots, workspaceRoots),
+          Layer.succeed(VirtualViews, virtualViews as never),
+        );
+
+        const userExtensions = makeUserExtensionsPackage({
+          servicesForExtensions,
+          transpiler: identityTranspiler,
+          virtualModules: { ...buildExtensionVirtualModules(), "test:virtual-probe": { opened: (id: string) => void events.push(`probe:${id}`) } },
+          homeDir: "/home/user",
+        });
+
+        yield* runtime.activateGraph([toPackageDescriptor(userExtensions, servicesForExtensions)]);
+        yield* waitUntil(Effect.sync(() => events.includes("close")));
+
+        expect(events).toEqual([
+          "open:Acme Status",
+          "probe:document:virtual-1",
+          "setText:ready",
+          "close",
+        ]);
+        expect(content).toBe("ready");
       }),
     ),
   );

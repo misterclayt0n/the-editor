@@ -22,9 +22,8 @@ finding that anchors everything below:
 
 1. **`Host*` tag count → 0.** Every `Context.Tag("the-editor/web/Host…")` is a spot
    where a package reaches a privileged `AppRuntime` method instead of a public
-   operation. **Currently: 5.**
+   operation. **Currently: 3.**
    ```
-   HostIntelActions  HostLspIntel
    HostFileTree  HostTerminal  HostDiffView
    ```
 2. **Every tag in the `services` layer is either nameable from the allowlist or on an
@@ -77,8 +76,8 @@ finding that anchors everything below:
 | 11 | Pick from a list (completing-read) | ✅ `Picker` via `@the-editor/picker`; one windowed host, N sources — all five surfaces converted |
 | 12 | Add statusline / context-menu items | ❌ no registry exists (E1) |
 | 13 | Own a background process | ✅ `Processes` / `Ptys` via `@the-editor/process`; Scope-bound handles, killed on dispose |
-| 14 | React to interaction (hover/scroll/viewport/pre-key) | ❌ `PaneHost` fields are single-assignment slots (D2) |
-| 15 | Back a buffer with non-file content | 🟡 `DocumentRegistry.open({text})` exists; provider semantics + view attach missing (D3) |
+| 14 | React to interaction (hover/scroll/viewport/pre-key) | 🟡 multiplexed fan-out hub (D2); `IntelController` a subscriber, `HostIntelActions` retired — extension-facing subscribe pending a view-context exposure |
+| 15 | Back a buffer with non-file content | ✅ `VirtualViews.open` + `DocumentPolicy` (read-only → edits become operations) (D3) |
 | 16 | Contribute a language server / grammar | 🟡 `LanguageServers` public via `@the-editor/intel`; grammars native `.so` (D1) |
 | 17 | Undo / redo | 🟡 engine `history` is pure data; not a public verb (F4) |
 | 18 | Be driven from outside (CLI/socket/MCP) | ❌ no inbound channel exists at all (F1) |
@@ -243,19 +242,36 @@ finding that anchors everything below:
   - **Order:** package + adapter + allowlist + loader-path test (asserting
     reload kills the spawn — the assertion that matters) → git provider →
     LspManager internals → terminal PTY half (+ publish clipboard).
-- [ ] **D1b. LSP as a package.** Rebuild `LspManager` as package code on
-  `Processes` + `LanguageServers` + `FileSystemPort` + notification buses;
-  retires `HostLspIntel` and the manager's runtime coupling (panes,
-  workspaceRoot getter, diagnostics callbacks). Real work; do after D1.
-- [ ] **D2. Interaction events — with multiplexing.** `PaneHost.pointerHover` /
-  `pointerScrolled` / `viewportChanged` / `keyInterceptor` are **single-assignment
-  slots** that `IntelController` overwrites (`intel/controller.ts`) — even internally
-  only one consumer can exist. The design work is a fan-out subscription seam, not a
-  tag move. Frees `IntelController`, retires `HostIntelActions`.
-- [ ] **D3. Virtual buffers — the missing half.** Unbound in-memory documents already
-  exist (`DocumentRegistry.open({text})`). Missing: provider-backed semantics (edits
-  become operations — REPL, magit-style status buffer) and attaching to a view (C1).
-  Smaller than previously scoped.
+- [x] **D1b. `HostLspIntel` retired.** The LSP query surface (completion / hover /
+  signature / trigger chars) is now the public `Lsp` tag in `@the-editor/intel`,
+  host-implemented from the manager — same relocate pattern C2 used for the action
+  tags. The `lspIntel` package consumes `Lsp`; the `the-editor/web/HostLspIntel`
+  tag is gone and an extension can query LSP directly. **Deferred (honest):** the
+  `LspManager` still physically lives on `AppRuntime` — the deep "manager as pure
+  package code / no runtime coupling" rewrite (panes, workspaceRoot getter,
+  diagnostics callbacks) remains a separate effort. The Host* tag and
+  extension-reachability goals are met; the god-object thinning is not.
+- [x] **D2. Interaction events — multiplexed.** `PaneHost`'s single-assignment
+  `keyInterceptor`/`pointerHover`/`pointerScrolled`/`viewportChanged`/`gutterClick`
+  slots are replaced by a fan-out hub (`editor/interaction.ts`,
+  `makeInteractionHub`): many subscribers, boolean events tried newest-first (later
+  wins, matching the keymap resolver), void events broadcast. `IntelController` is
+  now one subscriber (storing disposers), the multibuffer's intrinsic nav another;
+  the renderer emits via `pane.dispatch`. `HostIntelActions` retired the C2 way — the
+  triggers are the public `IntelActions` tag in `@the-editor/intel`. **Pending for
+  full verb 14:** the hub's `interaction` sits on the app-internal `PaneHost`; an
+  *extension* subscribing to hover/scroll needs it exposed on the view context /
+  `DecorationViewTarget` — a small follow-up.
+- [x] **D3. Virtual buffers.** `VirtualViews.open(spec)` in `@the-editor/editor`
+  (allowlisted, host-implemented) opens a provider-backed in-memory document into a
+  rendered tab and returns a handle (`setText` / `close`) — the C1 equivalent for a
+  non-file doc. `DocumentPolicy` (optional per-document tag) + a commit-layer gate
+  make a read-only virtual buffer reject typing at the single chokepoint, so "edits
+  become operations": all interaction flows through commands + scoped keymaps while
+  the provider drives content through the forced commit path. Proven by an editor
+  policy test (typing dropped, forced write lands) and a loader-path test (an
+  extension opens + drives a virtual view). REPL-style editable input regions
+  (prompt zones) are a further layer, not needed for magit-style status buffers.
 
 ## E. Build a registry
 

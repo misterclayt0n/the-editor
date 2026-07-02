@@ -93,7 +93,7 @@ const makePane = (gutterBands: readonly ResolvedGutterBand[] = []) => {
 /** Intel attaches per visible excerpt and the attach is debounced; cover the
  * whole buffer and wait out the debounce so syntax/diagnostics are live. */
 const attachViewport = async (pane: MultiBufferPane): Promise<void> => {
-  pane.viewportChanged(0, 0, 10_000);
+  pane.dispatch.viewportChanged(0, 0, 10_000);
   await new Promise((resolve) => setTimeout(resolve, 80));
 };
 
@@ -101,7 +101,7 @@ describe("MultiBufferPane", () => {
   test("typing routes through editPlan to the real source document", () => {
     const { pane, buffers } = makePane();
     pane.setSelection(Selection.point(0));
-    expect(pane.keyInterceptor(key("X"))).toBe(true);
+    expect(pane.dispatch.keyIntercept(key("X"))).toBe(true);
     // The unified text now starts with the inserted char...
     expect(pane.snapshot().text.sliceString(0, 1)).toBe("X");
     // ...and so does the underlying source document (excerpt starts at "beta").
@@ -140,7 +140,7 @@ describe("MultiBufferPane", () => {
       }
     });
     pane.setSelection(Selection.point(0));
-    pane.keyInterceptor(key("X"));
+    pane.dispatch.keyIntercept(key("X"));
     // Exactly one single-char insert at offset 0; the controller reads the new
     // text at [fromB, toB) to learn the typed char — here "X".
     expect(changes).toEqual([{ fromA: 0, toA: 0, fromB: 0, toB: 1 }]);
@@ -158,7 +158,7 @@ describe("MultiBufferPane", () => {
     // what makes the renderer scroll the caret into view. Regression: a
     // document-bus-only selection left the caret off-screen (under the gutter)
     // after typing while horizontally scrolled.
-    pane.keyInterceptor(key("X"));
+    pane.dispatch.keyIntercept(key("X"));
     expect(viewSelections).toBe(1);
   });
 
@@ -180,7 +180,7 @@ describe("MultiBufferPane", () => {
   test("Backspace deletes through editPlan; caret follows", () => {
     const { pane, buffers } = makePane();
     pane.setSelection(Selection.point(1)); // after the first char of the excerpt
-    expect(pane.keyInterceptor(key("Backspace"))).toBe(true);
+    expect(pane.dispatch.keyIntercept(key("Backspace"))).toBe(true);
     expect(buffers.get("doc:a")!.sliceString(0, 6)).toBe("alpha\n"); // "beta" lost its "b"
     expect(pane.snapshot().selection.primary.head).toBe(0);
   });

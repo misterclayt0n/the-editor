@@ -17,7 +17,7 @@
  * against, so the sync fiber never double-maps it.
  */
 
-import { Context, Effect, Ref } from "effect";
+import { Context, Effect, Option, Ref } from "effect";
 import {
   SelectionState,
   TextDocument,
@@ -34,6 +34,16 @@ import {
   type DocumentChangeRange,
 } from "./notifications";
 import { EditorVisuals } from "./visuals";
+import { DocumentPolicy } from "./policy";
+
+/** True when the document is read-only and this commit isn't a forced
+ *  provider write. Optional tag: absent = editable. */
+const blockedByPolicy = (force: boolean): Effect.Effect<boolean> =>
+  force
+    ? Effect.succeed(false)
+    : Effect.serviceOption(DocumentPolicy).pipe(
+        Effect.map((policy) => Option.isSome(policy) && policy.value.readOnly),
+      );
 
 /** Last document version a view's selection accounts for (see view.ts). */
 export class ViewDocumentSync extends Context.Tag("@the-editor/editor/ViewDocumentSync")<
@@ -66,8 +76,10 @@ export function mapOffsetThroughChanges(
  */
 export const commitDocumentTransaction = (
   transaction: Transaction,
+  options?: { readonly force?: boolean },
 ): Effect.Effect<void, TextError, TextDocument | EditorVisuals | DocumentNotifications> =>
   Effect.gen(function* () {
+    if (yield* blockedByPolicy(options?.force === true)) return;
     const document = yield* TextDocument;
     const visuals = yield* EditorVisuals;
     const documentBus = yield* DocumentNotifications;
@@ -100,6 +112,10 @@ export const commitTransaction = (
   | ViewDocumentSync
 > =>
   Effect.gen(function* () {
+    // Read-only documents reject typing: the view's edit is dropped whole
+    // (no text change, no selection move from it). Cursor moves still work —
+    // they go through setSelection, not here.
+    if (yield* blockedByPolicy(false)) return;
     const document = yield* TextDocument;
     const visuals = yield* EditorVisuals;
     const documentBus = yield* DocumentNotifications;

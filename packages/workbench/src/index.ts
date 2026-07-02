@@ -5,3 +5,5 @@ export * from "./arrangement.js";
 export * from "./surgery.js";
 export * from "./workbench.js";
 export * from "./panelRenderers.js";
+export * from "./contextMenus.js";
+export * from "./statusline.js";

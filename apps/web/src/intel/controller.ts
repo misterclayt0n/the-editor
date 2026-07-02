@@ -209,8 +209,8 @@ const withTimeout = async <T>(
 export class IntelController {
   private pane: PaneHost | null = null;
   private unsubscribePane: (() => void) | null = null;
-  /** The focused pane's own keyInterceptor, chained under the controller's. */
-  private paneKeyInterceptor: ((event: KeyboardEventLike) => boolean) | undefined;
+  /** Interaction-hub subscriptions for the focused pane (key/hover/scroll). */
+  private interactionDisposers: Array<() => void> = [];
   private completionFloat: FloatHandle | null = null;
   private hoverFloat: FloatHandle | null = null;
   /** Highlights the text range a hover card describes. */
@@ -328,10 +328,10 @@ export class IntelController {
     this.endSnippetSession();
     this.dismissSignature();
     if (this.pane !== null) {
-      // Restore the pane's own interceptor (the multibuffer uses it for nav).
-      this.pane.keyInterceptor = this.paneKeyInterceptor;
-      this.pane.pointerHover = undefined;
-      this.pane.pointerScrolled = undefined;
+      // Drop this controller's interaction subscriptions; the pane's own
+      // intrinsic handlers (multibuffer nav) stay registered on its hub.
+      for (const dispose of this.interactionDisposers) dispose();
+      this.interactionDisposers = [];
       this.completionFloat?.dispose();
       this.hoverFloat?.dispose();
       this.signatureFloat?.dispose();
@@ -346,7 +346,6 @@ export class IntelController {
     }
     this.unsubscribePane?.();
     this.unsubscribePane = null;
-    this.paneKeyInterceptor = undefined;
     this.pane = pane;
     if (pane === null) return;
     this.lastCaretHead = pane.snapshot().selection.primary.head;
@@ -366,13 +365,15 @@ export class IntelController {
         visuals.contribute("intel-hover-range", {}).pipe(Scope.extend(this.hoverRangeScope)),
       );
     }
-    // Chain BEFORE the pane's own interceptor (e.g. the multibuffer's nav/edit):
-    // completion navigation wins while open, everything else falls through.
-    this.paneKeyInterceptor = pane.keyInterceptor;
-    pane.keyInterceptor = (event) =>
-      this.interceptKey(event) || (this.paneKeyInterceptor?.(event) ?? false);
-    pane.pointerHover = (offset) => this.onPointerHover(offset);
-    pane.pointerScrolled = () => this.onScrolled();
+    // Subscribe to the pane's interaction hub. Key interception registers
+    // LAST so it wins over the pane's intrinsic nav (the hub tries subscribers
+    // newest-first) — completion navigation wins while a session is open,
+    // everything else falls through to the multibuffer's own handler.
+    this.interactionDisposers = [
+      pane.interaction.onPointerHover((offset) => this.onPointerHover(offset)),
+      pane.interaction.onPointerScrolled(() => this.onScrolled()),
+      pane.interaction.onKeyIntercept((event) => this.interceptKey(event)),
+    ];
     this.unsubscribePane = pane.subscribe((notification, source) => {
       if (source === "document") this.onDocumentChanged(notification);
       if (source === "view") this.onSelectionChanged();

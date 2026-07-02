@@ -56,6 +56,7 @@ import {
 } from "../editor/commands";
 import { FloatHub, MountHub } from "@the-editor/editor";
 import type { HighlightRun } from "../platform/syntax";
+import { makeInteractionHub } from "../editor/interaction";
 import type { IntelLocation, PaneHighlights, PaneHost } from "../runtime";
 import { metasFor, type ExcerptMeta, type MultiBufferBuild } from "./builder";
 import { excerptSlicesInRange, multiBufferVisuals } from "./visuals";
@@ -101,6 +102,9 @@ let scopeSeq = 0;
 export class MultiBufferPane implements PaneHost {
   readonly mounts = new MountHub();
   readonly floats = new FloatHub();
+  private readonly hub = makeInteractionHub();
+  readonly interaction = this.hub.interaction;
+  readonly dispatch = this.hub.dispatch;
 
   // Canonical state.
   private readonly documents: Map<string, TextBuffer>;
@@ -145,6 +149,12 @@ export class MultiBufferPane implements PaneHost {
     this.matchesByExcerptId = new Map(build.matchesByExcerptId);
     this.pathByDoc = build.pathByDoc;
     this.rebuild();
+    // The multibuffer's own nav/edit/sticky-header behavior are intrinsic
+    // subscribers on its interaction hub — the intel controller and any
+    // extension layer on top as further subscribers.
+    this.hub.interaction.onKeyIntercept(this.handleKeyIntercept);
+    this.hub.interaction.onViewportChanged(this.handleViewportChanged);
+    this.hub.interaction.onGutterClick(this.handleGutterClick);
   }
 
   get metas(): readonly ExcerptMeta[] {
@@ -242,7 +252,7 @@ export class MultiBufferPane implements PaneHost {
   };
 
   /** A click on a gutter line number jumps to that line in the source file. */
-  gutterClick(line: number): boolean {
+  private readonly handleGutterClick = (line: number): boolean => {
     if (line < 0 || line >= this.snapshotData.lineCount) return false;
     const source = this.snapshotData.offsetToSource(this.snapshotData.lineToOffset(line));
     if (source === undefined) return false;
@@ -255,7 +265,7 @@ export class MultiBufferPane implements PaneHost {
   }
 
   /** Read-only nav + editing. Runs before keymaps; returns true when consumed. */
-  readonly keyInterceptor = (event: KeyboardEventLike): boolean => {
+  private readonly handleKeyIntercept = (event: KeyboardEventLike): boolean => {
     const mod = event.metaKey === true || event.ctrlKey === true;
     const extend = event.shiftKey === true;
     const snap = this.snapshot();
@@ -316,7 +326,11 @@ export class MultiBufferPane implements PaneHost {
 
   /** Renderer reports the top visible line (sticky) + the rendered line window
    * (intel attach). Attach is debounced so scrolling doesn't thrash servers. */
-  readonly viewportChanged = (topLine: number, startLine: number, endLine: number): void => {
+  private readonly handleViewportChanged = (
+    topLine: number,
+    startLine: number,
+    endLine: number,
+  ): void => {
     this.stickyListener?.(this.stickyHeaderForLine(topLine));
     this.pendingViewport = { start: startLine, end: endLine };
     if (this.viewportScheduled) return;

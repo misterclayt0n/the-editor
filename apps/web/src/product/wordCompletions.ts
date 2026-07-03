@@ -23,6 +23,9 @@ export const wordCompletions = definePackage("the-editor/word-completions", () =
       // Only surfaces when no richer provider answered (VSCode semantics):
       // a bare word must never shadow the real LSP symbol.
       fallback: true,
+      // The corpus is every word in the buffer regardless of the typed
+      // prefix — deleting never invalidates it; refiltering is enough.
+      prefixIndependent: true,
       provide: (context) => {
         if (context.text.length > MAX_SCAN_CHARS) return null;
         const content = context.text.sliceString(0, context.text.length);

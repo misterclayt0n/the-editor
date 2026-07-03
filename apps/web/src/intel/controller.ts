@@ -1,13 +1,16 @@
 /**
  * The intel controller: completion sessions and hover, Monaco's model.
  *
- * Completion: a session anchors at the word start. Providers are queried
- * ONCE per session (plus on trigger characters and for providers that
- * reported an incomplete list); every other keystroke refilters CLIENT-side
- * with fuzzy scoring against the growing/shrinking prefix. While a session
- * is open the controller intercepts navigation keys ahead of the keymap
- * pipeline; accepting replaces the item's range through the ordinary
- * commit path.
+ * Completion: a session anchors at the word start. Every edit refilters the
+ * cached provider results CLIENT-side with fuzzy scoring — instant, in both
+ * directions — and the providers are RE-QUERIED only when that cache can no
+ * longer serve the live prefix: a trigger character, a provider that
+ * reported an incomplete list, or a prefix that stopped extending the one
+ * the results were fetched at (Zed's initial_query rule — a server-filtered
+ * list fetched for "foo" is not a superset of the matches for "fo", so
+ * deleting past the fetch point must ask again). While a session is open
+ * the controller intercepts navigation keys ahead of the keymap pipeline;
+ * accepting replaces the item's range through the ordinary commit path.
  *
  * Hover: pointer dwell (300ms stationary) queries hover providers and
  * anchors a card above the position; any movement to a different word,
@@ -95,6 +98,7 @@ type CompletionSession = {
   pane: PaneHost; // EditorPane or MultiBufferPane; accept branches on the kind
   docId: string;
   anchor: number; // word start; the float anchors here
+  /** Fetch counter: `querySources` bumps it and discards out-of-order arrivals. */
   generation: number;
   /** Providers answered; before this, empty results mean "still loading". */
   loaded: boolean;
@@ -104,6 +108,10 @@ type CompletionSession = {
     order: number;
     items: readonly CompletionItem[];
     isIncomplete: boolean;
+    /** The anchor..caret prefix this result set was fetched at ("" for
+     * prefix-independent providers). Client-side refiltering is only sound
+     * while the live prefix EXTENDS this. */
+    fetchedPrefix: string;
   }>;
   scored: readonly ScoredItem[];
   selected: number;
@@ -841,18 +849,37 @@ export class IntelController {
       pane,
       docId: location.docId,
       anchor,
-      generation: (this.session?.generation ?? 0) + 1,
+      generation: 0,
       loaded: false,
       sources: [],
       scored: [],
       selected: 0,
     };
     this.session = session;
+    await this.querySources(session, trigger);
+  }
 
+  /**
+   * Fetch every provider and install the results as the session's sources —
+   * the query half of both session start and cache-invalidating re-queries.
+   * The current scored list keeps rendering until the results land (no
+   * flash/stall); `generation` discards out-of-order arrivals when queries
+   * overlap. Each source records the prefix it was fetched at — the input
+   * for `staleCacheTrigger`'s validity rule.
+   */
+  private async querySources(
+    session: CompletionSession,
+    trigger: CompletionTrigger,
+  ): Promise<void> {
+    const generation = ++session.generation;
+    const snapshot = session.pane.snapshot();
+    const caret = snapshot.selection.primary.head;
+    const location = session.pane.resolveSource(caret);
+    if (location === null || location.docId !== session.docId) return;
     const providers = Effect.runSync(this.completionProviders.list);
-    const prefix = snapshot.text.sliceString(anchor, caret);
+    const prefix = snapshot.text.sliceString(session.anchor, caret);
     // The LSP request runs in SOURCE coords (resolveSource); the float/filter
-    // stay in PANE coords (anchor above).
+    // stay in PANE coords (the session anchor).
     const context = {
       docId: location.docId,
       path: location.path,
@@ -868,7 +895,7 @@ export class IntelController {
         result: await withTimeout(provider.provide(context), null),
       })),
     );
-    if (this.session !== session) return; // superseded or dismissed
+    if (this.session !== session || session.generation !== generation) return; // superseded
     session.loaded = true;
     const sources = results
       .filter((entry) => entry.result !== null && entry.result.items.length > 0)
@@ -877,6 +904,9 @@ export class IntelController {
         order: entry.order,
         items: entry.result!.items,
         isIncomplete: entry.result!.isIncomplete === true,
+        // Prefix-independent corpora (buffer words) serve ANY prefix; ""
+        // extends into everything, so deletion never invalidates them.
+        fetchedPrefix: entry.provider.prefixIndependent === true ? "" : prefix,
       }));
     // Fallback providers (buffer words) only count when nothing richer
     // answered — otherwise a bare word shadows the real LSP item.
@@ -888,11 +918,52 @@ export class IntelController {
       this.dismissCompletion();
       return;
     }
-    this.refilter();
+    // The prefix may have shrunk past this fetch while it was in flight —
+    // then what just landed is already stale; ask once more. (Incomplete
+    // sources are deliberately NOT re-checked here: edits drive those, and
+    // re-checking after their own fetch would loop forever.)
+    const stale = this.staleCacheTrigger(session, { includeIncomplete: false });
+    this.refilter({ keepEmpty: stale !== null });
+    if (stale !== null && this.session === session) void this.querySources(session, stale);
   }
 
-  /** Client-side fuzzy refilter against the current prefix. */
-  private refilter(): void {
+  /**
+   * Decide whether the cached sources can still serve the CURRENT prefix
+   * (Zed's initial_query rule): client-side refiltering is only sound while
+   * the live prefix EXTENDS the prefix a source was fetched at — a server-
+   * filtered list fetched for "foo" is not a superset of the matches for
+   * "fo", so any shrink or word rewrite must re-query. Incomplete sources
+   * (LSP `isIncomplete`) re-query on every edit; `includeIncomplete` scopes
+   * that to the edit path. Returns the trigger for the needed re-query, or
+   * null when the cache is sufficient.
+   */
+  private staleCacheTrigger(
+    session: CompletionSession,
+    options: { readonly includeIncomplete: boolean },
+  ): CompletionTrigger | null {
+    if (this.session !== session || !session.loaded) return null;
+    const snapshot = session.pane.snapshot();
+    const caret = snapshot.selection.primary.head;
+    if (caret < session.anchor) return null; // refilter dismisses this case
+    const prefix = snapshot.text.sliceString(session.anchor, caret);
+    if (options.includeIncomplete && session.sources.some((source) => source.isIncomplete)) {
+      return { kind: "incomplete" };
+    }
+    const shrunk = session.sources.some((source) => !prefix.startsWith(source.fetchedPrefix));
+    // A shrunken prefix over a COMPLETE list is a fresh invocation LSP-wise
+    // (TriggerForIncompleteCompletions is reserved for incomplete lists).
+    return shrunk ? { kind: "invoked" } : null;
+  }
+
+  /**
+   * Client-side fuzzy refilter against the current prefix. `keepEmpty` keeps
+   * an emptied session alive instead of dismissing it — used when a re-query
+   * is already on its way: an incomplete/stale cache filtering to nothing
+   * means "the cache can't say", not "no completions here"; the fetch
+   * decides. (A dismissal would also strand the session — deletion can
+   * never reopen a dead popup.)
+   */
+  private refilter(options?: { readonly keepEmpty?: boolean }): void {
     const session = this.session;
     if (session === null || !session.loaded) return; // results still in flight
     const snapshot = session.pane.snapshot();
@@ -926,7 +997,11 @@ export class IntelController {
         : -1;
     session.selected = kept >= 0 ? kept : 0;
     if (session.scored.length === 0) {
-      this.dismissCompletion();
+      if (options?.keepEmpty !== true) {
+        this.dismissCompletion();
+        return;
+      }
+      this.publish(); // the popup hides (open = items > 0) but the session survives
       return;
     }
     this.completionFloat?.setAnchor({ offset: session.anchor, placement: "below" });
@@ -976,18 +1051,21 @@ export class IntelController {
     if (documentPayloads.length === 0) return;
 
     if (this.session !== null) {
-      // Inside a session: trigger chars re-query; otherwise refilter, and
-      // re-query if any provider's last list was incomplete.
+      // Inside a session: a trigger char re-anchors a fresh session. Any
+      // other edit — insert, DELETE, paste, undo — refilters IMMEDIATELY
+      // (the popup tracks edits in both directions, even while a fetch is
+      // in flight) and then re-queries when the cached results can't serve
+      // the live prefix (see staleCacheTrigger).
       if (typedChar !== "" && this.isTriggerCharacter(typedChar)) {
         void this.startSession({ kind: "triggerCharacter", character: typedChar });
         return;
       }
-      const hasIncomplete = this.session.sources.some((source) => source.isIncomplete);
-      if (hasIncomplete && this.session.loaded) {
-        void this.startSession({ kind: "incomplete" });
-        return;
+      const session = this.session;
+      const requery = this.staleCacheTrigger(session, { includeIncomplete: true });
+      this.refilter({ keepEmpty: requery !== null });
+      if (requery !== null && this.session === session) {
+        void this.querySources(session, requery);
       }
-      this.refilter();
       return;
     }
 

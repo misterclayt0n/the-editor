@@ -80,6 +80,13 @@ export interface CompletionProvider {
    * VSCode's word-suggestion semantics.
    */
   readonly fallback?: boolean;
+  /**
+   * True when `provide` answers from a corpus that does not depend on the
+   * typed prefix (buffer words scan the whole document): the results cover
+   * ANY prefix at the position, so the controller can refilter client-side
+   * indefinitely and never needs to re-query as the prefix shrinks.
+   */
+  readonly prefixIndependent?: boolean;
   provide(context: CompletionContext): Promise<CompletionResult | null> | CompletionResult | null;
 }
 

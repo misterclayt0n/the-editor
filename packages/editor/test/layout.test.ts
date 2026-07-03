@@ -1,6 +1,12 @@
 import { describe, expect, test } from "vitest";
 import { TextBuffer } from "@the-editor/engine";
-import { hitTestTextPosition, hitTestTextPositionExact, layoutContentHeight, layoutViewport } from "../src/index";
+import {
+  hitTestTextPosition,
+  hitTestTextPositionExact,
+  layoutContentHeight,
+  layoutViewport,
+  rowVisualColumns,
+} from "../src/index";
 
 const text = (s: string) => TextBuffer.fromString(s);
 
@@ -638,6 +644,57 @@ describe("virtual text geometry", () => {
     expect((beforeHint as { rect: { left: number } }).rect.left).toBe(4 * 8);
     // At line end: text columns (12) + hint columns (5).
     expect((lineEnd as { rect: { left: number } }).rect.left).toBe((12 + 5) * 8);
+  });
+
+  test("decoration rects right of / across the hint shift by its columns", () => {
+    const layout = layoutViewport({
+      text,
+      version: 0,
+      startLine: 0,
+      lineCount: 1,
+      ...m,
+      visuals: {
+        virtualText,
+        rangeDecorations: [
+          // The hover-range highlight shape: background behind "= 1"
+          // (offsets 9..12), which renders RIGHT of the hint at offset 8.
+          { from: 9, to: 12, layer: "background" as const, className: "hl" },
+          // A diagnostics-underline shape crossing the hint (4..12).
+          { from: 4, to: 12, layer: "underline" as const },
+        ],
+      },
+    });
+    const byLayer = new Map(layout.decorations.map((d) => [d.layer, d] as const));
+    const background = byLayer.get("background")!;
+    // Starts at text col 9 shifted by the hint's 5 cols; width unchanged.
+    expect(background.rects[0]!.left).toBe((9 + 5) * 8);
+    expect(background.rects[0]!.width).toBe(3 * 8);
+    const underline = byLayer.get("underline")!;
+    // Crosses the hint: anchored left of it, widened by its columns.
+    expect(underline.rects[0]!.left).toBe(4 * 8);
+    expect(underline.rects[0]!.width).toBe((12 + 5 - 4) * 8);
+  });
+
+  test("rowVisualColumns counts text (tab-expanded) plus virtual segments", () => {
+    const layout = layoutViewport({
+      text,
+      version: 0,
+      startLine: 0,
+      lineCount: 1,
+      ...m,
+      visuals: { virtualText },
+    });
+    const row = layout.rows[0]! as Extract<(typeof layout.rows)[number], { kind: "text" }>;
+    expect(rowVisualColumns(row, 4)).toBe(12 + 5);
+    const tabbed = layoutViewport({
+      text: TextBuffer.fromString("\tab"),
+      version: 0,
+      startLine: 0,
+      lineCount: 1,
+      ...m,
+    });
+    const tabbedRow = tabbed.rows[0]! as Extract<(typeof tabbed.rows)[number], { kind: "text" }>;
+    expect(rowVisualColumns(tabbedRow, 4)).toBe(6); // tab → 4 cols, then "ab"
   });
 
   test("selection rect spanning the hint widens by its columns", () => {

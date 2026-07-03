@@ -5,9 +5,12 @@
  * marker walk-up through the FileSystemPort. Document sync is INCREMENTAL
  * when the server supports it (per-transaction change conversion through
  * DocumentSyncState — tiny messages, no debounce) and full-text on a
- * debounce otherwise. Diagnostics and inlay hints enter the editor as one
- * EditorVisuals contribution per document (underline decorations + virtual
- * text), so they ride the commit path's RangeSet mapping between publishes.
+ * debounce otherwise. Diagnostics and inlay hints enter the editor as TWO
+ * separate EditorVisuals contributions per document (underline decorations
+ * / virtual text), so each rides the commit path's RangeSet mapping and a
+ * diagnostics publish can never re-apply stale hint coordinates (or vice
+ * versa). Every push carries the diffed offset spans, and every response
+ * is version-gated — see visualRanges.ts for the coordinate discipline.
  * Server-initiated workspace edits become ordinary transactions on open
  * documents and read-modify-write through the FileSystemPort for closed
  * ones — undo, selections, and every extension's ranges stay coherent.
@@ -45,6 +48,7 @@ import {
 import type { DecorationSpec, VirtualTextSpec } from "@the-editor/editor";
 import type { Processes, ProcessHandle } from "@the-editor/process";
 import { chooseServerRoot } from "./roots";
+import { changedSpans, mapOffsetThrough, mapRangedValues, sortRanges } from "./visualRanges";
 import type { LanguageServerDefinition, LanguageServers } from "@the-editor/intel";
 import type {
   CompletionContext,
@@ -134,11 +138,23 @@ type Attachment = {
   /** Priority order — the first eligible binding serves each feature. */
   readonly bindings: ServerBinding[];
   readonly visualsScope: Scope.CloseableScope;
-  readonly visuals: VisualsHandle;
+  /** Separate handles: a diagnostics push must never re-send hint
+   *  coordinates (and vice versa) — the service maps each set through
+   *  edits on its own. */
+  readonly diagnosticsVisuals: VisualsHandle;
+  readonly hintsVisuals: VisualsHandle;
   readonly busFiber: Fiber.RuntimeFiber<unknown, unknown>;
   hintTimer: number | null;
   hintCancel: { cancel(): void } | null;
-  hintsSet: RangeSet<VirtualTextSpec>;
+  /** Last pushed hint ranges, kept in CURRENT document coordinates
+   *  (mapped through every edit) — the diff base for localized pushes. */
+  hintRanges: RangedValue<VirtualTextSpec>[];
+  /** Last pushed merged diagnostics, current coordinates (diff base). */
+  pushedDiagnostics: RangedValue<DecorationSpec>[];
+  /** False after a dropped notification batch: offsets can no longer be
+   *  trusted for diffing, so the next push invalidates the whole window. */
+  hintsDiffBaseValid: boolean;
+  diagnosticsDiffBaseValid: boolean;
 };
 
 const positionToOffset = (buffer: TextBuffer, position: lsp.Position): number => {
@@ -152,6 +168,17 @@ const offsetToPosition = (buffer: TextBuffer, offset: number): lsp.Position => {
   const range = buffer.lineRangeAt(clamped);
   return { line: range.index, character: clamped - range.from };
 };
+
+// Value equality for push diffs (changedSpans): compare exactly what the
+// renderer paints from each spec.
+const decorationSpecEquals = (a: DecorationSpec, b: DecorationSpec): boolean =>
+  a.layer === b.layer &&
+  a.className === b.className &&
+  a.priority === b.priority &&
+  a.style?.["borderBottomColor"] === b.style?.["borderBottomColor"];
+
+const virtualTextSpecEquals = (a: VirtualTextSpec, b: VirtualTextSpec): boolean =>
+  a.text === b.text && a.className === b.className && a.affinity === b.affinity;
 
 const completionKindNames: Record<number, string> = {
   1: "text",
@@ -297,8 +324,11 @@ export class LspManager {
     });
 
     const visualsScope = Effect.runSync(Scope.make());
-    const visuals = Effect.runSync(
+    const diagnosticsVisuals = Effect.runSync(
       editorVisuals.contribute("lsp", {}).pipe(Scope.extend(visualsScope)),
+    );
+    const hintsVisuals = Effect.runSync(
+      editorVisuals.contribute("lsp-hints", {}).pipe(Scope.extend(visualsScope)),
     );
 
     const attachment: Attachment = {
@@ -308,7 +338,8 @@ export class LspManager {
       document,
       bindings,
       visualsScope,
-      visuals,
+      diagnosticsVisuals,
+      hintsVisuals,
       busFiber: Effect.runFork(
         Stream.runForEach(bus.notifications, (notification) =>
           Effect.sync(() => {
@@ -320,7 +351,10 @@ export class LspManager {
       ),
       hintTimer: null,
       hintCancel: null,
-      hintsSet: RangeSet.empty(),
+      hintRanges: [],
+      pushedDiagnostics: [],
+      hintsDiffBaseValid: true,
+      diagnosticsDiffBaseValid: true,
     };
     this.attachments.set(docId, attachment);
     this.byUri.set(uri, attachment);
@@ -403,8 +437,9 @@ export class LspManager {
       if (this.hintsEnabled) {
         this.scheduleHints(attachment, 0);
       } else {
-        attachment.hintsSet = RangeSet.empty();
-        this.pushVisuals(attachment);
+        attachment.hintCancel?.cancel();
+        attachment.hintCancel = null;
+        this.pushHints(attachment, []);
       }
     }
   }
@@ -791,6 +826,26 @@ export class LspManager {
     changes: ReadonlyArray<{ fromA: number; toA: number; fromB: number; toB: number }> | undefined,
   ): void {
     if (this.disposed) return;
+    // The manager's cached coordinate copies (hover diagnostics, the
+    // cross-server merge inputs, the push-diff bases) slide through every
+    // edit exactly like the contributed sets do inside EditorVisuals — a
+    // later push must never re-apply pre-edit offsets. A batch without
+    // change ranges leaves them in place but poisons the diff bases: the
+    // next push invalidates fully instead of trusting suspect offsets.
+    if (changes !== undefined) {
+      attachment.hintRanges = mapRangedValues(attachment.hintRanges, changes);
+      attachment.pushedDiagnostics = mapRangedValues(attachment.pushedDiagnostics, changes);
+      for (const binding of attachment.bindings) {
+        binding.diagnosticRanges = mapRangedValues(binding.diagnosticRanges, changes);
+        binding.diagnosticList = binding.diagnosticList.map((diagnostic) => {
+          const from = mapOffsetThrough(changes, diagnostic.from);
+          return { ...diagnostic, from, to: Math.max(from, mapOffsetThrough(changes, diagnostic.to)) };
+        });
+      }
+    } else {
+      attachment.hintsDiffBaseValid = false;
+      attachment.diagnosticsDiffBaseValid = false;
+    }
     // Incremental sync demands an INTACT chain and a FRESH notification:
     // the bus is sliding (slow consumers drop batches), and the inserted
     // text is sliced from the live buffer — valid only while the buffer is
@@ -885,6 +940,14 @@ export class LspManager {
     if (attachment === undefined) return;
     const binding = attachment.bindings.find((b) => b.handle === handle);
     if (binding === undefined || !featureAllowed(binding, "diagnostics")) return;
+    // Version gate: a publish computed for an OLDER synced version carries
+    // positions in old coordinates — converting them against today's buffer
+    // draws underlines mid-word. Discard; the server re-lints after every
+    // didChange, so a fresh publish for the current version follows. (The
+    // existing, correctly-mapped diagnostics stay up meanwhile.)
+    if (params.version !== undefined && params.version < this.documentVersion(attachment)) {
+      return;
+    }
     const buffer = this.bufferOf(attachment);
     const ranges = params.diagnostics.map((diagnostic) => {
       const from = positionToOffset(buffer, diagnostic.range.start);
@@ -916,7 +979,7 @@ export class LspManager {
         source: diagnostic.source ?? undefined,
       };
     });
-    this.pushVisuals(attachment);
+    this.pushDiagnostics(attachment);
     binding.counts = {
       errors: params.diagnostics.filter((d) => (d.severity ?? 1) === 1).length,
       warnings: params.diagnostics.filter((d) => d.severity === 2).length,
@@ -940,7 +1003,17 @@ export class LspManager {
     if (this.disposed || !this.hintsEnabled) return;
     const binding = this.bindingFor(attachment, lsp.InlayHintRequest.method, "inlay-hints");
     if (binding === null) return;
+    // The response's positions are only meaningful against the exact
+    // version the server answered for. Sync the server fully to the current
+    // buffer first, remember that version, and DISCARD the response if the
+    // buffer moved on while the request was in flight — the edit that moved
+    // it already scheduled a fresh request (Zed's InlayHintCache enforces
+    // the same rule via buffer_version.changed_since). Applying a stale
+    // response splices hints mid-word and every column right of them
+    // shifts: the "hints teleport while typing" bug.
+    this.flushPendingSync(attachment);
     const buffer = this.bufferOf(attachment);
+    const requestVersion = this.documentVersion(attachment);
     if (buffer.length > INLAY_HINT_MAX_CHARS) return;
     attachment.hintCancel?.cancel();
     const source = binding.handle.client.cancellationSource();
@@ -958,10 +1031,10 @@ export class LspManager {
     } catch {
       return; // cancelled or server error; a newer request follows
     }
-    if (attachment.hintCancel !== source || this.disposed) return;
-    const current = this.bufferOf(attachment);
+    if (attachment.hintCancel !== source || this.disposed || !this.hintsEnabled) return;
+    if (this.documentVersion(attachment) !== requestVersion) return; // stale: a re-request is scheduled
     const ranges: RangedValue<VirtualTextSpec>[] = hints.map((hint) => {
-      const at = positionToOffset(current, hint.position);
+      const at = positionToOffset(buffer, hint.position);
       return {
         from: at,
         to: at,
@@ -972,20 +1045,47 @@ export class LspManager {
         },
       };
     });
-    attachment.hintsSet = RangeSet.of(ranges);
-    this.pushVisuals(attachment);
+    this.pushHints(attachment, sortRanges(ranges));
   }
 
-  private pushVisuals(attachment: Attachment): void {
+  /** The document's version now — the gate every async response checks. */
+  private documentVersion(attachment: Attachment): number {
+    const text = Context.get(
+      attachment.document.context as Context.Context<TextDocument>,
+      TextDocument,
+    );
+    return Effect.runSync(text.snapshot).version;
+  }
+
+  /**
+   * Push the merged cross-server diagnostics as their own contribution,
+   * invalidating only the spans that actually changed — an identical
+   * republish (servers re-lint constantly) repaints nothing.
+   */
+  private pushDiagnostics(attachment: Attachment): void {
     const merged = attachment.bindings
       .flatMap((binding) => binding.diagnosticRanges)
       .sort((a, b) => a.from - b.from || a.to - b.to);
+    const spans = attachment.diagnosticsDiffBaseValid
+      ? changedSpans(attachment.pushedDiagnostics, merged, decorationSpecEquals)
+      : undefined;
+    attachment.pushedDiagnostics = merged;
+    attachment.diagnosticsDiffBaseValid = true;
+    if (spans !== undefined && spans.length === 0) return; // identical: no-op
     Effect.runSync(
-      attachment.visuals.update({
-        decorations: RangeSet.of(merged),
-        virtualText: attachment.hintsSet,
-      }),
+      attachment.diagnosticsVisuals.update({ decorations: RangeSet.of(merged) }, spans),
     );
+  }
+
+  /** Push a new hint set, invalidating only rows whose hints changed. */
+  private pushHints(attachment: Attachment, next: RangedValue<VirtualTextSpec>[]): void {
+    const spans = attachment.hintsDiffBaseValid
+      ? changedSpans(attachment.hintRanges, next, virtualTextSpecEquals)
+      : undefined;
+    attachment.hintRanges = next;
+    attachment.hintsDiffBaseValid = true;
+    if (spans !== undefined && spans.length === 0) return; // identical: no-op
+    Effect.runSync(attachment.hintsVisuals.update({ virtualText: RangeSet.of(next) }, spans));
   }
 
   // -------------------------------------------------------- workspace edits
@@ -1153,10 +1253,10 @@ export class LspManager {
         binding.diagnosticRanges = [];
         binding.diagnosticList = [];
         binding.counts = { errors: 0, warnings: 0 };
+        this.pushDiagnostics(attachment);
         if (!attachment.bindings.some((b) => b.handle.alive)) {
-          attachment.hintsSet = RangeSet.empty();
+          this.pushHints(attachment, []);
         }
-        this.pushVisuals(attachment);
         this.onDiagnostics?.(attachment.docId);
       }
     });

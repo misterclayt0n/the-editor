@@ -263,6 +263,10 @@ function lineVirtuals(
 function rowTop(row: number, lineHeight: number, paddingTop: number): number {
   return paddingTop + row * lineHeight;
 }
+// `virtuals` is REQUIRED (pass undefined explicitly): every horizontal rect
+// must decide about virtual text, because forgetting it draws the rect
+// shifted left of its text on any line with an inlay hint. The optional
+// parameter this used to be is exactly how layoutDecorations shipped wrong.
 function rectForLine(
   text: RenderableText,
   line: number,
@@ -270,7 +274,7 @@ function rectForLine(
   from: number,
   to: number,
   m: Metrics,
-  virtuals?: readonly VirtualText[],
+  virtuals: readonly VirtualText[] | undefined,
 ): LayoutRect {
   const a =
     columnAtOffset(text, line, from, m.tabWidth) + virtualColsBefore(virtuals, text, line, from),
@@ -289,6 +293,27 @@ type Metrics = {
   paddingTop: number;
   paddingLeft: number;
 };
+
+/**
+ * Total VISUAL columns a laid-out text row occupies: its text (tab-expanded)
+ * plus every virtual-text segment on it. Content width, horizontal scroll
+ * range and thumb sizing must use this, never the raw text width — inlay
+ * hints occupy real columns. Owned here so the arithmetic that inserts
+ * virtual segments and the arithmetic that measures them cannot diverge.
+ */
+export function rowVisualColumns(
+  row: Extract<LayoutRow, { kind: "text" }>,
+  tabWidth: number,
+): number {
+  let cols = 0;
+  for (const ch of row.text) {
+    cols += ch === "\t" ? tabWidth - (cols % tabWidth) : 1;
+  }
+  for (const segment of row.segments) {
+    if (segment.kind === "virtual-text") cols += segment.text.length;
+  }
+  return cols;
+}
 
 export function layoutContentHeight(args: {
   readonly text: RenderableText;
@@ -677,6 +702,7 @@ export function layoutViewport<Payload = unknown>(
     lineToRow,
     m,
     visuals.rangeDecorations ?? [],
+    visuals.virtualText,
   );
   const blockWidgets = (visuals.blockWidgets ?? []).flatMap((w): LayoutBlockWidget[] => {
     const row = widgetByRow.get(w.id);
@@ -754,6 +780,7 @@ function layoutDecorations(
   lineToRow: Map<number, number>,
   m: Metrics,
   decorations: readonly RangeDecoration[],
+  virtuals: readonly VirtualText[] | undefined,
 ): readonly LayoutDecoration[] {
   const layerOrder: Record<DecorationLayer, number> = { background: 0, underline: 1, outline: 2 };
   return decorations
@@ -769,7 +796,7 @@ function layoutDecorations(
         const lr = lineRange(text, line),
           a = Math.max(range.from, lr.from),
           b = Math.min(range.to, lr.to);
-        if (b >= a) rects.push(rectForLine(text, line, row, a, b, m));
+        if (b >= a) rects.push(rectForLine(text, line, row, a, b, m, virtuals));
       }
       return rects.length
         ? [

@@ -40,6 +40,7 @@ import {
   hitTestTextPosition,
   hitTestTextPositionExact,
   layoutViewport,
+  rowVisualColumns,
   virtualColsBefore,
   payloadsOf,
   SelectionInvalidated,
@@ -703,7 +704,12 @@ export class EditorRenderer {
       if (anchor === null) continue;
       const offset = Math.max(0, Math.min(anchor.offset, text.length));
       const lineRange = text.lineRangeAt(offset);
-      const column = visualColumn(text.sliceString(lineRange.from, offset));
+      // Virtual text left of the anchor shifts it right like any other
+      // column — a completion popup under `foo(hint: bar▌` must sit under
+      // the caret's VISUAL x, not the raw text column.
+      const column =
+        visualColumn(text.sliceString(lineRange.from, offset)) +
+        virtualColsBefore(this.lineVirtuals(lineRange.index), text, lineRange.index, offset);
       const lineTop = this.geometry.lineTop(lineRange.index) - this.scrollY;
       let left = this.textOriginX + column * this.charWidth - this.scrollX;
       const height = entry.element.offsetHeight;
@@ -952,8 +958,13 @@ export class EditorRenderer {
       // The caret's line bounds content width from below. maxRowChars is
       // otherwise updated by the window patch AFTER this clamp runs, so a
       // bulk edit (paste, fast typing) would clamp the reveal against a
-      // stale width and strand the caret off-screen.
-      const caretLineCols = visualColumn(text.sliceString(lineRange.from, lineRange.to));
+      // stale width and strand the caret off-screen. Virtual text counts:
+      // the caret can sit to the RIGHT of every inlay on its line.
+      const caretLineVirtuals = (
+        this.visuals?.virtualTextBetween(lineRange.from, lineRange.to) ?? []
+      ).reduce((n, vt) => n + vt.text.length, 0);
+      const caretLineCols =
+        visualColumn(text.sliceString(lineRange.from, lineRange.to)) + caretLineVirtuals;
       if (caretLineCols > this.maxRowChars) this.maxRowChars = caretLineCols;
       const caretLeft =
         this.textOriginX + (visualColumn(beforeCaret) + caretVirtualCols) * this.charWidth;
@@ -1053,8 +1064,10 @@ export class EditorRenderer {
       // RECOMPUTE it — deleting the long line shrinks the scrollbar — while
       // scroll-driven rebuilds only grow it, keeping the thumb stable while
       // panning past the widest line.
+      // rowVisualColumns includes virtual text: a line whose inlay hints
+      // push its code past the viewport must be reachable by the h-scroll.
       const windowCols = layout.rows.reduce(
-        (max, row) => (row.kind === "text" ? Math.max(max, visualColumn(row.text)) : max),
+        (max, row) => (row.kind === "text" ? Math.max(max, rowVisualColumns(row, TAB_WIDTH)) : max),
         0,
       );
       this.maxRowChars = docDirty ? windowCols : Math.max(this.maxRowChars, windowCols);

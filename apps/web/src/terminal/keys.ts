@@ -1,7 +1,21 @@
 import type { ResolvedTheme } from "@the-editor/theme";
 import { resolveFontSystem, FONT_SLOT_TERMINAL, type ResolvedFontSystem } from "@the-editor/fonts";
-import type { ITerminalOptions } from "@xterm/xterm";
 import { terminalTheme } from "../theme/dom";
+
+/**
+ * Engine-neutral terminal options: a superset both engines accept. xterm.js
+ * reads all of them; ghostty-web ignores the xterm-specific ones (kitty
+ * keyboard state lives in the Ghostty emulator itself, and macOS "Option as
+ * Meta" is wired to its key encoder by the backend).
+ */
+export type TerminalOptions = {
+  readonly allowProposedApi?: boolean;
+  readonly fontSize?: number;
+  readonly fontFamily?: string;
+  readonly macOptionIsMeta?: boolean;
+  readonly theme?: Readonly<Record<string, string>>;
+  readonly vtExtensions?: { readonly kittyKeyboard?: boolean };
+};
 
 export type TerminalKeyHandlerResult = "process" | "process-prevent-default" | "skip";
 
@@ -18,7 +32,7 @@ const defaultFontSystem = resolveFontSystem([], []);
 export function createTerminalOptions(
   theme: ResolvedTheme,
   fonts: ResolvedFontSystem = defaultFontSystem,
-): ITerminalOptions {
+): TerminalOptions {
   const terminalFont = fonts.slots[FONT_SLOT_TERMINAL] ?? defaultFontSystem.slots[FONT_SLOT_TERMINAL]!;
   return {
     allowProposedApi: true,
@@ -29,14 +43,15 @@ export function createTerminalOptions(
     vtExtensions: {
       kittyKeyboard: true,
     },
-  } satisfies ITerminalOptions;
+  } satisfies TerminalOptions;
 }
 
 /**
  * macOS "natural text editing": Cmd/Option line- and word-motions that every
- * native terminal (Terminal.app, iTerm) maps to readline control bytes. xterm
- * sends nothing for some of these, so without this the terminal feels dead to
- * ⌘⌫ etc. Returns the bytes to write to the PTY, or null to leave the key.
+ * native terminal (Terminal.app, iTerm, Ghostty) maps to readline control
+ * bytes. The browser key encoder sends nothing for some of these, so without
+ * this the terminal feels dead to ⌘⌫ etc. Returns the bytes to write to the
+ * PTY, or null to leave the key.
  */
 export function macEditingSequence(event: TerminalKeyboardEventLike): string | null {
   if (event.ctrlKey || event.shiftKey) return null;

@@ -1142,7 +1142,7 @@ body {
   background: var(--theme-deleted, var(--theme-version-control-deleted));
 }
 
-/* Terminal panel host: xterm.js fills the panel body. */
+/* Terminal panel host: the ghostty-web canvas fills the panel body. */
 .terminal-host {
   display: flex;
   height: 100%;
@@ -1157,6 +1157,18 @@ body {
   overflow: hidden;
   padding: 4px 6px;
   background: var(--bg-terminal);
+}
+
+/* The terminal opens inside its own child so overlay widgets (search) stay
+   outside the element ghostty-web attaches its input handlers to. */
+.terminal-screen {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  outline: none;
+  /* ghostty-web marks this element contenteditable; without this the browser
+     draws a blinking caret at the top-left once the terminal is focused. */
+  caret-color: transparent;
 }
 
 .terminal-search {

@@ -55,7 +55,7 @@ describe("terminalKeyHandlerResult", () => {
 });
 
 describe("createTerminalOptions", () => {
-  test("enables extended keyboard reporting in xterm", () => {
+  test("enables extended keyboard reporting for engines that read it", () => {
     const options = createTerminalOptions(resolvedTheme) as {
       allowProposedApi?: boolean;
       macOptionIsMeta?: boolean;
@@ -85,7 +85,7 @@ describe("createTerminalOptions", () => {
     expect(options.theme?.selectionInactiveBackground).toBe("#009fff40");
   });
 
-  test("uses ANSI background for xterm cells and terminal background for the surface", () => {
+  test("uses ANSI background for terminal cells and terminal background for the surface", () => {
     const theme = {
       ...resolvedTheme,
       colors: {

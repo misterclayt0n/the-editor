@@ -39,6 +39,10 @@ import {
   TerminalNotification,
   type TerminalNotificationPayload,
 } from "./terminal/notifications.js";
+import {
+  DEFAULT_TERMINAL_ENGINE,
+  type TerminalEngineKind,
+} from "./terminal/backend";
 import { toPackageDescriptor } from "@the-editor/extensions";
 import { Shell } from "./shell";
 import { Commands, makeCommands } from "@the-editor/commands";
@@ -438,6 +442,9 @@ export class AppRuntime {
   decorationProviders!: DecorationProviders.Service;
   /** Version control (undefined without a process host). */
   vcs: VcsManager | undefined;
+  /** Terminal engine from user config (`terminal.engine`); set whenever the
+   *  config is (re)read. New terminal panels pick it up at mount. */
+  configuredTerminalEngine: TerminalEngineKind | undefined;
   /** Intel provider registries (App hands them to the IntelController). */
   intel!: {
     readonly completions: CompletionProviders.Service;
@@ -790,12 +797,23 @@ export class AppRuntime {
                 trust,
               })
             : () => Effect.succeed({});
+        // Every config read (boot + each extension reload) also refreshes the
+        // host-level settings the config carries — currently the terminal
+        // engine choice, picked up by terminals mounted afterwards.
+        const readConfigTracked: () => Effect.Effect<EditorConfig> = () =>
+          readConfig().pipe(
+            Effect.tap((config) =>
+              Effect.sync(() => {
+                appRuntime.configuredTerminalEngine = config.terminal?.engine;
+              }),
+            ),
+          );
         const defaultsController = makeDefaultPackagesController({
           entries: defaultPackages(),
           services,
           packages: runtime,
           attention,
-          readConfig,
+          readConfig: readConfigTracked,
         });
         // Activation phase — FORKED, not awaited. Boot stays synchronous
         // (runSync); reading user config crosses the fs bridge, which is an
@@ -2018,6 +2036,11 @@ export class AppRuntime {
   /** Whether a real PTY bridge exists (else the terminal shows an empty state). */
   terminalAvailable(): boolean {
     return this.ptyAvailable;
+  }
+
+  /** Emulator engine for new terminal panels (config-chosen, default xterm). */
+  terminalEngine(): TerminalEngineKind {
+    return this.configuredTerminalEngine ?? DEFAULT_TERMINAL_ENGINE;
   }
 
   /** The native clipboard bridge, falling back to browser clipboard APIs. */

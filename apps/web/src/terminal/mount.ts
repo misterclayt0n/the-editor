@@ -1,22 +1,16 @@
 /**
- * Terminal panel content: an xterm.js terminal wired to a PTY over the
+ * Terminal panel content: a terminal emulator wired to a PTY over the
  * TerminalPort. The host supplies the port (Electron node-pty, or a dev echo
- * for tests).
+ * for tests). The emulator engine (xterm.js or ghostty-web) is chosen by user
+ * config and loaded lazily through the backend seam.
  */
 
 import {
-  ensureReady,
-  Terminal,
-  FitAddon,
-  loadTerminalAddons,
-  recoverTerminalRenderer,
-  attachAutoFit,
-  attachGlobalKeyHandler,
-  unsupportedQueryResponses,
-  hideNativeInputCaret,
-  clearTerminalSearch,
-  resetTerminalSearchSession,
-  type TerminalAddonSet,
+  loadTerminalEngine,
+  type TerminalAddonSetHandle,
+  type TerminalEngine,
+  type TerminalFitHandle,
+  type TerminalHandle,
 } from "./backend";
 import { Effect, Exit, Scope } from "effect";
 import type { PtyHandle } from "@the-editor/process";
@@ -37,10 +31,6 @@ import {
   type TerminalPasteTextOptions,
 } from "./paste";
 import { detectTerminalShortcutPlatform, terminalShortcutAction } from "./shortcuts";
-
-/** xterm setup is synchronous today; keep the gate so async addons can hook in later. */
-let readyPromise: Promise<void> | null = null;
-const ensureEngine = (): Promise<void> => (readyPromise ??= ensureReady());
 
 type TerminalDisposable = { dispose(): void };
 
@@ -66,8 +56,9 @@ const isFindNextShortcut = (event: KeyboardEvent): boolean =>
   event.key.toLowerCase() === "g" && (event.metaKey || event.ctrlKey) && !event.altKey;
 
 const createTerminalSearchWidget = (
-  term: Terminal,
-  addons: TerminalAddonSet,
+  engine: TerminalEngine,
+  term: TerminalHandle,
+  addons: TerminalAddonSetHandle,
   decorations: () => TerminalSearchDecorations,
 ): TerminalSearchWidget => {
   const root = document.createElement("div");
@@ -110,7 +101,7 @@ const createTerminalSearchWidget = (
   });
 
   const clearSearch = (): void => {
-    clearTerminalSearch(term, addons);
+    engine.clearTerminalSearch(term, addons);
   };
 
   const clearSearchForQuery = (query: string): void => {
@@ -133,7 +124,7 @@ const createTerminalSearchWidget = (
 
   const resetSearchAfterPaint = (generation: number): void => {
     cancelPendingClear();
-    resetTerminalSearchSession(term, addons);
+    engine.resetTerminalSearchSession(term, addons);
     clearSearch();
     clearFrame = requestAnimationFrame(() => {
       clearFrame = null;
@@ -246,10 +237,11 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
     title: () => TERMINAL_TITLE,
     mount: (element, panel) => {
       let disposed = false;
-      let term: Terminal | null = null;
+      let engine: TerminalEngine | null = null;
+      let term: TerminalHandle | null = null;
       let termId: number | null = null;
-      let addons: TerminalAddonSet | null = null;
-      let fitAddon: FitAddon | null = null;
+      let addons: TerminalAddonSetHandle | null = null;
+      let fitAddon: TerminalFitHandle | null = null;
       let searchWidget: TerminalSearchWidget | null = null;
       let disposeTermUi: (() => void) | null = null;
       let refreshFrame: number | null = null;
@@ -336,12 +328,12 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
         term?.focus();
       };
 
-      const syncPtySize = (current: Terminal): void => {
+      const syncPtySize = (current: TerminalHandle): void => {
         if (termId === null || current.cols <= 0 || current.rows <= 0) return;
         pty?.resize(current.cols, current.rows);
       };
 
-      const refreshVisibleRows = (current: Terminal): void => {
+      const refreshVisibleRows = (current: TerminalHandle): void => {
         if (current.rows <= 0) return;
         current.refresh(0, current.rows - 1);
       };
@@ -354,7 +346,8 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
         const shouldFocus = options.focus === true;
         const run = (recoverRenderer: boolean): void => {
           if (disposed || term !== current || !bodyHasVisibleSize()) return;
-          if (recoverRenderer && addons !== null) recoverTerminalRenderer(current, addons);
+          if (recoverRenderer && addons !== null && engine !== null)
+            engine.recoverTerminalRenderer(current, addons);
           try {
             fitAddon?.fit();
           } catch {
@@ -388,22 +381,31 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
         refreshTerminalSurface({ recoverRenderer });
       };
 
-      const openTerminal = (): Terminal => {
+      const openTerminal = (): TerminalHandle => {
         const terminalBody = body;
+        const currentEngine = engine;
         if (terminalBody === null) throw new Error("Terminal body is not mounted.");
+        if (currentEngine === null) throw new Error("Terminal engine is not loaded.");
         disposeTermUi?.();
         terminalBody.replaceChildren();
-        const next = new Terminal(
+        // The terminal gets its own child element: ghostty-web attaches its
+        // keyboard/paste handlers to the element it opens in, so overlay
+        // widgets (the search box) must live outside it or their keystrokes
+        // would reach the shell. (Harmless for xterm.)
+        const screen = document.createElement("div");
+        screen.className = "terminal-screen";
+        terminalBody.appendChild(screen);
+        const next = currentEngine.createTerminal(
           createTerminalOptions(runtime.themeSnapshot(), runtime.fontSnapshot()),
         );
-        const fit = new FitAddon();
-        next.open(terminalBody);
-        const nextAddons = loadTerminalAddons(next, fit);
-        const nextSearchWidget = createTerminalSearchWidget(next, nextAddons, () =>
+        const fit = currentEngine.createFitAddon();
+        next.open(screen);
+        const nextAddons = currentEngine.loadTerminalAddons(next, fit);
+        const nextSearchWidget = createTerminalSearchWidget(currentEngine, next, nextAddons, () =>
           terminalSearchDecorations(runtime.themeSnapshot()),
         );
         terminalBody.appendChild(nextSearchWidget.element);
-        hideNativeInputCaret(next);
+        currentEngine.hideNativeInputCaret(next);
         if (bodyHasVisibleSize()) {
           try {
             fit.fit();
@@ -411,7 +413,7 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
             // The first visible attach will fit again.
           }
         }
-        const disposeFit = attachAutoFit(fit, terminalBody);
+        const disposeFit = currentEngine.attachAutoFit(fit, terminalBody);
 
         let suppressNextPasteEvent = false;
         let pasteSuppressionTimer: number | null = null;
@@ -555,7 +557,7 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
         ) as TerminalDisposable;
         // Terminal notifications: bubble the desktop-notification escape
         // sequences (and the bell) up to the Attention fabric. These fire even
-        // while the panel is hidden — xterm stays alive, detached/re-attached.
+        // while the panel is hidden — the terminal stays alive, detached/re-attached.
         let terminalTitle = TERMINAL_TITLE;
         const titleDisposable = next.onTitleChange((title) => {
           terminalTitle = title.length > 0 ? title : TERMINAL_TITLE;
@@ -578,7 +580,7 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
           }),
         ) as TerminalDisposable;
 
-        attachGlobalKeyHandler(next, (event) => {
+        currentEngine.attachGlobalKeyHandler(next, (event) => {
           if (
             !eventTargetsSearchWidget(event.target) &&
             terminalShortcutAction(event, platform) !== null
@@ -632,7 +634,37 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
         return next;
       };
 
+      // Nudge the PTY so a freshly rebuilt (blank) emulator gets repainted:
+      // same-size resizes emit no SIGWINCH, so shrink one row and restore.
+      const jigglePtySize = (): void => {
+        const current = term;
+        if (current === null || pty === null) return;
+        const { cols, rows } = current;
+        if (cols <= 0 || rows <= 1) return;
+        pty.resize(cols, rows - 1);
+        window.setTimeout(() => {
+          if (!disposed && term === current) pty?.resize(current.cols, current.rows);
+        }, 50);
+      };
+
+      // Engines without live theme updates (ghostty: the WASM emulator
+      // resolves cell colors against its creation-time palette and exposes no
+      // way to swap it) rebuild the terminal on theme switches. Scrollback is
+      // lost — the WINCH nudge makes the running program repaint the screen.
+      const rebuildTerminalForTheme = (): void => {
+        if (disposed || term === null || body === null) return;
+        openTerminal();
+        refreshTerminalSurface({});
+        window.setTimeout(() => {
+          if (!disposed) jigglePtySize();
+        }, 60);
+      };
+
       const unsubscribeTheme = runtime.subscribeTheme(() => {
+        if (engine !== null && !engine.liveThemeUpdates && term !== null) {
+          rebuildTerminalForTheme();
+          return;
+        }
         applyTerminalOptions(false);
       });
       const unsubscribeFont = runtime.subscribeFont(() => {
@@ -643,7 +675,29 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
         if (started) return;
         started = true;
         void (async () => {
-          await ensureEngine();
+          const loadedEngine = await loadTerminalEngine(runtime.terminalEngine());
+          if (disposed) return;
+          engine = loadedEngine;
+          // Canvas metrics are measured once at open(); if the terminal
+          // webfont has not loaded yet the whole grid is sized from a
+          // fallback font. Wait briefly for the face, and re-measure when
+          // the document's fonts settle (covers slow first loads).
+          try {
+            const options = createTerminalOptions(runtime.themeSnapshot(), runtime.fontSnapshot());
+            if (typeof document !== "undefined" && "fonts" in document) {
+              await Promise.race([
+                document.fonts.load(`${options.fontSize ?? 14}px ${options.fontFamily ?? "monospace"}`),
+                new Promise((resolve) => setTimeout(resolve, 1000)),
+              ]);
+              void document.fonts.ready.then(() => {
+                if (disposed) return;
+                term?.remeasureFont?.();
+                refreshTerminalSurface({});
+              });
+            }
+          } catch {
+            // Font readiness is best-effort; metrics correct on later font events.
+          }
           if (disposed) return;
           const spawnedTerm = openTerminal();
 
@@ -676,7 +730,7 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
           // PTY → screen, screen → PTY, and keep the PTY's window size in sync.
           pty.onData((data) => {
             if (disposed) return;
-            const responses = unsupportedQueryResponses(
+            const responses = loadedEngine.unsupportedQueryResponses(
               data,
               terminalTheme(runtime.themeSnapshot()),
             );
@@ -743,7 +797,7 @@ export function createTerminalRenderer(runtime: AppRuntime): PanelRenderer {
           refreshTerminalSurface({ recoverRenderer: true });
         },
         focus: () => {
-          // xterm.js's hidden textarea can miss a programmatic focus() call if
+          // The terminal's focus target can miss a programmatic focus() call if
           // the reverse portal just re-attached its host (terminal toggle on/off).
           // Retry once after the browser has settled the DOM.
           refreshTerminalSurface({ focus: true });

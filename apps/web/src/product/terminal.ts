@@ -1,7 +1,8 @@
 /**
  * The terminal as a product package: a workbench panel registered through
  * PanelRenderers, like the file tree. The package owns command identity and
- * the renderer registration; the host seam supplies the renderer (xterm.js +
+ * the renderer registration; the host seam supplies the renderer (an
+ * emulator engine — xterm.js by default, ghostty-web via config — wired to a
  * PTY) and the region toggle (arrangement surgery — bottom tab group).
  */
 

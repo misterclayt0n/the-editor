@@ -105,7 +105,13 @@ export const terminalTheme = (theme: ResolvedTheme): Record<string, string> => {
       theme.colors["terminal.selection.inactive_background"] ?? selectionBackground,
     ),
   };
-  setTerminalColor(out, "selectionForeground", theme.colors["terminal.selection.foreground"]);
+  // The canvas renderer paints selected text with selectionForeground
+  // unconditionally (it cannot keep per-cell colors), and its built-in
+  // default is near-black — unreadable on dark themes. Fall back to the
+  // terminal foreground so selected text stays legible.
+  out.selectionForeground = opaqueTerminalColor(
+    theme.colors["terminal.selection.foreground"] ?? foreground,
+  );
   setTerminalColor(out, "surfaceBackground", terminalBackground);
   setTerminalColor(out, "ansiBackground", terminalAnsiBackground);
   out.brightForeground = opaqueTerminalColor(theme.colors["terminal.bright_foreground"] ?? foreground);

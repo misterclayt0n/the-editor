@@ -29,3 +29,4 @@ onlyBuiltDependencies:
 
 patchedDependencies:
   "@xterm/addon-ligatures@0.11.0-beta.285": "config/patches/@xterm__addon-ligatures@0.11.0-beta.285.patch"
+

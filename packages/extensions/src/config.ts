@@ -24,6 +24,9 @@ import {
   type LoadExtensionPackageOptions,
 } from "./loadModule.js";
 
+/** Terminal emulator engine for the terminal panel. */
+export type TerminalEngineSetting = "xterm" | "ghostty";
+
 export interface EditorConfig {
   /**
    * First-party default package ids to NOT activate. Only swappable defaults
@@ -31,6 +34,15 @@ export interface EditorConfig {
    * ignored by the host with a notice. Order-independent.
    */
   readonly disable?: readonly string[];
+  /** Terminal panel settings. */
+  readonly terminal?: {
+    /**
+     * Emulator engine: `"xterm"` (xterm.js — the default) or `"ghostty"`
+     * (Ghostty's VT emulator in WASM). Project config overrides global.
+     * Applies to terminals opened after the config is read.
+     */
+    readonly engine?: TerminalEngineSetting;
+  };
 }
 
 /** Identity + a typed authoring surface for `~/.the-editor/config.ts`. */
@@ -41,8 +53,18 @@ export function defineConfig(config: EditorConfig): EditorConfig {
 const isEditorConfig = (value: unknown): value is EditorConfig => {
   if (typeof value !== "object" || value === null) return false;
   const disable = (value as { disable?: unknown }).disable;
-  if (disable === undefined) return true;
-  return Array.isArray(disable) && disable.every((entry) => typeof entry === "string");
+  if (disable !== undefined) {
+    if (!Array.isArray(disable) || !disable.every((entry) => typeof entry === "string")) {
+      return false;
+    }
+  }
+  const terminal = (value as { terminal?: unknown }).terminal;
+  if (terminal !== undefined) {
+    if (typeof terminal !== "object" || terminal === null) return false;
+    const engine = (terminal as { engine?: unknown }).engine;
+    if (engine !== undefined && engine !== "xterm" && engine !== "ghostty") return false;
+  }
+  return true;
 };
 
 /**

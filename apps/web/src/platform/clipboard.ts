@@ -1,7 +1,7 @@
 /**
  * ClipboardPort: the renderer seam for native clipboard operations.
- * Terminals need the host bridge because xterm's hidden textarea does not
- * reliably participate in Chromium's default copy/paste pipeline.
+ * Terminals need the host bridge because the terminal's hidden input element
+ * does not reliably participate in Chromium's default copy/paste pipeline.
  */
 
 export type ClipboardTextReadOptions = {

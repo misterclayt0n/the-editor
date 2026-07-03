@@ -1,6 +1,6 @@
-// OSC 52 — "Manipulate Selection Data". xterm.js does not handle this itself;
-// terminals register it so TUIs can copy through SSH/tmux without owning the
-// host clipboard API directly.
+// OSC 52 — "Manipulate Selection Data". The emulator does not own the host
+// clipboard; terminals register a handler for it so TUIs can copy through
+// SSH/tmux without direct clipboard access.
 
 export type Osc52ParseResult =
   | { readonly kind: "write"; readonly selections: string; readonly text: string }

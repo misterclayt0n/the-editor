@@ -3,9 +3,16 @@ import {
   displayGrapheme,
   graphemeSegments,
   offsetAtColumn,
+  type ColumnText,
   type GraphemeWidthFn,
   type RenderableText,
 } from "@the-editor/engine";
+import {
+  virtualTextColumns,
+  wrapIndentColumns,
+  wrapLineBreaks,
+  wrapSegmentBounds,
+} from "./wrap";
 
 export type EditorVisualOwner = string;
 export type TextStyleRun = {
@@ -69,6 +76,10 @@ export type LayoutAnchor<Payload = unknown> =
       readonly kind: "overlay";
       readonly id: string;
       readonly at: number;
+      /** Soft wrap: an offset AT a break normally displays at the start of
+       * the continuation row; "before" pins it to the END of the previous
+       * row instead (click-past-row-end caret affinity). */
+      readonly assoc?: "before" | undefined;
       readonly payload: Payload;
     };
 
@@ -86,6 +97,14 @@ export type ViewportLayoutRequest<Payload = unknown> = {
   readonly visuals?: EditorVisualsSnapshot;
   /** Renderer-measured grapheme grid widths (see GraphemeWidthFn). */
   readonly graphemeWidth?: GraphemeWidthFn | undefined;
+  /** Soft wrap width in visual columns; absent = no wrapping. Row counts
+   * MUST agree with the GeometryModel the renderer built — both derive
+   * from the same wrapLineBreaks. */
+  readonly wrapColumns?: number | undefined;
+  /** The absolute TEXT-row index of `startLine` (wrapped rows above the
+   * window; block-widget rows are accounted separately). Defaults to
+   * `startLine` — correct only when nothing above the window wraps. */
+  readonly startRow?: number | undefined;
 };
 export type LayoutRect = {
   readonly top: number;
@@ -124,6 +143,10 @@ export type LayoutRow =
       readonly top: number;
       readonly left: number;
       readonly height: number;
+      /** Soft wrap: a continuation row of its line (no line number). */
+      readonly continuation?: boolean;
+      /** Soft wrap: hanging-indent columns of a continuation row. */
+      readonly indentCols?: number;
     }
   | {
       readonly kind: "block";
@@ -200,6 +223,9 @@ export type ViewportLayoutSnapshot<Payload = unknown> = {
   readonly blockWidgets: readonly LayoutBlockWidget[];
 };
 export type HitTestBias = "before" | "after" | "nearest";
+/** Soft-wrap context for a hit test: the wrap width and which visual row
+ * (within the resolved line) the y coordinate landed on. */
+export type HitTestWrap = { readonly columns: number; readonly row: number };
 export type HitTestResult = {
   readonly line: number;
   readonly column: number;
@@ -207,6 +233,50 @@ export type HitTestResult = {
 };
 
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+/** A detached string as ColumnText (one wrap segment for column↔offset). */
+const stringText = (s: string): ColumnText =>
+  ({ length: s.length, sliceString: (a: number, b: number) => s.slice(a, b) }) as ColumnText;
+
+/** The shared column→offset resolution (floor/ceil biases, "nearest" by
+ * distance) — runs against a whole line or a single wrap segment. */
+function resolveColumn(
+  text: ColumnText,
+  line: number,
+  rawColumn: number,
+  tabWidth: number,
+  bias: HitTestBias,
+  graphemeWidth: GraphemeWidthFn | undefined,
+): { offset: number; column: number } {
+  const gwArg = graphemeWidth !== undefined ? { graphemeWidth } : {};
+  if (bias === "nearest") {
+    const beforeOffset = offsetAtColumn({
+      text,
+      line,
+      column: Math.floor(rawColumn),
+      tabWidth,
+      bias: "before",
+      ...gwArg,
+    });
+    const afterOffset = offsetAtColumn({
+      text,
+      line,
+      column: Math.ceil(rawColumn),
+      tabWidth,
+      bias: "after",
+      ...gwArg,
+    });
+    const beforeColumn = engineColumnAtOffset({ text, line, offset: beforeOffset, tabWidth, ...gwArg }),
+      afterColumn = engineColumnAtOffset({ text, line, offset: afterOffset, tabWidth, ...gwArg });
+    const offset =
+      Math.abs(rawColumn - beforeColumn) < Math.abs(afterColumn - rawColumn)
+        ? beforeOffset
+        : afterOffset;
+    return { offset, column: offset === beforeOffset ? beforeColumn : afterColumn };
+  }
+  const targetColumn = bias === "before" ? Math.floor(rawColumn) : Math.ceil(rawColumn);
+  const offset = offsetAtColumn({ text, line, column: targetColumn, tabWidth, bias, ...gwArg });
+  return { offset, column: engineColumnAtOffset({ text, line, offset, tabWidth, ...gwArg }) };
+}
 const priority = (x: { readonly priority?: number }) => x.priority ?? 0;
 function lineRange(text: RenderableText, line: number): { from: number; to: number } {
   const r = text.lineRange(line);
@@ -254,17 +324,7 @@ export function stringColumns(
   return column;
 }
 
-/**
- * Visual columns a VIRTUAL text run occupies. Defaults to its length (the
- * historical behavior — inlay hints are overwhelmingly ASCII); a width
- * oracle makes non-ASCII hint labels exact too.
- */
-export function virtualTextColumns(text: string, graphemeWidth?: GraphemeWidthFn): number {
-  if (graphemeWidth === undefined) return text.length;
-  let columns = 0;
-  for (const segment of graphemeSegments(text)) columns += graphemeWidth(segment.text);
-  return columns;
-}
+
 
 /**
  * Extra VISUAL columns contributed by virtual text (inlay hints etc.)
@@ -351,6 +411,94 @@ type Metrics = {
   graphemeWidth?: GraphemeWidthFn | undefined;
 };
 
+/** Soft-wrap info per window line: segment bounds + hanging indent. */
+type WrappedLine = { readonly bounds: readonly number[]; readonly indent: number };
+type WrappedBounds = Map<number, WrappedLine>;
+
+/**
+ * Visual column of `offset` within one wrap segment, measured from the
+ * SEGMENT start — each wrapped row is its own DOM element, so tab stops
+ * and virtual-text columns restart there. A virtual anchored exactly at a
+ * break belongs to the continuation row (the caret at a wrap point sits on
+ * the next visual row, after the hint).
+ */
+function segmentColumn(
+  text: RenderableText,
+  segFrom: number,
+  segTo: number,
+  isLast: boolean,
+  offset: number,
+  m: Metrics,
+  virtuals: readonly VirtualText[] | undefined,
+  /** Hanging indent of THIS segment (0 for a line's first segment). */
+  indent = 0,
+): number {
+  const clamped = Math.max(segFrom, Math.min(offset, segTo));
+  let column =
+    indent + stringColumns(text.sliceString(segFrom, clamped), m.tabWidth, m.graphemeWidth);
+  if (virtuals !== undefined) {
+    for (const vt of virtuals) {
+      const at = clamp(vt.at, 0, text.length);
+      if (at < segFrom || at > segTo || (!isLast && at === segTo)) continue;
+      if (at < clamped || (at === clamped && (vt.affinity ?? "after") === "before")) {
+        column += virtualTextColumns(vt.text, m.graphemeWidth);
+      }
+    }
+  }
+  return column;
+}
+
+/** The wrap segment containing `offset`. An offset exactly AT a break
+ * belongs to the continuation row — unless `assoc` pins it "before"
+ * (click-past-row-end affinity keeps the caret on the row it was aimed at). */
+function wrappedSegmentAt(
+  bounds: readonly number[],
+  offset: number,
+  assoc?: "before",
+): { index: number; from: number; to: number; isLast: boolean } {
+  let index = 0;
+  while (index + 2 < bounds.length && offset >= bounds[index + 1]!) index++;
+  if (assoc === "before" && index > 0 && offset === bounds[index]!) index--;
+  return {
+    index,
+    from: bounds[index]!,
+    to: bounds[index + 1]!,
+    isLast: index + 2 === bounds.length,
+  };
+}
+
+/** Rects for [a, b) on a soft-wrapped line: one per intersected segment. */
+function wrappedRangeRects(
+  text: RenderableText,
+  wrapped: WrappedLine,
+  firstRow: number,
+  a: number,
+  b: number,
+  m: Metrics,
+  virtuals: readonly VirtualText[] | undefined,
+): LayoutRect[] {
+  const bounds = wrapped.bounds;
+  const rects: LayoutRect[] = [];
+  for (let s = 0; s + 1 < bounds.length; s++) {
+    const segFrom = bounds[s]!;
+    const segTo = bounds[s + 1]!;
+    const isLast = s + 2 === bounds.length;
+    const sa = Math.max(a, segFrom);
+    const sb = Math.min(b, segTo);
+    if (sb < sa || (sb === sa && a !== b)) continue;
+    const indent = s > 0 ? wrapped.indent : 0;
+    const colA = segmentColumn(text, segFrom, segTo, isLast, sa, m, virtuals, indent);
+    const colB = segmentColumn(text, segFrom, segTo, isLast, sb, m, virtuals, indent);
+    rects.push({
+      top: rowTop(firstRow + s, m.lineHeight, m.paddingTop),
+      left: m.paddingLeft + colA * m.charWidth,
+      width: Math.max(1, (colB - colA) * m.charWidth),
+      height: m.lineHeight,
+    });
+  }
+  return rects;
+}
+
 /**
  * Total VISUAL columns a laid-out text row occupies: its text (tab-expanded)
  * plus every virtual-text segment on it. Content width, horizontal scroll
@@ -400,6 +548,7 @@ export function hitTestTextPosition(args: {
   /** Virtual text on/near the hit line; clicks inside it land at anchors. */
   readonly virtualText?: readonly VirtualText[];
   readonly graphemeWidth?: GraphemeWidthFn | undefined;
+  readonly wrap?: HitTestWrap | undefined;
 }): HitTestResult {
   const lineHeight = Math.max(Number.EPSILON, args.lineHeight),
     charWidth = Math.max(Number.EPSILON, args.charWidth);
@@ -411,6 +560,58 @@ export function hitTestTextPosition(args: {
   );
   let rawColumn = Math.max(0, (args.x - args.paddingLeft) / charWidth);
   const bias = args.bias ?? "before";
+  if (args.wrap !== undefined) {
+    // Soft wrap: resolve within ONE segment of the line — x is measured
+    // from the segment's start (its own DOM row), never the line's.
+    const range = lineRange(args.text, line);
+    const lineText = args.text.sliceString(range.from, range.to);
+    const breaks = wrapLineBreaks({
+      lineText,
+      wrapColumns: args.wrap.columns,
+      tabWidth: args.tabWidth,
+      graphemeWidth: gw,
+      lineFrom: range.from,
+      virtualText: args.virtualText,
+    });
+    const bounds = wrapSegmentBounds(range.from, range.to, breaks);
+    const segIndex = clamp(args.wrap.row, 0, bounds.length - 2);
+    const segFrom = bounds[segIndex]!;
+    const segTo = bounds[segIndex + 1]!;
+    const isLast = segIndex + 2 === bounds.length;
+    // Continuation rows hang under the line's indent: x starts there.
+    if (segIndex > 0) {
+      rawColumn = Math.max(
+        0,
+        rawColumn - wrapIndentColumns(lineText, args.tabWidth, args.wrap.columns),
+      );
+    }
+    // Virtual strip, segment-relative (same fixed walk as below).
+    {
+      let consumed = 0;
+      for (const vt of lineVirtuals(args.virtualText, args.text, line)) {
+        const at = clamp(vt.at, 0, args.text.length);
+        if (at < segFrom || at > segTo || (!isLast && at === segTo)) continue;
+        const startColumn =
+          stringColumns(args.text.sliceString(segFrom, at), args.tabWidth, gw) + consumed;
+        if (rawColumn < startColumn) break;
+        const width = virtualTextColumns(vt.text, gw);
+        if (rawColumn < startColumn + width) {
+          return { line, column: startColumn - consumed, offset: at };
+        }
+        consumed += width;
+      }
+      rawColumn = Math.max(0, rawColumn - consumed);
+    }
+    const resolved = resolveColumn(
+      stringText(args.text.sliceString(segFrom, segTo)),
+      0,
+      rawColumn,
+      args.tabWidth,
+      bias,
+      gw,
+    );
+    return { line, column: resolved.column, offset: segFrom + resolved.offset };
+  }
   // Strip virtual columns left of x; a hit INSIDE a virtual run resolves
   // to its anchor offset (the caret lands where the hint is attached).
   // The walk stays entirely in VISUAL columns — `consumed` inflates each
@@ -432,41 +633,8 @@ export function hitTestTextPosition(args: {
     }
     rawColumn = Math.max(0, rawColumn - consumed);
   }
-  if (bias === "nearest") {
-    const beforeOffset = offsetAtColumn({
-      text: args.text,
-      line,
-      column: Math.floor(rawColumn),
-      tabWidth: args.tabWidth,
-      bias: "before",
-      ...(gw !== undefined ? { graphemeWidth: gw } : {}),
-    });
-    const afterOffset = offsetAtColumn({
-      text: args.text,
-      line,
-      column: Math.ceil(rawColumn),
-      tabWidth: args.tabWidth,
-      bias: "after",
-      ...(gw !== undefined ? { graphemeWidth: gw } : {}),
-    });
-    const beforeColumn = columnAtOffset(args.text, line, beforeOffset, args.tabWidth, gw),
-      afterColumn = columnAtOffset(args.text, line, afterOffset, args.tabWidth, gw);
-    const offset =
-      Math.abs(rawColumn - beforeColumn) < Math.abs(afterColumn - rawColumn)
-        ? beforeOffset
-        : afterOffset;
-    return { line, column: offset === beforeOffset ? beforeColumn : afterColumn, offset };
-  }
-  const targetColumn = bias === "before" ? Math.floor(rawColumn) : Math.ceil(rawColumn);
-  const offset = offsetAtColumn({
-    text: args.text,
-    line,
-    column: targetColumn,
-    tabWidth: args.tabWidth,
-    bias,
-    ...(gw !== undefined ? { graphemeWidth: gw } : {}),
-  });
-  return { line, column: columnAtOffset(args.text, line, offset, args.tabWidth, gw), offset };
+  const resolved = resolveColumn(args.text, line, rawColumn, args.tabWidth, bias, gw);
+  return { line, column: resolved.column, offset: resolved.offset };
 }
 
 /**
@@ -487,6 +655,7 @@ export function hitTestTextPositionExact(args: {
   readonly tabWidth: number;
   readonly virtualText?: readonly VirtualText[];
   readonly graphemeWidth?: GraphemeWidthFn | undefined;
+  readonly wrap?: HitTestWrap | undefined;
 }): HitTestResult | null {
   const lineHeight = Math.max(Number.EPSILON, args.lineHeight),
     charWidth = Math.max(Number.EPSILON, args.charWidth);
@@ -495,6 +664,36 @@ export function hitTestTextPositionExact(args: {
   const rawColumn = (args.x - args.paddingLeft) / charWidth;
   if (rawColumn < -0.5) return null;
   const range = lineRange(args.text, rawLine);
+  if (args.wrap !== undefined) {
+    // Soft wrap: "past the text" is judged against THIS visual row only.
+    const lineText = args.text.sliceString(range.from, range.to);
+    const breaks = wrapLineBreaks({
+      lineText,
+      wrapColumns: args.wrap.columns,
+      tabWidth: args.tabWidth,
+      graphemeWidth: args.graphemeWidth,
+      lineFrom: range.from,
+      virtualText: args.virtualText,
+    });
+    const bounds = wrapSegmentBounds(range.from, range.to, breaks);
+    const segIndex = Math.max(0, Math.min(args.wrap.row, bounds.length - 2));
+    const segFrom = bounds[segIndex]!;
+    const segTo = bounds[segIndex + 1]!;
+    const isLast = segIndex + 2 === bounds.length;
+    const indent =
+      segIndex > 0 ? wrapIndentColumns(lineText, args.tabWidth, args.wrap.columns) : 0;
+    const segVirtualCols = lineVirtuals(args.virtualText, args.text, rawLine).reduce((n, vt) => {
+      const at = clamp(vt.at, 0, args.text.length);
+      if (at < segFrom || at > segTo || (!isLast && at === segTo)) return n;
+      return n + virtualTextColumns(vt.text, args.graphemeWidth);
+    }, 0);
+    const maxColumn =
+      indent +
+      stringColumns(args.text.sliceString(segFrom, segTo), args.tabWidth, args.graphemeWidth) +
+      segVirtualCols;
+    if (rawColumn > maxColumn + 0.5) return null;
+    return hitTestTextPosition({ ...args, bias: "nearest" });
+  }
   const virtualCols = lineVirtuals(args.virtualText, args.text, rawLine).reduce(
     (n, vt) => n + virtualTextColumns(vt.text, args.graphemeWidth),
     0,
@@ -643,7 +842,7 @@ export function layoutViewport<Payload = unknown>(
   // hitTestTextPosition), so the renderer can place viewport rows directly
   // without knowing what lies outside the window. Block rows that sit entirely
   // above the window shift the whole window down.
-  let row = start;
+  let row = request.startRow ?? start;
   // Blocks above the window shift it down. A "leading" block (afterLine < 0)
   // belongs before the first line: at the very top it is EMITTED as the first
   // row(s); off the top of the window it only contributes its height.
@@ -664,30 +863,80 @@ export function layoutViewport<Payload = unknown>(
     }
     row += b.heightRows;
   }
+  // Soft wrap: each window line's segment bounds, shared by rects/overlays.
+  const wrappedBounds: WrappedBounds | null = request.wrapColumns !== undefined ? new Map() : null;
   for (let line = start; line < end; line++) {
     const r = request.text.lineRange(line),
       rowText = request.text.sliceString(r.from, r.to);
     lineToRow.set(line, row);
-    rows.push({
-      kind: "text",
-      row,
-      line,
-      from: r.from,
-      to: r.to,
-      text: rowText,
-      segments: styleSegments(
-        request.text,
-        r.from,
-        r.to,
-        rowText,
-        visuals.textStyles,
-        visuals.virtualText,
-      ),
-      top: rowTop(row, m.lineHeight, m.paddingTop),
-      left: m.paddingLeft,
-      height: m.lineHeight,
-    });
-    row++;
+    if (wrappedBounds !== null) {
+      const breaks = wrapLineBreaks({
+        lineText: rowText,
+        wrapColumns: request.wrapColumns!,
+        tabWidth: m.tabWidth,
+        graphemeWidth: m.graphemeWidth,
+        lineFrom: r.from,
+        virtualText: visuals.virtualText,
+      });
+      const bounds = wrapSegmentBounds(r.from, r.to, breaks);
+      const indent =
+        breaks.length > 0 ? wrapIndentColumns(rowText, m.tabWidth, request.wrapColumns!) : 0;
+      wrappedBounds.set(line, { bounds, indent });
+      for (let s = 0; s + 1 < bounds.length; s++) {
+        const segFrom = bounds[s]!;
+        const segTo = bounds[s + 1]!;
+        const isLast = s + 2 === bounds.length;
+        // A virtual anchored exactly at a break renders once, on the
+        // continuation row (where its anchor's caret sits).
+        const segVirtuals = visuals.virtualText?.filter((vt) => {
+          const at = clamp(vt.at, 0, request.text.length);
+          return at >= segFrom && (isLast ? at <= segTo : at < segTo);
+        });
+        rows.push({
+          kind: "text",
+          row,
+          line,
+          from: segFrom,
+          to: segTo,
+          text: rowText.slice(segFrom - r.from, segTo - r.from),
+          segments: styleSegments(
+            request.text,
+            segFrom,
+            segTo,
+            rowText.slice(segFrom - r.from, segTo - r.from),
+            visuals.textStyles,
+            segVirtuals,
+          ),
+          top: rowTop(row, m.lineHeight, m.paddingTop),
+          left: m.paddingLeft,
+          height: m.lineHeight,
+          ...(s > 0 ? { continuation: true } : {}),
+          ...(s > 0 && indent > 0 ? { indentCols: indent } : {}),
+        });
+        row++;
+      }
+    } else {
+      rows.push({
+        kind: "text",
+        row,
+        line,
+        from: r.from,
+        to: r.to,
+        text: rowText,
+        segments: styleSegments(
+          request.text,
+          r.from,
+          r.to,
+          rowText,
+          visuals.textStyles,
+          visuals.virtualText,
+        ),
+        top: rowTop(row, m.lineHeight, m.paddingTop),
+        left: m.paddingLeft,
+        height: m.lineHeight,
+      });
+      row++;
+    }
     for (const b of blockItems)
       if (b.afterLine === line) {
         if (b.type === "anchor") blockRowById.set(b.id, row);
@@ -739,18 +988,36 @@ export function layoutViewport<Payload = unknown>(
         line = lineIndexAtOffset(request.text, at),
         row = lineToRow.get(line);
       if (row !== undefined) {
-        const column =
-          columnAtOffset(request.text, line, at, m.tabWidth, m.graphemeWidth) +
-          virtualColsBefore(visuals.virtualText, request.text, line, at, m.graphemeWidth);
+        const wrapped = wrappedBounds?.get(line);
+        let visualRow = row;
+        let column: number;
+        if (wrapped !== undefined) {
+          const seg = wrappedSegmentAt(wrapped.bounds, at, anchor.assoc);
+          visualRow = row + seg.index;
+          column = segmentColumn(
+            request.text,
+            seg.from,
+            seg.to,
+            seg.isLast,
+            at,
+            m,
+            visuals.virtualText,
+            seg.index > 0 ? wrapped.indent : 0,
+          );
+        } else {
+          column =
+            columnAtOffset(request.text, line, at, m.tabWidth, m.graphemeWidth) +
+            virtualColsBefore(visuals.virtualText, request.text, line, at, m.graphemeWidth);
+        }
         placements.push({
           kind: "overlay",
           id: anchor.id,
-          row,
+          row: visualRow,
           line,
           at,
           column,
           rect: {
-            top: rowTop(row, m.lineHeight, m.paddingTop),
+            top: rowTop(visualRow, m.lineHeight, m.paddingTop),
             left: m.paddingLeft + column * m.charWidth,
             width: 1,
             height: m.lineHeight,
@@ -759,7 +1026,17 @@ export function layoutViewport<Payload = unknown>(
         });
       }
     } else {
-      addRangePlacement(request.text, start, end, lineToRow, m, anchor, placements, visuals.virtualText);
+      addRangePlacement(
+        request.text,
+        start,
+        end,
+        lineToRow,
+        m,
+        anchor,
+        placements,
+        visuals.virtualText,
+        wrappedBounds,
+      );
     }
   }
   const decorations = layoutDecorations(
@@ -770,6 +1047,7 @@ export function layoutViewport<Payload = unknown>(
     m,
     visuals.rangeDecorations ?? [],
     visuals.virtualText,
+    wrappedBounds,
   );
   const blockWidgets = (visuals.blockWidgets ?? []).flatMap((w): LayoutBlockWidget[] => {
     const row = widgetByRow.get(w.id);
@@ -810,6 +1088,7 @@ function addRangePlacement<Payload>(
   anchor: Extract<LayoutAnchor<Payload>, { kind: "range" }>,
   out: LayoutPlacement<Payload>[],
   virtuals?: readonly VirtualText[],
+  wrapped?: WrappedBounds | null,
 ) {
   const range = normalizeRange(anchor.from, anchor.to, text.length);
   if (!range) return;
@@ -822,6 +1101,42 @@ function addRangePlacement<Payload>(
       a = Math.max(range.from, lr.from),
       b = Math.min(range.to, lr.to);
     if (b < a) continue;
+    const wrappedLine = wrapped?.get(line);
+    if (wrappedLine !== undefined) {
+      const segA = wrappedSegmentAt(wrappedLine.bounds, a);
+      const segB = wrappedSegmentAt(wrappedLine.bounds, Math.max(a, b - 1));
+      out.push({
+        kind: "range",
+        id: anchor.id,
+        row: row + segA.index,
+        line,
+        from: a,
+        to: b,
+        columnStart: segmentColumn(
+          text,
+          segA.from,
+          segA.to,
+          segA.isLast,
+          a,
+          m,
+          virtuals,
+          segA.index > 0 ? wrappedLine.indent : 0,
+        ),
+        columnEnd: segmentColumn(
+          text,
+          segB.from,
+          segB.to,
+          segB.isLast,
+          b,
+          m,
+          virtuals,
+          segB.index > 0 ? wrappedLine.indent : 0,
+        ),
+        rects: wrappedRangeRects(text, wrappedLine, row, a, b, m, virtuals),
+        payload: anchor.payload,
+      });
+      continue;
+    }
     const columnStart =
         columnAtOffset(text, line, a, m.tabWidth, m.graphemeWidth) +
         virtualColsBefore(virtuals, text, line, a, m.graphemeWidth),
@@ -850,6 +1165,7 @@ function layoutDecorations(
   m: Metrics,
   decorations: readonly RangeDecoration[],
   virtuals: readonly VirtualText[] | undefined,
+  wrapped?: WrappedBounds | null,
 ): readonly LayoutDecoration[] {
   const layerOrder: Record<DecorationLayer, number> = { background: 0, underline: 1, outline: 2 };
   return decorations
@@ -865,7 +1181,13 @@ function layoutDecorations(
         const lr = lineRange(text, line),
           a = Math.max(range.from, lr.from),
           b = Math.min(range.to, lr.to);
-        if (b >= a) rects.push(rectForLine(text, line, row, a, b, m, virtuals));
+        if (b < a) continue;
+        const wrappedLine = wrapped?.get(line);
+        if (wrappedLine !== undefined) {
+          rects.push(...wrappedRangeRects(text, wrappedLine, row, a, b, m, virtuals));
+        } else {
+          rects.push(rectForLine(text, line, row, a, b, m, virtuals));
+        }
       }
       return rects.length
         ? [

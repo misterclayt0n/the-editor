@@ -566,6 +566,7 @@ describe("makeUserExtensionsPackage", () => {
             nextTab: () => {},
             previousTab: () => {},
             toggleTabs: () => {},
+            toggleSoftWrap: () => {},
           }),
           Layer.succeed(Picker, makePicker(makePickerController())),
           Layer.succeed(LspOperations, {

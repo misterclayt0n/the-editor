@@ -855,3 +855,167 @@ describe("measured grapheme widths", () => {
     expect(rowVisualColumns(row, 4, width)).toBe(16); // 15 chars + 1 extra dash cell
   });
 });
+
+describe("soft wrap layout", () => {
+  const m = { tabWidth: 4, lineHeight: 20, charWidth: 8, paddingTop: 0, paddingLeft: 0 };
+  // "aaa bbb ccc" wraps at 6 into "aaa " | "bbb " | "ccc" (breaks 4, 8).
+  const text = TextBuffer.fromString("aaa bbb ccc\nend\n");
+
+  test("wrapped lines emit one row per segment; rows after them shift", () => {
+    const layout = layoutViewport({
+      text,
+      version: 0,
+      startLine: 0,
+      lineCount: 2,
+      ...m,
+      wrapColumns: 6,
+    });
+    const rows = layout.rows.filter((r) => r.kind === "text");
+    expect(rows.map((r) => [r.line, r.text, r.top])).toEqual([
+      [0, "aaa ", 0],
+      [0, "bbb ", 20],
+      [0, "ccc", 40],
+      [1, "end", 60],
+    ]);
+    expect(rows.map((r) => (r as { continuation?: boolean }).continuation === true)).toEqual([
+      false,
+      true,
+      true,
+      false,
+    ]);
+  });
+
+  test("a selection across wrap rows produces one rect per segment", () => {
+    const layout = layoutViewport({
+      text,
+      version: 0,
+      startLine: 0,
+      lineCount: 1,
+      ...m,
+      wrapColumns: 6,
+      anchors: [{ kind: "range", id: "sel", from: 2, to: 9, payload: null }],
+    });
+    const range = layout.placements.find((p) => p.kind === "range") as {
+      rects: ReadonlyArray<{ top: number; left: number; width: number }>;
+    };
+    // "a|a " tail of row 0, all of "bbb " on row 1, "c" head of row 2.
+    expect(range.rects).toEqual([
+      { top: 0, left: 2 * 8, width: 2 * 8, height: 20 },
+      { top: 20, left: 0, width: 4 * 8, height: 20 },
+      { top: 40, left: 0, width: 1 * 8, height: 20 },
+    ]);
+  });
+
+  test("the caret at a break lands at the continuation row start", () => {
+    const layout = layoutViewport({
+      text,
+      version: 0,
+      startLine: 0,
+      lineCount: 1,
+      ...m,
+      wrapColumns: 6,
+      anchors: [
+        { kind: "overlay", id: "at-break", at: 4, payload: null },
+        { kind: "overlay", id: "mid-row2", at: 9, payload: null },
+      ],
+    });
+    const byId = new Map(layout.placements.map((p) => [p.id, p] as const));
+    const atBreak = byId.get("at-break") as { rect: { top: number; left: number } };
+    expect(atBreak.rect).toMatchObject({ top: 20, left: 0 });
+    const mid = byId.get("mid-row2") as { rect: { top: number; left: number } };
+    expect(mid.rect).toMatchObject({ top: 40, left: 1 * 8 });
+  });
+
+  test("hit tests resolve x within the requested wrap row", () => {
+    const base = {
+      text,
+      y: 1,
+      lineHeight: 20,
+      charWidth: 8,
+      paddingLeft: 0,
+      paddingTop: 0,
+      tabWidth: 4,
+      bias: "nearest" as const,
+    };
+    // Row 1 ("bbb "), x at col 2 → offset 6.
+    expect(
+      hitTestTextPosition({ ...base, x: 2 * 8, wrap: { columns: 6, row: 1 } }).offset,
+    ).toBe(6);
+    // Row 2 ("ccc"), x at col 1 → offset 9.
+    expect(
+      hitTestTextPosition({ ...base, x: 1 * 8, wrap: { columns: 6, row: 2 } }).offset,
+    ).toBe(9);
+    // Exact: past row 1's four columns is a miss, not a clamp.
+    expect(hitTestTextPositionExact({ ...base, x: 10 * 8, wrap: { columns: 6, row: 1 } })).toBeNull();
+    expect(
+      hitTestTextPositionExact({ ...base, x: 3 * 8, wrap: { columns: 6, row: 1 } })?.offset,
+    ).toBe(7);
+  });
+});
+
+describe("soft wrap window origin and affinity", () => {
+  const m = { tabWidth: 4, lineHeight: 20, charWidth: 8, paddingTop: 0, paddingLeft: 0 };
+  const text = TextBuffer.fromString("aaa bbb ccc\nend\n");
+
+  test("startRow anchors absolute tops to the wrapped rows above the window", () => {
+    // Line 0 wraps to 3 rows; a window starting at line 1 must sit at row 3.
+    const layout = layoutViewport({
+      text,
+      version: 0,
+      startLine: 1,
+      lineCount: 1,
+      ...m,
+      wrapColumns: 6,
+      startRow: 3,
+      anchors: [{ kind: "overlay", id: "caret", at: 13, payload: null }],
+    });
+    expect(layout.rows[0]!.top).toBe(3 * 20);
+    const caret = layout.placements[0] as { rect: { top: number } };
+    expect(caret.rect.top).toBe(3 * 20);
+  });
+
+  test("assoc 'before' pins a break-offset caret to the previous row's end", () => {
+    const layout = layoutViewport({
+      text,
+      version: 0,
+      startLine: 0,
+      lineCount: 1,
+      ...m,
+      wrapColumns: 6,
+      anchors: [
+        { kind: "overlay", id: "pinned", at: 4, assoc: "before", payload: null },
+        { kind: "overlay", id: "free", at: 4, payload: null },
+      ],
+    });
+    const byId = new Map(layout.placements.map((p) => [p.id, p] as const));
+    // Pinned: end of row 0 ("aaa " = 4 columns). Free: start of row 1.
+    expect((byId.get("pinned") as { rect: { top: number; left: number } }).rect).toMatchObject({
+      top: 0,
+      left: 4 * 8,
+    });
+    expect((byId.get("free") as { rect: { top: number; left: number } }).rect).toMatchObject({
+      top: 20,
+      left: 0,
+    });
+  });
+
+  test("continuation rows carry the hanging indent in DOM and rects", () => {
+    // "  aaa bbb" at width 6: "  aaa " | "bbb" hanging at indent 2.
+    const indented = TextBuffer.fromString("  aaa bbb\n");
+    const layout = layoutViewport({
+      text: indented,
+      version: 0,
+      startLine: 0,
+      lineCount: 1,
+      ...m,
+      wrapColumns: 6,
+      anchors: [{ kind: "range", id: "word", from: 6, to: 9, payload: null }],
+    });
+    const rows = layout.rows.filter((r) => r.kind === "text");
+    expect((rows[1] as { indentCols?: number }).indentCols).toBe(2);
+    const range = layout.placements.find((p) => p.kind === "range") as {
+      rects: ReadonlyArray<{ top: number; left: number }>;
+    };
+    expect(range.rects[0]).toMatchObject({ top: 20, left: 2 * 8 });
+  });
+});

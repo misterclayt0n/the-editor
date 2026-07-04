@@ -75,6 +75,8 @@ const rangeMapOptions = { startAssoc: "before", endAssoc: "after" } as const;
 export interface MultiBufferHost {
   subscribeTheme(listener: () => void): () => void;
   subscribeFont(listener: () => void): () => void;
+  wrapEnabled(): boolean;
+  subscribeWrap(listener: () => void): () => void;
   jumpToLocation(path: string, position: lsp.Position): Promise<void>;
   /** Commit edits to a source document; returns its change + new buffer. */
   commitDocumentEdits(
@@ -206,6 +208,18 @@ export class MultiBufferPane implements PaneHost {
   subscribeFont(listener: () => void): () => void {
     return this.host.subscribeFont(listener);
   }
+
+  wrapEnabled(): boolean {
+    return this.host.wrapEnabled();
+  }
+
+  subscribeWrap(listener: () => void): () => void {
+    return this.host.subscribeWrap(listener);
+  }
+
+  /** Multibuffer movement is intrinsic (not command-driven); nothing reads
+   * the published wrap display here yet. */
+  setWrapDisplay(): void {}
 
   /** Resolve a unified offset to the underlying source document + offset. The
    * common ground for LSP/intel: the IntelController treats this exactly like a

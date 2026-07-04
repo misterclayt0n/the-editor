@@ -35,6 +35,21 @@ import { mapOffsetThroughChanges, ViewDocumentSync } from "./commit";
 import { MountHub, ViewMountHub } from "./mounts";
 import { FloatHub, ViewFloatHub } from "./floats";
 import { makeInteractionHub, ViewInteraction } from "./interaction";
+import type { WrapDisplay } from "./wrap";
+
+/**
+ * The view's soft-wrap display state: WRITTEN by the renderer every time
+ * its wrap width changes, READ by wrap-aware commands (vertical caret
+ * movement moves by VISUAL rows). The renderer owns the truth; this cell
+ * is its per-view mirror — null while wrap is off or nothing rendered yet.
+ */
+export class ViewWrapDisplay extends Context.Tag("@the-editor/editor/ViewWrapDisplay")<
+  ViewWrapDisplay,
+  {
+    readonly get: () => WrapDisplay | null;
+    readonly set: (display: WrapDisplay | null) => void;
+  }
+>() {}
 
 let nextViewId = 1;
 
@@ -98,9 +113,17 @@ export function makeViewScope(
     const mounts = input.mounts ?? new MountHub();
     const floats = input.floats ?? new FloatHub();
     const hub = makeInteractionHub();
+    let wrapDisplay: WrapDisplay | null = null;
+    const wrapDisplayCell = {
+      get: () => wrapDisplay,
+      set: (display: WrapDisplay | null) => {
+        wrapDisplay = display;
+      },
+    };
 
     const context = documentContext.pipe(
       Context.add(ActiveEditorScopeId, id),
+      Context.add(ViewWrapDisplay, wrapDisplayCell),
       Context.add(ViewMountHub, mounts),
       Context.add(ViewFloatHub, floats),
       Context.add(ViewInteraction, hub),

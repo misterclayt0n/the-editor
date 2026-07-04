@@ -44,6 +44,9 @@ import {
   stringColumns,
   virtualColsBefore,
   virtualTextColumns,
+  wrapIndentColumns,
+  wrapLineBreaks,
+  wrapRowOfOffset,
   payloadsOf,
   SelectionInvalidated,
   FileSyncInvalidated,
@@ -190,7 +193,13 @@ function renderRowContent(
   el: HTMLDivElement,
   segments: readonly LayoutInlineSegment[],
   metrics: GraphemeMetrics | null,
+  /** Soft wrap: hanging indent of a continuation row, in ch. */
+  indentCols = 0,
 ): void {
+  // ch === the '0' advance === charWidth: the DOM indent and the layout's
+  // column math agree by definition.
+  el.style.paddingLeft =
+    indentCols > 0 ? `calc(var(--editor-text-origin-x, 12px) + ${indentCols}ch)` : "";
   if (segments.length === 1) {
     const only = segments[0]!;
     if (
@@ -247,6 +256,7 @@ export class EditorRenderer {
   private readonly unsubscribeFloats: () => void;
   private readonly unsubscribeTheme: () => void;
   private readonly unsubscribeFont: () => void;
+  private readonly unsubscribeWrap: () => void;
   private readonly renderPass = () => this.render();
   /** Active mouse selection: the fixed "anchor unit" and the click mode. The
    * anchor is a single offset for char mode, or the clicked word/line range
@@ -325,9 +335,11 @@ export class EditorRenderer {
   /** Pixel → document offset, clamped to a valid position ("nearest" bias). */
   private offsetAt(clientX: number, clientY: number): number {
     const rect = this.viewport.getBoundingClientRect();
-    // Vertical geometry goes through the model (widget-aware); the column
-    // resolver gets a synthetic widget-less y for the resolved line.
-    const line = this.geometry.lineAt(clientY - rect.top + this.scrollY);
+    // Vertical geometry goes through the model (widget/wrap-aware); the
+    // column resolver gets a synthetic widget-less y for the resolved line.
+    const contentY = clientY - rect.top + this.scrollY;
+    const line = this.geometry.lineAt(contentY);
+    const wrap = this.wrapHitContext(line, contentY);
     const hit = hitTestTextPosition({
       text: this.snapshot.text,
       x: clientX - rect.left + this.scrollX,
@@ -340,7 +352,36 @@ export class EditorRenderer {
       bias: "nearest",
       virtualText: this.lineVirtuals(line),
       graphemeWidth: this.graphemeMetrics?.width,
+      wrap,
     });
+    // Wrap-break caret affinity: clicking past the END of a wrapped row
+    // resolves to the break offset, which normally DISPLAYS at the start
+    // of the next visual row — a jarring one-row jump. Pin its display to
+    // the row the user actually aimed at.
+    let assoc: { readonly offset: number } | null = null;
+    if (wrap !== undefined) {
+      const lineRange = this.snapshot.text.lineRange(line);
+      const breaks = wrapLineBreaks({
+        lineText: this.snapshot.text.sliceString(lineRange.from, lineRange.to),
+        wrapColumns: wrap.columns,
+        tabWidth: TAB_WIDTH,
+        graphemeWidth: this.graphemeMetrics?.width,
+        lineFrom: lineRange.from,
+        virtualText: this.lineVirtuals(line),
+      });
+      if (
+        wrap.row < breaks.length &&
+        hit.offset === lineRange.from + breaks[wrap.row]! &&
+        wrapRowOfOffset(breaks, hit.offset - lineRange.from) > wrap.row
+      ) {
+        assoc = { offset: hit.offset };
+      }
+    }
+    if ((assoc?.offset ?? null) !== (this.caretAssoc?.offset ?? null)) {
+      this.caretAssoc = assoc;
+      this.overlaysDirty = true;
+      queueRender(this.renderPass);
+    }
     return hit.offset;
   }
 
@@ -460,7 +501,10 @@ export class EditorRenderer {
       const contentY = y - rect.top + this.scrollY;
       const line = this.geometry.lineAt(contentY);
       const lineTop = this.geometry.lineTop(line);
-      if (contentY < lineTop || contentY >= lineTop + LINE_HEIGHT) {
+      if (
+        contentY < lineTop ||
+        contentY >= lineTop + this.geometry.lineRows(line) * LINE_HEIGHT
+      ) {
         this.runtime.dispatch.pointerHover(null);
         return;
       }
@@ -475,6 +519,7 @@ export class EditorRenderer {
         tabWidth: TAB_WIDTH,
         virtualText: this.lineVirtuals(line),
         graphemeWidth: this.graphemeMetrics?.width,
+        wrap: this.wrapHitContext(line, contentY),
       });
       this.runtime.dispatch.pointerHover(hit?.offset ?? null);
     });
@@ -537,6 +582,17 @@ export class EditorRenderer {
   private snapshot: EditorSnapshot;
   /** Measured grid widths for non-ASCII graphemes (null: engine defaults). */
   private graphemeMetrics: GraphemeMetrics | null = null;
+  /** Soft wrap: the width every wrapped consumer used this frame (undefined
+   *  = wrap off), the per-line row counts behind the GeometryModel, and the
+   *  width they were computed for. */
+  private wrapColumnsActive: number | undefined = undefined;
+  private wrapRowsPerLine: number[] | null = null;
+  private wrapColsCached = -1;
+  /** Sticky display side for a caret sitting exactly ON a wrap break: set
+   *  when a click past a row's end resolved to the break offset, so the
+   *  caret renders at the END of the clicked row instead of jumping to the
+   *  continuation row's start. Cleared on edits or when the caret moves. */
+  private caretAssoc: { readonly offset: number } | null = null;
   private visuals: VisualsSnapshot | null = null;
   private widgets: AnchoredBlockWidget[] = [];
   private geometry: GeometryModel;
@@ -704,9 +760,17 @@ export class EditorRenderer {
         this.measureCharWidth();
         this.visualsDirty = true;
         this.pendingVisualChanges = null;
+        this.wrapRowsPerLine = null; // widths changed: re-wrap
         this.overlaysDirty = true;
         queueRender(this.renderPass);
       });
+    });
+    this.unsubscribeWrap = runtime.subscribeWrap(() => {
+      this.wrapRowsPerLine = null;
+      this.visualsDirty = true;
+      this.pendingVisualChanges = null;
+      this.overlaysDirty = true;
+      queueRender(this.renderPass);
     });
 
     queueRender(this.renderPass);
@@ -723,6 +787,7 @@ export class EditorRenderer {
     this.unsubscribeHighlights();
     this.unsubscribeTheme();
     this.unsubscribeFont();
+    this.unsubscribeWrap();
     this.unsubscribeFloats();
     if (this.hoverRaf !== 0) cancelAnimationFrame(this.hoverRaf);
     this.handleDragEnd(); // drop any in-flight selection drag + window listeners
@@ -761,21 +826,44 @@ export class EditorRenderer {
       const lineRange = text.lineRangeAt(offset);
       // Virtual text left of the anchor shifts it right like any other
       // column — a completion popup under `foo(hint: bar▌` must sit under
-      // the caret's VISUAL x, not the raw text column.
+      // the caret's VISUAL x, not the raw text column. Under soft wrap the
+      // anchor's row and column are segment-relative.
+      let segFrom = lineRange.from;
+      let wrapRow = 0;
+      let wrapIndent = 0;
+      if (this.wrapColumnsActive !== undefined) {
+        const lineText = text.sliceString(lineRange.from, lineRange.to);
+        const breaks = wrapLineBreaks({
+          lineText,
+          wrapColumns: this.wrapColumnsActive,
+          tabWidth: TAB_WIDTH,
+          graphemeWidth: this.graphemeMetrics?.width,
+          lineFrom: lineRange.from,
+          virtualText: this.lineVirtuals(lineRange.index),
+        });
+        wrapRow = wrapRowOfOffset(breaks, offset - lineRange.from);
+        if (wrapRow > 0) {
+          segFrom = lineRange.from + breaks[wrapRow - 1]!;
+          wrapIndent = wrapIndentColumns(lineText, TAB_WIDTH, this.wrapColumnsActive);
+        }
+      }
       const column =
+        wrapIndent +
         stringColumns(
-          text.sliceString(lineRange.from, offset),
+          text.sliceString(segFrom, offset),
           TAB_WIDTH,
           this.graphemeMetrics?.width,
         ) +
-        virtualColsBefore(
-          this.lineVirtuals(lineRange.index),
-          text,
-          lineRange.index,
-          offset,
-          this.graphemeMetrics?.width,
-        );
-      const lineTop = this.geometry.lineTop(lineRange.index) - this.scrollY;
+        this.lineVirtuals(lineRange.index).reduce((n, vt) => {
+          const at = Math.max(0, Math.min(vt.at, text.length));
+          if (at < segFrom || at > offset) return n;
+          if (at < offset || (vt.affinity ?? "after") === "before") {
+            return n + virtualTextColumns(vt.text, this.graphemeMetrics?.width);
+          }
+          return n;
+        }, 0);
+      const lineTop =
+        this.geometry.lineTop(lineRange.index) + wrapRow * LINE_HEIGHT - this.scrollY;
       let left = this.textOriginX + column * this.charWidth - this.scrollX;
       const height = entry.element.offsetHeight;
       const width = entry.element.offsetWidth;
@@ -812,6 +900,102 @@ export class EditorRenderer {
     const text = this.snapshot.text;
     const range = text.lineRange(Math.max(0, Math.min(line, text.lineCount - 1)));
     return this.visuals.virtualTextBetween(range.from, range.to);
+  }
+
+  /**
+   * Soft wrap row count for ONE line, with the SAME inputs the layout uses
+   * (measured widths, inlay hints occupying columns). The fast path skips
+   * measuring lines that cannot possibly wrap: no hints, and every grapheme
+   * ≤ TAB_WIDTH cells (tabs expand ≤ TAB_WIDTH).
+   */
+  private wrapRowsFor(text: RenderableText, line: number, wrapColumns: number): number {
+    const range = text.lineRange(line);
+    const virtuals = this.visuals?.virtualTextBetween(range.from, range.to) ?? [];
+    if (virtuals.length === 0 && (range.to - range.from) * TAB_WIDTH <= wrapColumns) return 1;
+    return (
+      wrapLineBreaks({
+        lineText: text.sliceString(range.from, range.to),
+        wrapColumns,
+        tabWidth: TAB_WIDTH,
+        graphemeWidth: this.graphemeMetrics?.width,
+        lineFrom: range.from,
+        virtualText: virtuals,
+      }).length + 1
+    );
+  }
+
+  /** Row counts for EVERY line — the GeometryModel's vertical truth. Hints
+   * are fetched once for the whole document and bucketed by line (they are
+   * few; lines are many). */
+  private computeWrapRows(text: RenderableText, wrapColumns: number): number[] {
+    const allVirtuals = (this.visuals?.virtualTextBetween(0, text.length) ?? [])
+      .slice()
+      .sort((a, b) => a.at - b.at);
+    let cursor = 0;
+    const rows = new Array<number>(text.lineCount);
+    for (let line = 0; line < text.lineCount; line++) {
+      const range = text.lineRange(line);
+      const lineVirtuals: typeof allVirtuals = [];
+      while (cursor < allVirtuals.length && allVirtuals[cursor]!.at <= range.to) {
+        if (allVirtuals[cursor]!.at >= range.from) lineVirtuals.push(allVirtuals[cursor]!);
+        cursor++;
+      }
+      if (lineVirtuals.length === 0 && (range.to - range.from) * TAB_WIDTH <= wrapColumns) {
+        rows[line] = 1;
+        continue;
+      }
+      const breaks = wrapLineBreaks({
+        lineText: text.sliceString(range.from, range.to),
+        wrapColumns,
+        tabWidth: TAB_WIDTH,
+        graphemeWidth: this.graphemeMetrics?.width,
+        lineFrom: range.from,
+        virtualText: lineVirtuals,
+      });
+      rows[line] = breaks.length + 1;
+    }
+    return rows;
+  }
+
+  /** Splice cached row counts through ONE simple edit (the typing hot
+   * path); null when the batch shape can't be spliced safely. */
+  private spliceWrapRows(
+    prev: number[],
+    text: RenderableText,
+    wrapColumns: number,
+    changeSets: DocumentChangeRange[][] | null,
+  ): number[] | null {
+    if (changeSets === null || changeSets.length !== 1 || changeSets[0]!.length !== 1) return null;
+    const change = changeSets[0]![0]!;
+    const delta = text.lineCount - prev.length;
+    const startLine = text.lineRangeAt(Math.min(change.fromB, text.length)).index;
+    const endLine = text.lineRangeAt(Math.min(change.toB, text.length)).index;
+    const removed = endLine - startLine + 1 - delta;
+    if (removed < 0 || startLine + removed > prev.length) return null;
+    const fresh: number[] = [];
+    for (let line = startLine; line <= endLine; line++) {
+      fresh.push(this.wrapRowsFor(text, line, wrapColumns));
+    }
+    const next = prev.slice();
+    next.splice(startLine, removed, ...fresh);
+    return next;
+  }
+
+  /** Hit-test wrap context for a content-space y on `line` (undefined when
+   * wrap is off): which visual row of the line the y falls on. */
+  private wrapHitContext(
+    line: number,
+    contentY: number,
+  ): { columns: number; row: number } | undefined {
+    if (this.wrapColumnsActive === undefined) return undefined;
+    const row = Math.max(
+      0,
+      Math.min(
+        this.geometry.lineRows(line) - 1,
+        Math.floor((contentY - this.geometry.lineTop(line)) / LINE_HEIGHT),
+      ),
+    );
+    return { columns: this.wrapColumnsActive, row };
   }
 
   private measureCharWidth(): void {
@@ -988,15 +1172,87 @@ export class EditorRenderer {
     // that has its colors (synchronous, in-process — no flash possible).
     this.runtime.highlights?.ensureSynced(version, changeSets);
 
-    if (this.visuals === null || visualsDirty || docDirty) {
+    const rebuildBase = this.visuals === null || visualsDirty || docDirty;
+    if (rebuildBase) {
       this.visuals = this.runtime.visualsSnapshot();
       this.widgets = this.visuals.widgets(text);
-      this.geometry = new GeometryModel(lineCount, LINE_HEIGHT, PADDING_TOP, this.widgets);
       this.resolveBands();
     }
-    this.contentHeightPx = this.geometry.contentHeight();
     this.viewportHeight = this.viewport.clientHeight;
     this.viewportWidth = this.viewport.clientWidth;
+    // Soft wrap: the width derives from the live viewport (minus gutter
+    // bands); any change re-wraps and rebuilds vertical geometry — the
+    // GeometryModel and the layout MUST agree on rows per line.
+    const wrapCols = this.runtime.wrapEnabled()
+      ? Math.max(20, Math.floor((this.viewportWidth - this.textOriginX - 12) / this.charWidth))
+      : undefined;
+    const wrapChanged = (wrapCols ?? -1) !== this.wrapColsCached;
+    this.wrapColsCached = wrapCols ?? -1;
+    this.wrapColumnsActive = wrapCols;
+    if (rebuildBase || wrapChanged) {
+      if (wrapCols === undefined) {
+        this.wrapRowsPerLine = null;
+      } else {
+        // Incremental re-wrap: the typing hot path splices only the edited
+        // lines; hint pushes re-wrap only their invalidated lines; anything
+        // unsplicable (width change, multi-range batches, dropped ranges)
+        // recomputes from scratch.
+        let rows: number[] | null = wrapChanged ? null : this.wrapRowsPerLine;
+        if (rows !== null && docDirty) {
+          rows = this.spliceWrapRows(rows, text, wrapCols, changeSets);
+        }
+        if (rows !== null && rows.length !== lineCount) rows = null;
+        if (rows !== null && visualsDirty) {
+          if (visualChanges === null) {
+            rows = null; // unknown visual spans: hints may have moved anywhere
+          } else if (visualChanges.length > 0) {
+            rows = rows.slice();
+            for (const span of visualChanges) {
+              const first = text.lineRangeAt(Math.max(0, Math.min(span.from, text.length))).index;
+              const last = text.lineRangeAt(Math.max(0, Math.min(span.to, text.length))).index;
+              for (let line = first; line <= last; line++) {
+                rows[line] = this.wrapRowsFor(text, line, wrapCols);
+              }
+            }
+          }
+        }
+        this.wrapRowsPerLine = rows ?? this.computeWrapRows(text, wrapCols);
+      }
+      this.geometry = new GeometryModel(
+        lineCount,
+        LINE_HEIGHT,
+        PADDING_TOP,
+        this.widgets,
+        PADDING_TOP,
+        this.wrapRowsPerLine ?? undefined,
+      );
+    }
+    if (wrapChanged || (wrapCols !== undefined && rebuildBase)) {
+      // Vertical caret movement moves by VISUAL rows: publish the state it
+      // needs to compute the exact breaks this renderer paints. Re-published
+      // on visual rebuilds too — a font change swaps the width oracle even
+      // when the column count happens to stay put.
+      this.runtime.setWrapDisplay(
+        wrapCols !== undefined
+          ? {
+              columns: wrapCols,
+              tabWidth: TAB_WIDTH,
+              ...(this.graphemeMetrics !== null
+                ? { graphemeWidth: this.graphemeMetrics.width }
+                : {}),
+            }
+          : null,
+      );
+    }
+    // A break-pinned caret display is only meaningful while the caret sits
+    // exactly where the pinning click put it.
+    if (
+      this.caretAssoc !== null &&
+      (docDirty || this.snapshot.selection.primary.head !== this.caretAssoc.offset)
+    ) {
+      this.caretAssoc = null;
+    }
+    this.contentHeightPx = this.geometry.contentHeight();
 
     // Scroll anchoring: when an edit lands above the first visible line,
     // shift the scroll model so the viewport text holds still.
@@ -1010,7 +1266,28 @@ export class EditorRenderer {
     if (this.revealCaretPending) {
       this.revealCaretPending = false;
       const line = text.lineRangeAt(selection.primary.head).index;
-      const caretTop = this.geometry.lineTop(line);
+      // Under soft wrap the caret may sit on a continuation row of its line.
+      let caretWrapRow =
+        wrapCols !== undefined
+          ? wrapRowOfOffset(
+              wrapLineBreaks({
+                lineText: text.sliceString(
+                  text.lineRange(line).from,
+                  text.lineRange(line).to,
+                ),
+                wrapColumns: wrapCols,
+                tabWidth: TAB_WIDTH,
+                graphemeWidth: this.graphemeMetrics?.width,
+                lineFrom: text.lineRange(line).from,
+                virtualText: this.lineVirtuals(line),
+              }),
+              selection.primary.head - text.lineRange(line).from,
+            )
+          : 0;
+      if (this.caretAssoc?.offset === selection.primary.head && caretWrapRow > 0) {
+        caretWrapRow--; // break-pinned: displayed on the row above
+      }
+      const caretTop = this.geometry.lineTop(line) + caretWrapRow * LINE_HEIGHT;
       if (caretTop < this.scrollY) {
         this.scrollY = caretTop;
       } else if (caretTop + LINE_HEIGHT > this.scrollY + this.viewportHeight) {
@@ -1018,6 +1295,9 @@ export class EditorRenderer {
       }
 
       const lineRange = text.lineRange(line);
+      // Horizontal reveal only without wrap: wrapped rows fit the viewport,
+      // and line-relative columns would compute a bogus scrollX.
+      if (wrapCols === undefined) {
       const caretVirtualCols = virtualColsBefore(
         this.visuals?.virtualTextBetween(lineRange.from, lineRange.to) ?? [],
         text,
@@ -1051,6 +1331,7 @@ export class EditorRenderer {
       } else if (caretLeft + this.charWidth > this.scrollX + this.viewportWidth - rightMargin) {
         this.scrollX = caretLeft + this.charWidth - this.viewportWidth + rightMargin;
       }
+      }
     }
     this.scrollY = Math.max(0, Math.min(this.maxScrollY(), this.scrollY));
     this.scrollX = Math.max(0, Math.min(this.maxScrollX(), this.scrollX));
@@ -1072,7 +1353,7 @@ export class EditorRenderer {
       this.windowEnd >= needEnd &&
       this.windowEnd <= lineCount;
 
-    if (!windowOk || docDirty || visualsDirty) {
+    if (!windowOk || docDirty || visualsDirty || wrapChanged) {
       let start = this.windowStart;
       let end = this.windowEnd;
       if (!windowOk) {
@@ -1096,6 +1377,10 @@ export class EditorRenderer {
         paddingTop: PADDING_TOP,
         paddingLeft: this.textOriginX,
         graphemeWidth: this.graphemeMetrics?.width,
+        wrapColumns: wrapCols,
+        // Soft wrap: rows above the window (the GeometryModel's truth) —
+        // without this every rect below drifts once a line above wraps.
+        startRow: this.geometry.textRowsBefore(start),
         visuals: {
           // Syntax runs merge under product styles (lowest priority).
           textStyles: [
@@ -1135,7 +1420,15 @@ export class EditorRenderer {
         }
       }
 
-      this.patchRows(layout, structureUnknown, dirtySpans, this.windowStart, this.windowEnd);
+      // Wrapped windows always rebuild: row counts per line vary, so the
+      // element-count-preserving patch fast path cannot apply.
+      this.patchRows(
+        layout,
+        structureUnknown || wrapCols !== undefined,
+        dirtySpans,
+        this.windowStart,
+        this.windowEnd,
+      );
       // Content width derives from the window (line widths aren't indexed,
       // so it cannot be exact like the vertical side). Document edits
       // RECOMPUTE it — deleting the long line shrinks the scrollbar — while
@@ -1247,7 +1540,7 @@ export class EditorRenderer {
         if (row.kind === "text") {
           const el = document.createElement("div");
           el.className = "editor-row";
-          renderRowContent(el, row.segments, this.graphemeMetrics);
+          renderRowContent(el, row.segments, this.graphemeMetrics, row.indentCols ?? 0);
           index.set(row.line, childIndex);
           fragment.append(el);
         } else {
@@ -1290,10 +1583,10 @@ export class EditorRenderer {
       for (let i = 0; i < rows.length; i++) {
         let el = layer.children[i] as HTMLDivElement | undefined;
         if (el === undefined) {
-          el = this.buildRowEl(rows[i]!.segments);
+          el = this.buildRowEl(rows[i]!);
           layer.append(el);
         } else {
-          renderRowContent(el, rows[i]!.segments, this.graphemeMetrics);
+          renderRowContent(el, rows[i]!.segments, this.graphemeMetrics, rows[i]!.indentCols ?? 0);
         }
       }
       return { mode: "rebuild", added: rows.length, removed: 0, rewritten: 0 };
@@ -1304,14 +1597,14 @@ export class EditorRenderer {
     if (start < overlapStart) {
       const fragment = document.createDocumentFragment();
       for (let line = start; line < overlapStart; line++) {
-        fragment.append(this.buildRowEl(rows[line - start]!.segments));
+        fragment.append(this.buildRowEl(rows[line - start]!));
       }
       layer.insertBefore(fragment, layer.firstElementChild);
     }
     if (end > overlapEnd) {
       const fragment = document.createDocumentFragment();
       for (let line = overlapEnd; line < end; line++) {
-        fragment.append(this.buildRowEl(rows[line - start]!.segments));
+        fragment.append(this.buildRowEl(rows[line - start]!));
       }
       layer.append(fragment);
     }
@@ -1322,6 +1615,7 @@ export class EditorRenderer {
           layer.children[line - start] as HTMLDivElement,
           rows[line - start]!.segments,
           this.graphemeMetrics,
+          rows[line - start]!.indentCols ?? 0,
         );
         rewritten++;
       }
@@ -1344,10 +1638,12 @@ export class EditorRenderer {
     this.root.style.setProperty("--editor-viewport-width", `${this.viewportWidth}px`);
   }
 
-  private buildRowEl(segments: readonly LayoutInlineSegment[]): HTMLDivElement {
+  private buildRowEl(
+    row: Extract<ViewportLayoutSnapshot<unknown>["rows"][number], { kind: "text" }>,
+  ): HTMLDivElement {
     const el = document.createElement("div");
     el.className = "editor-row";
-    renderRowContent(el, segments, this.graphemeMetrics);
+    renderRowContent(el, row.segments, this.graphemeMetrics, row.indentCols ?? 0);
     return el;
   }
 
@@ -1363,7 +1659,10 @@ export class EditorRenderer {
       for (const row of layout.rows) {
         const cellEl = document.createElement("div");
         if (row.kind === "text") {
-          const cell = band.cell?.(row.line) ?? null;
+          // Wrap continuation rows carry no line number/marker — the cell
+          // belongs to the line's FIRST visual row.
+          const cell =
+            row.continuation === true ? null : (band.cell?.(row.line) ?? null);
           cellEl.className = cell?.className
             ? `editor-band-cell ${cell.className}`
             : "editor-band-cell";
@@ -1450,12 +1749,23 @@ export class EditorRenderer {
       paddingTop: PADDING_TOP,
       paddingLeft: this.textOriginX,
       graphemeWidth: this.graphemeMetrics?.width,
+      wrapColumns: this.wrapColumnsActive,
+      startRow: this.geometry.textRowsBefore(this.windowStart),
       visuals: {
         blockWidgets: this.widgets,
         virtualText: this.visuals?.virtualTextBetween(winFrom, winTo) ?? [],
       },
       anchors: [
-        { kind: "overlay", id: "caret", at: selection.primary.head, payload: null },
+        {
+          kind: "overlay",
+          id: "caret",
+          at: selection.primary.head,
+          // Break-pinned display: caret stays at the END of the clicked row.
+          ...(this.caretAssoc?.offset === selection.primary.head
+            ? { assoc: "before" as const }
+            : {}),
+          payload: null,
+        },
         ...selection.ranges
           .filter((range) => !range.isCollapsed)
           .map((range, index) => ({

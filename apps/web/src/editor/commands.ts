@@ -1,11 +1,21 @@
 import { Effect } from "effect";
-import type { EditorSnapshot } from "@the-editor/editor";
+import {
+  stringColumns,
+  wrapIndentColumns,
+  wrapLineBreaks,
+  wrapSegmentBounds,
+  type EditorSnapshot,
+  type WrapDisplay,
+  type WrapVirtualText,
+} from "@the-editor/editor";
 import {
   nextGraphemeBoundary,
+  offsetAtColumn,
   previousGraphemeBoundary,
   Selection,
   SelectionRange,
   Transaction,
+  type ColumnText,
   type RenderableText,
 } from "@the-editor/engine";
 
@@ -127,6 +137,99 @@ function verticalTarget(text: RenderableText, offset: number, direction: -1 | 1)
   return target.from + Math.min(column, target.to - target.from);
 }
 
+/**
+ * The wrap state vertical movement needs to move by VISUAL rows: the
+ * renderer-published display (columns, tab width, measured glyph widths)
+ * plus the document's inlay hints — both occupy wrap width, and the breaks
+ * computed here MUST equal the ones the renderer painted.
+ */
+export type VerticalWrapContext = WrapDisplay & {
+  readonly virtualTextBetween: (from: number, to: number) => readonly WrapVirtualText[];
+};
+
+const stringText = (s: string): ColumnText =>
+  ({ length: s.length, sliceString: (a: number, b: number) => s.slice(a, b) }) as ColumnText;
+
+type WrappedLineInfo = {
+  readonly from: number;
+  readonly bounds: readonly number[];
+  readonly indent: number;
+};
+
+function wrappedLineInfo(
+  text: RenderableText,
+  line: number,
+  wrap: VerticalWrapContext,
+): WrappedLineInfo {
+  const range = text.lineRange(line);
+  const lineText = text.sliceString(range.from, range.to);
+  const breaks = wrapLineBreaks({
+    lineText,
+    wrapColumns: wrap.columns,
+    tabWidth: wrap.tabWidth,
+    graphemeWidth: wrap.graphemeWidth,
+    lineFrom: range.from,
+    virtualText: wrap.virtualTextBetween(range.from, range.to),
+  });
+  return {
+    from: range.from,
+    bounds: wrapSegmentBounds(range.from, range.to, breaks),
+    indent: breaks.length > 0 ? wrapIndentColumns(lineText, wrap.tabWidth, wrap.columns) : 0,
+  };
+}
+
+/**
+ * One VISUAL row up/down: within a wrapped line first, crossing to the
+ * adjacent line's nearest visual row otherwise. The goal column is the
+ * caret's visual column on its current row (hanging indent included).
+ */
+function verticalTargetWrapped(
+  text: RenderableText,
+  offset: number,
+  direction: -1 | 1,
+  wrap: VerticalWrapContext,
+): number {
+  const line = text.lineRangeAt(offset);
+  const info = wrappedLineInfo(text, line.index, wrap);
+  let seg = 0;
+  while (seg + 2 < info.bounds.length && offset >= info.bounds[seg + 1]!) seg++;
+  const segFrom = info.bounds[seg]!;
+  const goal =
+    (seg > 0 ? info.indent : 0) +
+    stringColumns(text.sliceString(segFrom, offset), wrap.tabWidth, wrap.graphemeWidth);
+  let target = info;
+  let targetSeg = seg + direction;
+  if (targetSeg < 0) {
+    if (line.index === 0) return 0;
+    target = wrappedLineInfo(text, line.index - 1, wrap);
+    targetSeg = target.bounds.length - 2;
+  } else if (targetSeg > info.bounds.length - 2) {
+    if (line.index >= text.lineCount - 1) return text.length;
+    target = wrappedLineInfo(text, line.index + 1, wrap);
+    targetSeg = 0;
+  }
+  const tFrom = target.bounds[targetSeg]!;
+  const tTo = target.bounds[targetSeg + 1]!;
+  const segText = text.sliceString(tFrom, tTo);
+  const innerColumn = Math.max(0, Math.floor(goal - (targetSeg > 0 ? target.indent : 0)));
+  const resolved =
+    tFrom +
+    offsetAtColumn({
+      text: stringText(segText),
+      line: 0,
+      column: innerColumn,
+      tabWidth: wrap.tabWidth,
+      bias: "before",
+      ...(wrap.graphemeWidth !== undefined ? { graphemeWidth: wrap.graphemeWidth } : {}),
+    });
+  // An offset exactly AT the segment end displays on the NEXT visual row —
+  // landing there would skip the row we aimed at. Hold one grapheme short.
+  if (resolved >= tTo && targetSeg + 2 < target.bounds.length && segText.length > 0) {
+    return tFrom + previousGraphemeBoundary(segText, segText.length);
+  }
+  return resolved;
+}
+
 function mapRanges(
   selection: Selection,
   map: (range: SelectionRange) => SelectionRange,
@@ -153,10 +256,14 @@ export function moveVertical(
   snapshot: EditorSnapshot,
   direction: -1 | 1,
   extend: boolean,
+  wrap?: VerticalWrapContext | null,
 ): CommandResult {
   const text = snapshot.text;
   return mapRanges(snapshot.selection, (range) => {
-    const head = verticalTarget(text, range.head, direction);
+    const head =
+      wrap != null
+        ? verticalTargetWrapped(text, range.head, direction, wrap)
+        : verticalTarget(text, range.head, direction);
     return extend ? SelectionRange.create(range.anchor, head) : SelectionRange.point(head);
   });
 }

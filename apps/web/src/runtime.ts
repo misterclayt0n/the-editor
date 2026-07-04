@@ -127,6 +127,7 @@ import {
   ViewNotifications,
   ViewOperations,
   WorkspaceNotifications,
+  ViewWrapDisplay,
   WorkspaceOperations,
   WorkspaceRoots,
   type DocumentChangeRange,
@@ -139,6 +140,7 @@ import {
   type ViewScope,
   type VisualsSnapshot,
   type WorkspaceScope,
+  type WrapDisplay,
 } from "@the-editor/editor";
 import {
   Selection,
@@ -285,6 +287,12 @@ export interface PaneHost {
   setSelection(selection: Selection): void;
   subscribeTheme(listener: () => void): () => void;
   subscribeFont(listener: () => void): () => void;
+  /** Soft wrap: current setting + change notifications (renderer re-wraps). */
+  wrapEnabled(): boolean;
+  subscribeWrap(listener: () => void): () => void;
+  /** Renderer → view: publish the live wrap display state (vertical caret
+   * movement reads it to move by VISUAL rows). */
+  setWrapDisplay(display: WrapDisplay | null): void;
   subscribe(
     listener: (notification: EditorNotification, source: "document" | "view") => void,
   ): () => void;
@@ -346,6 +354,20 @@ export class EditorPane implements PaneHost {
 
   subscribeFont(listener: () => void): () => void {
     return this.runtime.subscribeFont(listener);
+  }
+
+  wrapEnabled(): boolean {
+    return this.runtime.wrapEnabled();
+  }
+
+  subscribeWrap(listener: () => void): () => void {
+    return this.runtime.subscribeWrap(listener);
+  }
+
+  setWrapDisplay(display: WrapDisplay | null): void {
+    Context.get(this.view.context as Context.Context<ViewWrapDisplay>, ViewWrapDisplay).set(
+      display,
+    );
   }
 
   setSelection(selection: Selection): void {
@@ -495,6 +517,8 @@ export class AppRuntime {
   private themeFiber: Fiber.RuntimeFiber<unknown, unknown> | undefined;
   private fontFiber: Fiber.RuntimeFiber<unknown, unknown> | undefined;
   private readonly themeListeners = new Set<() => void>();
+  private readonly wrapListeners = new Set<() => void>();
+  private softWrap = false;
   private readonly fontListeners = new Set<() => void>();
   /** The panel each toggle (terminal, file tree) currently owns as its dock.
    *  Cleared when the user moves or closes it, so a manually-placed panel is
@@ -695,6 +719,7 @@ export class AppRuntime {
             toggleLsp: () => instance.toggleLsp(),
           }),
           Layer.succeed(ViewOperations, {
+            toggleSoftWrap: () => instance.toggleSoftWrap(),
             splitRight: () => instance.splitFocused("row"),
             splitDown: () => instance.splitFocused("column"),
             closeTab: () => instance.requestCloseFocusedTab(),
@@ -980,6 +1005,22 @@ export class AppRuntime {
   subscribeTheme(listener: () => void): () => void {
     this.themeListeners.add(listener);
     return () => void this.themeListeners.delete(listener);
+  }
+
+  /** Soft wrap is a session-wide view setting (like theme/font): one truth,
+   *  every pane's renderer re-wraps on toggle. */
+  wrapEnabled(): boolean {
+    return this.softWrap;
+  }
+
+  toggleSoftWrap(): void {
+    this.softWrap = !this.softWrap;
+    for (const listener of this.wrapListeners) listener();
+  }
+
+  subscribeWrap(listener: () => void): () => void {
+    this.wrapListeners.add(listener);
+    return () => void this.wrapListeners.delete(listener);
   }
 
   /**

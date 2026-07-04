@@ -39,6 +39,7 @@ export class ViewOperations extends Context.Tag("@the-editor/editor/ViewOperatio
     readonly nextTab: () => void;
     readonly previousTab: () => void;
     readonly toggleTabs: () => void;
+    readonly toggleSoftWrap: () => void;
   }
 >() {}
 

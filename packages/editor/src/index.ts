@@ -10,6 +10,7 @@ export * from "./scope";
 export * from "./commit";
 export * from "./snapshot";
 export * from "./layout";
+export * from "./wrap";
 export * from "./notifications";
 export * from "./state";
 export * from "./visuals";

@@ -56,3 +56,26 @@ describe("GeometryModel", () => {
     expect(model.contentHeight()).toBe(8 + (10 + 2) * 20 + 8);
   });
 });
+
+describe("soft wrap rows", () => {
+  test("wrapped lines shift everything below and grow the content height", () => {
+    // 3 lines; line 1 wraps to 3 rows.
+    const g = new GeometryModel(3, 20, 8, [], 8, [1, 3, 1]);
+    expect(g.lineTop(0)).toBe(8);
+    expect(g.lineTop(1)).toBe(8 + 20);
+    expect(g.lineTop(2)).toBe(8 + 4 * 20);
+    expect(g.lineRows(1)).toBe(3);
+    expect(g.contentHeight()).toBe(8 + 5 * 20 + 8);
+    // y inside line 1's continuation rows resolves to line 1.
+    expect(g.lineAt(8 + 20 + 45)).toBe(1);
+    expect(g.lineAt(8 + 4 * 20 + 1)).toBe(2);
+  });
+
+  test("wrap and widgets compose", () => {
+    const g = new GeometryModel(2, 10, 0, [{ afterLine: 0, heightRows: 2 }], 0, [2, 1]);
+    // line0: rows 0-1, widget rows 2-3, line1: row 4.
+    expect(g.lineTop(1)).toBe(40);
+    expect(g.lineAt(25)).toBe(0); // widget rows resolve to the line above
+    expect(g.contentHeight()).toBe(50);
+  });
+});

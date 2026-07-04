@@ -7,7 +7,7 @@
  * default keys. A user package activated later can shadow any of it.
  */
 
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
 import { definePackage } from "@the-editor/extensions";
 import { Commands } from "@the-editor/commands";
 import { Keymaps } from "@the-editor/keymaps";
@@ -15,7 +15,9 @@ import { SurfaceKind, SurfaceScope } from "@the-editor/workbench";
 import {
   commitTransaction,
   editorSnapshot,
+  EditorVisuals,
   setSelection,
+  ViewWrapDisplay,
   type EditorSnapshot,
 } from "@the-editor/editor";
 import {
@@ -27,6 +29,7 @@ import {
   moveLineEdge,
   moveVertical,
   type CommandResult,
+  type VerticalWrapContext,
 } from "../editor/commands";
 
 export const EditorSurface = SurfaceKind("the-editor/editor");
@@ -53,6 +56,34 @@ const editorCommand = (f: (snapshot: EditorSnapshot, args: unknown) => CommandRe
     scope: editorScope,
     run: ({ args }: { readonly args: unknown }) =>
       Effect.flatMap(editorSnapshot(), (snapshot) => applyResult(f(snapshot, args))),
+  }) as const;
+
+/**
+ * cursor.up/down move by VISUAL rows under soft wrap: the renderer
+ * publishes its live wrap display into the view scope (ViewWrapDisplay);
+ * the command reads it plus the document's inlay hints (both occupy wrap
+ * width) so it computes the exact breaks the renderer painted.
+ */
+const verticalCommand = (direction: -1 | 1) =>
+  ({
+    scope: editorScope,
+    run: ({ args }: { readonly args: unknown }) =>
+      Effect.gen(function* () {
+        const snapshot = yield* editorSnapshot();
+        const displayCell = yield* Effect.serviceOption(ViewWrapDisplay);
+        const display = Option.isSome(displayCell) ? displayCell.value.get() : null;
+        let wrap: VerticalWrapContext | null = null;
+        if (display !== null) {
+          const visuals = yield* Effect.serviceOption(EditorVisuals);
+          const visualsSnapshot = Option.isSome(visuals) ? yield* visuals.value.snapshot : null;
+          wrap = {
+            ...display,
+            virtualTextBetween: (from, to) =>
+              visualsSnapshot?.virtualTextBetween(from, to) ?? [],
+          };
+        }
+        yield* applyResult(moveVertical(snapshot, direction, extend(args), wrap));
+      }),
   }) as const;
 
 const extend = (args: unknown): boolean =>
@@ -94,11 +125,11 @@ export const editorDefaults = definePackage("the-editor/editor-defaults", () =>
     });
     yield* commands.register("cursor.up", {
       title: "Move Caret Up",
-      ...editorCommand((snapshot, args) => moveVertical(snapshot, -1, extend(args))),
+      ...verticalCommand(-1),
     });
     yield* commands.register("cursor.down", {
       title: "Move Caret Down",
-      ...editorCommand((snapshot, args) => moveVertical(snapshot, 1, extend(args))),
+      ...verticalCommand(1),
     });
     yield* commands.register("cursor.lineStart", {
       title: "Move to Line Start",

@@ -59,6 +59,14 @@ export const viewPackage = definePackage("the-editor/view", () =>
       palette: { group: "View", aliases: ["bp"] },
       run: () => Effect.sync(() => view.previousTab()),
     });
+    // Global: a session-wide view setting; any surface may toggle it and
+    // every editor pane re-wraps.
+    yield* commands.register("view.toggleSoftWrap", {
+      title: "Toggle Soft Wrap",
+      scope: SurfaceScope.global,
+      palette: { group: "View", aliases: ["wrap", "word wrap", "line wrap"] },
+      run: () => Effect.sync(() => view.toggleSoftWrap()),
+    });
     // Global: reachable from the file tree (its single tab is the obvious use),
     // an empty workbench, etc. Hidden tabs can still be cycled by keyboard.
     yield* commands.register("view.toggleTabs", {

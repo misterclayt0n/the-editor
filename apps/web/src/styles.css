@@ -132,6 +132,7 @@ body {
   position: absolute;
   top: 0;
   left: 0;
+  z-index: 1;
   min-width: 100%;
   will-change: transform;
 }
@@ -213,14 +214,15 @@ body {
   background: color-mix(in srgb, var(--theme-text) 4%, transparent);
 }
 
-/* x-pinned gutter host. Text-row cells paint their own background; block-row
- * spacers are transparent so full-width widgets (multibuffer headers) are not
- * masked by the gutter columns. */
+/* x-pinned gutter host. It sits BEHIND the content stack: rows are padded
+ * away from the gutter, so line numbers/markers remain visible through the
+ * transparent left inset, while selections/carets can never be clipped or
+ * masked by gutter cells on the text edge. */
 .editor-bands {
   position: absolute;
   top: 0;
   left: 0;
-  z-index: 2;
+  z-index: 0;
   pointer-events: none;
 }
 
@@ -231,8 +233,11 @@ body {
 }
 
 .editor-band-cell {
+  box-sizing: border-box;
+  width: 100%;
   height: 20px;
   line-height: 20px;
+  overflow: hidden;
   padding: 0 8px;
   background: var(--bg-editor);
   text-align: right;

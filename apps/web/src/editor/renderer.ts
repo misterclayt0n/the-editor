@@ -1808,9 +1808,10 @@ export class EditorRenderer {
       this.mountCursorEffect(effect, placement);
     }
 
-    if (selDirty) {
-      // Re-inserting restarts the blink animation, like a fresh caret. The
-      // inner effects element moves with it and keeps existing transient DOM.
+    if (selDirty && style.blink !== false) {
+      // Re-inserting restarts the blink animation, like a fresh caret. Do not
+      // do this for non-blinking custom cursors: remove/append resets CSS
+      // transitions, which is exactly what smooth block cursors rely on.
       this.caretEl.remove();
       this.contentEl.append(this.caretEl);
     }

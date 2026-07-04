@@ -41,7 +41,9 @@ import {
   hitTestTextPositionExact,
   layoutViewport,
   rowVisualColumns,
+  stringColumns,
   virtualColsBefore,
+  virtualTextColumns,
   payloadsOf,
   SelectionInvalidated,
   FileSyncInvalidated,
@@ -57,9 +59,10 @@ import {
   type VisualsSnapshot,
 } from "@the-editor/editor";
 import { resolveSyntaxStyle } from "../theme/dom";
-import { Selection, type RenderableText } from "@the-editor/engine";
+import { graphemeSegments, Selection, type RenderableText } from "@the-editor/engine";
 import type { PaneHost } from "../runtime";
 import { cancelRender, queueRender } from "./frame";
+import { createGraphemeMetrics, type GraphemeMetrics } from "./textMetrics";
 
 const LINE_HEIGHT = 20;
 const TAB_WIDTH = 4;
@@ -98,17 +101,8 @@ function mapOffset(changes: ReadonlyArray<DocumentChangeRange>, pos: number): nu
   return pos + diff;
 }
 
-function visualColumn(text: string): number {
-  let column = 0;
-  for (const ch of text) {
-    if (ch === "\t") {
-      column += TAB_WIDTH - (column % TAB_WIDTH);
-    } else {
-      column++;
-    }
-  }
-  return column;
-}
+/** True when a row/segment needs no grapheme inspection (the common case). */
+const NON_ASCII = /[^\x00-\x7f]/;
 
 // Mouse selection helpers --------------------------------------------------
 
@@ -160,10 +154,51 @@ function lineSelectRange(text: RenderableText, offset: number): OffsetRange {
   return { from: line.from, to };
 }
 
-function renderRowContent(el: HTMLDivElement, segments: readonly LayoutInlineSegment[]): void {
+/**
+ * Append text, pinning any grapheme whose natural font advance is OFF the
+ * cell grid (a fallback-font CJK glyph at 1.7ch) into a fixed-width span of
+ * its grid cells — the DOM then agrees with the column math by
+ * construction. Glyphs whose advance IS an integer cell count (Iosevka's
+ * two-cell em dash) render naturally; the measured column math already
+ * accounts for them. ASCII-only text (nearly every code row) short-circuits.
+ */
+function appendGridText(parent: Node, text: string, metrics: GraphemeMetrics | null): void {
+  if (metrics === null || !NON_ASCII.test(text)) {
+    parent.appendChild(document.createTextNode(text));
+    return;
+  }
+  let plain = "";
+  for (const segment of graphemeSegments(text)) {
+    if (!NON_ASCII.test(segment.text) || !metrics.fractional(segment.text)) {
+      plain += segment.text;
+      continue;
+    }
+    if (plain.length > 0) {
+      parent.appendChild(document.createTextNode(plain));
+      plain = "";
+    }
+    const pin = document.createElement("span");
+    pin.className = "editor-cells";
+    pin.style.width = `${metrics.width(segment.text)}ch`;
+    pin.textContent = segment.text;
+    parent.appendChild(pin);
+  }
+  if (plain.length > 0) parent.appendChild(document.createTextNode(plain));
+}
+
+function renderRowContent(
+  el: HTMLDivElement,
+  segments: readonly LayoutInlineSegment[],
+  metrics: GraphemeMetrics | null,
+): void {
   if (segments.length === 1) {
     const only = segments[0]!;
-    if (only.kind === "text" && only.className === undefined && only.style === undefined) {
+    if (
+      only.kind === "text" &&
+      only.className === undefined &&
+      only.style === undefined &&
+      (metrics === null || !NON_ASCII.test(only.text))
+    ) {
       el.textContent = only.text;
       return;
     }
@@ -171,11 +206,11 @@ function renderRowContent(el: HTMLDivElement, segments: readonly LayoutInlineSeg
   const fragment = document.createDocumentFragment();
   for (const segment of segments) {
     if (segment.kind === "text" && segment.className === undefined && segment.style === undefined) {
-      fragment.append(segment.text);
+      appendGridText(fragment, segment.text, metrics);
       continue;
     }
     const span = document.createElement("span");
-    span.textContent = segment.text;
+    appendGridText(span, segment.text, metrics);
     const className =
       segment.kind === "virtual-text"
         ? (segment.className ?? "editor-virtual-text")
@@ -206,6 +241,7 @@ export class EditorRenderer {
   private readonly hThumb: HTMLDivElement;
   private readonly measureEl: HTMLSpanElement;
   private readonly resizeObserver: ResizeObserver;
+  private readonly floatResizeObserver: ResizeObserver;
   private readonly unsubscribe: () => void;
   private readonly unsubscribeHighlights: () => void;
   private readonly unsubscribeFloats: () => void;
@@ -303,6 +339,7 @@ export class EditorRenderer {
       tabWidth: TAB_WIDTH,
       bias: "nearest",
       virtualText: this.lineVirtuals(line),
+      graphemeWidth: this.graphemeMetrics?.width,
     });
     return hit.offset;
   }
@@ -437,6 +474,7 @@ export class EditorRenderer {
         paddingTop: PADDING_TOP,
         tabWidth: TAB_WIDTH,
         virtualText: this.lineVirtuals(line),
+        graphemeWidth: this.graphemeMetrics?.width,
       });
       this.runtime.dispatch.pointerHover(hit?.offset ?? null);
     });
@@ -497,6 +535,8 @@ export class EditorRenderer {
   };
 
   private snapshot: EditorSnapshot;
+  /** Measured grid widths for non-ASCII graphemes (null: engine defaults). */
+  private graphemeMetrics: GraphemeMetrics | null = null;
   private visuals: VisualsSnapshot | null = null;
   private widgets: AnchoredBlockWidget[] = [];
   private geometry: GeometryModel;
@@ -620,6 +660,17 @@ export class EditorRenderer {
     this.resizeObserver = new ResizeObserver(() => queueRender(this.renderPass));
     this.resizeObserver.observe(this.viewport);
 
+    // Float content is portaled in by React AFTER the render pass that
+    // positioned the (then-empty) element — an "above" popup measured at
+    // height 0 would sit ON its anchor line, covering the caret, until the
+    // next unrelated render. Reposition whenever a float's rendered size
+    // changes; ResizeObserver fires post-layout pre-paint, so the popup
+    // never paints misplaced. (Positioning only writes left/top — it cannot
+    // resize the float, so this can't loop.)
+    this.floatResizeObserver = new ResizeObserver(() => {
+      if (!this.disposed) this.positionFloats();
+    });
+
     this.viewport.addEventListener("mousemove", this.handleMouseMove);
     this.viewport.addEventListener("mouseleave", this.handleMouseLeave);
     // The viewport is overflow:hidden but the browser can still scroll it
@@ -679,6 +730,7 @@ export class EditorRenderer {
     this.viewport.removeEventListener("mouseleave", this.handleMouseLeave);
     this.viewport.removeEventListener("scroll", this.handleNativeScrollLeak);
     this.resizeObserver.disconnect();
+    this.floatResizeObserver.disconnect();
     this.viewport.removeEventListener("wheel", this.handleWheel);
     this.viewport.removeEventListener("mousedown", this.handleMouseDown);
     for (const id of this.mountEls.keys()) this.runtime.mounts.unmounted(id);
@@ -692,7 +744,10 @@ export class EditorRenderer {
   /** Attach float elements (popovers) to the editor root. */
   private syncFloats(): void {
     for (const entry of this.runtime.floats.all()) {
-      if (entry.element.parentElement !== this.root) this.root.append(entry.element);
+      if (entry.element.parentElement !== this.root) {
+        this.root.append(entry.element);
+        this.floatResizeObserver.observe(entry.element);
+      }
     }
   }
 
@@ -708,8 +763,18 @@ export class EditorRenderer {
       // column — a completion popup under `foo(hint: bar▌` must sit under
       // the caret's VISUAL x, not the raw text column.
       const column =
-        visualColumn(text.sliceString(lineRange.from, offset)) +
-        virtualColsBefore(this.lineVirtuals(lineRange.index), text, lineRange.index, offset);
+        stringColumns(
+          text.sliceString(lineRange.from, offset),
+          TAB_WIDTH,
+          this.graphemeMetrics?.width,
+        ) +
+        virtualColsBefore(
+          this.lineVirtuals(lineRange.index),
+          text,
+          lineRange.index,
+          offset,
+          this.graphemeMetrics?.width,
+        );
       const lineTop = this.geometry.lineTop(lineRange.index) - this.scrollY;
       let left = this.textOriginX + column * this.charWidth - this.scrollX;
       const height = entry.element.offsetHeight;
@@ -752,6 +817,11 @@ export class EditorRenderer {
   private measureCharWidth(): void {
     const width = this.measureEl.getBoundingClientRect().width / 100;
     if (width > 0) this.charWidth = width;
+    // Rebuild the grapheme width oracle against the (possibly new) font.
+    const style = getComputedStyle(this.measureEl);
+    this.graphemeMetrics = createGraphemeMetrics(
+      `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`,
+    );
   }
 
   private maxScrollY(): number {
@@ -962,12 +1032,18 @@ export class EditorRenderer {
       // the caret can sit to the RIGHT of every inlay on its line.
       const caretLineVirtuals = (
         this.visuals?.virtualTextBetween(lineRange.from, lineRange.to) ?? []
-      ).reduce((n, vt) => n + vt.text.length, 0);
+      ).reduce((n, vt) => n + virtualTextColumns(vt.text, this.graphemeMetrics?.width), 0);
       const caretLineCols =
-        visualColumn(text.sliceString(lineRange.from, lineRange.to)) + caretLineVirtuals;
+        stringColumns(
+          text.sliceString(lineRange.from, lineRange.to),
+          TAB_WIDTH,
+          this.graphemeMetrics?.width,
+        ) + caretLineVirtuals;
       if (caretLineCols > this.maxRowChars) this.maxRowChars = caretLineCols;
       const caretLeft =
-        this.textOriginX + (visualColumn(beforeCaret) + caretVirtualCols) * this.charWidth;
+        this.textOriginX +
+        (stringColumns(beforeCaret, TAB_WIDTH, this.graphemeMetrics?.width) + caretVirtualCols) *
+          this.charWidth;
       const leftMargin = this.textOriginX;
       const rightMargin = 24;
       if (caretLeft < this.scrollX + leftMargin) {
@@ -1019,6 +1095,7 @@ export class EditorRenderer {
         charWidth: this.charWidth,
         paddingTop: PADDING_TOP,
         paddingLeft: this.textOriginX,
+        graphemeWidth: this.graphemeMetrics?.width,
         visuals: {
           // Syntax runs merge under product styles (lowest priority).
           textStyles: [
@@ -1067,7 +1144,10 @@ export class EditorRenderer {
       // rowVisualColumns includes virtual text: a line whose inlay hints
       // push its code past the viewport must be reachable by the h-scroll.
       const windowCols = layout.rows.reduce(
-        (max, row) => (row.kind === "text" ? Math.max(max, rowVisualColumns(row, TAB_WIDTH)) : max),
+        (max, row) =>
+          row.kind === "text"
+            ? Math.max(max, rowVisualColumns(row, TAB_WIDTH, this.graphemeMetrics?.width))
+            : max,
         0,
       );
       this.maxRowChars = docDirty ? windowCols : Math.max(this.maxRowChars, windowCols);
@@ -1167,7 +1247,7 @@ export class EditorRenderer {
         if (row.kind === "text") {
           const el = document.createElement("div");
           el.className = "editor-row";
-          renderRowContent(el, row.segments);
+          renderRowContent(el, row.segments, this.graphemeMetrics);
           index.set(row.line, childIndex);
           fragment.append(el);
         } else {
@@ -1213,7 +1293,7 @@ export class EditorRenderer {
           el = this.buildRowEl(rows[i]!.segments);
           layer.append(el);
         } else {
-          renderRowContent(el, rows[i]!.segments);
+          renderRowContent(el, rows[i]!.segments, this.graphemeMetrics);
         }
       }
       return { mode: "rebuild", added: rows.length, removed: 0, rewritten: 0 };
@@ -1241,6 +1321,7 @@ export class EditorRenderer {
         renderRowContent(
           layer.children[line - start] as HTMLDivElement,
           rows[line - start]!.segments,
+          this.graphemeMetrics,
         );
         rewritten++;
       }
@@ -1266,7 +1347,7 @@ export class EditorRenderer {
   private buildRowEl(segments: readonly LayoutInlineSegment[]): HTMLDivElement {
     const el = document.createElement("div");
     el.className = "editor-row";
-    renderRowContent(el, segments);
+    renderRowContent(el, segments, this.graphemeMetrics);
     return el;
   }
 
@@ -1368,6 +1449,7 @@ export class EditorRenderer {
       charWidth: this.charWidth,
       paddingTop: PADDING_TOP,
       paddingLeft: this.textOriginX,
+      graphemeWidth: this.graphemeMetrics?.width,
       visuals: {
         blockWidgets: this.widgets,
         virtualText: this.visuals?.virtualTextBetween(winFrom, winTo) ?? [],

@@ -18,6 +18,15 @@ export type ColumnText = SyntaxText | RenderableText;
 
 export type OffsetBias = "before" | "after";
 
+/**
+ * A renderer-supplied width oracle: grid cells for one grapheme cluster,
+ * measured from the ACTUAL rendered font. The static tables below are the
+ * deterministic fallback — they cannot know that e.g. Iosevka draws an em
+ * dash two cells wide while SF Mono draws it one. Tabs and newlines are
+ * never asked; the column math owns those.
+ */
+export type GraphemeWidthFn = (grapheme: string) => number;
+
 export type DisplayGrapheme =
   | {
       readonly kind: "newline";
@@ -116,6 +125,26 @@ export function displayGrapheme(
   return { kind: "other", text: grapheme, width: graphemeWidth(grapheme), displayText: grapheme };
 }
 
+/** One segment's width: the override answers for real glyphs; tabs and
+ * newlines keep the positional column math. */
+function segmentWidth(
+  text: string,
+  visualColumn: number,
+  tabWidth: number,
+  override: GraphemeWidthFn | undefined,
+): number {
+  if (
+    override !== undefined &&
+    text !== "\t" &&
+    text !== "\n" &&
+    text !== "\r" &&
+    text !== "\r\n"
+  ) {
+    return override(text);
+  }
+  return displayGrapheme(text, visualColumn, tabWidth).width;
+}
+
 function assertColumn(column: number): void {
   if (!Number.isInteger(column) || column < 0) {
     throw new RangeError("column must be an integer >= 0");
@@ -171,6 +200,7 @@ export function columnAtOffset(args: {
   readonly offset: number;
   readonly tabWidth: number;
   readonly line?: number;
+  readonly graphemeWidth?: GraphemeWidthFn;
 }): number {
   assertTabArgs(0, args.tabWidth);
   const line = args.line ?? lineIndexAtOffset(args.text, args.offset);
@@ -179,7 +209,7 @@ export function columnAtOffset(args: {
   const lineText = args.text.sliceString(range.from, end);
   let column = 0;
   for (const segment of graphemeSegments(lineText)) {
-    column += displayGrapheme(segment.text, column, args.tabWidth).width;
+    column += segmentWidth(segment.text, column, args.tabWidth, args.graphemeWidth);
   }
   return column;
 }
@@ -190,6 +220,7 @@ export function offsetAtColumn(args: {
   readonly column: number;
   readonly tabWidth: number;
   readonly bias?: OffsetBias;
+  readonly graphemeWidth?: GraphemeWidthFn;
 }): number {
   assertTabArgs(0, args.tabWidth);
   assertColumn(args.column);
@@ -198,7 +229,7 @@ export function offsetAtColumn(args: {
   const lineText = args.text.sliceString(range.from, range.to);
   let visualColumn = 0;
   for (const segment of graphemeSegments(lineText)) {
-    const width = displayGrapheme(segment.text, visualColumn, args.tabWidth).width;
+    const width = segmentWidth(segment.text, visualColumn, args.tabWidth, args.graphemeWidth);
     const nextColumn = visualColumn + width;
     if (args.column < nextColumn) {
       if (args.column === visualColumn) return range.from + segment.from;

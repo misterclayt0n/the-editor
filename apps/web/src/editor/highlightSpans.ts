@@ -33,6 +33,33 @@ export function runsToSpans(
 }
 
 /**
+ * The sub-range [from, to) of flat spans, colors preserved — for surfaces
+ * that wrap PART of a highlighted string in extra structure (signature help
+ * nests the active parameter inside an emphasis span without losing the
+ * syntax colors underneath it).
+ */
+export function sliceCodeSpans(
+  spans: readonly CodeSpan[],
+  from: number,
+  to: number,
+): CodeSpan[] {
+  const out: CodeSpan[] = [];
+  let position = 0;
+  for (const span of spans) {
+    const start = position;
+    const end = position + span.text.length;
+    position = end;
+    if (end <= from) continue;
+    if (start >= to) break;
+    const text = span.text.slice(Math.max(start, from) - start, Math.min(end, to) - start);
+    if (text.length > 0) {
+      out.push(span.color !== undefined ? { text, color: span.color } : { text });
+    }
+  }
+  return out;
+}
+
+/**
  * Split flat spans at newlines into per-line span arrays. The result always
  * has `text.split("\n").length` entries; the newline char itself is dropped
  * (each line renders as its own block).

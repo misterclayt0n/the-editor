@@ -102,6 +102,15 @@ body {
   cursor: text;
 }
 
+/* A grapheme whose natural font advance is off the cell grid, pinned to its
+   grid width so DOM pixels agree with the editor's column math. */
+.editor-cells {
+  display: inline-block;
+  overflow: hidden;
+  white-space: pre;
+  vertical-align: top;
+}
+
 .editor-measure {
   position: absolute;
   visibility: hidden;

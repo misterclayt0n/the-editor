@@ -1,6 +1,9 @@
 import {
   columnAtOffset as engineColumnAtOffset,
+  displayGrapheme,
+  graphemeSegments,
   offsetAtColumn,
+  type GraphemeWidthFn,
   type RenderableText,
 } from "@the-editor/engine";
 
@@ -81,6 +84,8 @@ export type ViewportLayoutRequest<Payload = unknown> = {
   readonly paddingLeft?: number;
   readonly anchors?: readonly LayoutAnchor<Payload>[];
   readonly visuals?: EditorVisualsSnapshot;
+  /** Renderer-measured grapheme grid widths (see GraphemeWidthFn). */
+  readonly graphemeWidth?: GraphemeWidthFn | undefined;
 };
 export type LayoutRect = {
   readonly top: number;
@@ -210,8 +215,55 @@ function lineRange(text: RenderableText, line: number): { from: number; to: numb
 function lineIndexAtOffset(text: RenderableText, offset: number): number {
   return text.lineRangeAt(clamp(offset, 0, text.length)).index;
 }
-function columnAtOffset(text: RenderableText, line: number, offset: number, tabWidth: number): number {
-  return engineColumnAtOffset({ text, line, offset, tabWidth });
+function columnAtOffset(
+  text: RenderableText,
+  line: number,
+  offset: number,
+  tabWidth: number,
+  graphemeWidth?: GraphemeWidthFn,
+): number {
+  return engineColumnAtOffset({
+    text,
+    line,
+    offset,
+    tabWidth,
+    ...(graphemeWidth !== undefined ? { graphemeWidth } : {}),
+  });
+}
+
+/**
+ * Visual columns of a detached string measured from column 0 (tabs advance
+ * to grid stops). The renderer's float anchoring and caret math share this
+ * with the layout so a wide glyph (an Iosevka em dash is TWO cells) shifts
+ * every consumer identically.
+ */
+export function stringColumns(
+  text: string,
+  tabWidth: number,
+  graphemeWidth?: GraphemeWidthFn,
+): number {
+  let column = 0;
+  for (const segment of graphemeSegments(text)) {
+    if (graphemeWidth !== undefined && segment.text !== "\t") {
+      column += graphemeWidth(segment.text);
+    } else {
+      // Same defaults as the engine's columnAtOffset — one column model.
+      column += displayGrapheme(segment.text, column, tabWidth).width;
+    }
+  }
+  return column;
+}
+
+/**
+ * Visual columns a VIRTUAL text run occupies. Defaults to its length (the
+ * historical behavior — inlay hints are overwhelmingly ASCII); a width
+ * oracle makes non-ASCII hint labels exact too.
+ */
+export function virtualTextColumns(text: string, graphemeWidth?: GraphemeWidthFn): number {
+  if (graphemeWidth === undefined) return text.length;
+  let columns = 0;
+  for (const segment of graphemeSegments(text)) columns += graphemeWidth(segment.text);
+  return columns;
 }
 
 /**
@@ -227,6 +279,7 @@ export function virtualColsBefore(
   text: RenderableText,
   line: number,
   offset: number,
+  graphemeWidth?: GraphemeWidthFn,
 ): number {
   if (virtuals === undefined || virtuals.length === 0) return 0;
   const range = text.lineRange(line);
@@ -235,7 +288,7 @@ export function virtualColsBefore(
     const at = clamp(vt.at, 0, text.length);
     if (at < range.from || at > range.to) continue;
     if (at < offset || (at === offset && (vt.affinity ?? "after") === "before")) {
-      cols += vt.text.length;
+      cols += virtualTextColumns(vt.text, graphemeWidth);
     }
   }
   return cols;
@@ -277,8 +330,11 @@ function rectForLine(
   virtuals: readonly VirtualText[] | undefined,
 ): LayoutRect {
   const a =
-    columnAtOffset(text, line, from, m.tabWidth) + virtualColsBefore(virtuals, text, line, from),
-    b = columnAtOffset(text, line, to, m.tabWidth) + virtualColsBefore(virtuals, text, line, to);
+    columnAtOffset(text, line, from, m.tabWidth, m.graphemeWidth) +
+      virtualColsBefore(virtuals, text, line, from, m.graphemeWidth),
+    b =
+      columnAtOffset(text, line, to, m.tabWidth, m.graphemeWidth) +
+      virtualColsBefore(virtuals, text, line, to, m.graphemeWidth);
   return {
     top: rowTop(visualRow, m.lineHeight, m.paddingTop),
     left: m.paddingLeft + a * m.charWidth,
@@ -292,6 +348,7 @@ type Metrics = {
   charWidth: number;
   paddingTop: number;
   paddingLeft: number;
+  graphemeWidth?: GraphemeWidthFn | undefined;
 };
 
 /**
@@ -304,13 +361,11 @@ type Metrics = {
 export function rowVisualColumns(
   row: Extract<LayoutRow, { kind: "text" }>,
   tabWidth: number,
+  graphemeWidth?: GraphemeWidthFn,
 ): number {
-  let cols = 0;
-  for (const ch of row.text) {
-    cols += ch === "\t" ? tabWidth - (cols % tabWidth) : 1;
-  }
+  let cols = stringColumns(row.text, tabWidth, graphemeWidth);
   for (const segment of row.segments) {
-    if (segment.kind === "virtual-text") cols += segment.text.length;
+    if (segment.kind === "virtual-text") cols += virtualTextColumns(segment.text, graphemeWidth);
   }
   return cols;
 }
@@ -344,9 +399,11 @@ export function hitTestTextPosition(args: {
   readonly bias?: HitTestBias;
   /** Virtual text on/near the hit line; clicks inside it land at anchors. */
   readonly virtualText?: readonly VirtualText[];
+  readonly graphemeWidth?: GraphemeWidthFn | undefined;
 }): HitTestResult {
   const lineHeight = Math.max(Number.EPSILON, args.lineHeight),
     charWidth = Math.max(Number.EPSILON, args.charWidth);
+  const gw = args.graphemeWidth;
   const line = clamp(
     Math.floor((args.y - args.paddingTop) / lineHeight),
     0,
@@ -356,19 +413,24 @@ export function hitTestTextPosition(args: {
   const bias = args.bias ?? "before";
   // Strip virtual columns left of x; a hit INSIDE a virtual run resolves
   // to its anchor offset (the caret lands where the hint is attached).
+  // The walk stays entirely in VISUAL columns — `consumed` inflates each
+  // virtual's start column; rawColumn is deflated ONCE afterwards. (The
+  // old version deflated rawColumn inside the loop while ALSO inflating
+  // the comparisons: from the second hint on, the windows were doubly
+  // shifted and text after two hints resolved into the wrong hint.)
   {
     let consumed = 0;
     for (const vt of lineVirtuals(args.virtualText, args.text, line)) {
       const at = clamp(vt.at, 0, args.text.length);
-      const baseColumn =
-        columnAtOffset(args.text, line, at, args.tabWidth) + consumed;
-      if (rawColumn < baseColumn) break;
-      if (rawColumn < baseColumn + vt.text.length) {
-        return { line, column: baseColumn - consumed, offset: at };
+      const startColumn = columnAtOffset(args.text, line, at, args.tabWidth, gw) + consumed;
+      if (rawColumn < startColumn) break;
+      const width = virtualTextColumns(vt.text, gw);
+      if (rawColumn < startColumn + width) {
+        return { line, column: startColumn - consumed, offset: at };
       }
-      consumed += vt.text.length;
-      rawColumn -= vt.text.length;
+      consumed += width;
     }
+    rawColumn = Math.max(0, rawColumn - consumed);
   }
   if (bias === "nearest") {
     const beforeOffset = offsetAtColumn({
@@ -377,6 +439,7 @@ export function hitTestTextPosition(args: {
       column: Math.floor(rawColumn),
       tabWidth: args.tabWidth,
       bias: "before",
+      ...(gw !== undefined ? { graphemeWidth: gw } : {}),
     });
     const afterOffset = offsetAtColumn({
       text: args.text,
@@ -384,9 +447,10 @@ export function hitTestTextPosition(args: {
       column: Math.ceil(rawColumn),
       tabWidth: args.tabWidth,
       bias: "after",
+      ...(gw !== undefined ? { graphemeWidth: gw } : {}),
     });
-    const beforeColumn = columnAtOffset(args.text, line, beforeOffset, args.tabWidth),
-      afterColumn = columnAtOffset(args.text, line, afterOffset, args.tabWidth);
+    const beforeColumn = columnAtOffset(args.text, line, beforeOffset, args.tabWidth, gw),
+      afterColumn = columnAtOffset(args.text, line, afterOffset, args.tabWidth, gw);
     const offset =
       Math.abs(rawColumn - beforeColumn) < Math.abs(afterColumn - rawColumn)
         ? beforeOffset
@@ -400,8 +464,9 @@ export function hitTestTextPosition(args: {
     column: targetColumn,
     tabWidth: args.tabWidth,
     bias,
+    ...(gw !== undefined ? { graphemeWidth: gw } : {}),
   });
-  return { line, column: columnAtOffset(args.text, line, offset, args.tabWidth), offset };
+  return { line, column: columnAtOffset(args.text, line, offset, args.tabWidth, gw), offset };
 }
 
 /**
@@ -421,6 +486,7 @@ export function hitTestTextPositionExact(args: {
   readonly paddingTop: number;
   readonly tabWidth: number;
   readonly virtualText?: readonly VirtualText[];
+  readonly graphemeWidth?: GraphemeWidthFn | undefined;
 }): HitTestResult | null {
   const lineHeight = Math.max(Number.EPSILON, args.lineHeight),
     charWidth = Math.max(Number.EPSILON, args.charWidth);
@@ -430,11 +496,11 @@ export function hitTestTextPositionExact(args: {
   if (rawColumn < -0.5) return null;
   const range = lineRange(args.text, rawLine);
   const virtualCols = lineVirtuals(args.virtualText, args.text, rawLine).reduce(
-    (n, vt) => n + vt.text.length,
+    (n, vt) => n + virtualTextColumns(vt.text, args.graphemeWidth),
     0,
   );
   const maxColumn =
-    columnAtOffset(args.text, rawLine, range.to, args.tabWidth) + virtualCols;
+    columnAtOffset(args.text, rawLine, range.to, args.tabWidth, args.graphemeWidth) + virtualCols;
   if (rawColumn > maxColumn + 0.5) return null;
   return hitTestTextPosition({ ...args, bias: "nearest" });
 }
@@ -540,6 +606,7 @@ export function layoutViewport<Payload = unknown>(
     charWidth: request.charWidth ?? 1,
     paddingTop: request.paddingTop ?? 0,
     paddingLeft: request.paddingLeft ?? 0,
+    graphemeWidth: request.graphemeWidth,
   };
   const anchors = request.anchors ?? [],
     visuals = request.visuals ?? {};
@@ -673,8 +740,8 @@ export function layoutViewport<Payload = unknown>(
         row = lineToRow.get(line);
       if (row !== undefined) {
         const column =
-          columnAtOffset(request.text, line, at, m.tabWidth) +
-          virtualColsBefore(visuals.virtualText, request.text, line, at);
+          columnAtOffset(request.text, line, at, m.tabWidth, m.graphemeWidth) +
+          virtualColsBefore(visuals.virtualText, request.text, line, at, m.graphemeWidth);
         placements.push({
           kind: "overlay",
           id: anchor.id,
@@ -756,9 +823,11 @@ function addRangePlacement<Payload>(
       b = Math.min(range.to, lr.to);
     if (b < a) continue;
     const columnStart =
-        columnAtOffset(text, line, a, m.tabWidth) + virtualColsBefore(virtuals, text, line, a),
+        columnAtOffset(text, line, a, m.tabWidth, m.graphemeWidth) +
+        virtualColsBefore(virtuals, text, line, a, m.graphemeWidth),
       columnEnd =
-        columnAtOffset(text, line, b, m.tabWidth) + virtualColsBefore(virtuals, text, line, b);
+        columnAtOffset(text, line, b, m.tabWidth, m.graphemeWidth) +
+        virtualColsBefore(virtuals, text, line, b, m.graphemeWidth);
     out.push({
       kind: "range",
       id: anchor.id,

@@ -6,6 +6,7 @@ import {
   layoutContentHeight,
   layoutViewport,
   rowVisualColumns,
+  stringColumns,
 } from "../src/index";
 
 const text = (s: string) => TextBuffer.fromString(s);
@@ -736,6 +737,38 @@ describe("virtual text geometry", () => {
     expect(hitTestTextPosition({ ...base, x: 60 * 8 }).offset).toBe(12);
   });
 
+  test("hit testing stays aligned after MULTIPLE hints on one line", () => {
+    // The LSP shape that regressed: `f(_event, filePath) => {}` with a
+    // parameter-name hint before `_event` and a type hint after it. The
+    // pointer sits on `filePath` — AFTER both hints — and must resolve
+    // there, not inside the second hint's window (the old walk mixed
+    // coordinate spaces and returned the second hint's anchor).
+    const multi = TextBuffer.fromString("f(_event, filePath) => {}\n");
+    const hints = [
+      { at: 2, text: "listener: ", affinity: "before" as const }, // 10 cols
+      { at: 8, text: ": IpcMainInvokeEvent", affinity: "before" as const }, // 20 cols
+    ];
+    const base = {
+      text: multi,
+      y: 1,
+      lineHeight: 20,
+      charWidth: 8,
+      paddingLeft: 0,
+      paddingTop: 0,
+      tabWidth: 4,
+      bias: "nearest" as const,
+      virtualText: hints,
+    };
+    // 'P' of filePath: text col 14, visual col 14 + 10 + 20 = 44.
+    expect(hitTestTextPosition({ ...base, x: 44 * 8 }).offset).toBe(14);
+    // Start of filePath: text col 10, visual 40.
+    expect(hitTestTextPosition({ ...base, x: 40 * 8 }).offset).toBe(10);
+    // Inside the SECOND hint's run (visual 18..38): its anchor.
+    expect(hitTestTextPosition({ ...base, x: 20 * 8 }).offset).toBe(8);
+    // Between the hints, on `_event`: text col 4, visual 14.
+    expect(hitTestTextPosition({ ...base, x: 14 * 8 }).offset).toBe(4);
+  });
+
   test("exact hit testing reports null off the text", () => {
     const base = {
       text,
@@ -759,5 +792,66 @@ describe("virtual text geometry", () => {
     // Above the first line / below the last: null.
     expect(hitTestTextPositionExact({ ...base, y: -1, x: 8 })).toBeNull();
     expect(hitTestTextPositionExact({ ...base, y: 20 * 30, x: 8 })).toBeNull();
+  });
+});
+
+describe("measured grapheme widths", () => {
+  // An Iosevka-like oracle: the em dash renders TWO cells wide.
+  const width = (grapheme: string) => (grapheme === "—" ? 2 : 1);
+  // "a — `examples/`" — offsets: a=0 ' '=1 —=2 ' '=3 `=4 examples=5..13
+  const text = TextBuffer.fromString("a — `examples/`\n");
+  const m = { tabWidth: 4, lineHeight: 20, charWidth: 8, paddingTop: 0, paddingLeft: 0 };
+
+  test("rects right of a wide glyph shift by its extra cells", () => {
+    const layout = layoutViewport({
+      text,
+      version: 0,
+      startLine: 0,
+      lineCount: 1,
+      ...m,
+      graphemeWidth: width,
+      anchors: [{ kind: "range", id: "word", from: 5, to: 13, payload: null }],
+    });
+    const range = layout.placements.find((p) => p.kind === "range") as {
+      columnStart: number;
+      rects: ReadonlyArray<{ left: number; width: number }>;
+    };
+    // 5 text chars before "examples", the dash counting 2 → visual col 6.
+    expect(range.columnStart).toBe(6);
+    expect(range.rects[0]!.left).toBe(6 * 8);
+    expect(range.rects[0]!.width).toBe(8 * 8);
+  });
+
+  test("hit tests map x through the wide glyph", () => {
+    const base = {
+      text,
+      y: 1,
+      lineHeight: 20,
+      charWidth: 8,
+      paddingLeft: 0,
+      paddingTop: 0,
+      tabWidth: 4,
+      bias: "nearest" as const,
+    };
+    // Clicking the visual start of "examples" (col 6).
+    expect(hitTestTextPosition({ ...base, graphemeWidth: width, x: 6 * 8 }).offset).toBe(5);
+    // Without the oracle the SAME x drifts one character right — the
+    // double-click-selects-the-wrong-span bug this pins down.
+    expect(hitTestTextPosition({ ...base, x: 6 * 8 }).offset).toBe(6);
+  });
+
+  test("stringColumns and rowVisualColumns count the wide glyph", () => {
+    expect(stringColumns("a — b", 4, width)).toBe(6);
+    expect(stringColumns("a — b", 4)).toBe(5); // engine default: 1 cell
+    const layout = layoutViewport({
+      text,
+      version: 0,
+      startLine: 0,
+      lineCount: 1,
+      ...m,
+      graphemeWidth: width,
+    });
+    const row = layout.rows[0]! as Extract<(typeof layout.rows)[number], { kind: "text" }>;
+    expect(rowVisualColumns(row, 4, width)).toBe(16); // 15 chars + 1 extra dash cell
   });
 });

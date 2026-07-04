@@ -91,6 +91,8 @@ export type IntelState = {
     readonly result: SignatureResult | null;
     /** Selected signature index (ArrowUp/Down when several overloads). */
     readonly selected: number;
+    /** The document's language (file extension), for label highlighting. */
+    readonly language?: string;
   };
 };
 
@@ -1316,16 +1318,25 @@ export class IntelController {
 
   // ------------------------------------------------------------- internals
 
+  /** The focused document's language as a file extension ("ts", "c"), the
+   * tag the detached snippet highlighter understands — for coloring code
+   * the server sends back about this document (docs detail, signatures). */
+  private documentLanguage(): string | undefined {
+    const basename = this.resolveCaret()?.path?.split("/").pop() ?? "";
+    const dot = basename.lastIndexOf(".");
+    return dot > 0 ? basename.slice(dot + 1) : undefined;
+  }
+
   private publish(): void {
     const selectedItem =
       this.session !== null ? this.session.scored[this.session.selected]?.item : undefined;
     const resolved = selectedItem !== undefined ? this.resolvedDocs.get(selectedItem) : undefined;
     const documentation = resolved?.documentation ?? selectedItem?.documentation;
     const detail = resolved?.detail ?? selectedItem?.detail;
-    const basename =
-      selectedItem !== undefined ? (this.resolveCaret()?.path?.split("/").pop() ?? "") : "";
-    const dot = basename.lastIndexOf(".");
-    const language = dot > 0 ? basename.slice(dot + 1) : undefined;
+    const language =
+      selectedItem !== undefined || this.signatureSession !== null
+        ? this.documentLanguage()
+        : undefined;
     this.state = {
       completion: {
         open: this.session !== null && this.session.scored.length > 0,
@@ -1346,6 +1357,7 @@ export class IntelController {
         open: this.signatureSession !== null,
         result: this.signatureSession?.result ?? null,
         selected: this.signatureSession?.selected ?? 0,
+        ...(this.signatureSession !== null && language !== undefined ? { language } : {}),
       },
     };
     for (const listener of this.listeners) listener();

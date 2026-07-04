@@ -9,17 +9,37 @@ import { createPortal } from "react-dom";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { highlightSnippet } from "../editor/snippetHighlight";
-import type { CodeSpan } from "../editor/highlightSpans";
+import { sliceCodeSpans, type CodeSpan } from "../editor/highlightSpans";
 import type { IntelController } from "./controller";
 import type { SignatureInfo } from "@the-editor/intel";
 
-/** The signature label split around the active parameter's span. */
+/** Flat code spans rendered as colored JSX (a fragment of one string). */
+function SpanRun({ spans }: { readonly spans: readonly CodeSpan[] }) {
+  return (
+    <>
+      {spans.map((span, index) => (
+        <span key={index} style={span.color !== undefined ? { color: span.color } : undefined}>
+          {span.text}
+        </span>
+      ))}
+    </>
+  );
+}
+
+/**
+ * The signature label, syntax highlighted as the document's language (the
+ * way Zed renders it as a code block) and split around the active
+ * parameter's span — the emphasis wraps AROUND the colored spans, so both
+ * survive.
+ */
 function SignatureLabel({
   signature,
   activeParameter,
+  language,
 }: {
   readonly signature: SignatureInfo;
   readonly activeParameter: number;
+  readonly language: string | undefined;
 }) {
   const label = signature.label;
   const parameter = signature.parameters?.[activeParameter];
@@ -32,12 +52,23 @@ function SignatureLabel({
       range = parameter.label;
     }
   }
-  if (range === null) return <span className="intel-signature__label">{label}</span>;
+  const spans: readonly CodeSpan[] = (language !== undefined
+    ? highlightSnippet(label, language)
+    : null) ?? [{ text: label }];
+  if (range === null) {
+    return (
+      <span className="intel-signature__label">
+        <SpanRun spans={spans} />
+      </span>
+    );
+  }
   return (
     <span className="intel-signature__label">
-      {label.slice(0, range[0])}
-      <span className="intel-signature__active">{label.slice(range[0], range[1])}</span>
-      {label.slice(range[1])}
+      <SpanRun spans={sliceCodeSpans(spans, 0, range[0])} />
+      <span className="intel-signature__active">
+        <SpanRun spans={sliceCodeSpans(spans, range[0], range[1])} />
+      </span>
+      <SpanRun spans={sliceCodeSpans(spans, range[1], label.length)} />
     </span>
   );
 }
@@ -220,7 +251,11 @@ export function IntelView({ controller }: { readonly controller: IntelController
                   {state.signature.selected + 1}/{signatureResult.signatures.length}
                 </span>
               )}
-              <SignatureLabel signature={activeSignature} activeParameter={activeParameter} />
+              <SignatureLabel
+                signature={activeSignature}
+                activeParameter={activeParameter}
+                language={state.signature.language}
+              />
             </div>
           </div>,
           signatureHost,

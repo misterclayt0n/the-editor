@@ -81,6 +81,8 @@ function makePane(initial: string) {
       onPointerScrolled: () => () => {},
       onKeyIntercept: () => () => {},
     },
+    registerPreKeymap: () => () => {},
+    dispatchPreKeymap: () => false,
     resolveSource: (offset: number) => ({
       docId: "doc-1",
       path: "/main.ts",

@@ -10,6 +10,7 @@
 import { Effect, Option } from "effect";
 import { definePackage } from "@the-editor/extensions";
 import { Commands } from "@the-editor/commands";
+import { inputWhen } from "@the-editor/input";
 import { Keymaps } from "@the-editor/keymaps";
 import { SurfaceKind, SurfaceScope } from "@the-editor/workbench";
 import {
@@ -35,6 +36,7 @@ import {
 export const EditorSurface = SurfaceKind("the-editor/editor");
 
 const editorScope = SurfaceScope.surface(EditorSurface);
+const acceptsText = inputWhen({ acceptsText: true });
 
 /**
  * Apply a pure command result through the focused panel's view context.
@@ -141,10 +143,21 @@ export const editorDefaults = definePackage("the-editor/editor-defaults", () =>
     });
 
     yield* keymaps.registerAll([
-      { keys: "enter", command: "editor.newline", scope: editorScope },
-      { keys: "backspace", command: "editor.deleteBackward", scope: editorScope },
-      { keys: "delete", command: "editor.deleteForward", scope: editorScope },
-      { keys: "tab", command: "editor.insertText", args: { text: "\t" }, scope: editorScope },
+      { keys: "enter", command: "editor.newline", scope: editorScope, when: acceptsText },
+      {
+        keys: "backspace",
+        command: "editor.deleteBackward",
+        scope: editorScope,
+        when: acceptsText,
+      },
+      { keys: "delete", command: "editor.deleteForward", scope: editorScope, when: acceptsText },
+      {
+        keys: "tab",
+        command: "editor.insertText",
+        args: { text: "\t" },
+        scope: editorScope,
+        when: acceptsText,
+      },
       { keys: "arrowleft", command: "cursor.left", scope: editorScope },
       { keys: "arrowright", command: "cursor.right", scope: editorScope },
       { keys: "arrowup", command: "cursor.up", scope: editorScope },
@@ -161,7 +174,12 @@ export const editorDefaults = definePackage("the-editor/editor-defaults", () =>
         args: { extend: true },
         scope: editorScope,
       },
-      { keys: "shift+arrowup", command: "cursor.up", args: { extend: true }, scope: editorScope },
+      {
+        keys: "shift+arrowup",
+        command: "cursor.up",
+        args: { extend: true },
+        scope: editorScope,
+      },
       {
         keys: "shift+arrowdown",
         command: "cursor.down",
@@ -176,7 +194,12 @@ export const editorDefaults = definePackage("the-editor/editor-defaults", () =>
         args: { extend: true },
         scope: editorScope,
       },
-      { keys: "shift+end", command: "cursor.lineEnd", args: { extend: true }, scope: editorScope },
+      {
+        keys: "shift+end",
+        command: "cursor.lineEnd",
+        args: { extend: true },
+        scope: editorScope,
+      },
     ]);
   }),
 );

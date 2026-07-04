@@ -65,7 +65,33 @@ describe("keymaps service", () => {
 
       yield* keymaps.handleKey(parseChord("ctrl+w"));
       const dead = yield* keymaps.handleKey(parseChord("z"));
-      expect(dead).toEqual({ _tag: "none" });
+      expect(dead).toMatchObject({ _tag: "none", cancelled: [parseChord("ctrl+w"), parseChord("z")] });
+      expect(yield* keymaps.pending).toHaveLength(0);
+    }),
+  );
+
+  it.scoped("pending prefixes reset when input facts change", () =>
+    Effect.gen(function* () {
+      const { runtime, keymaps, layer } = yield* setup;
+      const pkg = definePackage("pkg", () =>
+        Effect.flatMap(Keymaps, (k) =>
+          k.register({
+            keys: "g d",
+            command: "goto.definition",
+            when: { "input.mode": "normal" },
+          }),
+        ),
+      );
+      yield* runtime.activateGraph([toPackageDescriptor(pkg, layer)]);
+
+      const first = yield* keymaps.handleKey(parseChord("g"), {
+        facts: { "input.mode": "normal" },
+      });
+      expect(first._tag).toBe("pending");
+      const changed = yield* keymaps.handleKey(parseChord("d"), {
+        facts: { "input.mode": "insert" },
+      });
+      expect(changed).toEqual({ _tag: "none" });
       expect(yield* keymaps.pending).toHaveLength(0);
     }),
   );

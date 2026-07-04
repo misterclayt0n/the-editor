@@ -27,6 +27,8 @@ import {
 /** Terminal emulator engine for the terminal panel. */
 export type TerminalEngineSetting = "xterm" | "ghostty";
 
+export type InputProfileSetting = string;
+
 export interface EditorConfig {
   /**
    * First-party default package ids to NOT activate. Only swappable defaults
@@ -34,6 +36,11 @@ export interface EditorConfig {
    * ignored by the host with a notice. Order-independent.
    */
   readonly disable?: readonly string[];
+  /** Input/interaction model settings. */
+  readonly input?: {
+    /** Active input profile id (for example: "default", "helix-lite", "vim"). */
+    readonly profile?: InputProfileSetting;
+  };
   /** Terminal panel settings. */
   readonly terminal?: {
     /**
@@ -57,6 +64,12 @@ const isEditorConfig = (value: unknown): value is EditorConfig => {
     if (!Array.isArray(disable) || !disable.every((entry) => typeof entry === "string")) {
       return false;
     }
+  }
+  const input = (value as { input?: unknown }).input;
+  if (input !== undefined) {
+    if (typeof input !== "object" || input === null) return false;
+    const profile = (input as { profile?: unknown }).profile;
+    if (profile !== undefined && typeof profile !== "string") return false;
   }
   const terminal = (value as { terminal?: unknown }).terminal;
   if (terminal !== undefined) {

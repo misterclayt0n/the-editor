@@ -41,7 +41,8 @@ import {
   type Invalidation,
   type VisualsSnapshot,
 } from "@the-editor/editor";
-import type { KeyboardEventLike } from "@the-editor/keymaps";
+import type { InputInterceptor } from "@the-editor/input";
+import { chordFromKeyboardEvent, type KeyboardEventLike } from "@the-editor/keymaps";
 import type { lsp } from "@the-editor/lsp";
 import { SurfaceKind, type PanelId } from "@the-editor/workbench";
 import {
@@ -140,6 +141,24 @@ export class MultiBufferPane implements PaneHost {
   >();
   private readonly highlightListeners = new Set<() => void>();
   private stickyListener: ((meta: ExcerptMeta | null) => void) | null = null;
+
+  registerPreKeymap(interceptor: InputInterceptor): () => void {
+    return this.hub.interaction.onKeyIntercept((event) => {
+      const chord = chordFromKeyboardEvent(event);
+      if (chord === undefined) return false;
+      return (
+        interceptor.onKey({
+          chord,
+          raw: event,
+          context: { profile: "default", mode: "insert", textFallback: "insert" },
+        })._tag === "handled"
+      );
+    });
+  }
+
+  dispatchPreKeymap(event: KeyboardEventLike): boolean {
+    return this.hub.dispatch.keyIntercept(event);
+  }
 
   constructor(
     readonly panelId: PanelId,

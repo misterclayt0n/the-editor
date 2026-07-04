@@ -162,6 +162,9 @@ importers:
       '@the-editor/fonts':
         specifier: workspace:*
         version: link:../../packages/fonts
+      '@the-editor/input':
+        specifier: workspace:*
+        version: link:../../packages/input
       '@the-editor/intel':
         specifier: workspace:*
         version: link:../../packages/intel
@@ -454,6 +457,34 @@ importers:
       node-gyp:
         specifier: ^11.0.0
         version: 11.5.0
+
+  packages/input:
+    dependencies:
+      '@the-editor/extensions':
+        specifier: workspace:*
+        version: link:../extensions
+      '@the-editor/kernel':
+        specifier: workspace:*
+        version: link:../kernel
+      '@the-editor/keymaps':
+        specifier: workspace:*
+        version: link:../keymaps
+      effect:
+        specifier: 'catalog:'
+        version: 3.21.2
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.12.4
+      tsdown:
+        specifier: 'catalog:'
+        version: 0.20.3(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(@typescript/native-preview@7.0.0-dev.20260522.1)(typescript@5.9.3)
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 3.2.4(@types/node@24.12.4)(happy-dom@20.10.6)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)
 
   packages/intel:
     dependencies:

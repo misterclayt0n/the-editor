@@ -11,11 +11,13 @@ const binding = (
   keys: string,
   command: string,
   scope = SurfaceScope.global,
+  when?: KeyBindingContribution["when"],
 ): KeyBindingContribution => ({
   id: ContributionId(`b${n++}`),
   chords: parseKeys(keys),
   command,
   scope,
+  ...(when !== undefined ? { when } : {}),
 });
 
 const editorFocus = { id: PanelId("p1"), kind: Editor };
@@ -59,7 +61,7 @@ describe("resolver", () => {
     expect(second).toMatchObject({ _tag: "match", binding: { command: "focus.left" } });
   });
 
-  test("a pending prefix that dead-ends resolves to none", () => {
+  test("a pending prefix that dead-ends resolves to none and reports the cancelled sequence", () => {
     const bindings = [binding("ctrl+w h", "focus.left")];
     const result = resolveKey({
       bindings,
@@ -67,7 +69,7 @@ describe("resolver", () => {
       pending: parseKeys("ctrl+w"),
       chord: parseChord("z"),
     });
-    expect(result).toEqual({ _tag: "none" });
+    expect(result).toEqual({ _tag: "none", cancelled: parseKeys("ctrl+w z") });
   });
 
   test("prefixes win over exact matches (leader keys are never consumed early)", () => {
@@ -123,6 +125,40 @@ describe("resolver", () => {
       chord: parseChord("ctrl+p"),
     });
     expect(result).toMatchObject({ _tag: "match", binding: { command: "my.palette" } });
+  });
+
+  test("when facts are filters, not specificity boosters", () => {
+    const bindings = [
+      binding("esc", "vim.normal", SurfaceScope.surface(Editor), { "input.mode": "insert" }),
+      binding("esc", "later.ungated", SurfaceScope.surface(Editor)),
+    ];
+    const insert = resolveKey({
+      bindings,
+      focus: editorFocus,
+      pending: [],
+      chord: parseChord("esc"),
+      facts: { "input.mode": "insert" },
+    });
+    expect(insert).toMatchObject({ _tag: "match", binding: { command: "later.ungated" } });
+    const normal = resolveKey({
+      bindings,
+      focus: editorFocus,
+      pending: [],
+      chord: parseChord("esc"),
+      facts: { "input.mode": "normal" },
+    });
+    expect(normal).toMatchObject({ _tag: "match", binding: { command: "later.ungated" } });
+  });
+
+  test("failed facts exclude a binding", () => {
+    const result = resolveKey({
+      bindings: [binding("i", "vim.insert", SurfaceScope.surface(Editor), { "input.mode": "normal" })],
+      focus: editorFocus,
+      pending: [],
+      chord: parseChord("i"),
+      facts: { "input.mode": "insert" },
+    });
+    expect(result).toEqual({ _tag: "none" });
   });
 
   test("nothing focused: only global bindings resolve", () => {

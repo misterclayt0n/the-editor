@@ -5,9 +5,9 @@
  *
  * The keystroke pipeline is:
  *
- *   keydown -> chord -> Keymaps.handleKey -> Commands.execute (at the
- *   focused panel's view context) -> transaction -> notification publish
- *   -> renderer repaint
+ *   keydown -> chord -> ViewInput continuation -> pre-keymap interceptors
+ *   -> Keymaps.handleKey(facts) -> Commands.execute (at the focused panel's
+ *   view context) -> transaction -> notification publish -> renderer repaint
  *
  * Every hop is synchronous under Effect.runSync; only the repaint rides a
  * subscriber fiber behind the keystroke.
@@ -56,6 +56,17 @@ import {
   type Chord,
   type KeyboardEventLike,
 } from "@the-editor/keymaps";
+import {
+  defaultInputContext,
+  factsOfInputContext,
+  InputProfiles,
+  makeInputProfiles,
+  ViewInput,
+  type InputContinuationResult,
+  type InputInterceptor,
+  type InputStatus,
+  type ViewInputService,
+} from "@the-editor/input";
 import {
   activateTab,
   collectSlots,
@@ -284,6 +295,9 @@ export interface PaneHost {
   readonly interaction: PaneInteraction;
   /** Producer side, called by the renderer/host to emit events into the hub. */
   readonly dispatch: InteractionDispatch;
+  /** Input substrate: register/dispatch pre-keymap interceptors. */
+  registerPreKeymap(interceptor: InputInterceptor): () => void;
+  dispatchPreKeymap(event: KeyboardEventLike): boolean;
   /** Map a pane offset to its underlying source document + offset (LSP/intel). */
   resolveSource(offset: number): IntelLocation | null;
   snapshot(): EditorSnapshot;
@@ -319,6 +333,7 @@ export class EditorPane implements PaneHost {
   // attachView can subscribe); the pane just surfaces it + its dispatch.
   readonly interaction: PaneInteraction;
   readonly dispatch: InteractionDispatch;
+  private readonly input: ViewInputService;
   private readonly cursor: CursorController;
 
   constructor(
@@ -332,7 +347,29 @@ export class EditorPane implements PaneHost {
     const hub = Context.get(view.context as Context.Context<ViewInteraction>, ViewInteraction);
     this.interaction = hub.interaction;
     this.dispatch = hub.dispatch;
+    this.input = Context.get(view.context as Context.Context<ViewInput>, ViewInput);
     this.cursor = Context.get(view.context as Context.Context<ViewCursor>, ViewCursor);
+  }
+
+  registerPreKeymap(interceptor: InputInterceptor): () => void {
+    const scope = Effect.runSync(Scope.make());
+    Effect.runSync(Scope.extend(this.input.registerPreKeymap(interceptor), scope));
+    return () => void Effect.runSync(Scope.close(scope, Exit.void));
+  }
+
+  dispatchPreKeymap(event: KeyboardEventLike): boolean {
+    const chord = chordFromKeyboardEvent(event);
+    if (chord === undefined) return false;
+    const context = Effect.runSync(this.input.context);
+    return (
+      Effect.runSync(
+        this.input.dispatchPreKeymap({
+          chord,
+          raw: event,
+          context,
+        }),
+      )._tag === "handled"
+    );
   }
 
   /** Highlight source for this pane's document (absent without a host). */
@@ -541,6 +578,7 @@ export class AppRuntime {
   private readonly themeListeners = new Set<() => void>();
   private readonly wrapListeners = new Set<() => void>();
   private softWrap = false;
+  private configuredInputProfile: string | undefined;
   private readonly fontListeners = new Set<() => void>();
   /** The panel each toggle (terminal, file tree) currently owns as its dock.
    *  Cleared when the user moves or closes it, so a manually-placed panel is
@@ -568,6 +606,7 @@ export class AppRuntime {
     readonly workbench: Workbench.Service,
     readonly commands: Commands.Service,
     readonly keymaps: Keymaps.Service,
+    readonly inputProfiles: InputProfiles.Service,
     readonly themes: Themes.Service,
     readonly fonts: Fonts.Service,
   ) {
@@ -589,6 +628,7 @@ export class AppRuntime {
         const attention = yield* Scope.extend(makeAttention(), scope);
         const commands = yield* makeCommands(runtime.contributionIndex, { workbench });
         const keymaps = yield* makeKeymaps(runtime.contributionIndex, { workbench });
+        const inputProfiles = yield* makeInputProfiles(runtime.contributionIndex);
 
         const workspace = yield* makeWorkspaceScope({
           ...(fileSystem ? { fileSystem } : {}),
@@ -714,6 +754,7 @@ export class AppRuntime {
           Layer.succeed(LanguageServers, languageServers),
           Layer.succeed(Commands, commands),
           Layer.succeed(Keymaps, keymaps),
+          Layer.succeed(InputProfiles, inputProfiles),
           Layer.succeed(Workbench, workbench),
           Layer.succeed(Attention, attention),
           Layer.succeed(DocumentRegistry, Context.get(workspaceContext, DocumentRegistry)),
@@ -757,6 +798,7 @@ export class AppRuntime {
           workbench,
           commands,
           keymaps,
+          inputProfiles,
           themes,
           fonts,
         );
@@ -852,6 +894,8 @@ export class AppRuntime {
             Effect.tap((config) =>
               Effect.sync(() => {
                 appRuntime.configuredTerminalEngine = config.terminal?.engine;
+                appRuntime.configuredInputProfile = config.input?.profile;
+                Effect.runSync(inputProfiles.setActiveProfile(config.input?.profile ?? "default"));
               }),
             ),
           );
@@ -2212,14 +2256,6 @@ export class AppRuntime {
       }
     }
 
-    // The focused editor's completion/snippet interceptor runs before keymaps
-    // (never over an editable surface — completion only lives in the editor).
-    if (!editable && this.focusedPaneHost()?.dispatch.keyIntercept(event) === true) {
-      event.preventDefault();
-      this.onPendingChords?.(this.pendingChords());
-      return;
-    }
-
     const outcome = this.resolveKeyboardEvent(event, editable);
     if (outcome !== "passthrough") event.preventDefault();
     this.onPendingChords?.(this.pendingChords());
@@ -2237,10 +2273,42 @@ export class AppRuntime {
     const chord = chordFromKeyboardEvent(event);
     if (chord === undefined) return "passthrough";
 
-    const resolution = Effect.runSync(this.keymaps.handleKey(chord));
+    const input = !editable ? this.focusedViewInput() : null;
+    // Editor views have a real ViewInput. Editor-like panes that are not
+    // ViewScopes yet (multibuffer) still need default input facts so contextual
+    // default bindings keep the old behavior instead of being filtered out.
+    const inputContext =
+      input === null
+        ? !editable && this.focusedPaneHost() !== undefined
+          ? defaultInputContext()
+          : null
+        : Effect.runSync(input.context);
+
+    // 1. Semantic pending key requests (`f<char>`, `r<char>`, operator prompts)
+    // are explicit user-initiated state and therefore win over completion/snippet
+    // pre-key handling and static keymaps unless they choose to fall through.
+    if (input !== null) {
+      const continuation = Effect.runSync(input.handleContinuation(chord));
+      if (continuation !== null) {
+        const outcome = this.applyContinuationResult(continuation);
+        if (outcome !== "passthrough") return outcome;
+      }
+    }
+
+    // 2. Newest-wins pre-keymap interceptors (completion/snippet, surface-owned
+    // read-only navigation) run before ordinary keymap resolution.
+    if (!editable && this.focusedPaneHost()?.dispatchPreKeymap(event) === true) {
+      return "handled";
+    }
+
+    const facts = inputContext === null ? {} : factsOfInputContext(inputContext);
+    const resolution = Effect.runSync(this.keymaps.handleKey(chord, { facts }));
     switch (resolution._tag) {
       case "match":
-        if (editable && resolution.binding.scope._tag !== "global") return "passthrough";
+        if (editable && resolution.binding.scope._tag !== "global") {
+          Effect.runSync(this.keymaps.resetPending);
+          return "passthrough";
+        }
         Effect.runSync(
           this.commands
             .execute(resolution.binding.command, resolution.binding.args)
@@ -2248,11 +2316,15 @@ export class AppRuntime {
         );
         return "handled";
       case "pending":
-        // Don't hold a chord prefix over an editable surface's own typing.
-        return editable ? "passthrough" : "pending";
+        if (editable) {
+          Effect.runSync(this.keymaps.resetPending);
+          return "passthrough";
+        }
+        return "pending";
       case "none":
         if (
           !editable &&
+          inputContext?.textFallback === "insert" &&
           isTextInputChord(chord) &&
           event.key.length === 1 &&
           this.focusedPane() !== undefined
@@ -2264,6 +2336,31 @@ export class AppRuntime {
         }
         return "passthrough";
     }
+  }
+
+  private applyContinuationResult(result: InputContinuationResult): KeyOutcome {
+    switch (result._tag) {
+      case "handled":
+      case "cancel":
+        return "handled";
+      case "fallthrough":
+        return "passthrough";
+      case "execute":
+        Effect.runSync(this.commands.execute(result.command, result.args).pipe(Effect.orDie));
+        return "handled";
+    }
+  }
+
+  private focusedViewInput(): ViewInputService | null {
+    const focused = Effect.runSync(this.workbench.focusedPanel);
+    if (Option.isNone(focused)) return null;
+    const input = Context.getOption(focused.value.context as Context.Context<ViewInput>, ViewInput);
+    return Option.isSome(input) ? input.value : null;
+  }
+
+  inputStatus(): InputStatus | null {
+    const input = this.focusedViewInput();
+    return input === null ? null : Effect.runSync(input.status);
   }
 
   pendingChords(): ReadonlyArray<Chord> {
@@ -2281,7 +2378,7 @@ export class AppRuntime {
   handleGlobalKey(event: KeyboardEventLike): boolean {
     const chord = chordFromKeyboardEvent(event);
     if (chord === undefined) return false;
-    const resolution = Effect.runSync(this.keymaps.handleKey(chord));
+    const resolution = Effect.runSync(this.keymaps.handleKey(chord, { facts: {} }));
     if (resolution._tag === "match" && resolution.binding.scope._tag === "global") {
       Effect.runSync(
         this.commands
@@ -2291,6 +2388,7 @@ export class AppRuntime {
       this.onPendingChords?.(this.pendingChords());
       return true;
     }
+    Effect.runSync(this.keymaps.resetPending);
     this.onPendingChords?.(this.pendingChords());
     return false;
   }
@@ -2298,9 +2396,10 @@ export class AppRuntime {
   // ------------------------------------------------------------ lifecycle
 
   private createPane(document: DocumentScope, options?: { selection?: Selection }): EditorPane {
-    const view = Effect.runSync(
+    const baseView = Effect.runSync(
       makeViewScope(document, options?.selection ? { selection: options.selection } : {}),
     );
+    const view = Effect.runSync(this.inputProfiles.attachView(baseView));
     Effect.runSync(this.decorationProviders.connectView(view));
     const panel: Panel = Effect.runSync(
       this.workbench.createPanel({ kind: EditorSurface, context: view.context }),

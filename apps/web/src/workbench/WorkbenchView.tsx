@@ -31,7 +31,7 @@ import type { WorkbenchHost } from "./host";
 import { EditorView } from "../editor/EditorView";
 import { MultiBufferView } from "../multibuffer/MultiBufferView";
 import { FileIcon } from "./fileIcons";
-import { createPortalNode, OutPortal, type PortalNode } from "./panelPortal";
+import { createPortalNode, disposePortalNode, OutPortal, type PortalNode } from "./panelPortal";
 
 type WorkbenchViewProps = {
   readonly runtime: WorkbenchHost;
@@ -194,7 +194,14 @@ export function WorkbenchView({
   if (wb.arrangement.tiles !== null) collectStacks(wb.arrangement.tiles, stacks);
   const allPanels = new Set<PanelId>(wb.panelIds);
   for (const id of activated) if (!allPanels.has(id)) activated.delete(id);
-  for (const id of nodes.keys()) if (!allPanels.has(id)) nodes.delete(id);
+  for (const [id, node] of nodes) {
+    if (!allPanels.has(id)) {
+      // The parking lot holds a live DOM reference to every parked panel;
+      // a closed panel's container must leave it or the subtree leaks.
+      disposePortalNode(node);
+      nodes.delete(id);
+    }
+  }
   for (const s of stacks) {
     const active = s.panels[s.active];
     if (active !== undefined) activated.add(active);

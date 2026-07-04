@@ -46,6 +46,7 @@ import * as ExtensionsNamespace from "@the-editor/extensions";
 import { Commands } from "@the-editor/commands";
 import * as CommandsNamespace from "@the-editor/commands";
 import * as KeymapsNamespace from "@the-editor/keymaps";
+import * as InputNamespace from "@the-editor/input";
 import * as WorkbenchNamespace from "@the-editor/workbench";
 import * as EditorNamespace from "@the-editor/editor";
 import * as EngineNamespace from "@the-editor/engine";
@@ -80,6 +81,7 @@ export function buildExtensionVirtualModules(): Readonly<Record<string, unknown>
     "@the-editor/extensions": ExtensionsNamespace,
     "@the-editor/commands": CommandsNamespace,
     "@the-editor/keymaps": KeymapsNamespace,
+    "@the-editor/input": InputNamespace,
     "@the-editor/workbench": WorkbenchNamespace,
     "@the-editor/editor": EditorNamespace,
     "@the-editor/engine": EngineNamespace,

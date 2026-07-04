@@ -31,6 +31,7 @@ import { intelActions } from "./intelActions";
 import { vcsDefaults } from "./vcs";
 import { fileTreePackage } from "./fileTree";
 import { terminalPackage } from "./terminal";
+import { helixLite } from "./helixLite";
 
 export type DefaultPackageEntry = {
   readonly pkg: ExtensionPackage<any>;
@@ -62,5 +63,6 @@ export function defaultPackages(): readonly DefaultPackageEntry[] {
     swappable(vcsDefaults),
     swappable(fileTreePackage),
     swappable(terminalPackage),
+    swappable(helixLite),
   ];
 }

@@ -65,9 +65,24 @@ export function defaultStatuslineSegments(runtime: AppRuntime): readonly Statusl
       },
     },
     {
-      id: "the-editor/pending-chords",
+      id: "the-editor/input-mode",
       side: "left",
       priority: 3,
+      content: () => {
+        const status = runtime.inputStatus();
+        if (status === null || status.context.profile === "default") return null;
+        const mode = status.context.mode ?? status.context.profile;
+        const pending = status.pendingContinuationLabel;
+        return {
+          text: ` · ${mode}${pending !== undefined ? ` · ${pending}` : ""}`,
+          className: "status-input-mode",
+        };
+      },
+    },
+    {
+      id: "the-editor/pending-chords",
+      side: "left",
+      priority: 4,
       content: () => {
         const pending = runtime.pendingChords();
         return pending.length > 0 ? { text: ` · ${formatChords(pending)} …` } : null;

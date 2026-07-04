@@ -19,6 +19,7 @@ import {
   toPackageDescriptor,
   type EditorConfig,
   type ExtensionTranspiler,
+  type InputProfileSetting,
   type TerminalEngineSetting,
 } from "@the-editor/extensions";
 import { FileSystemPort } from "@the-editor/editor";
@@ -89,10 +90,12 @@ export function makeReadEditorConfig(
     Effect.gen(function* () {
       const disable = new Set<string>();
       let terminalEngine: TerminalEngineSetting | undefined;
+      let inputProfile: InputProfileSetting | undefined;
       if (homeDir !== undefined) {
         const global = yield* readOne(`${trimTrailingSlash(homeDir)}/.the-editor/config.ts`);
         for (const id of global?.disable ?? []) disable.add(id);
         terminalEngine = global?.terminal?.engine ?? terminalEngine;
+        inputProfile = global?.input?.profile ?? inputProfile;
       }
       const root = yield* currentRoot();
       if (root !== undefined) {
@@ -102,11 +105,13 @@ export function makeReadEditorConfig(
           for (const id of project?.disable ?? []) disable.add(id);
           // Project config wins over global for scalar settings.
           terminalEngine = project?.terminal?.engine ?? terminalEngine;
+          inputProfile = project?.input?.profile ?? inputProfile;
         }
       }
       return {
         disable: [...disable],
         ...(terminalEngine !== undefined ? { terminal: { engine: terminalEngine } } : {}),
+        ...(inputProfile !== undefined ? { input: { profile: inputProfile } } : {}),
       };
     });
 }

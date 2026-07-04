@@ -588,7 +588,8 @@ Packages get expressive placement without raw tree surgery.
 
 ## 14. Focus and input routing
 
-The kernel owns focus and input routing.
+The host/workbench owns focus; `@the-editor/input` owns focused-view input
+composition. The kernel remains only the package/runtime substrate.
 
 This is non-negotiable because arbitrary packages must compose safely.
 
@@ -606,27 +607,9 @@ The input router owns:
 
 Packages request focus. They do not mutate global focus truth directly.
 
-Recommended scope families:
-
-```txt
-global
-editor.normal
-editor.insert
-editor.select
-palette
-dialog
-tool.<instanceId>
-tool-kind.<toolTypeId>
-```
-
-Scopes let command/key handling compose across:
-
-- editor modes
-- palettes
-- dialogs
-- overlays
-- tools
-- global commands
+Keymaps still use workbench scopes (`global`, surface, panel). Interaction modes
+are exact-match facts supplied by Input, not new scope families. This avoids a
+second keys→command registry and keeps reload ownership simple.
 
 ---
 
@@ -646,59 +629,36 @@ Examples:
 - Emacs-ish profile
 - custom user profile
 
-The active model is:
+The implemented model is:
 
 ```txt
-base profile + overlays
+ViewInput context facts + Keymaps.when + semantic continuations
 ```
 
-The kernel owns:
+`InputProfiles` owns active profile selection and view attachment. A profile owns:
 
-- active profile selection
-- overlay precedence
-- input routing into the profile
-- execution of profile effects
-
-A profile owns:
-
-- profile state
-- modes
-- pending-key behavior
-- key sequence interpretation
-- operator/motion composition
-- mode-specific scopes
+- profile state (`profile`, `mode`, optional `transient`/facets)
+- text fallback policy (`insert` or `none`)
+- semantic pending-key behavior (`f<char>`, `r<char>`, operators)
 - profile-specific cursor/mode metadata
-- translation from input to effects
+- any focus policy it wants to implement through public Workbench events
 
-Conceptual shape:
-
-```ts
-interface InteractionProfile {
-  id: string;
-  initialState(): unknown;
-  reduce(input: InteractionInput, state: unknown): InteractionResult;
-}
-
-interface InteractionResult {
-  state: unknown;
-  effects: readonly InteractionEffect[];
-  snapshot: InteractionSnapshot;
-}
-```
-
-Effects are host-executed:
+Keybindings are still registered with `Keymaps`:
 
 ```ts
-type InteractionEffect =
-  | { type: "command.execute"; command: string; args?: unknown }
-  | { type: "focus.request"; target: FocusTarget }
-  | { type: "overlay.open"; role: string }
-  | { type: "overlay.close"; role: string };
+keymaps.register({
+  keys: "i",
+  command: "vim.enterInsert",
+  scope: editorScope,
+  when: inputWhen({ profile: "vim", mode: "normal" }),
+});
 ```
 
-Profiles should not directly mutate layout, focus, or document internals. They compose workflows from stable commands/effects.
-
-This keeps interaction powerful but inspectable.
+`when` facts are filters only; among surviving bindings the resolver keeps the
+old precedence: scope specificity, then later registration. Static known
+sequences (`g d`, `ctrl+w h`) are Keymaps chords. Semantic "next key is data"
+sequences are `ViewInput` continuations. Profile retraction resets live views to
+the built-in default profile so reload cannot strand a pane in a dead mode.
 
 ---
 
@@ -706,7 +666,9 @@ This keeps interaction powerful but inspectable.
 
 Commands are named effects.
 
-Keymaps are data contributions used by interaction profiles or simpler command resolution paths.
+Keymaps are the single keys→command contribution registry. Input profiles make
+bindings contextual by supplying facts; they do not own a second keybinding
+registry.
 
 A package may register commands:
 
@@ -733,7 +695,9 @@ editor.keymaps.register({
 
 For simple profiles, keymaps may map directly to commands.
 
-For modal profiles, keymaps are one input into the profile state machine. Pending input belongs to the interaction profile/session, not to the keymap registry itself.
+For modal profiles, static sequences remain in Keymaps, while semantic pending
+input belongs to the `ViewInput` session. Unbound printable text insertion is not
+a keybinding; it is the profile's `textFallback: "insert"` policy.
 
 ---
 

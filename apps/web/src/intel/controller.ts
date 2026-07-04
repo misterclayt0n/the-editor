@@ -375,14 +375,18 @@ export class IntelController {
         visuals.contribute("intel-hover-range", {}).pipe(Scope.extend(this.hoverRangeScope)),
       );
     }
-    // Subscribe to the pane's interaction hub. Key interception registers
-    // LAST so it wins over the pane's intrinsic nav (the hub tries subscribers
-    // newest-first) — completion navigation wins while a session is open,
-    // everything else falls through to the multibuffer's own handler.
+    // Subscribe to the pane's interaction hub and input pre-keymap seam. Key
+    // interception registers LAST/newest so completion/snippet navigation wins
+    // while a session is open; everything else falls through to the pane/keymaps.
     this.interactionDisposers = [
       pane.interaction.onPointerHover((offset) => this.onPointerHover(offset)),
       pane.interaction.onPointerScrolled(() => this.onScrolled()),
-      pane.interaction.onKeyIntercept((event) => this.interceptKey(event)),
+      pane.registerPreKeymap({
+        owner: "intel",
+        label: "completion/snippet",
+        onKey: ({ raw }) =>
+          this.interceptKey(raw) ? { _tag: "handled" } : { _tag: "passthrough" },
+      }),
     ];
     this.unsubscribePane = pane.subscribe((notification, source) => {
       if (source === "document") this.onDocumentChanged(notification);

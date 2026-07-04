@@ -22,6 +22,7 @@
     "@the-editor/extensions": "workspace:*",
     "@the-editor/fonts": "workspace:*",
     "@the-editor/intel": "workspace:*",
+    "@the-editor/input": "workspace:*",
     "@the-editor/kernel": "workspace:*",
     "@the-editor/keymaps": "workspace:*",
     "@the-editor/lsp": "workspace:*",

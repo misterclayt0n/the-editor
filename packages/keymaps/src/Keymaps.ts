@@ -1,5 +1,5 @@
 import { PackageActivationContext } from "@the-editor/extensions";
-import { Context, Effect, Layer, Option, type Scope, type Stream } from "effect";
+import { Context, Effect, Layer, Option, Stream, type Scope } from "effect";
 import {
   ContributionId,
   makeRegistry,
@@ -13,7 +13,7 @@ import { SurfaceScope, Workbench } from "@the-editor/workbench";
 import { parseKeys, type Chord } from "./chord.js";
 import { InvalidKeysError, type KeymapsError } from "./errors.js";
 import { resolveKey, type FocusTarget, type KeyResolution } from "./resolver.js";
-import type { KeyBindingContribution, KeyBindingDefinition } from "./types.js";
+import type { KeyBindingContribution, KeyBindingDefinition, KeyBindingFacts } from "./types.js";
 
 let nextBindingId = 1;
 
@@ -43,7 +43,10 @@ export declare namespace Keymaps {
      *
      * Resolution only: executing the matched command is the host's move.
      */
-    readonly handleKey: (chord: Chord) => Effect.Effect<KeyResolution>;
+    readonly handleKey: (
+      chord: Chord,
+      options?: { readonly facts?: KeyBindingFacts },
+    ) => Effect.Effect<KeyResolution>;
     readonly pending: Effect.Effect<ReadonlyArray<Chord>>;
     readonly pendingChanges: Stream.Stream<ReadonlyArray<Chord>>;
     readonly resetPending: Effect.Effect<void>;
@@ -70,7 +73,13 @@ export const makeKeymaps = (
       { contributionIndex },
     );
     const workbench = options?.workbench;
-    const pendingCell = yield* makeStateCell<ReadonlyArray<Chord>>([]);
+    type PendingState = {
+      readonly chords: ReadonlyArray<Chord>;
+      readonly focusKey: string;
+      readonly factsKey: string;
+    };
+    const EMPTY_PENDING: PendingState = { chords: [], focusKey: "", factsKey: "" };
+    const pendingCell = yield* makeStateCell<PendingState>(EMPTY_PENDING);
 
     const focusTarget: Effect.Effect<FocusTarget> = workbench
       ? workbench.focusedPanel.pipe(
@@ -99,6 +108,7 @@ export const makeKeymaps = (
           command: definition.command,
           scope: definition.scope ?? SurfaceScope.global,
           ...(definition.args !== undefined ? { args: definition.args } : {}),
+          ...(definition.when !== undefined ? { when: definition.when } : {}),
           ...(definition.description !== undefined ? { description: definition.description } : {}),
         });
       });
@@ -107,23 +117,39 @@ export const makeKeymaps = (
       register,
       registerAll: (definitions) => Effect.forEach(definitions, register, { concurrency: 1 }),
       bindings: registry.list,
-      handleKey: (chord) =>
+      handleKey: (chord, handleOptions) =>
         Effect.gen(function* () {
           const focus = yield* focusTarget;
           const owned = yield* registry.list;
-          const pending = yield* pendingCell.get;
+          const facts = handleOptions?.facts ?? {};
+          const focusKey = focus === undefined ? "" : `${focus.kind}:${focus.id}`;
+          const factsKey = JSON.stringify(
+            Object.entries(facts)
+              .filter(([, value]) => value !== undefined)
+              .sort(([a], [b]) => a.localeCompare(b)),
+          );
+          const pendingState = yield* pendingCell.get;
+          const pending =
+            pendingState.focusKey === focusKey && pendingState.factsKey === factsKey
+              ? pendingState.chords
+              : [];
           const resolution = resolveKey({
             bindings: owned.map((entry) => entry.contribution),
             focus,
             pending,
             chord,
+            facts,
           });
-          yield* pendingCell.set(resolution._tag === "pending" ? resolution.chords : []);
+          yield* pendingCell.set(
+            resolution._tag === "pending"
+              ? { chords: resolution.chords, focusKey, factsKey }
+              : EMPTY_PENDING,
+          );
           return resolution;
         }),
-      pending: pendingCell.get,
-      pendingChanges: pendingCell.changes,
-      resetPending: pendingCell.set([]),
+      pending: pendingCell.get.pipe(Effect.map((state) => state.chords)),
+      pendingChanges: pendingCell.changes.pipe(Stream.map((state) => state.chords)),
+      resetPending: pendingCell.set(EMPTY_PENDING),
     } satisfies Keymaps.Service;
   });
 

@@ -81,7 +81,7 @@ finding that anchors everything below:
 | 16 | Contribute a language server / grammar | 🟡 `LanguageServers` public via `@the-editor/intel`; grammars native `.so` (D1) |
 | 17 | Undo / redo | 🟡 engine `history` is pure data; not a public verb (F4) |
 | 18 | Be driven from outside (CLI/socket/MCP) | ❌ no inbound channel exists at all (F1) |
-| 19 | Replace the interaction model (Vim/Helix/Emacs) | ❓ undecided — no mode state machine (F3) |
+| 19 | Replace the interaction model (Vim/Helix/Emacs) | ✅ `@the-editor/input` profiles + contextual `Keymaps.when` + continuations (F3) |
 | 20 | Opt OUT of / replace a default (not just add) | ✅ default set is a manifest; `~/.the-editor/config.ts` `disable`s a swappable package (I1) |
 
 ---
@@ -342,10 +342,21 @@ finding that anchors everything below:
   surface, seams-by-task, theme tokens for native-looking UI, the prebundle
   recipe, config, and the debugging workflow (Reload → toast → Extension
   Issues).
-- [ ] **F3. Interaction-model decision.** `docs/EXTENSIONS.md` promises Vim/Helix/
-  Emacs replacement via interaction profiles; current `Keymaps` has scopes + chords
-  but no mode state machine. Decide: extension-owned mode state + scoped keymaps +
-  pre-key interceptor (D2), or a first-class profile seam. Settle it deliberately.
+- [x] **F3. Interaction-model seam.** Shipped as `@the-editor/input` plus generic
+  `Keymaps.when` facts. There is still ONE keybinding registry: packages register
+  keys with `Keymaps`; Input owns the focused view's profile/mode/transient facts,
+  semantic continuations (`f<char>`, `r<char>`, operator prompts), pre-keymap
+  interceptors, text fallback policy, and status. Facts are exact-match FILTERS
+  only — they never boost specificity; among surviving bindings the old rule
+  remains scope specificity, then later registration. Pending keymap prefixes reset
+  when focus or facts change. Profile retraction is reload-safe: every live view
+  using that profile resets to the built-in `default` profile and clears
+  continuations. Static known sequences (`g d`, `ctrl+w h`) stay in Keymaps;
+  semantic "next key is data" sequences are Input continuations. Runtime ordering is
+  continuation → newest pre-keymap interceptor → contextual keymaps → text fallback.
+  A first-party inert proof package, `the-editor/helix-lite`, registers a real
+  `helix-lite` profile (enable via `defineConfig({ input: { profile:
+  "helix-lite" } })`) with normal/insert/select modes and cursor styling.
 - [ ] **F4. Undo/redo as a public verb.** Engine `history` is pure data, product-
   wired; an extension can only invoke undo via whatever command id the default
   package registered. Small, but it belongs in the table.

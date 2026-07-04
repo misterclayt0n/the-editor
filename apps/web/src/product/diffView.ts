@@ -7,7 +7,7 @@
 import { Context, Effect } from "effect";
 import { definePackage } from "@the-editor/extensions";
 import { Commands, type CommandDefinition } from "@the-editor/commands";
-import { Keymaps } from "@the-editor/keymaps";
+import { Keymaps, ctrlCmd } from "@the-editor/keymaps";
 import {
   PanelRenderers,
   SurfaceKind,
@@ -280,8 +280,7 @@ export const diffViewPackage = definePackage("the-editor/diff-view", () =>
       ]),
     );
     yield* keymaps.registerAll([
-      { keys: "meta+shift+g", command: "diffs.openDiffView", scope: SurfaceScope.global },
-      { keys: "ctrl+shift+g", command: "diffs.openDiffView", scope: SurfaceScope.global },
+      { keys: ctrlCmd("shift+g"), command: "diffs.openDiffView", scope: SurfaceScope.global },
     ]);
   }),
 );

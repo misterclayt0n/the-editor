@@ -9,7 +9,7 @@
 import { Context, Effect } from "effect";
 import { definePackage } from "@the-editor/extensions";
 import { Commands } from "@the-editor/commands";
-import { Keymaps } from "@the-editor/keymaps";
+import { Keymaps, ctrlCmd } from "@the-editor/keymaps";
 import {
   PanelRenderers,
   SurfaceKind,
@@ -53,8 +53,7 @@ export const fileTreePackage = definePackage("the-editor/file-tree", () =>
       run: () => Effect.sync(() => host.moveSide()),
     });
     yield* keymaps.registerAll([
-      { keys: "meta+b", command: "files.toggleTree", scope: SurfaceScope.global },
-      { keys: "ctrl+b", command: "files.toggleTree", scope: SurfaceScope.global },
+      { keys: ctrlCmd("b"), command: "files.toggleTree", scope: SurfaceScope.global },
     ]);
   }),
 );

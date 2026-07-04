@@ -47,10 +47,16 @@ export const workspacesPackage = definePackage("the-editor/workspaces", () =>
     });
 
     yield* keymaps.registerAll([
-      { keys: "meta+k meta+o", command: "workspace.open", scope: SurfaceScope.global },
-      { keys: "ctrl+k ctrl+o", command: "workspace.open", scope: SurfaceScope.global },
-      { keys: "meta+k meta+w", command: "workspace.switch", scope: SurfaceScope.global },
-      { keys: "ctrl+k ctrl+w", command: "workspace.switch", scope: SurfaceScope.global },
+      {
+        keys: { primary: "ctrl+k ctrl+o", mac: "meta+k meta+o" },
+        command: "workspace.open",
+        scope: SurfaceScope.global,
+      },
+      {
+        keys: { primary: "ctrl+k ctrl+w", mac: "meta+k meta+w" },
+        command: "workspace.switch",
+        scope: SurfaceScope.global,
+      },
     ]);
   }),
 );

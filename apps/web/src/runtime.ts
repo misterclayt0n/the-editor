@@ -50,6 +50,7 @@ import { Themes, type ResolvedTheme } from "@the-editor/theme";
 import { Fonts, type ResolvedFontSystem } from "@the-editor/fonts";
 import {
   chordFromKeyboardEvent,
+  detectKeybindingPlatform,
   isTextInputChord,
   Keymaps,
   makeKeymaps,
@@ -627,7 +628,10 @@ export class AppRuntime {
         const workbench = yield* Scope.extend(makeWorkbench(), scope);
         const attention = yield* Scope.extend(makeAttention(), scope);
         const commands = yield* makeCommands(runtime.contributionIndex, { workbench });
-        const keymaps = yield* makeKeymaps(runtime.contributionIndex, { workbench });
+        const keymaps = yield* makeKeymaps(runtime.contributionIndex, {
+          workbench,
+          platform: detectKeybindingPlatform(),
+        });
         const inputProfiles = yield* makeInputProfiles(runtime.contributionIndex);
 
         const workspace = yield* makeWorkspaceScope({

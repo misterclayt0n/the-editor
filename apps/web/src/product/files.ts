@@ -8,7 +8,7 @@
 import { Effect } from "effect";
 import { definePackage } from "@the-editor/extensions";
 import { Commands } from "@the-editor/commands";
-import { Keymaps } from "@the-editor/keymaps";
+import { Keymaps, ctrlCmd } from "@the-editor/keymaps";
 import { SurfaceScope } from "@the-editor/workbench";
 import { FileOperations } from "@the-editor/editor";
 import { EditorSurface } from "./editorDefaults";
@@ -49,14 +49,10 @@ export const filesPackage = definePackage("the-editor/files", () =>
     });
 
     yield* keymaps.registerAll([
-      { keys: "meta+s", command: "file.save", scope: editorScope },
-      { keys: "ctrl+s", command: "file.save", scope: editorScope },
-      { keys: "meta+o", command: "file.open", scope: editorScope },
-      { keys: "ctrl+o", command: "file.open", scope: editorScope },
-      { keys: "meta+p", command: "file.find", scope: SurfaceScope.global },
-      { keys: "ctrl+p", command: "file.find", scope: SurfaceScope.global },
-      { keys: "meta+shift+f", command: "file.findInProject", scope: SurfaceScope.global },
-      { keys: "ctrl+shift+f", command: "file.findInProject", scope: SurfaceScope.global },
+      { keys: ctrlCmd("s"), command: "file.save", scope: editorScope },
+      { keys: ctrlCmd("o"), command: "file.open", scope: editorScope },
+      { keys: ctrlCmd("p"), command: "file.find", scope: SurfaceScope.global },
+      { keys: ctrlCmd("shift+f"), command: "file.findInProject", scope: SurfaceScope.global },
     ]);
   }),
 );

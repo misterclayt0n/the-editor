@@ -96,6 +96,30 @@ describe("keymaps service", () => {
     }),
   );
 
+  it.scoped("platform-aware key definitions resolve for the configured platform", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makePackageRuntime;
+      const wb = yield* makeWorkbench();
+      const keymaps = yield* makeKeymaps(runtime.contributionIndex, { workbench: wb, platform: "mac" });
+      const layer = Layer.succeed(Keymaps, keymaps);
+      const pkg = definePackage("pkg", () =>
+        Effect.flatMap(Keymaps, (k) =>
+          k.register({
+            keys: { primary: "ctrl+p", mac: "meta+p" },
+            command: "quick.open",
+          }),
+        ),
+      );
+      yield* runtime.activateGraph([toPackageDescriptor(pkg, layer)]);
+
+      expect(yield* keymaps.handleKey(parseChord("ctrl+p"))).toEqual({ _tag: "none" });
+      expect(yield* keymaps.handleKey(parseChord("meta+p"))).toMatchObject({
+        _tag: "match",
+        binding: { command: "quick.open" },
+      });
+    }),
+  );
+
   it.scoped("kind-scoped bindings resolve only with matching focus", () =>
     Effect.gen(function* () {
       const { runtime, wb, keymaps, layer } = yield* setup;

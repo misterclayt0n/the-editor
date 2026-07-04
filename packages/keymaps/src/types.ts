@@ -10,9 +10,20 @@ import type { Chord } from "./chord.js";
 export type KeyBindingFactValue = string | number | boolean;
 export type KeyBindingFacts = Readonly<Record<string, KeyBindingFactValue | undefined>>;
 
+export type KeybindingPlatform = "mac" | "win" | "linux";
+export type PlatformKeyOverride = string | { readonly primary: string };
+export type PlatformKeys = {
+  /** Fallback key sequence when no current-platform override is present. */
+  readonly primary: string;
+  readonly mac?: PlatformKeyOverride;
+  readonly win?: PlatformKeyOverride;
+  readonly linux?: PlatformKeyOverride;
+};
+export type KeyBindingKeys = string | PlatformKeys;
+
 export interface KeyBindingDefinition {
-  /** Key sequence, e.g. "ctrl+s" or "ctrl+w h". */
-  readonly keys: string;
+  /** Key sequence, e.g. "ctrl+s" or "ctrl+w h", or a platform-aware map. */
+  readonly keys: KeyBindingKeys;
   readonly command: string;
   readonly args?: unknown;
   /** Defaults to global. */
@@ -34,4 +45,6 @@ export interface KeyBindingContribution extends IdentifiedContribution {
   readonly scope: SurfaceScope;
   readonly when?: KeyBindingFacts;
   readonly description?: string;
+  /** Resolved source keys used to create this contribution (for introspection). */
+  readonly sourceKeys?: KeyBindingKeys;
 }

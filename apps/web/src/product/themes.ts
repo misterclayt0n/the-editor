@@ -74,8 +74,16 @@ export const themeCommands = definePackage("the-editor/theme-commands", () =>
     });
 
     yield* keymaps.registerAll([
-      { keys: "meta+k meta+t", command: "theme.select", scope: SurfaceScope.global },
-      { keys: "meta+k meta+l", command: "theme.toggleLightDark", scope: SurfaceScope.global },
+      {
+        keys: { primary: "ctrl+k ctrl+t", mac: "meta+k meta+t" },
+        command: "theme.select",
+        scope: SurfaceScope.global,
+      },
+      {
+        keys: { primary: "ctrl+k ctrl+l", mac: "meta+k meta+l" },
+        command: "theme.toggleLightDark",
+        scope: SurfaceScope.global,
+      },
     ]);
   }),
 );

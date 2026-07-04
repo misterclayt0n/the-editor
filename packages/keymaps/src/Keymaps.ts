@@ -13,7 +13,14 @@ import { SurfaceScope, Workbench } from "@the-editor/workbench";
 import { parseKeys, type Chord } from "./chord.js";
 import { InvalidKeysError, type KeymapsError } from "./errors.js";
 import { resolveKey, type FocusTarget, type KeyResolution } from "./resolver.js";
-import type { KeyBindingContribution, KeyBindingDefinition, KeyBindingFacts } from "./types.js";
+import type {
+  KeyBindingContribution,
+  KeyBindingDefinition,
+  KeyBindingFacts,
+  KeyBindingKeys,
+  KeybindingPlatform,
+  PlatformKeyOverride,
+} from "./types.js";
 
 let nextBindingId = 1;
 
@@ -22,7 +29,7 @@ export declare namespace Keymaps {
     readonly register: (
       definition: KeyBindingDefinition,
     ) => Effect.Effect<
-      OwnedContribution<KeyBindingContribution>,
+      ReadonlyArray<OwnedContribution<KeyBindingContribution>>,
       KeymapsError,
       Scope.Scope | PackageActivationContext
     >;
@@ -61,7 +68,32 @@ export class Keymaps extends Context.Tag("@the-editor/keymaps/Keymaps")<
 export type MakeKeymapsOptions = {
   /** Source of focus for scope filtering. Without it only global bindings resolve. */
   readonly workbench?: Workbench.Service;
+  /** Current platform for platform-aware key definitions. Defaults to linux. */
+  readonly platform?: KeybindingPlatform;
 };
+
+const primaryOf = (override: PlatformKeyOverride | undefined): string | undefined =>
+  typeof override === "string" ? override : override?.primary;
+
+export function resolvePlatformKeys(keys: KeyBindingKeys, platform: KeybindingPlatform): string {
+  if (typeof keys === "string") return keys;
+  return primaryOf(keys[platform]) ?? keys.primary;
+}
+
+export function ctrlCmd(keys: string): KeyBindingKeys {
+  return { primary: `ctrl+${keys}`, mac: `meta+${keys}` };
+}
+
+export function macCtrl(keys: string): KeyBindingKeys {
+  return { primary: `ctrl+${keys}`, mac: `ctrl+${keys}` };
+}
+
+export function detectKeybindingPlatform(userAgent: string | undefined = globalThis.navigator?.userAgent): KeybindingPlatform {
+  const ua = userAgent?.toLowerCase() ?? "";
+  if (ua.includes("macintosh") || ua.includes("mac os") || ua.includes("darwin")) return "mac";
+  if (ua.includes("windows") || ua.includes("win32") || ua.includes("win64")) return "win";
+  return "linux";
+}
 
 export const makeKeymaps = (
   contributionIndex: ContributionIndex,
@@ -73,6 +105,7 @@ export const makeKeymaps = (
       { contributionIndex },
     );
     const workbench = options?.workbench;
+    const platform = options?.platform ?? "linux";
     type PendingState = {
       readonly chords: ReadonlyArray<Chord>;
       readonly focusKey: string;
@@ -94,15 +127,16 @@ export const makeKeymaps = (
 
     const register: Keymaps.Service["register"] = (definition) =>
       Effect.gen(function* () {
+        const resolvedKeys = resolvePlatformKeys(definition.keys, platform);
         const chords = yield* Effect.try({
-          try: () => parseKeys(definition.keys),
+          try: () => parseKeys(resolvedKeys),
           catch: (error) =>
             error instanceof InvalidKeysError
               ? error
-              : new InvalidKeysError({ keys: definition.keys, reason: String(error) }),
+              : new InvalidKeysError({ keys: resolvedKeys, reason: String(error) }),
         });
         const extension = yield* PackageActivationContext;
-        return yield* extension.contributions.register(registry, {
+        const owned = yield* extension.contributions.register(registry, {
           id: ContributionId(`keybinding:${nextBindingId++}`),
           chords,
           command: definition.command,
@@ -110,12 +144,17 @@ export const makeKeymaps = (
           ...(definition.args !== undefined ? { args: definition.args } : {}),
           ...(definition.when !== undefined ? { when: definition.when } : {}),
           ...(definition.description !== undefined ? { description: definition.description } : {}),
+          sourceKeys: definition.keys,
         });
+        return [owned];
       });
 
     return {
       register,
-      registerAll: (definitions) => Effect.forEach(definitions, register, { concurrency: 1 }),
+      registerAll: (definitions) =>
+        Effect.forEach(definitions, register, { concurrency: 1 }).pipe(
+          Effect.map((groups) => groups.flat()),
+        ),
       bindings: registry.list,
       handleKey: (chord, handleOptions) =>
         Effect.gen(function* () {

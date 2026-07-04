@@ -11,7 +11,7 @@
 import { Effect } from "effect";
 import { definePackage } from "@the-editor/extensions";
 import { Commands, type CommandPaletteDefinition } from "@the-editor/commands";
-import { Keymaps } from "@the-editor/keymaps";
+import { Keymaps, ctrlCmd } from "@the-editor/keymaps";
 import { Picker, type PickerItem } from "@the-editor/picker";
 
 const defaultGroup = "Commands";
@@ -79,8 +79,8 @@ export const palettePackage = definePackage("the-editor/palette", () =>
     });
 
     yield* keymaps.registerAll([
-      { keys: "meta+shift+p", command: "palette.open" },
-      { keys: "ctrl+shift+p", command: "palette.open" },
+      { keys: ctrlCmd("shift+p"), command: "palette.open" },
+      { keys: "f1", command: "palette.open" },
     ]);
   }),
 );

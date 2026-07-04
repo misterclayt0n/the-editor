@@ -12,7 +12,7 @@
 import { Effect } from "effect";
 import { definePackage } from "@the-editor/extensions";
 import { Commands } from "@the-editor/commands";
-import { Keymaps } from "@the-editor/keymaps";
+import { Keymaps, ctrlCmd } from "@the-editor/keymaps";
 import { SurfaceScope } from "@the-editor/workbench";
 import { ViewOperations } from "@the-editor/editor";
 import { EditorSurface } from "./editorDefaults";
@@ -77,14 +77,12 @@ export const viewPackage = definePackage("the-editor/view", () =>
     });
 
     yield* keymaps.registerAll([
-      { keys: "meta+\\", command: "view.splitRight", scope: editorScope },
-      { keys: "ctrl+\\", command: "view.splitRight", scope: editorScope },
-      { keys: "meta+w", command: "view.closeTab", scope: SurfaceScope.global },
-      { keys: "ctrl+w", command: "view.closeTab", scope: editorScope },
-      { keys: "meta+alt+arrowright", command: "view.nextTab", scope: editorScope },
-      { keys: "meta+alt+arrowleft", command: "view.previousTab", scope: editorScope },
+      { keys: ctrlCmd("\\"), command: "view.splitRight", scope: editorScope },
+      { keys: ctrlCmd("w"), command: "view.closeTab", scope: SurfaceScope.global },
       { keys: "ctrl+pagedown", command: "view.nextTab", scope: editorScope },
       { keys: "ctrl+pageup", command: "view.previousTab", scope: editorScope },
+      { keys: { primary: "alt+arrowright", mac: "meta+alt+arrowright" }, command: "view.nextTab", scope: editorScope },
+      { keys: { primary: "alt+arrowleft", mac: "meta+alt+arrowleft" }, command: "view.previousTab", scope: editorScope },
     ]);
   }),
 );

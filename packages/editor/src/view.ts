@@ -35,6 +35,7 @@ import { mapOffsetThroughChanges, ViewDocumentSync } from "./commit";
 import { MountHub, ViewMountHub } from "./mounts";
 import { FloatHub, ViewFloatHub } from "./floats";
 import { makeInteractionHub, ViewInteraction } from "./interaction";
+import { makeViewCursor, ViewCursor } from "./cursor";
 import type { WrapDisplay } from "./wrap";
 
 /**
@@ -113,6 +114,7 @@ export function makeViewScope(
     const mounts = input.mounts ?? new MountHub();
     const floats = input.floats ?? new FloatHub();
     const hub = makeInteractionHub();
+    const cursor = makeViewCursor();
     let wrapDisplay: WrapDisplay | null = null;
     const wrapDisplayCell = {
       get: () => wrapDisplay,
@@ -124,6 +126,7 @@ export function makeViewScope(
     const context = documentContext.pipe(
       Context.add(ActiveEditorScopeId, id),
       Context.add(ViewWrapDisplay, wrapDisplayCell),
+      Context.add(ViewCursor, cursor),
       Context.add(ViewMountHub, mounts),
       Context.add(ViewFloatHub, floats),
       Context.add(ViewInteraction, hub),

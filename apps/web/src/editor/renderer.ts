@@ -60,6 +60,9 @@ import {
   type TextStyleRun,
   type ViewportLayoutSnapshot,
   type VisualsSnapshot,
+  type CursorEffect,
+  type CursorPlacement,
+  type CursorStyle,
 } from "@the-editor/editor";
 import { resolveSyntaxStyle } from "../theme/dom";
 import { graphemeSegments, Selection, type RenderableText } from "@the-editor/engine";
@@ -243,6 +246,8 @@ export class EditorRenderer {
   private readonly rowLayer: HTMLDivElement;
   private readonly decoFgLayer: HTMLDivElement;
   private readonly caretEl: HTMLDivElement;
+  private readonly caretCoreEl: HTMLDivElement;
+  private readonly caretEffectsEl: HTMLDivElement;
   private readonly bandHost: HTMLDivElement;
   private readonly vScrollbar: HTMLDivElement;
   private readonly vThumb: HTMLDivElement;
@@ -257,6 +262,7 @@ export class EditorRenderer {
   private readonly unsubscribeTheme: () => void;
   private readonly unsubscribeFont: () => void;
   private readonly unsubscribeWrap: () => void;
+  private readonly unsubscribeCursor: () => void;
   private readonly renderPass = () => this.render();
   /** Active mouse selection: the fixed "anchor unit" and the click mode. The
    * anchor is a single offset for char mode, or the clicked word/line range
@@ -632,6 +638,7 @@ export class EditorRenderer {
   private pendingChangeSets: DocumentChangeRange[][] | null = [];
   private revealCaretPending = false;
   private overlaysDirty = true;
+  private focused: boolean;
   private disposed = false;
 
   constructor(
@@ -639,6 +646,7 @@ export class EditorRenderer {
     private readonly runtime: PaneHost,
     private readonly options: EditorRendererOptions = {},
   ) {
+    this.focused = this.options.focused === true;
     this.snapshot = runtime.snapshot();
     this.lastLineCount = this.snapshot.text.lineCount;
     this.geometry = new GeometryModel(this.lastLineCount, LINE_HEIGHT, PADDING_TOP);
@@ -662,10 +670,13 @@ export class EditorRenderer {
     this.decoFgLayer = document.createElement("div");
     this.decoFgLayer.className = "editor-layer editor-layer-fg";
     this.caretEl = document.createElement("div");
-    this.caretEl.className = this.options.focused === true
-      ? "editor-caret"
-      : "editor-caret editor-caret-idle";
+    this.caretEl.className = this.focused ? "editor-caret" : "editor-caret editor-caret-idle";
     this.caretEl.style.display = "none";
+    this.caretCoreEl = document.createElement("div");
+    this.caretCoreEl.className = "editor-caret-core";
+    this.caretEffectsEl = document.createElement("div");
+    this.caretEffectsEl.className = "editor-caret-effects";
+    this.caretEl.append(this.caretCoreEl, this.caretEffectsEl);
     this.bandHost = document.createElement("div");
     this.bandHost.className = "editor-bands";
     this.vScrollbar = document.createElement("div");
@@ -772,11 +783,16 @@ export class EditorRenderer {
       this.overlaysDirty = true;
       queueRender(this.renderPass);
     });
+    this.unsubscribeCursor = runtime.subscribeCursor(() => {
+      this.overlaysDirty = true;
+      queueRender(this.renderPass);
+    });
 
     queueRender(this.renderPass);
   }
 
   setFocused(focused: boolean): void {
+    this.focused = focused;
     this.caretEl.classList.toggle("editor-caret-idle", !focused);
   }
 
@@ -788,6 +804,7 @@ export class EditorRenderer {
     this.unsubscribeTheme();
     this.unsubscribeFont();
     this.unsubscribeWrap();
+    this.unsubscribeCursor();
     this.unsubscribeFloats();
     if (this.hoverRaf !== 0) cancelAnimationFrame(this.hoverRaf);
     this.handleDragEnd(); // drop any in-flight selection drag + window listeners
@@ -1730,6 +1747,93 @@ export class EditorRenderer {
     }
   }
 
+  private placeCaret(
+    offset: number,
+    rect: { readonly top: number; readonly left: number; readonly width: number; readonly height: number },
+    windowTop: number,
+    selDirty: boolean,
+  ): void {
+    const style = this.runtime.cursorStyle();
+    const thickness = Math.max(1, style.widthPx ?? 2);
+    const columns = Math.max(0.25, style.widthColumns ?? 1);
+    const lineHeight = rect.height;
+    let top = rect.top - windowTop;
+    let left = rect.left;
+    let width = thickness;
+    let height = lineHeight;
+
+    if (style.shape === "block") {
+      width = columns * this.charWidth;
+      height = lineHeight;
+    } else if (style.shape === "underline") {
+      width = columns * this.charWidth;
+      height = thickness;
+      top += Math.max(0, lineHeight - thickness);
+    }
+
+    const classes = ["editor-caret", `editor-caret--${style.shape}`];
+    if (!this.focused) classes.push("editor-caret-idle");
+    if (style.blink === false) classes.push("editor-caret-no-blink");
+    if (style.className !== undefined && style.className.length > 0) classes.push(style.className);
+    this.caretEl.className = classes.join(" ");
+    this.caretEl.style.display = "";
+    this.caretEl.style.top = `${top}px`;
+    this.caretEl.style.left = `${left}px`;
+    this.caretEl.style.width = `${width}px`;
+    this.caretEl.style.height = `${height}px`;
+    this.caretEl.style.setProperty("--editor-caret-core-color", style.color ?? "var(--caret)");
+
+    const placement: CursorPlacement = {
+      offset,
+      rect: { top, left, width, height },
+      lineHeight,
+      charWidth: this.charWidth,
+      focused: this.focused,
+      style,
+    };
+
+    this.caretCoreEl.className = "editor-caret-core";
+    if (style.render !== undefined) {
+      try {
+        style.render(this.caretCoreEl, placement);
+      } catch (error) {
+        console.error("cursor renderer failed", error);
+        this.caretCoreEl.replaceChildren();
+      }
+    } else if (this.caretCoreEl.childNodes.length > 0) {
+      this.caretCoreEl.replaceChildren();
+    }
+
+    for (const effect of this.runtime.drainCursorEffects()) {
+      this.mountCursorEffect(effect, placement);
+    }
+
+    if (selDirty) {
+      // Re-inserting restarts the blink animation, like a fresh caret. The
+      // inner effects element moves with it and keeps existing transient DOM.
+      this.caretEl.remove();
+      this.contentEl.append(this.caretEl);
+    }
+  }
+
+  private mountCursorEffect(effect: CursorEffect, placement: CursorPlacement): void {
+    const el = document.createElement("div");
+    el.className = effect.className
+      ? `editor-caret-effect ${effect.className}`
+      : "editor-caret-effect";
+    try {
+      effect.render?.(el, placement);
+    } catch (error) {
+      // Cursor effects are visual sugar; a bad extension effect must never
+      // break the input/rendering path.
+      console.error("cursor effect failed", error);
+      el.remove();
+      return;
+    }
+    this.caretEffectsEl.append(el);
+    window.setTimeout(() => el.remove(), Math.max(0, effect.ttlMs ?? 500));
+  }
+
   /** Caret + selection rects, window-local, above the rows. */
   private renderOverlays(windowTop: number, selDirty: boolean): void {
     const { text, version, selection } = this.snapshot;
@@ -1793,15 +1897,7 @@ export class EditorRenderer {
         }
       } else if (placement.kind === "overlay" && placement.id === "caret") {
         caretPlaced = true;
-        this.caretEl.style.display = "";
-        this.caretEl.style.top = `${placement.rect.top - windowTop}px`;
-        this.caretEl.style.left = `${placement.rect.left}px`;
-        this.caretEl.style.height = `${placement.rect.height}px`;
-        if (selDirty) {
-          // Re-inserting restarts the blink animation, like a fresh caret.
-          this.caretEl.remove();
-          this.contentEl.append(this.caretEl);
-        }
+        this.placeCaret(selection.primary.head, placement.rect, windowTop, selDirty);
       }
     }
     if (!caretPlaced) this.caretEl.style.display = "none";

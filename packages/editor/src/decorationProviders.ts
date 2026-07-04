@@ -40,6 +40,7 @@ import type { DocumentId, EditorScopeId } from "./services";
 import { ViewMountHub, type MountHub } from "./mounts";
 import { ViewFloatHub, type FloatHub } from "./floats";
 import { ViewInteraction, type PaneInteraction } from "./interaction";
+import { ViewCursor, type CursorController } from "./cursor";
 
 /**
  * What a decoration provider gets for one document: its identity, a live text
@@ -65,6 +66,8 @@ export interface DecorationViewTarget extends DecorationTarget {
   readonly floats: FloatHub;
   /** Subscribe to this view's hover / scroll / viewport / pre-keymap events. */
   readonly interaction: PaneInteraction;
+  /** View-local cursor style/effect control; renderer owns geometry. */
+  readonly cursor: CursorController;
 }
 
 export interface DecorationProvider {
@@ -136,6 +139,7 @@ const viewTargetOf = (view: ViewScope): DecorationViewTarget => {
     | ViewMountHub
     | ViewFloatHub
     | ViewInteraction
+    | ViewCursor
   >;
   return {
     ...targetOfContext(view.documentId, ctx),
@@ -144,6 +148,7 @@ const viewTargetOf = (view: ViewScope): DecorationViewTarget => {
     mounts: Context.get(ctx, ViewMountHub),
     floats: Context.get(ctx, ViewFloatHub),
     interaction: Context.get(ctx, ViewInteraction).interaction,
+    cursor: Context.get(ctx, ViewCursor),
   };
 };
 

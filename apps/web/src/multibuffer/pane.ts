@@ -54,7 +54,8 @@ import {
   moveVertical,
   type Edit,
 } from "../editor/commands";
-import { FloatHub, MountHub } from "@the-editor/editor";
+import { CursorController, FloatHub, MountHub } from "@the-editor/editor";
+import type { CursorEffect, CursorStyle } from "@the-editor/editor";
 import type { HighlightRun } from "../platform/syntax";
 import { makeInteractionHub } from "@the-editor/editor";
 import type { IntelLocation, PaneHighlights, PaneHost } from "../runtime";
@@ -104,6 +105,7 @@ let scopeSeq = 0;
 export class MultiBufferPane implements PaneHost {
   readonly mounts = new MountHub();
   readonly floats = new FloatHub();
+  private readonly cursor = new CursorController();
   private readonly hub = makeInteractionHub();
   readonly interaction = this.hub.interaction;
   readonly dispatch = this.hub.dispatch;
@@ -220,6 +222,18 @@ export class MultiBufferPane implements PaneHost {
   /** Multibuffer movement is intrinsic (not command-driven); nothing reads
    * the published wrap display here yet. */
   setWrapDisplay(): void {}
+
+  cursorStyle(): CursorStyle {
+    return this.cursor.getStyle();
+  }
+
+  subscribeCursor(listener: () => void): () => void {
+    return this.cursor.subscribe(listener);
+  }
+
+  drainCursorEffects(): readonly CursorEffect[] {
+    return this.cursor.drainEffects();
+  }
 
   /** Resolve a unified offset to the underlying source document + offset. The
    * common ground for LSP/intel: the IntelController treats this exactly like a

@@ -19,3 +19,4 @@ export * from "./geometry";
 export * from "./mounts";
 export * from "./floats";
 export * from "./interaction";
+export * from "./cursor";

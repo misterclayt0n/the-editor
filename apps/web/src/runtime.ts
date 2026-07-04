@@ -100,6 +100,7 @@ import {
   commitDocumentTransaction,
   DecorationProviders,
   DocumentId,
+  CursorController,
   DocumentNotifications,
   DocumentRegistry,
   editorSnapshot,
@@ -120,6 +121,7 @@ import {
   LspOperations,
   ViewFloatHub,
   ViewMountHub,
+  ViewCursor,
   ViewInteraction,
   type PaneInteraction,
   type InteractionDispatch,
@@ -141,6 +143,8 @@ import {
   type VisualsSnapshot,
   type WorkspaceScope,
   type WrapDisplay,
+  type CursorEffect,
+  type CursorStyle,
 } from "@the-editor/editor";
 import {
   Selection,
@@ -293,6 +297,10 @@ export interface PaneHost {
   /** Renderer → view: publish the live wrap display state (vertical caret
    * movement reads it to move by VISUAL rows). */
   setWrapDisplay(display: WrapDisplay | null): void;
+  /** Cursor style/effects: renderer consumes style and drains one-shot effects. */
+  cursorStyle(): CursorStyle;
+  subscribeCursor(listener: () => void): () => void;
+  drainCursorEffects(): readonly CursorEffect[];
   subscribe(
     listener: (notification: EditorNotification, source: "document" | "view") => void,
   ): () => void;
@@ -311,6 +319,7 @@ export class EditorPane implements PaneHost {
   // attachView can subscribe); the pane just surfaces it + its dispatch.
   readonly interaction: PaneInteraction;
   readonly dispatch: InteractionDispatch;
+  private readonly cursor: CursorController;
 
   constructor(
     readonly panelId: PanelId,
@@ -323,6 +332,7 @@ export class EditorPane implements PaneHost {
     const hub = Context.get(view.context as Context.Context<ViewInteraction>, ViewInteraction);
     this.interaction = hub.interaction;
     this.dispatch = hub.dispatch;
+    this.cursor = Context.get(view.context as Context.Context<ViewCursor>, ViewCursor);
   }
 
   /** Highlight source for this pane's document (absent without a host). */
@@ -368,6 +378,18 @@ export class EditorPane implements PaneHost {
     Context.get(this.view.context as Context.Context<ViewWrapDisplay>, ViewWrapDisplay).set(
       display,
     );
+  }
+
+  cursorStyle(): CursorStyle {
+    return this.cursor.getStyle();
+  }
+
+  subscribeCursor(listener: () => void): () => void {
+    return this.cursor.subscribe(listener);
+  }
+
+  drainCursorEffects(): readonly CursorEffect[] {
+    return this.cursor.drainEffects();
   }
 
   setSelection(selection: Selection): void {

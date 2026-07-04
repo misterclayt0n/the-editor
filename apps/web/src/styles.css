@@ -246,15 +246,53 @@ body {
 
 .editor-caret {
   position: absolute;
-  width: 2px;
-  background: var(--caret);
-  animation: caret-blink 1.06s steps(1) infinite;
   pointer-events: none;
   z-index: 2;
+  animation: caret-blink 1.06s steps(1) infinite;
+  --editor-caret-core-color: var(--caret);
+}
+
+.editor-caret-core {
+  position: absolute;
+  inset: 0;
+  background: var(--editor-caret-core-color, var(--caret));
+}
+
+.editor-caret-effects {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.editor-caret-effect {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.editor-caret--bar .editor-caret-core {
+  border-radius: 1px;
+}
+
+.editor-caret--block .editor-caret-core {
+  border-radius: 2px;
+}
+
+.editor-caret--underline .editor-caret-core {
+  border-radius: 999px;
+}
+
+.editor-caret--hidden .editor-caret-core {
+  display: none;
+}
+
+.editor-caret-no-blink,
+.editor-caret-idle {
+  animation: none;
 }
 
 .editor-caret-idle {
-  animation: none;
   opacity: 0.4;
 }
 

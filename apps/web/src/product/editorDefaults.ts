@@ -1,17 +1,15 @@
 /**
  * The default editor product package.
  *
- * This is deliberately an ordinary package: it mints the editor surface kind,
- * registers the editing/movement commands (kind-scoped — they exist wherever
- * an editor is focused, structurally unavailable elsewhere), and binds the
- * default keys. A user package activated later can shadow any of it.
+ * This is deliberately an ordinary package: it mints the editor surface kind
+ * and registers the editing/movement commands (kind-scoped — they exist
+ * wherever an editor is focused, structurally unavailable elsewhere). Keybinding
+ * schemes bind those commands separately.
  */
 
 import { Effect, Option } from "effect";
 import { definePackage } from "@the-editor/extensions";
 import { Commands } from "@the-editor/commands";
-import { inputWhen } from "@the-editor/input";
-import { Keymaps } from "@the-editor/keymaps";
 import { SurfaceKind, SurfaceScope } from "@the-editor/workbench";
 import {
   commitTransaction,
@@ -36,7 +34,6 @@ import {
 export const EditorSurface = SurfaceKind("the-editor/editor");
 
 const editorScope = SurfaceScope.surface(EditorSurface);
-const acceptsText = inputWhen({ acceptsText: true });
 
 /**
  * Apply a pure command result through the focused panel's view context.
@@ -99,8 +96,6 @@ const text = (args: unknown): string =>
 export const editorDefaults = definePackage("the-editor/editor-defaults", () =>
   Effect.gen(function* () {
     const commands = yield* Commands;
-    const keymaps = yield* Keymaps;
-
     yield* commands.register("editor.insertText", {
       title: "Insert Text",
       ...editorCommand((snapshot, args) => insertText(snapshot, text(args))),
@@ -141,65 +136,5 @@ export const editorDefaults = definePackage("the-editor/editor-defaults", () =>
       title: "Move to Line End",
       ...editorCommand((snapshot, args) => moveLineEdge(snapshot, "end", extend(args))),
     });
-
-    yield* keymaps.registerAll([
-      { keys: "enter", command: "editor.newline", scope: editorScope, when: acceptsText },
-      {
-        keys: "backspace",
-        command: "editor.deleteBackward",
-        scope: editorScope,
-        when: acceptsText,
-      },
-      { keys: "delete", command: "editor.deleteForward", scope: editorScope, when: acceptsText },
-      {
-        keys: "tab",
-        command: "editor.insertText",
-        args: { text: "\t" },
-        scope: editorScope,
-        when: acceptsText,
-      },
-      { keys: "arrowleft", command: "cursor.left", scope: editorScope },
-      { keys: "arrowright", command: "cursor.right", scope: editorScope },
-      { keys: "arrowup", command: "cursor.up", scope: editorScope },
-      { keys: "arrowdown", command: "cursor.down", scope: editorScope },
-      {
-        keys: "shift+arrowleft",
-        command: "cursor.left",
-        args: { extend: true },
-        scope: editorScope,
-      },
-      {
-        keys: "shift+arrowright",
-        command: "cursor.right",
-        args: { extend: true },
-        scope: editorScope,
-      },
-      {
-        keys: "shift+arrowup",
-        command: "cursor.up",
-        args: { extend: true },
-        scope: editorScope,
-      },
-      {
-        keys: "shift+arrowdown",
-        command: "cursor.down",
-        args: { extend: true },
-        scope: editorScope,
-      },
-      { keys: "home", command: "cursor.lineStart", scope: editorScope },
-      { keys: "end", command: "cursor.lineEnd", scope: editorScope },
-      {
-        keys: "shift+home",
-        command: "cursor.lineStart",
-        args: { extend: true },
-        scope: editorScope,
-      },
-      {
-        keys: "shift+end",
-        command: "cursor.lineEnd",
-        args: { extend: true },
-        scope: editorScope,
-      },
-    ]);
   }),
 );

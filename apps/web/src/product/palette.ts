@@ -11,7 +11,6 @@
 import { Effect } from "effect";
 import { definePackage } from "@the-editor/extensions";
 import { Commands, type CommandPaletteDefinition } from "@the-editor/commands";
-import { Keymaps, ctrlCmd } from "@the-editor/keymaps";
 import { Picker, type PickerItem } from "@the-editor/picker";
 
 const defaultGroup = "Commands";
@@ -27,7 +26,6 @@ const paletteDefinition = (
 export const palettePackage = definePackage("the-editor/palette", () =>
   Effect.gen(function* () {
     const commands = yield* Commands;
-    const keymaps = yield* Keymaps;
     const picker = yield* Picker;
 
     const listActions = (): Promise<ReadonlyArray<PickerItem<string>>> =>
@@ -78,9 +76,5 @@ export const palettePackage = definePackage("the-editor/palette", () =>
         ),
     });
 
-    yield* keymaps.registerAll([
-      { keys: ctrlCmd("shift+p"), command: "palette.open" },
-      { keys: "f1", command: "palette.open" },
-    ]);
   }),
 );

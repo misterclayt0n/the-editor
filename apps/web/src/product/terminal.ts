@@ -9,7 +9,6 @@
 import { Context, Effect } from "effect";
 import { definePackage } from "@the-editor/extensions";
 import { Commands } from "@the-editor/commands";
-import { Keymaps } from "@the-editor/keymaps";
 import {
   ContextMenuProviders,
   PanelRenderers,
@@ -32,7 +31,6 @@ export class HostTerminal extends Context.Tag("the-editor/web/HostTerminal")<
 export const terminalPackage = definePackage("the-editor/terminal", () =>
   Effect.gen(function* () {
     const commands = yield* Commands;
-    const keymaps = yield* Keymaps;
     const renderers = yield* PanelRenderers;
     const contextMenus = yield* ContextMenuProviders;
     const host = yield* HostTerminal;
@@ -56,9 +54,5 @@ export const terminalPackage = definePackage("the-editor/terminal", () =>
       palette: { group: "View", aliases: ["term", "terminal"] },
       run: () => Effect.sync(() => host.toggle()),
     });
-    yield* keymaps.registerAll([
-      { keys: "ctrl+`", command: "terminal.toggle", scope: SurfaceScope.global },
-      { keys: "meta+j", command: "terminal.toggle", scope: SurfaceScope.global },
-    ]);
   }),
 );

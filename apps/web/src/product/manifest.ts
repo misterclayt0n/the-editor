@@ -31,6 +31,7 @@ import { intelActions } from "./intelActions";
 import { vcsDefaults } from "./vcs";
 import { fileTreePackage } from "./fileTree";
 import { terminalPackage } from "./terminal";
+import { vscodeKeybindings } from "./vscodeKeybindings";
 import { helixLite } from "./helixLite";
 
 export type DefaultPackageEntry = {
@@ -63,6 +64,7 @@ export function defaultPackages(): readonly DefaultPackageEntry[] {
     swappable(vcsDefaults),
     swappable(fileTreePackage),
     swappable(terminalPackage),
+    swappable(vscodeKeybindings),
     swappable(helixLite),
   ];
 }

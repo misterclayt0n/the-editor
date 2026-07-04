@@ -14,14 +14,12 @@
 import { Effect } from "effect";
 import { definePackage } from "@the-editor/extensions";
 import { Commands } from "@the-editor/commands";
-import { Keymaps } from "@the-editor/keymaps";
 import { SurfaceScope } from "@the-editor/workbench";
 import { WorkspaceOperations } from "@the-editor/editor";
 
 export const workspacesPackage = definePackage("the-editor/workspaces", () =>
   Effect.gen(function* () {
     const commands = yield* Commands;
-    const keymaps = yield* Keymaps;
     const workspace = yield* WorkspaceOperations;
 
     yield* commands.register("workspace.open", {
@@ -46,17 +44,5 @@ export const workspacesPackage = definePackage("the-editor/workspaces", () =>
       run: () => Effect.sync(() => workspace.closeWorkspace()),
     });
 
-    yield* keymaps.registerAll([
-      {
-        keys: { primary: "ctrl+k ctrl+o", mac: "meta+k meta+o" },
-        command: "workspace.open",
-        scope: SurfaceScope.global,
-      },
-      {
-        keys: { primary: "ctrl+k ctrl+w", mac: "meta+k meta+w" },
-        command: "workspace.switch",
-        scope: SurfaceScope.global,
-      },
-    ]);
   }),
 );

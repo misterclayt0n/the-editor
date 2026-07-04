@@ -8,7 +8,6 @@
 import { Effect } from "effect";
 import { definePackage } from "@the-editor/extensions";
 import { Commands } from "@the-editor/commands";
-import { Keymaps } from "@the-editor/keymaps";
 import { Themes } from "@the-editor/theme";
 import { SurfaceScope } from "@the-editor/workbench";
 import { Picker } from "@the-editor/picker";
@@ -16,7 +15,6 @@ import { Picker } from "@the-editor/picker";
 export const themeCommands = definePackage("the-editor/theme-commands", () =>
   Effect.gen(function* () {
     const commands = yield* Commands;
-    const keymaps = yield* Keymaps;
     const themes = yield* Themes;
     const picker = yield* Picker;
 
@@ -73,17 +71,5 @@ export const themeCommands = definePackage("the-editor/theme-commands", () =>
       run: () => themes.toggleMode,
     });
 
-    yield* keymaps.registerAll([
-      {
-        keys: { primary: "ctrl+k ctrl+t", mac: "meta+k meta+t" },
-        command: "theme.select",
-        scope: SurfaceScope.global,
-      },
-      {
-        keys: { primary: "ctrl+k ctrl+l", mac: "meta+k meta+l" },
-        command: "theme.toggleLightDark",
-        scope: SurfaceScope.global,
-      },
-    ]);
   }),
 );

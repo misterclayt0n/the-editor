@@ -3,13 +3,12 @@
  * non-editor surface) registered through PanelRenderers — proof that panel
  * kinds are ordinary contributions. The package owns command identity and
  * the renderer registration; the host seam supplies the renderer and the
- * toggle (which owns arrangement surgery).
+ * toggle (which owns arrangement surgery). Keybinding schemes bind the command.
  */
 
 import { Context, Effect } from "effect";
 import { definePackage } from "@the-editor/extensions";
 import { Commands } from "@the-editor/commands";
-import { Keymaps, ctrlCmd } from "@the-editor/keymaps";
 import {
   PanelRenderers,
   SurfaceKind,
@@ -31,7 +30,6 @@ export class HostFileTree extends Context.Tag("the-editor/web/HostFileTree")<
 export const fileTreePackage = definePackage("the-editor/file-tree", () =>
   Effect.gen(function* () {
     const commands = yield* Commands;
-    const keymaps = yield* Keymaps;
     const renderers = yield* PanelRenderers;
     const host = yield* HostFileTree;
 
@@ -52,8 +50,5 @@ export const fileTreePackage = definePackage("the-editor/file-tree", () =>
       },
       run: () => Effect.sync(() => host.moveSide()),
     });
-    yield* keymaps.registerAll([
-      { keys: ctrlCmd("b"), command: "files.toggleTree", scope: SurfaceScope.global },
-    ]);
   }),
 );

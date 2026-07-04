@@ -1,18 +1,13 @@
 /**
  * Window-management commands as a product package: splits and tab cycling
- * are ordinary commands with ordinary keybindings, so they are palette-ready
- * and rebindable. The host owns the gestures' mechanics (pane lifecycle,
+ * are ordinary commands, so they are palette-ready and keybinding schemes can
+ * bind them. The host owns the gestures' mechanics (pane lifecycle,
  * arrangement surgery) behind ViewOperations.
- *
- * Keybinding note: chords match on `event.key`, so shifted punctuation
- * ("meta+shift+\\" arriving as "|") never matches — bindings below stick to
- * keys whose names survive modifiers.
  */
 
 import { Effect } from "effect";
 import { definePackage } from "@the-editor/extensions";
 import { Commands } from "@the-editor/commands";
-import { Keymaps, ctrlCmd } from "@the-editor/keymaps";
 import { SurfaceScope } from "@the-editor/workbench";
 import { ViewOperations } from "@the-editor/editor";
 import { EditorSurface } from "./editorDefaults";
@@ -22,7 +17,6 @@ const editorScope = SurfaceScope.surface(EditorSurface);
 export const viewPackage = definePackage("the-editor/view", () =>
   Effect.gen(function* () {
     const commands = yield* Commands;
-    const keymaps = yield* Keymaps;
     const view = yield* ViewOperations;
 
     yield* commands.register("view.splitRight", {
@@ -76,13 +70,5 @@ export const viewPackage = definePackage("the-editor/view", () =>
       run: () => Effect.sync(() => view.toggleTabs()),
     });
 
-    yield* keymaps.registerAll([
-      { keys: ctrlCmd("\\"), command: "view.splitRight", scope: editorScope },
-      { keys: ctrlCmd("w"), command: "view.closeTab", scope: SurfaceScope.global },
-      { keys: "ctrl+pagedown", command: "view.nextTab", scope: editorScope },
-      { keys: "ctrl+pageup", command: "view.previousTab", scope: editorScope },
-      { keys: { primary: "alt+arrowright", mac: "meta+alt+arrowright" }, command: "view.nextTab", scope: editorScope },
-      { keys: { primary: "alt+arrowleft", mac: "meta+alt+arrowleft" }, command: "view.previousTab", scope: editorScope },
-    ]);
   }),
 );

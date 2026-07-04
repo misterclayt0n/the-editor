@@ -1,13 +1,13 @@
 /**
  * LSP feature commands: definition, formatting, rename, inlay hints. The
  * host owns the mechanics (jumping panes, the rename prompt); the package
- * owns command identity, keybindings, and palette presence.
+ * owns command identity and palette presence. Keybinding schemes bind these
+ * commands separately.
  */
 
 import { Effect } from "effect";
 import { definePackage } from "@the-editor/extensions";
 import { Commands } from "@the-editor/commands";
-import { Keymaps } from "@the-editor/keymaps";
 import { SurfaceScope } from "@the-editor/workbench";
 import { LspOperations } from "@the-editor/editor";
 import { EditorSurface } from "./editorDefaults";
@@ -17,7 +17,6 @@ const editorScope = SurfaceScope.surface(EditorSurface);
 export const lspActions = definePackage("the-editor/lsp-actions", () =>
   Effect.gen(function* () {
     const commands = yield* Commands;
-    const keymaps = yield* Keymaps;
     const lsp = yield* LspOperations;
 
     yield* commands.register("lsp.definition", {
@@ -55,10 +54,5 @@ export const lspActions = definePackage("the-editor/lsp-actions", () =>
       run: () => Effect.sync(() => lsp.toggleLsp()),
     });
 
-    yield* keymaps.registerAll([
-      { keys: "f12", command: "lsp.definition", scope: editorScope },
-      { keys: "f2", command: "lsp.rename", scope: editorScope },
-      { keys: "alt+shift+f", command: "lsp.format", scope: editorScope },
-    ]);
   }),
 );

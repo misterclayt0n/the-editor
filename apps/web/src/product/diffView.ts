@@ -1,13 +1,13 @@
 /**
  * The diff view as a product package: a global workbench tab that shows the
  * working-tree diff against HEAD. Follows the same contribution shape as other
- * center content surfaces: surface kind, host seam, command, and keybinding.
+ * center content surfaces: surface kind, host seam, and commands. Keybinding
+ * schemes bind those commands separately.
  */
 
 import { Context, Effect } from "effect";
 import { definePackage } from "@the-editor/extensions";
 import { Commands, type CommandDefinition } from "@the-editor/commands";
-import { Keymaps, ctrlCmd } from "@the-editor/keymaps";
 import {
   PanelRenderers,
   SurfaceKind,
@@ -192,7 +192,6 @@ const DIFF_VIEW_HUNK_SEPARATOR_COMMANDS: readonly DiffViewCommandOption<DiffView
 export const diffViewPackage = definePackage("the-editor/diff-view", () =>
   Effect.gen(function* () {
     const commands = yield* Commands;
-    const keymaps = yield* Keymaps;
     const preferences = yield* DiffViewPreferences;
     const renderers = yield* PanelRenderers;
     const host = yield* HostDiffView;
@@ -279,8 +278,5 @@ export const diffViewPackage = definePackage("the-editor/diff-view", () =>
         "button bar",
       ]),
     );
-    yield* keymaps.registerAll([
-      { keys: ctrlCmd("shift+g"), command: "diffs.openDiffView", scope: SurfaceScope.global },
-    ]);
   }),
 );

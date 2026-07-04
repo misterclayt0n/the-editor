@@ -1,14 +1,13 @@
 /**
  * File commands as a product package: save and open, bound to the platform
- * through FileOperations (the host owns dialogs and view swapping; the package
- * owns command identity and keybindings, so they are palette-ready and
- * rebindable like everything else).
+ * through FileOperations. The host owns dialogs and view swapping; the package
+ * owns command identity and palette metadata. Keybinding schemes bind these
+ * commands separately.
  */
 
 import { Effect } from "effect";
 import { definePackage } from "@the-editor/extensions";
 import { Commands } from "@the-editor/commands";
-import { Keymaps, ctrlCmd } from "@the-editor/keymaps";
 import { SurfaceScope } from "@the-editor/workbench";
 import { FileOperations } from "@the-editor/editor";
 import { EditorSurface } from "./editorDefaults";
@@ -18,7 +17,6 @@ const editorScope = SurfaceScope.surface(EditorSurface);
 export const filesPackage = definePackage("the-editor/files", () =>
   Effect.gen(function* () {
     const commands = yield* Commands;
-    const keymaps = yield* Keymaps;
     const files = yield* FileOperations;
 
     yield* commands.register("file.save", {
@@ -48,11 +46,5 @@ export const filesPackage = definePackage("the-editor/files", () =>
       run: () => Effect.sync(() => files.findInProject()),
     });
 
-    yield* keymaps.registerAll([
-      { keys: ctrlCmd("s"), command: "file.save", scope: editorScope },
-      { keys: ctrlCmd("o"), command: "file.open", scope: editorScope },
-      { keys: ctrlCmd("p"), command: "file.find", scope: SurfaceScope.global },
-      { keys: ctrlCmd("shift+f"), command: "file.findInProject", scope: SurfaceScope.global },
-    ]);
   }),
 );

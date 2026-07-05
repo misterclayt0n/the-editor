@@ -26,8 +26,8 @@
  */
 
 import { Context, Effect, ExecutionStrategy, Exit, Option, Ref, Scope, Stream } from "effect";
-import { TextDocument } from "@the-editor/engine";
-import { EditorVisuals } from "./visuals";
+import { SelectionState, TextDocument } from "@the-editor/engine";
+import { EditorVisuals, ViewVisuals } from "./visuals";
 import {
   DocumentNotifications,
   payloadsOf,
@@ -66,6 +66,10 @@ export interface DecorationViewTarget extends DecorationTarget {
   readonly floats: FloatHub;
   /** Subscribe to this view's hover / scroll / viewport / pre-keymap events. */
   readonly interaction: PaneInteraction;
+  /** View-local selection for this pane. */
+  readonly selection: SelectionState.Service;
+  /** View-local visual contributions (selection matches, active-line adornments, etc.). */
+  readonly viewVisuals: ViewVisuals.Service;
   /** View-local cursor style/effect control; renderer owns geometry. */
   readonly cursor: CursorController;
 }
@@ -140,6 +144,8 @@ const viewTargetOf = (view: ViewScope): DecorationViewTarget => {
     | ViewFloatHub
     | ViewInteraction
     | ViewCursor
+    | ViewVisuals
+    | SelectionState
   >;
   return {
     ...targetOfContext(view.documentId, ctx),
@@ -148,6 +154,8 @@ const viewTargetOf = (view: ViewScope): DecorationViewTarget => {
     mounts: Context.get(ctx, ViewMountHub),
     floats: Context.get(ctx, ViewFloatHub),
     interaction: Context.get(ctx, ViewInteraction).interaction,
+    selection: Context.get(ctx, SelectionState),
+    viewVisuals: Context.get(ctx, ViewVisuals),
     cursor: Context.get(ctx, ViewCursor),
   };
 };

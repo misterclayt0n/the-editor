@@ -33,7 +33,7 @@ import {
   ViewNotifications,
   type DocumentChangeRange,
 } from "./notifications";
-import { EditorVisuals } from "./visuals";
+import { EditorVisuals, ViewVisuals } from "./visuals";
 import { DocumentPolicy } from "./policy";
 
 /** True when the document is read-only and this commit isn't a forced
@@ -106,6 +106,7 @@ export const commitTransaction = (
   TextError,
   | TextDocument
   | EditorVisuals
+  | ViewVisuals
   | DocumentNotifications
   | SelectionState
   | ViewNotifications
@@ -118,9 +119,12 @@ export const commitTransaction = (
     if (yield* blockedByPolicy(false)) return;
     const document = yield* TextDocument;
     const visuals = yield* EditorVisuals;
+    const viewVisuals = yield* ViewVisuals;
     const documentBus = yield* DocumentNotifications;
     yield* document.transact(transaction);
-    yield* visuals.mapChanges(transaction.changes.desc());
+    const changeDesc = transaction.changes.desc();
+    yield* visuals.mapChanges(changeDesc);
+    yield* viewVisuals.mapChanges(changeDesc);
     const version = yield* document.version;
     if (selection !== undefined) {
       // Mark this view current BEFORE publishing so its sync fiber skips
@@ -131,7 +135,7 @@ export const commitTransaction = (
     yield* documentBus.publish([
       invalidate(DocumentInvalidated, {
         version,
-        changes: transaction.changes.desc().ranges,
+        changes: changeDesc.ranges,
       }),
     ]);
     if (selection !== undefined) {

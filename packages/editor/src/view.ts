@@ -19,6 +19,7 @@ import {
   SelectionRange,
   SelectionState,
   TextDocument,
+  type ChangeDesc,
 } from "@the-editor/engine";
 import { ActiveDocumentId, ActiveEditorScopeId, EditorScopeId, type DocumentId } from "./services";
 import {
@@ -36,6 +37,7 @@ import { MountHub, ViewMountHub } from "./mounts";
 import { FloatHub, ViewFloatHub } from "./floats";
 import { makeInteractionHub, ViewInteraction } from "./interaction";
 import { makeViewCursor, ViewCursor } from "./cursor";
+import { makeViewVisuals, ViewVisuals, VisualsInvalidated } from "./visuals";
 import type { WrapDisplay } from "./wrap";
 
 /**
@@ -115,6 +117,7 @@ export function makeViewScope(
     const floats = input.floats ?? new FloatHub();
     const hub = makeInteractionHub();
     const cursor = makeViewCursor();
+    const viewVisuals = yield* makeViewVisuals(bus);
     let wrapDisplay: WrapDisplay | null = null;
     const wrapDisplayCell = {
       get: () => wrapDisplay,
@@ -127,6 +130,7 @@ export function makeViewScope(
       Context.add(ActiveEditorScopeId, id),
       Context.add(ViewWrapDisplay, wrapDisplayCell),
       Context.add(ViewCursor, cursor),
+      Context.add(ViewVisuals, viewVisuals),
       Context.add(ViewMountHub, mounts),
       Context.add(ViewFloatHub, floats),
       Context.add(ViewInteraction, hub),
@@ -145,10 +149,18 @@ export function makeViewScope(
           if (payload.version <= synced) continue;
           yield* Ref.set(syncedVersion, payload.version);
           if (payload.changes === undefined || payload.changes.length === 0) continue;
+          yield* viewVisuals.mapChanges({ ranges: payload.changes } as ChangeDesc);
           const current = yield* selectionState.get;
           const mapped = mapSelection(current, payload.changes);
           yield* selectionState.set(mapped);
-          yield* bus.publish([invalidate(SelectionInvalidated)]);
+          const visuals = yield* viewVisuals.snapshot;
+          yield* bus.publish([
+            invalidate(SelectionInvalidated),
+            invalidate(VisualsInvalidated, {
+              generation: visuals.generation,
+              changes: payload.changes.map((change) => ({ from: change.fromB, to: change.toB })),
+            }),
+          ]);
         }
       }),
     ).pipe(Effect.forkDaemon);

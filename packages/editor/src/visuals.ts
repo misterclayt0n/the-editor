@@ -41,6 +41,8 @@ export type TextStyleSpec = {
 
 export type DecorationSpec = {
   readonly layer: DecorationLayer;
+  /** Semantic role for non-renderer consumers (minimap, scrollbar, overview ruler). */
+  readonly role?: string;
   readonly className?: string;
   readonly style?: Readonly<Record<string, string>>;
   readonly priority?: number;
@@ -139,30 +141,43 @@ export interface VisualsHandle {
   ) => Effect.Effect<void>;
 }
 
+export interface VisualsService {
+  /**
+   * Contribute a visual set. Retracted automatically when the surrounding
+   * scope closes (package deactivation).
+   */
+  readonly contribute: (
+    owner: string,
+    set: EditorVisualSet,
+  ) => Effect.Effect<VisualsHandle, never, Scope.Scope>;
+  /** Current merged snapshot (cached per generation/mapping). */
+  readonly snapshot: Effect.Effect<VisualsSnapshot>;
+  /**
+   * Slide all sets through a transaction. Called on the commit path,
+   * before the owning notification publishes. Does not bump generation:
+   * relative alignment with the text is preserved by construction.
+   */
+  readonly mapChanges: (changes: ChangeDesc) => Effect.Effect<void>;
+}
+
 export class EditorVisuals extends Context.Tag("@the-editor/editor/EditorVisuals")<
   EditorVisuals,
   EditorVisuals.Service
 >() {}
 
 export namespace EditorVisuals {
-  export interface Service {
-    /**
-     * Contribute a visual set. Retracted automatically when the surrounding
-     * scope closes (package deactivation).
-     */
-    readonly contribute: (
-      owner: string,
-      set: EditorVisualSet,
-    ) => Effect.Effect<VisualsHandle, never, Scope.Scope>;
-    /** Current merged snapshot (cached per generation/mapping). */
-    readonly snapshot: Effect.Effect<VisualsSnapshot>;
-    /**
-     * Slide all sets through a transaction. Called on the commit path,
-     * before the document notification publishes. Does not bump generation:
-     * relative alignment with the text is preserved by construction.
-     */
-    readonly mapChanges: (changes: ChangeDesc) => Effect.Effect<void>;
-  }
+  export interface Service extends VisualsService {}
+}
+
+/** View-local visuals: selection-derived ranges, active-line adornments, etc.
+ * Split panes of the same document get independent instances. */
+export class ViewVisuals extends Context.Tag("@the-editor/editor/ViewVisuals")<
+  ViewVisuals,
+  ViewVisuals.Service
+>() {}
+
+export namespace ViewVisuals {
+  export interface Service extends VisualsService {}
 }
 
 type Entry = {
@@ -241,9 +256,7 @@ function buildSnapshot(state: State): VisualsSnapshot {
   };
 }
 
-export const makeEditorVisuals = (
-  notifications: NotificationBus,
-): Effect.Effect<EditorVisuals.Service> =>
+const makeVisuals = (notifications: NotificationBus): Effect.Effect<VisualsService> =>
   Effect.gen(function* () {
     const state = yield* Ref.make<State>({
       entries: new Map(),
@@ -307,5 +320,49 @@ export const makeEditorVisuals = (
         return { ...current, entries, snapshotCache: null };
       });
 
-    return { contribute, snapshot, mapChanges } satisfies EditorVisuals.Service;
+    return { contribute, snapshot, mapChanges } satisfies VisualsService;
   });
+
+export const makeEditorVisuals = (
+  notifications: NotificationBus,
+): Effect.Effect<EditorVisuals.Service> => makeVisuals(notifications);
+
+export const makeViewVisuals = (
+  notifications: NotificationBus,
+): Effect.Effect<ViewVisuals.Service> => makeVisuals(notifications);
+
+export function mergeVisualsSnapshots(
+  document: VisualsSnapshot,
+  view: VisualsSnapshot,
+): VisualsSnapshot {
+  const generation = Math.max(document.generation, view.generation);
+  const textStylesBetween = (from: number, to: number) => [
+    ...document.textStylesBetween(from, to),
+    ...view.textStylesBetween(from, to),
+  ];
+  const decorationsBetween = (from: number, to: number) => [
+    ...document.decorationsBetween(from, to),
+    ...view.decorationsBetween(from, to),
+  ];
+  const virtualTextBetween = (from: number, to: number) => [
+    ...document.virtualTextBetween(from, to),
+    ...view.virtualTextBetween(from, to),
+  ];
+  return {
+    generation,
+    textStylesBetween,
+    decorationsBetween,
+    virtualTextBetween,
+    widgets: (text) =>
+      [...document.widgets(text), ...view.widgets(text)].sort(
+        (a, b) => a.afterLine - b.afterLine || a.id.localeCompare(b.id),
+      ),
+    totalWidgetRows: document.totalWidgetRows + view.totalWidgetRows,
+    gutterBands: [...document.gutterBands, ...view.gutterBands].sort(
+      (a, b) =>
+        (a.side === b.side ? 0 : a.side === "left" ? -1 : 1) ||
+        (a.priority ?? 0) - (b.priority ?? 0) ||
+        a.owner.localeCompare(b.owner),
+    ),
+  };
+}

@@ -1,4 +1,5 @@
 import { Context, Effect, Exit, Ref, Scope } from "effect";
+import { SelectionState } from "@the-editor/engine";
 import { describe, expect, it } from "vitest";
 import {
   DocumentRegistry,
@@ -10,6 +11,7 @@ import {
   ViewFloatHub,
   ViewMountHub,
   ViewInteraction,
+  ViewVisuals,
   type DecorationTarget,
   type DecorationViewTarget,
 } from "../src";
@@ -237,6 +239,8 @@ describe("DecorationProviders", () => {
           const view = yield* makeViewScope(document);
           const viewMounts = Context.get(view.context, ViewMountHub);
           const viewFloats = Context.get(view.context, ViewFloatHub);
+          const viewVisuals = Context.get(view.context, ViewVisuals);
+          const selection = Context.get(view.context, SelectionState);
           const mounted: string[] = [];
           let targetFloats: unknown;
 
@@ -247,6 +251,8 @@ describe("DecorationProviders", () => {
                 Effect.sync(() => {
                   expect(target.mounts).toBe(viewMounts);
                   expect(target.floats).toBe(viewFloats);
+                  expect(target.viewVisuals).toBe(viewVisuals);
+                  expect(target.selection).toBe(selection);
                   targetFloats = target.floats;
                   return target.mounts.subscribe((event) => {
                     if (event.type === "mounted") mounted.push(event.id);

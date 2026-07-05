@@ -28,6 +28,7 @@ export type RangeDecoration = {
   readonly from: number;
   readonly to: number;
   readonly layer: DecorationLayer;
+  readonly role?: string;
   readonly className?: string;
   readonly style?: Readonly<Record<string, string>>;
   readonly priority?: number;
@@ -201,6 +202,7 @@ export type LayoutDecoration = {
   readonly from: number;
   readonly to: number;
   readonly rects: readonly LayoutRect[];
+  readonly role?: string;
   readonly className?: string;
   readonly style?: Readonly<Record<string, string>>;
   readonly priority?: number;

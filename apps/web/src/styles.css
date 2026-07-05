@@ -364,6 +364,11 @@ body {
   background: var(--theme-editor-document-highlight-read-background);
 }
 
+.editor-selection-match {
+  background: color-mix(in srgb, var(--selection) 42%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--selection) 55%, transparent);
+}
+
 .editor-decoration-underline {
   /* Color comes from the contribution's inline borderBottomColor. */
   border-bottom: 2px dotted currentColor;

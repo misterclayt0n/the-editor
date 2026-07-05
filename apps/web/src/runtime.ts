@@ -117,6 +117,8 @@ import {
   DocumentRegistry,
   editorSnapshot,
   EditorVisuals,
+  ViewVisuals,
+  mergeVisualsSnapshots,
   makeDecorationProviders,
   Files,
   FileIoError,
@@ -405,7 +407,13 @@ export class EditorPane implements PaneHost {
   }
 
   visualsSnapshot(): VisualsSnapshot {
-    return this.runIn(Effect.flatMap(EditorVisuals, (visuals) => visuals.snapshot));
+    return this.runIn(
+      Effect.gen(function* () {
+        const documentVisuals = yield* Effect.flatMap(EditorVisuals, (visuals) => visuals.snapshot);
+        const viewVisuals = yield* Effect.flatMap(ViewVisuals, (visuals) => visuals.snapshot);
+        return mergeVisualsSnapshots(documentVisuals, viewVisuals);
+      }),
+    );
   }
 
   /** A single-file pane resolves to itself (identity); the multibuffer maps. */

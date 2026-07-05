@@ -248,6 +248,7 @@ export class EditorRenderer {
   private readonly decoFgLayer: HTMLDivElement;
   private readonly caretEl: HTMLDivElement;
   private readonly caretCoreEl: HTMLDivElement;
+  private readonly caretTextEl: HTMLDivElement;
   private readonly caretEffectsEl: HTMLDivElement;
   private readonly bandHost: HTMLDivElement;
   private readonly vScrollbar: HTMLDivElement;
@@ -687,9 +688,11 @@ export class EditorRenderer {
     this.caretEl.style.display = "none";
     this.caretCoreEl = document.createElement("div");
     this.caretCoreEl.className = "editor-caret-core";
+    this.caretTextEl = document.createElement("div");
+    this.caretTextEl.className = "editor-caret-text";
     this.caretEffectsEl = document.createElement("div");
     this.caretEffectsEl.className = "editor-caret-effects";
-    this.caretEl.append(this.caretCoreEl, this.caretEffectsEl);
+    this.caretEl.append(this.caretCoreEl, this.caretTextEl, this.caretEffectsEl);
     this.bandHost = document.createElement("div");
     this.bandHost.className = "editor-bands";
     this.vScrollbar = document.createElement("div");
@@ -1870,6 +1873,16 @@ export class EditorRenderer {
     }
   }
 
+  private cursorGrapheme(offset: number): string {
+    const text = this.snapshot.text;
+    if (offset < 0 || offset >= text.length) return "";
+    const line = text.lineRangeAt(offset);
+    const lineText = text.sliceString(line.from, line.to);
+    const local = offset - line.from;
+    const segment = graphemeSegments(lineText).find((entry) => entry.from <= local && local < entry.to);
+    return segment?.text ?? "";
+  }
+
   private placeCaret(
     offset: number,
     rect: { readonly top: number; readonly left: number; readonly width: number; readonly height: number },
@@ -1904,6 +1917,7 @@ export class EditorRenderer {
     this.caretEl.style.left = `${left}px`;
     this.caretEl.style.width = `${width}px`;
     this.caretEl.style.height = `${height}px`;
+    this.caretEl.style.lineHeight = `${lineHeight}px`;
     this.caretEl.style.setProperty("--editor-caret-core-color", style.color ?? "var(--caret)");
 
     // Keep the browser's IME/dead-key anchor at the visual caret. The textarea
@@ -1932,6 +1946,9 @@ export class EditorRenderer {
     } else if (this.caretCoreEl.childNodes.length > 0) {
       this.caretCoreEl.replaceChildren();
     }
+
+    const cursorText = style.shape === "block" ? this.cursorGrapheme(offset) : "";
+    if (this.caretTextEl.textContent !== cursorText) this.caretTextEl.textContent = cursorText;
 
     for (const effect of this.runtime.drainCursorEffects()) {
       this.mountCursorEffect(effect, placement);

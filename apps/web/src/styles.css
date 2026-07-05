@@ -292,12 +292,25 @@ body {
 .editor-caret-core {
   position: absolute;
   inset: 0;
+  z-index: 0;
   background: var(--editor-caret-core-color, var(--caret));
+}
+
+.editor-caret-text {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  color: var(--bg-editor);
+  line-height: inherit;
+  overflow: hidden;
+  white-space: pre;
+  pointer-events: none;
 }
 
 .editor-caret-effects {
   position: absolute;
   inset: 0;
+  z-index: 2;
   overflow: visible;
   pointer-events: none;
 }

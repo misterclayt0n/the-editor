@@ -105,6 +105,21 @@ export type HoverResult = {
   readonly kind?: "info" | "diagnostic";
 };
 
+export type DocumentHighlightKind = "text" | "read" | "write";
+
+export type DocumentHighlight = {
+  readonly from: number;
+  readonly to: number;
+  readonly kind: DocumentHighlightKind;
+};
+
+export type DocumentHighlightContext = {
+  readonly docId: string;
+  readonly path: string | null;
+  readonly text: RenderableText;
+  readonly offset: number;
+};
+
 export interface HoverProvider {
   readonly id: string;
   provide(context: HoverContext): Promise<HoverResult | null> | HoverResult | null;
@@ -266,6 +281,9 @@ export class Lsp extends Context.Tag("@the-editor/intel/Lsp")<
     readonly completion: (context: CompletionContext) => Promise<CompletionResult | null>;
     readonly hover: (context: HoverContext) => Promise<HoverResult | null>;
     readonly diagnosticsHover: (context: HoverContext) => HoverResult | null;
+    readonly documentHighlights: (
+      context: DocumentHighlightContext,
+    ) => Promise<readonly DocumentHighlight[]>;
     readonly triggerCharacters: (docId: string) => readonly string[];
     readonly signature: (context: SignatureContext) => Promise<SignatureResult | null>;
     readonly signatureTriggerCharacters: (docId: string) => readonly string[];

@@ -778,6 +778,8 @@ export class AppRuntime {
             completion: (context) => instance.lsp?.completionAt(context) ?? Promise.resolve(null),
             hover: (context) => instance.lsp?.hoverAt(context) ?? Promise.resolve(null),
             diagnosticsHover: (context) => instance.lsp?.diagnosticsHoverAt(context) ?? null,
+            documentHighlights: (context) =>
+              instance.lsp?.documentHighlightsAt(context) ?? Promise.resolve([]),
             triggerCharacters: (docId) => instance.lsp?.completionTriggerCharacters(docId) ?? [],
             signature: (context) => instance.lsp?.signatureHelpAt(context) ?? Promise.resolve(null),
             signatureTriggerCharacters: (docId) =>

@@ -39,6 +39,7 @@ const staticCapabilityKeys: Record<string, string> = {
   [lsp.DocumentFormattingRequest.method]: "documentFormattingProvider",
   [lsp.RenameRequest.method]: "renameProvider",
   [lsp.InlayHintRequest.method]: "inlayHintProvider",
+  [lsp.DocumentHighlightRequest.method]: "documentHighlightProvider",
   [lsp.HoverRequest.method]: "hoverProvider",
   [lsp.CompletionRequest.method]: "completionProvider",
   [lsp.SignatureHelpRequest.method]: "signatureHelpProvider",
@@ -161,6 +162,7 @@ export class LspClient {
           formatting: { dynamicRegistration: true },
           rename: { dynamicRegistration: true, prepareSupport: false },
           inlayHint: { dynamicRegistration: true },
+          documentHighlight: { dynamicRegistration: true },
         },
         workspace: {
           applyEdit: true,
@@ -396,6 +398,19 @@ export class LspClient {
       token,
     );
     return result ?? null;
+  }
+
+  async documentHighlights(
+    uri: string,
+    position: lsp.Position,
+    token?: CancellationToken,
+  ): Promise<lsp.DocumentHighlight[]> {
+    const result = await this.connection.sendRequest(
+      lsp.DocumentHighlightRequest.type,
+      { textDocument: { uri }, position },
+      token,
+    );
+    return result ?? [];
   }
 
   /** Server-declared completion trigger characters (static capability). */

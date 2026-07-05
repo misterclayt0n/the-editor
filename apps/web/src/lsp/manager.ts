@@ -54,6 +54,8 @@ import type {
   CompletionContext,
   CompletionItem,
   CompletionResult,
+  DocumentHighlight,
+  DocumentHighlightContext,
   HoverContext,
   HoverResult,
   SignatureContext,
@@ -174,6 +176,7 @@ const offsetToPosition = (buffer: TextBuffer, offset: number): lsp.Position => {
 const decorationSpecEquals = (a: DecorationSpec, b: DecorationSpec): boolean =>
   a.layer === b.layer &&
   a.className === b.className &&
+  a.role === b.role &&
   a.priority === b.priority &&
   a.style?.["borderBottomColor"] === b.style?.["borderBottomColor"];
 
@@ -611,6 +614,45 @@ export class LspManager {
           }
         : {}),
     };
+  }
+
+  /** LSP document highlights as semantic symbol occurrence ranges. */
+  async documentHighlightsAt(
+    context: DocumentHighlightContext,
+  ): Promise<readonly DocumentHighlight[]> {
+    const attachment = this.attachments.get(context.docId);
+    if (attachment === undefined) return [];
+    const binding = this.bindingFor(
+      attachment,
+      lsp.DocumentHighlightRequest.method,
+      "document-highlight",
+    );
+    if (binding === null) return [];
+    this.flushPendingSync(attachment);
+    const buffer = this.bufferOf(attachment);
+    const requestVersion = this.documentVersion(attachment);
+    const highlights = await binding.handle.client.documentHighlights(
+      attachment.uri,
+      offsetToPosition(buffer, context.offset),
+    );
+    if (this.documentVersion(attachment) !== requestVersion) return [];
+    return highlights.flatMap((highlight): DocumentHighlight[] => {
+      const from = positionToOffset(buffer, highlight.range.start);
+      const to = positionToOffset(buffer, highlight.range.end);
+      if (to <= from) return [];
+      return [
+        {
+          from,
+          to,
+          kind:
+            highlight.kind === lsp.DocumentHighlightKind.Write
+              ? "write"
+              : highlight.kind === lsp.DocumentHighlightKind.Read
+                ? "read"
+                : "text",
+        },
+      ];
+    });
   }
 
   completionTriggerCharacters(docId: string): readonly string[] {

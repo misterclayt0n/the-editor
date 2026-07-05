@@ -259,9 +259,15 @@ registerSurfaceFallback(MultiBufferSurface, EditorSurface);
 
 export type KeyOutcome = "handled" | "pending" | "passthrough";
 
+/** The editor's hidden text-input sink feeds DOM composition/input back into the engine. */
+function isEditorTextInputTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && target.closest("[data-editor-text-input='true']") !== null;
+}
+
 /** A surface that owns its own typing (form fields, contenteditable). */
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
+  if (isEditorTextInputTarget(target)) return false;
   const tag = target.tagName;
   return tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable;
 }
@@ -299,6 +305,10 @@ export interface PaneHost {
   /** Input substrate: register/dispatch pre-keymap interceptors. */
   registerPreKeymap(interceptor: InputInterceptor): () => void;
   dispatchPreKeymap(event: KeyboardEventLike): boolean;
+  /** DOM text/composition input sink: whether text may be committed now. */
+  acceptsTextInput(): boolean;
+  /** DOM text/composition input sink: commit already-composed text. */
+  insertTextInput(text: string): boolean;
   /** Map a pane offset to its underlying source document + offset (LSP/intel). */
   resolveSource(offset: number): IntelLocation | null;
   snapshot(): EditorSnapshot;
@@ -371,6 +381,18 @@ export class EditorPane implements PaneHost {
         }),
       )._tag === "handled"
     );
+  }
+
+  acceptsTextInput(): boolean {
+    return Effect.runSync(this.input.context).textFallback === "insert";
+  }
+
+  insertTextInput(text: string): boolean {
+    if (text.length === 0 || !this.acceptsTextInput()) return false;
+    Effect.runSync(
+      this.runtime.commands.executeIn(this.panelId, "editor.insertText", { text }).pipe(Effect.orDie),
+    );
+    return true;
   }
 
   /** Highlight source for this pane's document (absent without a host). */
@@ -2243,6 +2265,7 @@ export class AppRuntime {
    * keyboard trap. Surface-scoped bindings (editor save, etc.) do NOT leak in.
    */
   dispatchKeyboardEvent(event: KeyboardEvent): void {
+    const textInputSink = isEditorTextInputTarget(event.target);
     const editable = isEditableTarget(event.target);
 
     // Native copy of a selection inside a float (hover-card text): the keymap's
@@ -2260,7 +2283,7 @@ export class AppRuntime {
       }
     }
 
-    const outcome = this.resolveKeyboardEvent(event, editable);
+    const outcome = this.resolveKeyboardEvent(event, editable, textInputSink);
     if (outcome !== "passthrough") event.preventDefault();
     this.onPendingChords?.(this.pendingChords());
   }
@@ -2273,7 +2296,12 @@ export class AppRuntime {
    * so only GLOBAL bindings may claim it — no surface bindings, no chord
    * buffering, no text insertion.
    */
-  private resolveKeyboardEvent(event: KeyboardEventLike, editable: boolean): KeyOutcome {
+  private resolveKeyboardEvent(
+    event: KeyboardEventLike & { readonly isComposing?: boolean },
+    editable: boolean,
+    textInputSink = false,
+  ): KeyOutcome {
+    if (event.isComposing === true || event.key === "Dead") return "passthrough";
     const chord = chordFromKeyboardEvent(event);
     if (chord === undefined) return "passthrough";
 
@@ -2328,6 +2356,7 @@ export class AppRuntime {
       case "none":
         if (
           !editable &&
+          !textInputSink &&
           inputContext?.textFallback === "insert" &&
           isTextInputChord(chord) &&
           event.key.length === 1 &&

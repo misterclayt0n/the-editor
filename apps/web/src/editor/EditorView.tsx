@@ -31,9 +31,7 @@ export function EditorView({ runtime, pane, focused, onSnapshot }: EditorViewPro
       onSnapshot: (snapshot) => callbacks.current.onSnapshot?.(snapshot),
     });
     rendererRef.current = renderer;
-    const unregister = runtime.registerPanelFocuser(pane.panelId, () =>
-      root.focus({ preventScroll: true }),
-    );
+    const unregister = runtime.registerPanelFocuser(pane.panelId, () => renderer.focus());
     return () => {
       unregister();
       rendererRef.current = null;

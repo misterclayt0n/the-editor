@@ -37,9 +37,7 @@ export function MultiBufferView({
     const root = rootRef.current!;
     const renderer = new EditorRenderer(root, pane, { focused });
     rendererRef.current = renderer;
-    const unregister = runtime.registerPanelFocuser(pane.panelId, () =>
-      root.focus({ preventScroll: true }),
-    );
+    const unregister = runtime.registerPanelFocuser(pane.panelId, () => renderer.focus());
     const unsubscribeMounts = pane.mounts.subscribe((event) => {
       setMounts((prev) => {
         const next = new Map(prev);

@@ -160,6 +160,16 @@ export class MultiBufferPane implements PaneHost {
     return this.hub.dispatch.keyIntercept(event);
   }
 
+  acceptsTextInput(): boolean {
+    return true;
+  }
+
+  insertTextInput(text: string): boolean {
+    if (text.length === 0) return false;
+    this.applyEdit(insertEdits(this.snapshot(), text));
+    return true;
+  }
+
   constructor(
     readonly panelId: PanelId,
     readonly title: string,

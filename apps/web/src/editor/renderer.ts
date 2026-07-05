@@ -239,6 +239,7 @@ function renderRowContent(
 }
 
 export class EditorRenderer {
+  private readonly textInputEl: HTMLTextAreaElement;
   private readonly viewport: HTMLDivElement;
   private readonly contentEl: HTMLDivElement;
   private readonly decoBgLayer: HTMLDivElement;
@@ -285,9 +286,9 @@ export class EditorRenderer {
     // Own the gesture: stop the browser starting a native selection over our
     // row DOM (we render our own selection from the engine model).
     event.preventDefault();
-    // Put the keyboard in this pane so the workbench knows the editor was
-    // activated; preventScroll keeps the viewport from jumping on focus.
-    this.root.focus({ preventScroll: true });
+    // Put DOM text/composition input in this pane; preventScroll keeps the
+    // viewport from jumping on focus.
+    this.focus();
     // A click in the gutter (left of the text) can be claimed by the pane
     // (the multibuffer jumps to that source line); fall through otherwise.
     {
@@ -639,6 +640,8 @@ export class EditorRenderer {
   private revealCaretPending = false;
   private overlaysDirty = true;
   private focused: boolean;
+  private composingTextInput = false;
+  private skipNextTextInput = false;
   private disposed = false;
 
   constructor(
@@ -655,6 +658,16 @@ export class EditorRenderer {
     this.measureEl.className = "editor-measure";
     this.measureEl.setAttribute("aria-hidden", "true");
     this.measureEl.textContent = "0".repeat(100);
+
+    this.textInputEl = document.createElement("textarea");
+    this.textInputEl.className = "editor-text-input";
+    this.textInputEl.dataset.editorTextInput = "true";
+    this.textInputEl.setAttribute("aria-label", "Editor text input");
+    this.textInputEl.tabIndex = -1;
+    this.textInputEl.spellcheck = false;
+    this.textInputEl.autocapitalize = "off";
+    this.textInputEl.autocomplete = "off";
+    this.textInputEl.wrap = "off";
 
     this.viewport = document.createElement("div");
     this.viewport.className = "editor-viewport";
@@ -698,7 +711,7 @@ export class EditorRenderer {
     this.vScrollbar.append(this.vThumb);
     this.hScrollbar.append(this.hThumb);
     this.viewport.append(this.contentEl, this.bandHost);
-    root.append(this.measureEl, this.viewport, this.vScrollbar, this.hScrollbar);
+    root.append(this.measureEl, this.textInputEl, this.viewport, this.vScrollbar, this.hScrollbar);
 
     this.measureCharWidth();
     document.fonts?.ready.then(() => {
@@ -709,6 +722,10 @@ export class EditorRenderer {
       queueRender(this.renderPass);
     });
 
+    this.textInputEl.addEventListener("input", this.handleTextInput);
+    this.textInputEl.addEventListener("compositionstart", this.handleCompositionStart);
+    this.textInputEl.addEventListener("compositionupdate", this.handleCompositionUpdate);
+    this.textInputEl.addEventListener("compositionend", this.handleCompositionEnd);
     this.viewport.addEventListener("wheel", this.handleWheel, { passive: false });
     this.viewport.addEventListener("mousedown", this.handleMouseDown);
     this.vThumb.addEventListener("pointerdown", this.handleVThumbDown);
@@ -796,6 +813,62 @@ export class EditorRenderer {
     this.caretEl.classList.toggle("editor-caret-idle", !focused);
   }
 
+  focus(): void {
+    this.textInputEl.focus({ preventScroll: true });
+  }
+
+  private readonly handleTextInput = (): void => {
+    if (this.skipNextTextInput) {
+      this.skipNextTextInput = false;
+      this.textInputEl.value = "";
+      return;
+    }
+    if (this.composingTextInput) return;
+    this.commitTextInputValue();
+  };
+
+  private readonly handleCompositionStart = (): void => {
+    this.composingTextInput = true;
+    this.skipNextTextInput = false;
+    // Do not clear here: browsers may have already placed the pending dead-key
+    // glyph in the textarea before firing compositionstart. Making the textarea
+    // visible preserves Monaco's native little accent preview.
+    this.setTextInputPreview(true);
+  };
+
+  private readonly handleCompositionUpdate = (): void => {
+    this.setTextInputPreview(true);
+  };
+
+  private readonly handleCompositionEnd = (event: CompositionEvent): void => {
+    this.composingTextInput = false;
+    const text = event.data.length > 0 ? event.data : this.textInputEl.value;
+    if (text.length > 0) {
+      this.runtime.insertTextInput(text);
+      this.skipNextTextInput = true;
+      window.setTimeout(() => {
+        this.skipNextTextInput = false;
+      }, 0);
+    }
+    this.textInputEl.value = "";
+    this.setTextInputPreview(false);
+  };
+
+  private setTextInputPreview(visible: boolean): void {
+    const show = visible && this.runtime.acceptsTextInput();
+    this.textInputEl.classList.toggle("editor-text-input--composing", show);
+    this.textInputEl.style.width = show
+      ? `${Math.max(this.charWidth * 16, 80)}px`
+      : "1px";
+  }
+
+  private commitTextInputValue(): void {
+    const text = this.textInputEl.value;
+    this.textInputEl.value = "";
+    if (text.length === 0) return;
+    this.runtime.insertTextInput(text);
+  }
+
   dispose(): void {
     this.disposed = true;
     cancelRender(this.renderPass);
@@ -813,11 +886,16 @@ export class EditorRenderer {
     this.viewport.removeEventListener("scroll", this.handleNativeScrollLeak);
     this.resizeObserver.disconnect();
     this.floatResizeObserver.disconnect();
+    this.textInputEl.removeEventListener("input", this.handleTextInput);
+    this.textInputEl.removeEventListener("compositionstart", this.handleCompositionStart);
+    this.textInputEl.removeEventListener("compositionupdate", this.handleCompositionUpdate);
+    this.textInputEl.removeEventListener("compositionend", this.handleCompositionEnd);
     this.viewport.removeEventListener("wheel", this.handleWheel);
     this.viewport.removeEventListener("mousedown", this.handleMouseDown);
     for (const id of this.mountEls.keys()) this.runtime.mounts.unmounted(id);
     this.mountEls.clear();
     this.measureEl.remove();
+    this.textInputEl.remove();
     this.viewport.remove();
     this.vScrollbar.remove();
     this.hScrollbar.remove();
@@ -1782,6 +1860,12 @@ export class EditorRenderer {
     this.caretEl.style.width = `${width}px`;
     this.caretEl.style.height = `${height}px`;
     this.caretEl.style.setProperty("--editor-caret-core-color", style.color ?? "var(--caret)");
+
+    // Keep the browser's IME/dead-key anchor at the visual caret. The textarea
+    // itself is transparent, but native composition UI uses its screen rect.
+    this.textInputEl.style.left = `${Math.max(0, left - this.scrollX)}px`;
+    this.textInputEl.style.top = `${Math.max(0, rect.top - this.scrollY)}px`;
+    this.textInputEl.style.height = `${lineHeight}px`;
 
     const placement: CursorPlacement = {
       offset,

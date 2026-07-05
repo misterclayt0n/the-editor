@@ -117,6 +117,38 @@ body {
   white-space: pre;
 }
 
+.editor-text-input {
+  position: absolute;
+  z-index: 0;
+  width: 1px;
+  min-width: 1px;
+  max-width: none;
+  padding: 0;
+  border: 0;
+  margin: 0;
+  opacity: 0;
+  color: transparent;
+  background: transparent;
+  caret-color: transparent;
+  resize: none;
+  overflow: hidden;
+  pointer-events: none;
+  outline: none;
+  white-space: pre;
+  font: inherit;
+  line-height: var(--font-buffer-line-height);
+}
+
+.editor-text-input--composing {
+  z-index: 4;
+  opacity: 1;
+  color: var(--fg);
+  /* The editor owns cursor rendering (bar/block/underline/custom styles).
+   * During composition the textarea only previews pending text; its native
+   * caret would be a second, browser-styled cursor. */
+  caret-color: transparent;
+}
+
 /*
  * Owned scrolling: no native scroller exists. The viewport clips; the
  * content element (the rendered window of rows) is positioned with a

@@ -1272,7 +1272,6 @@ body {
 .editor-band-cell.vcs-gutter-modified,
 .editor-band-cell.vcs-gutter-deleted {
   padding: 0;
-  border-radius: 1px;
 }
 
 .editor-band-cell.vcs-gutter-added {

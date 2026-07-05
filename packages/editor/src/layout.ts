@@ -24,6 +24,18 @@ export type TextStyleRun = {
   readonly owner?: EditorVisualOwner;
 };
 export type DecorationLayer = "background" | "underline" | "outline";
+export type LineDecorationTarget = "content" | "gutter" | "all";
+export type LineDecorationScope = "visual-row" | "logical-line";
+export type LineDecorationPaint = "background" | "border" | "horizontal-border";
+export type LineDecorationSpec = {
+  readonly target: LineDecorationTarget;
+  readonly scope: LineDecorationScope;
+  readonly paint: LineDecorationPaint;
+  readonly role?: string;
+  readonly className?: string;
+  readonly style?: Readonly<Record<string, string>>;
+  readonly priority?: number;
+};
 export type RangeDecoration = {
   readonly from: number;
   readonly to: number;
@@ -35,6 +47,10 @@ export type RangeDecoration = {
   readonly owner?: EditorVisualOwner;
 };
 export type VirtualTextAffinity = "before" | "after";
+export type LineDecoration = LineDecorationSpec & {
+  readonly at: number;
+  readonly owner?: EditorVisualOwner;
+};
 export type VirtualText = {
   readonly at: number;
   readonly text: string;
@@ -53,6 +69,7 @@ export type BlockWidget = {
 export type EditorVisualsSnapshot = {
   readonly textStyles?: readonly TextStyleRun[];
   readonly rangeDecorations?: readonly RangeDecoration[];
+  readonly lineDecorations?: readonly LineDecoration[];
   readonly virtualText?: readonly VirtualText[];
   readonly blockWidgets?: readonly BlockWidget[];
 };
@@ -208,6 +225,19 @@ export type LayoutDecoration = {
   readonly priority?: number;
   readonly owner?: EditorVisualOwner;
 };
+export type LayoutLineDecoration = {
+  readonly row: number;
+  readonly line: number;
+  readonly top: number;
+  readonly height: number;
+  readonly target: LineDecorationTarget;
+  readonly paint: LineDecorationPaint;
+  readonly role?: string;
+  readonly className?: string;
+  readonly style?: Readonly<Record<string, string>>;
+  readonly priority?: number;
+  readonly owner?: EditorVisualOwner;
+};
 export type LayoutBlockWidget = {
   readonly id: string;
   readonly afterLine: number;
@@ -222,6 +252,7 @@ export type ViewportLayoutSnapshot<Payload = unknown> = {
   readonly rows: readonly LayoutRow[];
   readonly placements: readonly LayoutPlacement<Payload>[];
   readonly decorations: readonly LayoutDecoration[];
+  readonly lineDecorations: readonly LayoutLineDecoration[];
   readonly blockWidgets: readonly LayoutBlockWidget[];
 };
 export type HitTestBias = "before" | "after" | "nearest";
@@ -1051,6 +1082,15 @@ export function layoutViewport<Payload = unknown>(
     visuals.virtualText,
     wrappedBounds,
   );
+  const lineDecorations = layoutLineDecorations(
+    request.text,
+    start,
+    end,
+    lineToRow,
+    m,
+    visuals.lineDecorations ?? [],
+    wrappedBounds,
+  );
   const blockWidgets = (visuals.blockWidgets ?? []).flatMap((w): LayoutBlockWidget[] => {
     const row = widgetByRow.get(w.id);
     return row === undefined || w.heightRows <= 0
@@ -1077,6 +1117,7 @@ export function layoutViewport<Payload = unknown>(
     rows,
     placements,
     decorations,
+    lineDecorations,
     blockWidgets,
   };
 }
@@ -1159,6 +1200,47 @@ function addRangePlacement<Payload>(
     });
   }
 }
+function layoutLineDecorations(
+  text: RenderableText,
+  start: number,
+  end: number,
+  lineToRow: Map<number, number>,
+  m: Metrics,
+  decorations: readonly LineDecoration[],
+  wrapped?: WrappedBounds | null,
+): readonly LayoutLineDecoration[] {
+  return decorations
+    .flatMap((dec, index) => {
+      const at = clamp(dec.at, 0, text.length);
+      const line = lineIndexAtOffset(text, at);
+      if (line < start || line >= end) return [];
+      const row = lineToRow.get(line);
+      if (row === undefined) return [];
+      const wrappedLine = wrapped?.get(line);
+      let visualRow = row;
+      let heightRows = 1;
+      if (wrappedLine !== undefined) {
+        if (dec.scope === "logical-line") {
+          heightRows = Math.max(1, wrappedLine.bounds.length - 1);
+        } else {
+          visualRow = row + wrappedSegmentAt(wrappedLine.bounds, at).index;
+        }
+      }
+      return [
+        {
+          ...dec,
+          row: visualRow,
+          line,
+          top: rowTop(visualRow, m.lineHeight, m.paddingTop),
+          height: heightRows * m.lineHeight,
+          _index: index,
+        } as LayoutLineDecoration & { readonly _index: number },
+      ];
+    })
+    .sort((a, b) => priority(a) - priority(b) || a._index - b._index)
+    .map(({ _index, ...dec }) => dec);
+}
+
 function layoutDecorations(
   text: RenderableText,
   start: number,

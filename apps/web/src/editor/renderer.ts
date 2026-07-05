@@ -1483,6 +1483,7 @@ export class EditorRenderer {
             ...this.visuals!.textStylesBetween(winFrom, winTo),
           ],
           rangeDecorations: this.visuals!.decorationsBetween(winFrom, winTo),
+          lineDecorations: this.visuals!.lineDecorationsBetween(winFrom, winTo),
           virtualText: this.visuals!.virtualTextBetween(winFrom, winTo),
           // All widgets: layout's absolute geometry must agree with the
           // GeometryModel about rows above the window too.
@@ -1787,11 +1788,38 @@ export class EditorRenderer {
     return base - leadingRows * LINE_HEIGHT;
   }
 
+  private decorationContentWidth(): number {
+    return Math.max(
+      this.viewportWidth + this.scrollX,
+      this.textOriginX + this.maxRowChars * this.charWidth + H_SCROLL_PAD,
+    );
+  }
+
   /** Decoration rect layers (window-local), rebuilt with the window. */
   private renderDecorations(layout: ViewportLayoutSnapshot<unknown>): void {
     const windowTop = this.windowTop();
     const bg: HTMLDivElement[] = [];
     const fg: HTMLDivElement[] = [];
+    const contentWidth = this.decorationContentWidth();
+    for (const decoration of layout.lineDecorations) {
+      const el = document.createElement("div");
+      el.className = decoration.className
+        ? `editor-line-decoration editor-line-decoration-${decoration.paint} ${decoration.className}`
+        : `editor-line-decoration editor-line-decoration-${decoration.paint}`;
+      el.style.top = `${decoration.top - windowTop}px`;
+      const left = decoration.target === "content" ? this.textOriginX : 0;
+      const width =
+        decoration.target === "gutter" ? this.textOriginX : Math.max(0, contentWidth - left);
+      el.style.left = `${left}px`;
+      el.style.width = `${width}px`;
+      el.style.height = `${decoration.height}px`;
+      if (decoration.style) {
+        for (const [key, value] of Object.entries(decoration.style)) {
+          (el.style as unknown as Record<string, string>)[key] = value;
+        }
+      }
+      bg.push(el);
+    }
     for (const decoration of layout.decorations) {
       for (const rect of decoration.rects) {
         const el = document.createElement("div");

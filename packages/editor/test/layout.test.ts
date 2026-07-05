@@ -317,6 +317,61 @@ describe("layout viewport", () => {
     expect(snapshot.decorations[1]!.rects).toEqual([{ top: 0, left: 10, width: 50, height: 20 }]);
   });
 
+  test("line decorations resolve to visual rows", () => {
+    const snapshot = layoutViewport({
+      text: text("abcdef"),
+      version: 1,
+      startLine: 0,
+      lineCount: 1,
+      lineHeight: 20,
+      visuals: {
+        lineDecorations: [
+          {
+            at: 3,
+            target: "content",
+            scope: "visual-row",
+            paint: "horizontal-border",
+            role: "current-line",
+          },
+        ],
+      },
+    });
+    expect(snapshot.lineDecorations).toEqual([
+      {
+        at: 3,
+        line: 0,
+        row: 0,
+        top: 0,
+        height: 20,
+        target: "content",
+        scope: "visual-row",
+        paint: "horizontal-border",
+        role: "current-line",
+      },
+    ]);
+  });
+
+  test("line decorations can span a wrapped logical line", () => {
+    const snapshot = layoutViewport({
+      text: text("abcdef"),
+      version: 1,
+      startLine: 0,
+      lineCount: 1,
+      lineHeight: 10,
+      wrapColumns: 3,
+      visuals: {
+        lineDecorations: [
+          { at: 4, target: "content", scope: "logical-line", paint: "background" },
+          { at: 4, target: "content", scope: "visual-row", paint: "horizontal-border" },
+        ],
+      },
+    });
+    expect(snapshot.lineDecorations.map((d) => ({ row: d.row, top: d.top, height: d.height }))).toEqual([
+      { row: 0, top: 0, height: 20 },
+      { row: 1, top: 10, height: 10 },
+    ]);
+  });
+
   test("block widgets create rows outputs and content height", () => {
     const buffer = text("a\nb");
     const widgets = [{ id: "w", afterLine: 0, heightRows: 2, owner: "test" }];

@@ -355,9 +355,24 @@ body {
   opacity: 0.75;
 }
 
-.editor-decoration {
+.editor-decoration,
+.editor-line-decoration {
   position: absolute;
+  box-sizing: border-box;
   pointer-events: none;
+}
+
+.editor-line-decoration-background {
+  background: currentColor;
+}
+
+.editor-line-decoration-border {
+  border: 1px solid currentColor;
+}
+
+.editor-line-decoration-horizontal-border {
+  border-top: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
 }
 
 .editor-decoration-background {
@@ -375,6 +390,16 @@ body {
 
 .editor-document-highlight-write {
   background: var(--theme-editor-document-highlight-write-background);
+}
+
+.editor-current-line {
+  color: var(--theme-editor-active-line-background, color-mix(in srgb, var(--accent) 35%, transparent));
+  border-top-width: 2px;
+  border-bottom-width: 2px;
+}
+
+.editor-matching-bracket {
+  color: var(--theme-editor-document-highlight-bracket-background);
 }
 
 .editor-decoration-underline {

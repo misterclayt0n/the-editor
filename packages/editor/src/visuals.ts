@@ -26,6 +26,8 @@ import { Context, Effect, Ref, type Scope } from "effect";
 import { RangeSet, type ChangeDesc, type RenderableText } from "@the-editor/engine";
 import {
   type DecorationLayer,
+  type LineDecoration,
+  type LineDecorationSpec,
   type RangeDecoration,
   type TextStyleRun,
   type VirtualText,
@@ -86,6 +88,8 @@ export type GutterBandSpec = {
 export type EditorVisualSet = {
   readonly textStyles?: RangeSet<TextStyleSpec>;
   readonly decorations?: RangeSet<DecorationSpec>;
+  /** Point ranges (from === to), resolved by the renderer to whole visual/logical rows. */
+  readonly lineDecorations?: RangeSet<LineDecorationSpec>;
   /** Point ranges (from === to). */
   readonly virtualText?: RangeSet<VirtualTextSpec>;
   /** Point ranges anchored anywhere in the widget's line. */
@@ -112,6 +116,7 @@ export type VisualsSnapshot = {
   readonly generation: number;
   readonly textStylesBetween: (from: number, to: number) => TextStyleRun[];
   readonly decorationsBetween: (from: number, to: number) => RangeDecoration[];
+  readonly lineDecorationsBetween: (from: number, to: number) => LineDecoration[];
   readonly virtualTextBetween: (from: number, to: number) => VirtualText[];
   /** All widgets, resolved to lines against `text`, sorted by line. */
   readonly widgets: (text: RenderableText) => AnchoredBlockWidget[];
@@ -195,6 +200,7 @@ function buildSnapshot(state: State): VisualsSnapshot {
   const entries = [...state.entries.values()];
   const styleSets = entries.filter((e) => e.set.textStyles !== undefined);
   const decorationSets = entries.filter((e) => e.set.decorations !== undefined);
+  const lineDecorationSets = entries.filter((e) => e.set.lineDecorations !== undefined);
   const virtualSets = entries.filter((e) => e.set.virtualText !== undefined);
   const widgetSets = entries.filter((e) => e.set.blockWidgets !== undefined);
 
@@ -229,6 +235,12 @@ function buildSnapshot(state: State): VisualsSnapshot {
         entry.set
           .decorations!.between(from, to)
           .map((range) => ({ from: range.from, to: range.to, owner: entry.owner, ...range.value })),
+      ),
+    lineDecorationsBetween: (from, to) =>
+      lineDecorationSets.flatMap((entry) =>
+        entry.set
+          .lineDecorations!.between(from, to)
+          .map((range) => ({ at: range.from, owner: entry.owner, ...range.value })),
       ),
     virtualTextBetween: (from, to) =>
       virtualSets.flatMap((entry) =>
@@ -307,6 +319,9 @@ const makeVisuals = (notifications: NotificationBus): Effect.Effect<VisualsServi
           const set: EditorVisualSet = {
             ...(entry.set.textStyles ? { textStyles: entry.set.textStyles.map(changes) } : {}),
             ...(entry.set.decorations ? { decorations: entry.set.decorations.map(changes) } : {}),
+            ...(entry.set.lineDecorations
+              ? { lineDecorations: entry.set.lineDecorations.map(changes) }
+              : {}),
             ...(entry.set.virtualText ? { virtualText: entry.set.virtualText.map(changes) } : {}),
             ...(entry.set.blockWidgets
               ? { blockWidgets: entry.set.blockWidgets.map(changes) }
@@ -344,6 +359,10 @@ export function mergeVisualsSnapshots(
     ...document.decorationsBetween(from, to),
     ...view.decorationsBetween(from, to),
   ];
+  const lineDecorationsBetween = (from: number, to: number) => [
+    ...document.lineDecorationsBetween(from, to),
+    ...view.lineDecorationsBetween(from, to),
+  ];
   const virtualTextBetween = (from: number, to: number) => [
     ...document.virtualTextBetween(from, to),
     ...view.virtualTextBetween(from, to),
@@ -352,6 +371,7 @@ export function mergeVisualsSnapshots(
     generation,
     textStylesBetween,
     decorationsBetween,
+    lineDecorationsBetween,
     virtualTextBetween,
     widgets: (text) =>
       [...document.widgets(text), ...view.widgets(text)].sort(

@@ -13,6 +13,7 @@
 
 import type {
   AnchoredBlockWidget,
+  LineDecoration,
   RangeDecoration,
   ResolvedGutterBand,
   VirtualText,
@@ -128,6 +129,18 @@ export function multiBufferVisuals(
           for (const d of source.decorationsBetween(slice.sourceFrom, slice.sourceTo)) {
             out.push({ ...d, from: slice.base + d.from, to: slice.base + d.to });
           }
+        }
+      }
+      return out;
+    },
+    lineDecorationsBetween: (from, to) => {
+      if (sourceVisuals === undefined) return [];
+      const out: LineDecoration[] = [];
+      for (const slice of excerptSlicesInRange(metas, from, to)) {
+        const source = sourceVisuals(slice.meta.excerpt.documentId);
+        if (source === undefined) continue;
+        for (const d of source.lineDecorationsBetween(slice.sourceFrom, slice.sourceTo)) {
+          out.push({ ...d, at: slice.base + d.at });
         }
       }
       return out;

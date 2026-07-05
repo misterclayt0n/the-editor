@@ -49,12 +49,20 @@ describe("EditorVisuals", () => {
             decorations: RangeSet.of([
               { from: 6, to: 10, value: { layer: "background" as const, className: "hl" } },
             ]),
+            lineDecorations: RangeSet.of([
+              {
+                from: 6,
+                to: 6,
+                value: { target: "content", scope: "visual-row", paint: "horizontal-border" },
+              },
+            ]),
             virtualText: RangeSet.of([{ from: 5, to: 5, value: { text: " hint" } }]),
           });
           const snapshot = yield* visuals.snapshot;
           return {
             styles: snapshot.textStylesBetween(0, 20),
             decorations: snapshot.decorationsBetween(0, 20),
+            lineDecorations: snapshot.lineDecorationsBetween(0, 20),
             virtual: snapshot.virtualTextBetween(0, 20),
           };
         }),
@@ -63,6 +71,15 @@ describe("EditorVisuals", () => {
     expect(result.styles).toEqual([{ from: 0, to: 5, owner: "test/styles", className: "kw" }]);
     expect(result.decorations).toEqual([
       { from: 6, to: 10, owner: "test/styles", layer: "background", className: "hl" },
+    ]);
+    expect(result.lineDecorations).toEqual([
+      {
+        at: 6,
+        owner: "test/styles",
+        target: "content",
+        scope: "visual-row",
+        paint: "horizontal-border",
+      },
     ]);
     expect(result.virtual).toEqual([{ at: 5, owner: "test/styles", text: " hint" }]);
   });

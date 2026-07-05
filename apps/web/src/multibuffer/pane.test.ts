@@ -59,6 +59,7 @@ function makeHost(buffers: Map<string, TextBuffer>, gutterBands: readonly Resolv
       decorationsBetween: (from, to) =>
         to > from ? [{ from, to: Math.min(to, from + 3), layer: "underline", className: "diag" }] : [],
       lineDecorationsBetween: () => [],
+      verticalGuidesBetween: () => [],
       virtualTextBetween: () => [],
       widgets: () => [],
       totalWidgetRows: 0,

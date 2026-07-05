@@ -37,6 +37,7 @@ import { matchingBrackets } from "./matchingBrackets";
 import { selectionMatches } from "./selectionMatches";
 import { vscodeKeybindings } from "./vscodeKeybindings";
 import { helixLite } from "./helixLite";
+import { indentGuides } from "./indentGuides";
 
 export type DefaultPackageEntry = {
   readonly pkg: ExtensionPackage<any>;
@@ -69,6 +70,7 @@ export function defaultPackages(): readonly DefaultPackageEntry[] {
     swappable(fileTreePackage),
     swappable(terminalPackage),
     swappable(currentLineHighlight),
+    swappable(indentGuides),
     swappable(matchingBrackets),
     swappable(documentHighlights),
     swappable(selectionMatches),

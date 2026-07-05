@@ -1484,6 +1484,7 @@ export class EditorRenderer {
           ],
           rangeDecorations: this.visuals!.decorationsBetween(winFrom, winTo),
           lineDecorations: this.visuals!.lineDecorationsBetween(winFrom, winTo),
+          verticalGuides: this.visuals!.verticalGuidesBetween(winFrom, winTo),
           virtualText: this.visuals!.virtualTextBetween(winFrom, winTo),
           // All widgets: layout's absolute geometry must agree with the
           // GeometryModel about rows above the window too.
@@ -1801,6 +1802,22 @@ export class EditorRenderer {
     const bg: HTMLDivElement[] = [];
     const fg: HTMLDivElement[] = [];
     const contentWidth = this.decorationContentWidth();
+    for (const guide of layout.verticalGuides) {
+      const el = document.createElement("div");
+      el.className = guide.className
+        ? `editor-vertical-guide ${guide.className}`
+        : "editor-vertical-guide";
+      el.style.top = `${guide.top - windowTop}px`;
+      el.style.left = `${guide.left}px`;
+      el.style.width = `${Math.max(1, guide.widthPx ?? 1)}px`;
+      el.style.height = `${guide.height}px`;
+      if (guide.style) {
+        for (const [key, value] of Object.entries(guide.style)) {
+          (el.style as unknown as Record<string, string>)[key] = value;
+        }
+      }
+      bg.push(el);
+    }
     for (const decoration of layout.lineDecorations) {
       const el = document.createElement("div");
       el.className = decoration.className

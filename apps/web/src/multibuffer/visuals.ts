@@ -16,6 +16,7 @@ import type {
   LineDecoration,
   RangeDecoration,
   ResolvedGutterBand,
+  VerticalGuide,
   VirtualText,
   VisualsSnapshot,
 } from "@the-editor/editor";
@@ -141,6 +142,18 @@ export function multiBufferVisuals(
         if (source === undefined) continue;
         for (const d of source.lineDecorationsBetween(slice.sourceFrom, slice.sourceTo)) {
           out.push({ ...d, at: slice.base + d.at });
+        }
+      }
+      return out;
+    },
+    verticalGuidesBetween: (from, to) => {
+      if (sourceVisuals === undefined) return [];
+      const out: VerticalGuide[] = [];
+      for (const slice of excerptSlicesInRange(metas, from, to)) {
+        const source = sourceVisuals(slice.meta.excerpt.documentId);
+        if (source === undefined) continue;
+        for (const d of source.verticalGuidesBetween(slice.sourceFrom, slice.sourceTo)) {
+          out.push({ ...d, from: slice.base + d.from, to: slice.base + d.to });
         }
       }
       return out;

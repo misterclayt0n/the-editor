@@ -56,6 +56,9 @@ describe("EditorVisuals", () => {
                 value: { target: "content", scope: "visual-row", paint: "horizontal-border" },
               },
             ]),
+            verticalGuides: RangeSet.of([
+              { from: 6, to: 16, value: { column: 2, className: "indent" } },
+            ]),
             virtualText: RangeSet.of([{ from: 5, to: 5, value: { text: " hint" } }]),
           });
           const snapshot = yield* visuals.snapshot;
@@ -63,6 +66,7 @@ describe("EditorVisuals", () => {
             styles: snapshot.textStylesBetween(0, 20),
             decorations: snapshot.decorationsBetween(0, 20),
             lineDecorations: snapshot.lineDecorationsBetween(0, 20),
+            verticalGuides: snapshot.verticalGuidesBetween(0, 20),
             virtual: snapshot.virtualTextBetween(0, 20),
           };
         }),
@@ -80,6 +84,9 @@ describe("EditorVisuals", () => {
         scope: "visual-row",
         paint: "horizontal-border",
       },
+    ]);
+    expect(result.verticalGuides).toEqual([
+      { from: 6, to: 16, owner: "test/styles", column: 2, className: "indent" },
     ]);
     expect(result.virtual).toEqual([{ at: 5, owner: "test/styles", text: " hint" }]);
   });

@@ -27,6 +27,14 @@ export type DecorationLayer = "background" | "underline" | "outline";
 export type LineDecorationTarget = "content" | "gutter" | "all";
 export type LineDecorationScope = "visual-row" | "logical-line";
 export type LineDecorationPaint = "background" | "border" | "horizontal-border";
+export type VerticalGuideSpec = {
+  readonly column: number;
+  readonly widthPx?: number;
+  readonly role?: string;
+  readonly className?: string;
+  readonly style?: Readonly<Record<string, string>>;
+  readonly priority?: number;
+};
 export type LineDecorationSpec = {
   readonly target: LineDecorationTarget;
   readonly scope: LineDecorationScope;
@@ -35,6 +43,11 @@ export type LineDecorationSpec = {
   readonly className?: string;
   readonly style?: Readonly<Record<string, string>>;
   readonly priority?: number;
+};
+export type VerticalGuide = VerticalGuideSpec & {
+  readonly from: number;
+  readonly to: number;
+  readonly owner?: EditorVisualOwner;
 };
 export type RangeDecoration = {
   readonly from: number;
@@ -70,6 +83,7 @@ export type EditorVisualsSnapshot = {
   readonly textStyles?: readonly TextStyleRun[];
   readonly rangeDecorations?: readonly RangeDecoration[];
   readonly lineDecorations?: readonly LineDecoration[];
+  readonly verticalGuides?: readonly VerticalGuide[];
   readonly virtualText?: readonly VirtualText[];
   readonly blockWidgets?: readonly BlockWidget[];
 };
@@ -225,6 +239,22 @@ export type LayoutDecoration = {
   readonly priority?: number;
   readonly owner?: EditorVisualOwner;
 };
+export type LayoutVerticalGuide = {
+  readonly from: number;
+  readonly to: number;
+  readonly row: number;
+  readonly line: number;
+  readonly top: number;
+  readonly left: number;
+  readonly height: number;
+  readonly column: number;
+  readonly widthPx?: number;
+  readonly role?: string;
+  readonly className?: string;
+  readonly style?: Readonly<Record<string, string>>;
+  readonly priority?: number;
+  readonly owner?: EditorVisualOwner;
+};
 export type LayoutLineDecoration = {
   readonly row: number;
   readonly line: number;
@@ -253,6 +283,7 @@ export type ViewportLayoutSnapshot<Payload = unknown> = {
   readonly placements: readonly LayoutPlacement<Payload>[];
   readonly decorations: readonly LayoutDecoration[];
   readonly lineDecorations: readonly LayoutLineDecoration[];
+  readonly verticalGuides: readonly LayoutVerticalGuide[];
   readonly blockWidgets: readonly LayoutBlockWidget[];
 };
 export type HitTestBias = "before" | "after" | "nearest";
@@ -1091,6 +1122,15 @@ export function layoutViewport<Payload = unknown>(
     visuals.lineDecorations ?? [],
     wrappedBounds,
   );
+  const verticalGuides = layoutVerticalGuides(
+    request.text,
+    start,
+    end,
+    lineToRow,
+    m,
+    visuals.verticalGuides ?? [],
+    wrappedBounds,
+  );
   const blockWidgets = (visuals.blockWidgets ?? []).flatMap((w): LayoutBlockWidget[] => {
     const row = widgetByRow.get(w.id);
     return row === undefined || w.heightRows <= 0
@@ -1118,6 +1158,7 @@ export function layoutViewport<Payload = unknown>(
     placements,
     decorations,
     lineDecorations,
+    verticalGuides,
     blockWidgets,
   };
 }
@@ -1200,6 +1241,51 @@ function addRangePlacement<Payload>(
     });
   }
 }
+function visualRowsForLine(line: number, row: number, wrapped?: WrappedBounds | null): number {
+  const wrappedLine = wrapped?.get(line);
+  return wrappedLine === undefined ? 1 : Math.max(1, wrappedLine.bounds.length - 1);
+}
+
+function layoutVerticalGuides(
+  text: RenderableText,
+  start: number,
+  end: number,
+  lineToRow: Map<number, number>,
+  m: Metrics,
+  guides: readonly VerticalGuide[],
+  wrapped?: WrappedBounds | null,
+): readonly LayoutVerticalGuide[] {
+  return guides
+    .flatMap((guide, index) => {
+      const from = clamp(guide.from, 0, text.length);
+      const to = clamp(guide.to, from, text.length);
+      const first = lineIndexAtOffset(text, from);
+      const last = lineIndexAtOffset(text, Math.max(from, to - 1));
+      const firstVisible = Math.max(start, first);
+      const lastVisible = Math.min(end - 1, last);
+      if (lastVisible < firstVisible) return [];
+      const startRow = lineToRow.get(firstVisible);
+      const endStartRow = lineToRow.get(lastVisible);
+      if (startRow === undefined || endStartRow === undefined) return [];
+      const endRow = endStartRow + visualRowsForLine(lastVisible, endStartRow, wrapped);
+      return [
+        {
+          ...guide,
+          from,
+          to,
+          row: startRow,
+          line: firstVisible,
+          top: rowTop(startRow, m.lineHeight, m.paddingTop),
+          left: m.paddingLeft + guide.column * m.charWidth,
+          height: Math.max(1, endRow - startRow) * m.lineHeight,
+          _index: index,
+        } as LayoutVerticalGuide & { readonly _index: number },
+      ];
+    })
+    .sort((a, b) => priority(a) - priority(b) || a._index - b._index)
+    .map(({ _index, ...guide }) => guide);
+}
+
 function layoutLineDecorations(
   text: RenderableText,
   start: number,

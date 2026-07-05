@@ -356,10 +356,15 @@ body {
 }
 
 .editor-decoration,
-.editor-line-decoration {
+.editor-line-decoration,
+.editor-vertical-guide {
   position: absolute;
   box-sizing: border-box;
   pointer-events: none;
+}
+
+.editor-vertical-guide {
+  background: currentColor;
 }
 
 .editor-line-decoration-background {
@@ -396,6 +401,14 @@ body {
   color: var(--theme-editor-active-line-background, color-mix(in srgb, var(--accent) 35%, transparent));
   border-top-width: 2px;
   border-bottom-width: 2px;
+}
+
+.editor-indent-guide {
+  color: var(--theme-editor-indent-guide);
+}
+
+.editor-indent-guide-active {
+  color: var(--theme-editor-indent-guide-active);
 }
 
 .editor-matching-bracket {

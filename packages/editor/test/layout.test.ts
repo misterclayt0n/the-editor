@@ -317,6 +317,53 @@ describe("layout viewport", () => {
     expect(snapshot.decorations[1]!.rects).toEqual([{ top: 0, left: 10, width: 50, height: 20 }]);
   });
 
+  test("vertical guides resolve to spanning row rects", () => {
+    const snapshot = layoutViewport({
+      text: text("a\n  b\n  c\nd"),
+      version: 1,
+      startLine: 1,
+      lineCount: 2,
+      lineHeight: 10,
+      charWidth: 5,
+      paddingLeft: 20,
+      visuals: {
+        verticalGuides: [
+          { from: 2, to: 9, column: 2, className: "guide" },
+        ],
+      },
+    });
+    expect(snapshot.verticalGuides).toEqual([
+      {
+        from: 2,
+        to: 9,
+        line: 1,
+        row: 1,
+        top: 10,
+        left: 30,
+        height: 20,
+        column: 2,
+        className: "guide",
+      },
+    ]);
+  });
+
+  test("vertical guides include wrapped visual rows", () => {
+    const snapshot = layoutViewport({
+      text: text("abcdef\ngh"),
+      version: 1,
+      startLine: 0,
+      lineCount: 2,
+      lineHeight: 10,
+      wrapColumns: 3,
+      visuals: {
+        verticalGuides: [{ from: 0, to: 9, column: 0 }],
+      },
+    });
+    expect(snapshot.verticalGuides.map((guide) => ({ row: guide.row, top: guide.top, height: guide.height }))).toEqual([
+      { row: 0, top: 0, height: 30 },
+    ]);
+  });
+
   test("line decorations resolve to visual rows", () => {
     const snapshot = layoutViewport({
       text: text("abcdef"),
